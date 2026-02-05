@@ -1,26 +1,21 @@
 @echo off
-echo Building BatteryDataTool.exe...
+setlocal
+echo Building BatteryDataTool.exe with Icon...
 
-REM ============================================
-REM 환경에 맞게 아래 경로를 수정하세요
-REM ============================================
-REM 현재 PC:  set VENV_PATH=%~dp0..\.venv
-REM 다른 PC:  set VENV_PATH=%~dp0..\..\..\.venv
-set VENV_PATH=%~dp0..\.venv
-REM ============================================
-
-REM 현재 배치 파일 위치로 이동
 cd /d "%~dp0"
 
-"%VENV_PATH%\Scripts\pyinstaller.exe" ^
+set "VENV_EXE=%~dp0.venv\Scripts\pyinstaller.exe"
+set "SCRIPT_PATH=%~dp0BatteryDataTool.py"
+set "ICON_PATH=%~dp0BatteryDataTool.ico"
+
+"%VENV_EXE%" ^
     --onefile ^
     --noconsole ^
     --noconfirm ^
     --uac-admin ^
     --hidden-import fsspec ^
-    "%~dp0BatteryDataTool.py" ^
+    %ICON_CMD% ^
+    "%SCRIPT_PATH%" ^
     --distpath "."
 
-echo Build complete.
 pause
-
