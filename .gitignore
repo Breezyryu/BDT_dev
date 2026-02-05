@@ -11,3 +11,4 @@ wheels/
 .venv
 .agent
 !bak/
+.vscode/

@@ -14,7 +14,7 @@ set "ICON_PATH=%~dp0BatteryDataTool.ico"
     --noconfirm ^
     --uac-admin ^
     --hidden-import fsspec ^
-    %ICON_CMD% ^
+    --icon="%ICON_PATH%" ^
     "%SCRIPT_PATH%" ^
     --distpath "."
 
