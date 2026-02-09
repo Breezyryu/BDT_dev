@@ -8928,7 +8928,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
-        loaded_data = self.f_load_all_cycle_data_parallel(
+        loaded_data = self._load_all_cycle_data_parallel(
             all_data_folder, mincapacity, firstCrate,
             self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
             max_workers=4
