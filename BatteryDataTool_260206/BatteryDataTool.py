@@ -523,16 +523,15 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                 Cycleraw.loc[Cycleraw["Condition"] == 2, "TotlCycle"] -= 1
                 Cycleraw = Cycleraw.drop(0, axis=0)
                 Cycleraw = Cycleraw.reset_index()
-        # Step 충전 용량, 방전 용량, 방전 에너지 계산 (벡터화된 병합)
-        # 연속된 동일 Condition에 그룹 ID 부여 (1, 2만 병합 대상)
-        Cycleraw = Cycleraw.reset_index(drop=True)
+        
+        # while loop 변경 260206
+        # 연속된 동일 Condition에 그룹
         cond_series = Cycleraw["Condition"]
-        # 연속된 같은 Condition을 하나의 그룹으로 묶음
         merge_group = ((cond_series != cond_series.shift()) | (~cond_series.isin([1, 2]))).cumsum()
         
-        # 그룹별 집계 함수 정의
         def merge_rows(group):
-            if len(group) == 1:
+            # 충방전 단일 행 반환
+            if len(group) == 1: 
                 return group.iloc[0]
             cond = group["Condition"].iloc[0]
             result = group.iloc[-1].copy()  # 마지막 행 기준
@@ -544,6 +543,7 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                 # 방전: Cap, Pow 합산, AveVolt 재계산
                 result["Cap[mAh]"] = group["Cap[mAh]"].sum()
                 result["Pow[mWh]"] = group["Pow[mWh]"].sum()
+                result["Ocv"] = group["Ocv"].iloc[0]
                 if result["Cap[mAh]"] != 0:
                     result["AveVolt[V]"] = result["Pow[mWh]"] / result["Cap[mAh]"]
             return result
@@ -8341,7 +8341,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
     
-    # 박민희 프로님
+     # 박민희 프로님
     def _load_cycle_data_task(self, task_info):
         """
         단일 폴더의 사이클 데이터 로딩(ThreadPoolExecutor용)
@@ -10710,6 +10710,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 toyo_data["vol"] = toyo_data['testname'].str.split(" ").str[2]
             toyo_data["cyclername"] = blkname
             used_chnl = toyo_data["use"].sum()
+            toyo_data["use"] = toyo_data["use"].astype(object)  # 문자열 할당을 위해 타입 변환
             toyo_data.loc[(toyo_data["chno"] == 1) & (toyo_data["use"] == 0), "use"] = "완료"
             toyo_data.loc[(toyo_data["chno"] == 0) & (toyo_data["use"] == 0), "use"] = "작업정지"
             toyo_data.loc[toyo_data["use"] == 1, "use"] = "작업중"
@@ -10814,15 +10815,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
             pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
             if os.path.isfile(pneworkpath2):
-                with open(pneworkpath) as f1:
+                with open(pneworkpath, encoding='utf-8') as f1:
                     js1 = json.loads(f1.read())
-                with open(pneworkpath2) as f2:
+                with open(pneworkpath2, encoding='utf-8') as f2:
                     js2 = json.loads(f2.read())
                 df1 = pd.DataFrame(js1['Channel'])
                 df2 = pd.DataFrame(js2['Channel'])
                 self.df = pd.concat([df1, df2])
             else:
-                with open(pneworkpath) as f1:
+                with open(pneworkpath, encoding='utf-8') as f1:
                     try:
                         js1 = json.loads(f1.read())
                     except json.JSONDecodeError as e:

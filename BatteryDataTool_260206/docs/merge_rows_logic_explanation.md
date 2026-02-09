@@ -17,7 +17,7 @@ def merge_rows(group):
     return result
 
 # 그룹별로 병합 수행
-Cycleraw = Cycleraw.groupby(merge_group, ...).apply(merge_rows, ...)
+Cycleraw = Cycleraw.groupby(merge_group, ...).apply(merge_rows, ...)r
 ```
 
 ---
