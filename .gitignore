@@ -12,3 +12,4 @@ wheels/
 .agent
 !bak/
 .vscode/
+.github/
