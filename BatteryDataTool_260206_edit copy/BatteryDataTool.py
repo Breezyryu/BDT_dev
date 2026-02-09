@@ -626,16 +626,13 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         sys.exit()
     return [mincapacity, df]
 
-# ========================================
-# 배치 스텝 프로파일 로딩 함수 (채널 단위 1회 읽기)
-# ========================================
+
 
 def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
     """
-    Toyo 스텝 프로파일 배치 로딩: 채널당 1회 min_cap 산정 후, 모든 사이클을 순회.
-    Returns: {cycle_no: [mincapacity, df], ...}
+    Toyo 스텝 프로파일 배치 로딩: 채널당 1회 min_cap 산정 후, 사이클 반복.
     """
-    # min_cap은 1회만 계산
+    
     mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
     results = {}
     for inicycle in cycle_list:
@@ -683,7 +680,7 @@ def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inir
 
 def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
     """
-    PNE 스텝 프로파일 배치 로딩: 인덱스 파일/원시 데이터를 1회 읽어 캐싱 후, 모든 사이클을 분배.
+    PNE 프로파일: 인덱스 파일/원시 데이터를 1회 읽어 캐싱 후, 모든 사이클 반복.
     Returns: {cycle_no: [mincapacity, df], ...}
     """
     results = {}
