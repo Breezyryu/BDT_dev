@@ -626,6 +626,175 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         sys.exit()
     return [mincapacity, df]
 
+# ========================================
+# 배치 스텝 프로파일 로딩 함수 (채널 단위 1회 읽기)
+# ========================================
+
+def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
+    """
+    Toyo 스텝 프로파일 배치 로딩: 채널당 1회 min_cap 산정 후, 모든 사이클을 순회.
+    Returns: {cycle_no: [mincapacity, df], ...}
+    """
+    # min_cap은 1회만 계산
+    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
+    results = {}
+    for inicycle in cycle_list:
+        df = pd.DataFrame()
+        if os.path.isfile(raw_file_path + "\\%06d" % inicycle):
+            tempdata = toyo_Profile_import(raw_file_path, inicycle)
+            stepcyc = inicycle
+            lasttime = 0
+            if int(tempdata.dataraw["Condition"].max()) < 2:
+                df.stepchg = tempdata.dataraw
+                df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
+                lasttime = df.stepchg["PassTime[Sec]"].max()
+                maxcon = 1
+                while maxcon == 1:
+                    stepcyc = stepcyc + 1
+                    tempdata = toyo_Profile_import(raw_file_path, stepcyc)
+                    maxcon = int(tempdata.dataraw["Condition"].max())
+                    tempdata.dataraw = tempdata.dataraw[(tempdata.dataraw["Condition"] == 1)]
+                    tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
+                    df.stepchg = df.stepchg._append(tempdata.dataraw)
+                    lasttime = df.stepchg["PassTime[Sec]"].max()
+            else:
+                df.stepchg = tempdata.dataraw
+                df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
+            if not df.stepchg.empty:
+                df.stepchg["Cap[mAh]"] = 0
+                df.stepchg = df.stepchg[df.stepchg["Current[mA]"] >= (cutoff * mincapacity)]
+                df.stepchg = df.stepchg.reset_index()
+                initial_cap = df.stepchg["Cap[mAh]"].iloc[0]
+                df.stepchg["delta_time"] = (
+                    df.stepchg["PassTime[Sec]"].shift(-1) - df.stepchg["PassTime[Sec]"]
+                )
+                df.stepchg["next_current"] = df.stepchg["Current[mA]"].shift(-1)
+                df.stepchg["contribution"] = (df.stepchg["delta_time"] * df.stepchg["next_current"]) / 3600
+                df.stepchg["Cap[mAh]"] = initial_cap + df.stepchg["contribution"].fillna(0).cumsum().shift(1, fill_value=0)
+                df.stepchg.drop(["delta_time", "next_current", "contribution"], axis=1, inplace=True)
+                df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"]/60
+                df.stepchg["Current[mA]"] = df.stepchg["Current[mA]"]/mincapacity
+                df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"]/mincapacity
+                df.stepchg = df.stepchg[["PassTime[Sec]", "Cap[mAh]", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
+                df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
+        results[inicycle] = [mincapacity, df]
+    return results
+
+
+def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
+    """
+    PNE 스텝 프로파일 배치 로딩: 인덱스 파일/원시 데이터를 1회 읽어 캐싱 후, 모든 사이클을 분배.
+    Returns: {cycle_no: [mincapacity, df], ...}
+    """
+    results = {}
+    if (raw_file_path[-4:-1]) == "ter":
+        for cyc in cycle_list:
+            results[cyc] = [mincapacity, pd.DataFrame()]
+        return results
+    
+    # min_cap은 1회만 계산
+    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
+    
+    rawdir = raw_file_path + "\\Restore\\"
+    if not os.path.isdir(rawdir):
+        for cyc in cycle_list:
+            results[cyc] = [mincapacity, pd.DataFrame()]
+        return results
+    
+    # 인덱스 파일 1회 읽기 (SaveEndData, savingFileIndex_start)
+    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
+    save_end_data = None
+    file_index_list = None
+    for files in subfile:
+        if "SaveEndData" in files:
+            save_end_data = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
+                                         header=None, encoding="cp949", on_bad_lines='skip')
+        if files == "savingFileIndex_start.csv":
+            df2 = pd.read_csv(rawdir + files, sep=r"\s+", skiprows=0, engine="c",
+                               header=None, encoding="cp949", on_bad_lines='skip')
+            file_index_list = [int(element.replace(',', '')) for element in df2.loc[:, 3].tolist()]
+    
+    if save_end_data is None or file_index_list is None:
+        for cyc in cycle_list:
+            results[cyc] = [mincapacity, pd.DataFrame()]
+        return results
+    
+    # 전체 사이클 범위에서 필요한 SaveData 파일 범위 산정 (1회)
+    min_cyc = min(cycle_list)
+    max_cyc = max(cycle_list) + 1
+    if min_cyc != 1:
+        index_min = save_end_data.loc[(save_end_data.loc[:, 27] == (min_cyc - 1)), 0].tolist()
+    else:
+        index_min = [0]
+    index_max = save_end_data.loc[(save_end_data.loc[:, 27] == max_cyc), 0].tolist()
+    if not index_max:
+        index_max = save_end_data.loc[(save_end_data.loc[:, 27] == save_end_data.loc[:, 27].max()), 0].tolist()
+    
+    if len(index_min) == 0:
+        file_start = 0
+    else:
+        file_start = binary_search(file_index_list, index_min[-1] + 1) - 1
+    file_end = binary_search(file_index_list, index_max[-1]) - 1
+    if file_start < 0:
+        file_start = 0
+    
+    # 필요한 SaveData 파일 전체를 1회 로딩
+    all_raw = None
+    for files in subfile[file_start:(file_end + 1)]:
+        if "SaveData" in files:
+            chunk = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
+                                header=None, encoding="cp949", on_bad_lines='skip')
+            if all_raw is None:
+                all_raw = chunk
+            else:
+                all_raw = pd.concat([all_raw, chunk], ignore_index=True)
+    
+    if all_raw is None:
+        for cyc in cycle_list:
+            results[cyc] = [mincapacity, pd.DataFrame()]
+        return results
+    
+    # PNE21/22 단위 변환 계수 결정
+    is_pne21_22 = ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path)
+    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
+    cap_divisor = current_divisor
+    
+    # 사이클별 데이터 분배 (메모리에서)
+    for inicycle in cycle_list:
+        df = pd.DataFrame()
+        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))]
+        if len(cycle_raw) > 0:
+            cycle_raw = cycle_raw[[17, 8, 9, 21, 10, 7]].copy()
+            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
+            # 단위 변환
+            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
+            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
+            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
+            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
+            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
+            # 스텝 연결 처리
+            stepmin = cycle_raw.step.min()
+            stepmax = cycle_raw.step.max()
+            stepdiv = stepmax - stepmin
+            if not np.isnan(stepdiv):
+                if stepdiv == 0:
+                    df.stepchg = cycle_raw
+                else:
+                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
+                    for si in range(1, int(stepdiv) + 1):
+                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
+                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
+                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
+                    df.stepchg = pd.concat(Profiles)
+            # cut-off 및 컬럼 정리
+            if hasattr(df, "stepchg"):
+                df.stepchg = df.stepchg[(df.stepchg["Current[mA]"] >= cutoff)]
+                df.stepchg = df.stepchg[["PassTime[Sec]", "Chgcap", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
+                df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
+        results[inicycle] = [mincapacity, df]
+    return results
+
+
 # Toyo Step charge Profile data 처리
 def toyo_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate):
     df = pd.DataFrame()
@@ -8341,24 +8510,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
     
-    def _load_step_data_task(self, task_info):
+    def _load_step_batch_task(self, task_info):
         """
-        단일 스텝 프로파일 데이터 로딩 (ThreadPoolExecutor용)
+        채널 단위 배치 스텝 프로파일 로딩 (ThreadPoolExecutor용)
+        1채널의 모든 사이클을 한 번에 로딩 → 디스크 I/O 최소화
         """
-        folder_path, step_cyc_no, mincapacity, mincrate, firstCrate, is_pne, folder_idx, subfolder_idx = task_info
+        folder_path, cycle_list, mincapacity, mincrate, firstCrate, is_pne, folder_idx, subfolder_idx = task_info
         try:
             if is_pne:
-                temp = pne_step_Profile_data(folder_path, step_cyc_no, mincapacity, mincrate, firstCrate)
+                batch_results = pne_step_Profile_batch(folder_path, cycle_list, mincapacity, mincrate, firstCrate)
             else:
-                temp = toyo_step_Profile_data(folder_path, step_cyc_no, mincapacity, mincrate, firstCrate)
-            return (folder_idx, subfolder_idx, step_cyc_no, temp)
+                batch_results = toyo_step_Profile_batch(folder_path, cycle_list, mincapacity, mincrate, firstCrate)
+            return (folder_idx, subfolder_idx, batch_results)
         except Exception as e:
-            print(f"[병렬 로딩 오류] {folder_path}, CycNo={step_cyc_no}: {e}")
-            return (folder_idx, subfolder_idx, step_cyc_no, None)
+            print(f"[배치 로딩 오류] {folder_path}: {e}")
+            return (folder_idx, subfolder_idx, None)
     
     def _load_all_step_data_parallel(self, all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=4):
         """
-        모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩
+        모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩 (채널 단위 배치)
+        - 채널당 1개 태스크 → 태스크 수 = 폴더 × 채널 (최대 ~200개)
+        - 각 태스크 내부에서 모든 사이클을 배치 처리 (min_cap 1회, 인덱스 1회 읽기)
         """
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
@@ -8367,9 +8539,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 is_pne = check_cycler(cyclefolder)
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
-                        for step_cyc_no in CycleNo:
-                            task_info = (folder_path, step_cyc_no, mincapacity, mincrate, firstCrate, is_pne, i, j)
-                            tasks.append(task_info)
+                        task_info = (folder_path, CycleNo, mincapacity, mincrate, firstCrate, is_pne, i, j)
+                        tasks.append(task_info)
         
         results = {}
         total_tasks = len(tasks)
@@ -8379,12 +8550,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return results
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_step_data_task, task): task for task in tasks}
+            futures = {executor.submit(self._load_step_batch_task, task): task for task in tasks}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
-                    folder_idx, subfolder_idx, step_cyc_no, temp = result
-                    results[(folder_idx, subfolder_idx, step_cyc_no)] = temp
+                    folder_idx, subfolder_idx, batch_results = result
+                    if batch_results:
+                        for cyc_no, temp in batch_results.items():
+                            results[(folder_idx, subfolder_idx, cyc_no)] = temp
                 completed += 1
                 self.progressBar.setValue(int(completed / total_tasks * 50))
         
