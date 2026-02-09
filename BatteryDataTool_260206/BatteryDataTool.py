@@ -10815,15 +10815,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
             pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
             if os.path.isfile(pneworkpath2):
-                with open(pneworkpath, encoding='utf-8') as f1:
+                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
                     js1 = json.loads(f1.read())
-                with open(pneworkpath2, encoding='utf-8') as f2:
+                with open(pneworkpath2, encoding='cp949', errors='ignore') as f2:
                     js2 = json.loads(f2.read())
                 df1 = pd.DataFrame(js1['Channel'])
                 df2 = pd.DataFrame(js2['Channel'])
                 self.df = pd.concat([df1, df2])
             else:
-                with open(pneworkpath, encoding='utf-8') as f1:
+                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
                     try:
                         js1 = json.loads(f1.read())
                     except json.JSONDecodeError as e:
