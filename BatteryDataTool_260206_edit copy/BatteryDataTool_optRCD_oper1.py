@@ -17,7 +17,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from datetime import timezone
-import glob
+import globㄱ
 import xlwings as xw
 
 # pip 추가 항목: xlsxwriter

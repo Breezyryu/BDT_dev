@@ -2870,17 +2870,6 @@ class Ui_sitool(object):
         self.CellProfile.setFont(font)
         self.CellProfile.setObjectName("CellProfile")
         self.horizontalLayout_15.addWidget(self.CellProfile)
-        self.AllProfile = QtWidgets.QRadioButton(parent=self.tab_6)
-        self.AllProfile.setMinimumSize(QtCore.QSize(0, 30))
-        self.AllProfile.setMaximumSize(QtCore.QSize(300, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(9)
-        font.setBold(False)
-        font.setWeight(50)
-        self.AllProfile.setFont(font)
-        self.AllProfile.setObjectName("AllProfile")
-        self.horizontalLayout_15.addWidget(self.AllProfile)
         self.chk_dqdv = QtWidgets.QCheckBox(parent=self.tab_6)
         self.chk_dqdv.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_dqdv.setMaximumSize(QtCore.QSize(120, 30))
@@ -7933,7 +7922,6 @@ class Ui_sitool(object):
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
         self.CycProfile.setText(_translate("sitool", "사이클 통합"))
         self.CellProfile.setText(_translate("sitool", "셀별 통합"))
-        self.AllProfile.setText(_translate("sitool", "전체 통합"))
         self.chk_dqdv.setText(_translate("sitool", "dQdV X/Y축 변환"))
         self.stepnumlb.setText(_translate("sitool", "Cycle\n"
 "(원하는 스텝들을 띄어쓰기나 -로 표기)\n"
@@ -9750,45 +9738,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             # 함수 사용으로 변경
                             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                             tab_no += 1
-                elif self.AllProfile.isChecked():
-                    # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                    fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                        nrows=2, ncols=3, figsize=(14, 10))
-                    tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                    all_step_namelist = None
-                    for j, FolderBase in enumerate(subfolder):
-                        chnlcount += 1
-                        chnlcountmax = len(subfolder)
-                        if "Pattern" not in FolderBase:
-                            for Step_CycNo in CycleNo:
-                                cyccountmax = len(CycleNo)
-                                cyccount += 1
-                                progressdata = 50 + progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax) * 0.5
-                                self.progressBar.setValue(int(progressdata))
-                                all_step_namelist = FolderBase.split("\\")
-                                headername = all_step_namelist[-2] + ", " + all_step_namelist[-1] + ", " + str(Step_CycNo) + "cy, "
-                                lgnd = all_step_namelist[-1] + " %04d" % Step_CycNo
-                                temp = loaded_data.get((i, j, Step_CycNo))
-                                if temp is None:
-                                    if not is_pne:
-                                        temp = toyo_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                    else:
-                                        temp = pne_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                                if hasattr(temp[1], "stepchg"):
-                                    if len(temp[1].stepchg) > 2:
-                                        axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num = self._plot_and_save_step_data(
-                                            axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
-                                            writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
-                    if all_step_namelist:
-                        title = all_step_namelist[-2] + " All"
-                        plt.suptitle(title, fontsize=15, fontweight='bold')
-                        axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
-                        positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                    tab_no += 1
                 else:
                     for Step_CycNo in CycleNo:
                         fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
@@ -9919,59 +9868,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
-            elif self.AllProfile.isChecked():
-                # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                all_Ratenamelist = None
-                for FolderBase in subfolder:
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(progressdata))
-                            all_Ratenamelist = FolderBase.split("\\")
-                            headername = all_Ratenamelist[-2] + ", " + all_Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = all_Ratenamelist[-1] + " %04d" % CycNo
-                            if not is_pne:
-                                Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                            else:
-                                Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Ratetemp[1], "rateProfile"):
-                                if len(Ratetemp[1].rateProfile) > 2:
-                                    self.capacitytext.setText(str(Ratetemp[0]))
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd)
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Ratetemp[1].rateProfile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "time(min)", headername + "SOC",
-                                                    headername + "Voltage", headername + "Crate", headername + "Temp."])
-                                        writecolno += 5
-                if all_Ratenamelist:
-                    title = all_Ratenamelist[-2] + " All"
-                    plt.suptitle(title, fontsize=15, fontweight='bold')
-                    axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
-                    positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
             else:
                 for CycNo in CycleNo:
                     fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
@@ -10121,66 +10017,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
-            elif self.AllProfile.isChecked():
-                # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                all_Chgnamelist = None
-                for FolderBase in subfolder:
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(progressdata))
-                            all_Chgnamelist = FolderBase.split("\\")
-                            headername = all_Chgnamelist[-2] + ", " + all_Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = all_Chgnamelist[-1] + " %04d" % CycNo
-                            if not is_pne:
-                                Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            else:
-                                Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Chgtemp[1], "Profile"):
-                                if len(Chgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Chgtemp[0]))
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
-                                    if self.chk_dqdv.isChecked():
-                                        graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
-                                                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd)
-                                    else:
-                                        graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
-                                                    0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Chgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "SOC", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-                if all_Chgnamelist:
-                    title = all_Chgnamelist[-2] + " All"
-                    plt.suptitle(title, fontsize=15, fontweight='bold')
-                    axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                    positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
             else:
                 for CycNo in CycleNo:
                     chnlcount += 1
@@ -10332,62 +10168,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
-            elif self.AllProfile.isChecked():
-                # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                all_Dchgnamelist = None
-                for FolderBase in subfolder:
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(progressdata))
-                            all_Dchgnamelist = FolderBase.split("\\")
-                            headername = all_Dchgnamelist[-2] + ", " + all_Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = all_Dchgnamelist[-1] + " %04d" % CycNo
-                            if not is_pne:
-                                Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            else:
-                                Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Dchgtemp[1], "Profile"):
-                                if len(Dchgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Dchgtemp[0]))
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
-                                                  -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Dchgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "DOD", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-                if all_Dchgnamelist:
-                    title = all_Dchgnamelist[-2] + " All"
-                    plt.suptitle(title, fontsize=15, fontweight='bold')
-                    axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                    positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
             else:
                 for CycNo in CycleNo:
                     chnlcount += 1
@@ -10580,13 +10360,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ContinueConfirm.setEnabled(True)
             chg_dchg_dcir_no = list((self.stepnum.toPlainText().split(" ")))
             tab_no = 0
-            all_profile = self.AllProfile.isChecked()
-            # AllProfile: 사전에 fig/tab 1개 생성
-            if all_profile:
-                fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                last_namelist = None
             for i, cyclefolder in enumerate(all_data_folder):
                 if not os.path.isdir(cyclefolder):
                     continue
@@ -10606,10 +10379,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         CycleNo = range(Step_CycNo, Step_CycEnd + 1)
                         if "Pattern" in FolderBase:
                             continue
-                        if not all_profile:
-                            fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                                nrows=2, ncols=3, figsize=(14, 10))
-                            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
+                        fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
+                            nrows=2, ncols=3, figsize=(14, 10))
+                        tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                         cyccountmax = len(CycleNo)
                         cyccount += 1
                         progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
@@ -10620,20 +10392,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             headername = headername + "cy, "
                         else:
                             headername = headername + "-" + str(Step_CycEnd) + "cy, "
-                        if all_profile:
-                            lgnd = step_namelist[-1] + " %04d" % Step_CycNo
-                        elif self.CycProfile.isChecked():
-                            lgnd = "%04d" % Step_CycNo
-                        else:
-                            lgnd = step_namelist[-1]
+                        lgnd = "%04d" % Step_CycNo if self.CycProfile.isChecked() else step_namelist[-1]
                         if not is_pne:
                             err_msg("Toyo는 준비 중", "토요는 시간나면 추가할께요 ^^;")
                         else:
                             temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
-                            if all_profile:
-                                temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            else:
-                                temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
+                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
                             if hasattr(temp[1], "stepchg"):
                                 if len(temp[1].stepchg) > 2:
                                     self.capacitytext.setText(str(temp[0]))
@@ -10681,30 +10445,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         continue_df.to_csv(save_file_name + "_" + "%04d" % tab_no + ".csv",
                                                            index=False, sep=',',
                                                            header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                        if all_profile:
-                            last_namelist = step_namelist
-                        else:
-                            title = step_namelist[-2] + "=" + step_namelist[-1] if self.CycProfile.isChecked() else step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=15, fontweight='bold')
-                            
-                            axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                            positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions)
-                            
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                            if self.CycProfile.isChecked():
-                                tab_no += 1
-                            output_fig(self.figsaveok, title)
-            # AllProfile: 루프 종료 후 한번에 finalize
-            if all_profile and last_namelist:
-                title = last_namelist[-2] + " All"
-                plt.suptitle(title, fontsize=15, fontweight='bold')
-                axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                self._setup_legend(axes_list, all_data_name, positions)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
+                        title = step_namelist[-2] + "=" + step_namelist[-1] if self.CycProfile.isChecked() else step_namelist[-2] + "=" + "%04d" % Step_CycNo
+                        plt.suptitle(title, fontsize=15, fontweight='bold')
+                        
+                        axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
+                        positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
+                        self._setup_legend(axes_list, all_data_name, positions)
+                        
+                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                        if self.CycProfile.isChecked():
+                            tab_no += 1
+                        output_fig(self.figsaveok, title)
             if self.saveok.isChecked() and save_file_name:
                 writer.close()
             self.progressBar.setValue(100)
