@@ -7925,8 +7925,8 @@ class Ui_sitool(object):
         self.chk_dqdv.setText(_translate("sitool", "dQdV X/Y축 변환"))
         self.stepnumlb.setText(_translate("sitool", "Cycle\n"
 "(원하는 스텝들을 띄어쓰기나 -로 표기)\n"
-"예) 1 3-5 8-9"))
-        self.stepnum.setPlainText(_translate("sitool", "1"))
+"예) 2 3-5 8-9"))
+        self.stepnum.setPlainText(_translate("sitool", "2"))
         self.smoothlb_3.setText(_translate("sitool", "전압 Y축 하한"))
         self.volrngyhl.setText(_translate("sitool", "2.5"))
         self.smoothlb_2.setText(_translate("sitool", "전압 Y축 상한"))
@@ -10349,7 +10349,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         smoothdegree, mincrate, dqscale, dvscale = config[3], config[4], config[5], config[6]
         all_data_name = []
         #global writer 제거 → 로컬 변수로만 사용
-        if "-" in self.stepnum.toPlainText():
+        if self.stepnum.toPlainText().strip():
             write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
             pne_path = self.pne_path_setting()
             all_data_folder = pne_path[0]
@@ -10372,9 +10372,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     for dcir_continue_step in chg_dchg_dcir_no:
-                        if "-" not in dcir_continue_step:
-                            continue
-                        Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
+                        if "-" in dcir_continue_step:
+                            Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
+                        else:
+                            Step_CycNo, Step_CycEnd = int(dcir_continue_step), int(dcir_continue_step)
                         CycleNo = range(Step_CycNo, Step_CycEnd + 1)
                         if "Pattern" in FolderBase:
                             continue
@@ -10387,7 +10388,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self.progressBar.setValue(int(progressdata))
                         step_namelist = FolderBase.split("\\")
                         headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str(Step_CycNo)
-                        headername = headername + "-" + str(Step_CycEnd) + "cy, "
+                        if Step_CycNo == Step_CycEnd:
+                            headername = headername + "cy, "
+                        else:
+                            headername = headername + "-" + str(Step_CycEnd) + "cy, "
                         lgnd = "%04d" % Step_CycNo if self.CycProfile.isChecked() else step_namelist[-1]
                         if not is_pne:
                             err_msg("Toyo는 준비 중", "토요는 시간나면 추가할께요 ^^;")
@@ -10457,7 +10461,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.progressBar.setValue(100)
             plt.close()
         else:
-            err_msg('Step 에러','Step에 3-5 같은 연속 형식으로 넣어주세요!')
+            err_msg('Step 에러','Step에 사이클 번호를 넣어주세요! 예) 2 3-5 8')
             self.ContinueConfirm.setEnabled(True)
 
     def dcir_confirm_button(self):
@@ -10492,96 +10496,98 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         for dcir_continue_step in chg_dchg_dcir_no:
                             if "-" in dcir_continue_step:
                                 Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
-                                CycleNo = range(Step_CycNo, Step_CycEnd + 1)
-                                if "Pattern" not in FolderBase:
-                                    fig, ((step_ax1, step_ax3), (step_ax2, step_ax4)) = plt.subplots(
-                                        nrows=2, ncols=2, figsize=(14, 8))
-                                    tab = QtWidgets.QWidget()
-                                    tab_layout = QtWidgets.QVBoxLayout(tab)
-                                    canvas = FigureCanvas(fig)
-                                    toolbar = NavigationToolbar(canvas, None)
-                                    cyccountmax = len(CycleNo)
-                                    cyccount = cyccount + 1
-                                    progressdata = progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                                    self.progressBar.setValue(int(progressdata))
-                                    step_namelist = FolderBase.split("\\")
-                                    headername = step_namelist[-2] + ", " + step_namelist[-1]
-                                    if self.CycProfile.isChecked():
-                                        lgnd = "%04d" % Step_CycNo
-                                    else:
-                                        lgnd = step_namelist[-1]
-                                    if not check_cycler(cyclefolder):
-                                        err_msg("PNE 충방전기 사용 요청", "DCIR은 PNE 충방전기를 사용하여 측정 부탁 드립니다.")
-                                    else:
-                                        temp = pne_dcir_Profile_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
-                                        if (temp is not None) and hasattr(temp[1], "AccCap"):
-                                            if len(temp[1]) > 2:
-                                                self.capacitytext.setText(str(temp[0]))
-                                                graph_soc_continue(temp[1].SOC, temp[1].OCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "OCV", "o")
-                                                graph_soc_continue(temp[1].SOC, temp[1].rOCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "rOCV", "o")
-                                                graph_soc_continue(temp[1].SOC, temp[1].CCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV","CCV", "o")
-                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 7], step_ax2, "SOC", "DCIR(mΩ)", " 0.1s DCIR", "o")
-                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 8], step_ax2, "SOC", "DCIR(mΩ)", " 1.0s DCIR", "o")
-                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 9], step_ax2, "SOC", "DCIR(mΩ)", "10.0s DCIR", "o")
-                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 10], step_ax2, "SOC", "DCIR(mΩ)", "20.0s DCIR", "o")
-                                                graph_soc_dcir(temp[1].SOC, temp[1].RSS, step_ax2, "SOC", "DCIR(mΩ)", "RSS DCIR", "o")
-                                                graph_continue(temp[1].OCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","OCV", "o")
-                                                graph_continue(temp[1].CCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","CCV", "o")
-                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 7], step_ax4, "OCV", "DCIR(mΩ)", " 0.1s DCIR", "o")
-                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 8], step_ax4, "OCV", "DCIR(mΩ)", " 1.0s DCIR", "o")
-                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 9], step_ax4, "OCV", "DCIR(mΩ)", "10.0s DCIR", "o")
-                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 10], step_ax4, "OCV", "DCIR(mΩ)", "20.0s DCIR", "o")
-                                                graph_dcir(temp[1].OCV, temp[1].RSS, step_ax4, "OCV", "DCIR(mΩ)", "RSS DCIR", "o")
-                                                # Data output option
-                                                if self.saveok.isChecked() and save_file_name:
-                                                    # temp[1] = temp[1].iloc[:,[1, 2, 4, 6, 7, 8, 9, 10, 5, 3]]
-                                                    temp[1] = temp[1].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
-                                                    temp[1].to_excel(writer, sheet_name="DCIR", startcol=write_column_num, index=False,
-                                                                        header=[headername + " Capacity(mAh)",
-                                                                                headername + " SOC",
-                                                                                headername + " OCV",
-                                                                                # headername + " OCV_est",
-                                                                                headername + "  0.1s DCIR",
-                                                                                headername + "  1.0s DCIR",
-                                                                                headername + " 10.0s DCIR",
-                                                                                headername + " 20.0s DCIR",
-                                                                                headername + " RSS",
-                                                                                headername + " CCV"])
-                                                    temp[2] = temp[2].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
-                                                    temp[2].to_excel(writer, sheet_name="RSQ", startcol=write_column_num, index=False,
-                                                                        header=[headername + " Capacity(mAh)",
-                                                                                headername + " SOC",
-                                                                                headername + " OCV",
-                                                                                # headername + " OCV_est",
-                                                                                headername + "  0.1s DCIR RSQ",
-                                                                                headername + "  1.0s DCIR RSQ",
-                                                                                headername + " 10.0s DCIR RSQ",
-                                                                                headername + " 20.0s DCIR RSQ",
-                                                                                headername + " RSS",
-                                                                                headername + " CCV"])
-                                                    write_column_num = write_column_num + 9
-                                                if self.CycProfile.isChecked():
-                                                    title = step_namelist[-2] + "=" + step_namelist[-1]
-                                                else:
-                                                    title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                                                plt.suptitle(title, fontsize= 15, fontweight='bold')
-                                                step_ax1.legend(loc="lower right")
-                                                step_ax2.legend(loc="upper right")
-                                                step_ax3.legend(loc="lower right")
-                                                step_ax4.legend(loc="upper right")
-                                                tab_layout.addWidget(toolbar)
-                                                tab_layout.addWidget(canvas)
-                                                if temp[1].iloc[0,2] == 100:
-                                                    self.cycle_tab.addTab(tab, "dchg" + str(dchg_tab_no))
-                                                    dchg_tab_no = dchg_tab_no + 1
-                                                else:
-                                                    self.cycle_tab.addTab(tab, "chg" + str(chg_tab_no))
-                                                    chg_tab_no = chg_tab_no + 1
-                                                self.cycle_tab.setCurrentWidget(tab)
-                                                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                                                output_fig(self.figsaveok, title)
-                                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                                plt.close()
+                            else:
+                                Step_CycNo, Step_CycEnd = int(dcir_continue_step), int(dcir_continue_step)
+                            CycleNo = range(Step_CycNo, Step_CycEnd + 1)
+                            if "Pattern" not in FolderBase:
+                                fig, ((step_ax1, step_ax3), (step_ax2, step_ax4)) = plt.subplots(
+                                    nrows=2, ncols=2, figsize=(14, 8))
+                                tab = QtWidgets.QWidget()
+                                tab_layout = QtWidgets.QVBoxLayout(tab)
+                                canvas = FigureCanvas(fig)
+                                toolbar = NavigationToolbar(canvas, None)
+                                cyccountmax = len(CycleNo)
+                                cyccount = cyccount + 1
+                                progressdata = progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
+                                self.progressBar.setValue(int(progressdata))
+                                step_namelist = FolderBase.split("\\")
+                                headername = step_namelist[-2] + ", " + step_namelist[-1]
+                                if self.CycProfile.isChecked():
+                                    lgnd = "%04d" % Step_CycNo
+                                else:
+                                    lgnd = step_namelist[-1]
+                                if not check_cycler(cyclefolder):
+                                    err_msg("PNE 충방전기 사용 요청", "DCIR은 PNE 충방전기를 사용하여 측정 부탁 드립니다.")
+                                else:
+                                    temp = pne_dcir_Profile_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
+                                    if (temp is not None) and hasattr(temp[1], "AccCap"):
+                                        if len(temp[1]) > 2:
+                                            self.capacitytext.setText(str(temp[0]))
+                                            graph_soc_continue(temp[1].SOC, temp[1].OCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "OCV", "o")
+                                            graph_soc_continue(temp[1].SOC, temp[1].rOCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "rOCV", "o")
+                                            graph_soc_continue(temp[1].SOC, temp[1].CCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV","CCV", "o")
+                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 7], step_ax2, "SOC", "DCIR(mΩ)", " 0.1s DCIR", "o")
+                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 8], step_ax2, "SOC", "DCIR(mΩ)", " 1.0s DCIR", "o")
+                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 9], step_ax2, "SOC", "DCIR(mΩ)", "10.0s DCIR", "o")
+                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 10], step_ax2, "SOC", "DCIR(mΩ)", "20.0s DCIR", "o")
+                                            graph_soc_dcir(temp[1].SOC, temp[1].RSS, step_ax2, "SOC", "DCIR(mΩ)", "RSS DCIR", "o")
+                                            graph_continue(temp[1].OCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","OCV", "o")
+                                            graph_continue(temp[1].CCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","CCV", "o")
+                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 7], step_ax4, "OCV", "DCIR(mΩ)", " 0.1s DCIR", "o")
+                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 8], step_ax4, "OCV", "DCIR(mΩ)", " 1.0s DCIR", "o")
+                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 9], step_ax4, "OCV", "DCIR(mΩ)", "10.0s DCIR", "o")
+                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 10], step_ax4, "OCV", "DCIR(mΩ)", "20.0s DCIR", "o")
+                                            graph_dcir(temp[1].OCV, temp[1].RSS, step_ax4, "OCV", "DCIR(mΩ)", "RSS DCIR", "o")
+                                            # Data output option
+                                            if self.saveok.isChecked() and save_file_name:
+                                                # temp[1] = temp[1].iloc[:,[1, 2, 4, 6, 7, 8, 9, 10, 5, 3]]
+                                                temp[1] = temp[1].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
+                                                temp[1].to_excel(writer, sheet_name="DCIR", startcol=write_column_num, index=False,
+                                                                    header=[headername + " Capacity(mAh)",
+                                                                            headername + " SOC",
+                                                                            headername + " OCV",
+                                                                            # headername + " OCV_est",
+                                                                            headername + "  0.1s DCIR",
+                                                                            headername + "  1.0s DCIR",
+                                                                            headername + " 10.0s DCIR",
+                                                                            headername + " 20.0s DCIR",
+                                                                            headername + " RSS",
+                                                                            headername + " CCV"])
+                                                temp[2] = temp[2].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
+                                                temp[2].to_excel(writer, sheet_name="RSQ", startcol=write_column_num, index=False,
+                                                                    header=[headername + " Capacity(mAh)",
+                                                                            headername + " SOC",
+                                                                            headername + " OCV",
+                                                                            # headername + " OCV_est",
+                                                                            headername + "  0.1s DCIR RSQ",
+                                                                            headername + "  1.0s DCIR RSQ",
+                                                                            headername + " 10.0s DCIR RSQ",
+                                                                            headername + " 20.0s DCIR RSQ",
+                                                                            headername + " RSS",
+                                                                            headername + " CCV"])
+                                                write_column_num = write_column_num + 9
+                                            if self.CycProfile.isChecked():
+                                                title = step_namelist[-2] + "=" + step_namelist[-1]
+                                            else:
+                                                title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
+                                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                            step_ax1.legend(loc="lower right")
+                                            step_ax2.legend(loc="upper right")
+                                            step_ax3.legend(loc="lower right")
+                                            step_ax4.legend(loc="upper right")
+                                            tab_layout.addWidget(toolbar)
+                                            tab_layout.addWidget(canvas)
+                                            if temp[1].iloc[0,2] == 100:
+                                                self.cycle_tab.addTab(tab, "dchg" + str(dchg_tab_no))
+                                                dchg_tab_no = dchg_tab_no + 1
+                                            else:
+                                                self.cycle_tab.addTab(tab, "chg" + str(chg_tab_no))
+                                                chg_tab_no = chg_tab_no + 1
+                                            self.cycle_tab.setCurrentWidget(tab)
+                                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                                            output_fig(self.figsaveok, title)
+                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                            plt.close()
         if self.saveok.isChecked() and save_file_name:
             writer.close()
         self.progressBar.setValue(100)
