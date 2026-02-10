@@ -1733,7 +1733,8 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
                 CycfileCap =  pnecyc.Cycrawtemp.loc[((pnecyc.Cycrawtemp[2] == 1) | (pnecyc.Cycrawtemp[2] == 2)), [0, 8, 10, 11]]
                 CycfileCap["AccCap"] = (CycfileCap[10].cumsum() - CycfileCap[11].cumsum())
                 CycfileCap = CycfileCap.reset_index(drop=True)
-                CycfileCap["AccCap"] = (CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000
+                if not CycfileCap.empty:
+                    CycfileCap["AccCap"] = (CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000
                 CycfileOCV =  pnecyc.Cycrawtemp.loc[(pnecyc.Cycrawtemp[2] == 3), [0, 8]]
                 CycfileCCV =  pnecyc.Cycrawtemp.loc[((pnecyc.Cycrawtemp[2] == 1) | (pnecyc.Cycrawtemp[2] == 2)), [0, 8]]
                 Cycfileraw = pd.merge(CycfileOCV, CycfileCCV, on = 0, how='outer')
@@ -1859,7 +1860,8 @@ def pne_dcir_Profile_data(raw_file_path, inicycle, endcycle, mincapacity, inirat
                 real_ocv = real_ocv.reset_index()
                 CycfileCap["AccCap"] = (CycfileCap.loc[:,10].cumsum() - CycfileCap[11].cumsum())
                 CycfileCap = CycfileCap.reset_index(drop=True)
-                CycfileCap["AccCap"] = abs((CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000)
+                if not CycfileCap.empty:
+                    CycfileCap["AccCap"] = abs((CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000)
                 if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                     CycfileCap["AccCap"] = CycfileCap["AccCap"]/1000
                 if dcir_crate[-2] < 0:
