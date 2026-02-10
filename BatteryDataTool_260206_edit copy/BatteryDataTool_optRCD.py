@@ -1016,22 +1016,13 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
         else:
             df.stepchg = tempdata.dataraw
         if not df.stepchg.empty:
-            df.stepchg["Cap[mAh]"] = 0
+            df.stepchg["Cap[mAh]"] = 0.0
             # 충전 용량 산정
-            df.stepchg = df.stepchg.reset_index()
-            # for i in range(len(df.stepchg) - 1):
-            #     df.stepchg.loc[i + 1, "Cap[mAh]"] = (df.stepchg.loc[i + 1, "PassTime[Sec]"] - df.stepchg.loc[i, "PassTime[Sec]"])/3600 * (df.stepchg.loc[i + 1, "Current[mA]"]) + df.stepchg.loc[i, "Cap[mAh]"]
+            df.stepchg = df.stepchg.reset_index(drop=True)
             if len(df.stepchg) > 1:
-                # PassTime[Sec]의 차이 계산 (첫 행은 NaN)
-                time_diffs = df.stepchg["PassTime[Sec]"].diff().iloc[1:]
-                # (시간 차이 / 3600) * Current[mA] 계산
-                increments = (time_diffs / 3600) * df.stepchg["Current[mA]"].iloc[1:]
-                # 누적 합 계산
-                cum_increments = increments.cumsum()
-                # 첫 행의 Cap[mAh] 값 가져오기
-                initial_cap = df.stepchg["Cap[mAh]"].iloc[0]
-                # 두 번째 행부터 Cap[mAh] 업데이트
-                df.stepchg.iloc[1:, df.stepchg.columns.get_loc("Cap[mAh]")] = initial_cap + cum_increments.values
+                time_diffs = df.stepchg["PassTime[Sec]"].diff()
+                increments = (time_diffs / 3600) * df.stepchg["Current[mA]"]
+                df.stepchg["Cap[mAh]"] = increments.cumsum().fillna(0.0)
             # 충전 단위 변환
             df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"]/60
             df.stepchg["Current[mA]"] = df.stepchg["Current[mA]"]/mincapacity
