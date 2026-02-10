@@ -7925,8 +7925,8 @@ class Ui_sitool(object):
         self.chk_dqdv.setText(_translate("sitool", "dQdV X/Y축 변환"))
         self.stepnumlb.setText(_translate("sitool", "Cycle\n"
 "(원하는 스텝들을 띄어쓰기나 -로 표기)\n"
-"예) 1 3-5 8-9"))
-        self.stepnum.setPlainText(_translate("sitool", "1"))
+"예) 3 4 5 8-9"))
+        self.stepnum.setPlainText(_translate("sitool", "2"))
         self.smoothlb_3.setText(_translate("sitool", "전압 Y축 하한"))
         self.volrngyhl.setText(_translate("sitool", "2.5"))
         self.smoothlb_2.setText(_translate("sitool", "전압 Y축 상한"))
