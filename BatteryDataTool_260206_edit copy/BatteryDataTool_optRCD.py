@@ -10702,36 +10702,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             lgnd = step_namelist[-1]
                         if not is_pne:
-                            err_msg("Toyo는 준비 중", "토요는 시간나면 추가할께요 ^^;")
+                            temp = toyo_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
                         else:
                             temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
-                            if all_profile:
-                                temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            else:
-                                temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
-                            if hasattr(temp[1], "stepchg"):
-                                if len(temp[1].stepchg) > 2:
-                                    self.capacitytext.setText(str(temp[0]))
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                        if all_profile:
+                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
+                        else:
+                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
+                        if hasattr(temp[1], "stepchg"):
+                            if len(temp[1].stepchg) > 2:
+                                self.capacitytext.setText(str(temp[0]))
+                                has_ocv = "OCV" in temp[1].stepchg.columns
+                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
+                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
+                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                if has_ocv:
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
                                                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o")
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
                                                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o")
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
-                                                   -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd)
+                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
+                                               -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd)
+                                if len(temp) > 2 and hasattr(temp[2], 'AccCap') and not temp[2].empty:
                                     graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                    "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o")
                                     graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                    "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o")
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
-                                                   0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
-                                                   -15, 60, 5, "Time(min)", "Temp.", lgnd)
-                                                                        
-                                    if self.saveok.isChecked() and save_file_name:
+                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
+                                               0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
+                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
+                                               -15, 60, 5, "Time(min)", "Temp.", lgnd)
+                                                                    
+                                if self.saveok.isChecked() and save_file_name:
+                                    if has_ocv:
                                         excel_df = temp[1].stepchg[["TimeSec", "Vol", "Curr", "OCV", "CCV",
                                                                      "Crate", "SOC", "Temp"]].copy()
                                         excel_df.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
@@ -10746,16 +10750,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                          header=[headername + "SOC", headername + "OCV",
                                                                  headername + "CCV"])
                                         write_column_num2 += 3
-                                    if self.ect_saveok.isChecked() and save_file_name:
-                                        continue_df = temp[1].stepchg[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                        continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                        continue_df["Curr"] = (continue_df["Crate"] * temp[0] / 1000).round(4)
-                                        continue_df["Vol"] = continue_df["Vol"].round(4)
-                                        continue_df["Temp"] = continue_df["Temp"].round(1)
-                                        continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                                        continue_df.to_csv(save_file_name + "_" + "%04d" % tab_no + ".csv",
-                                                           index=False, sep=',',
-                                                           header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
+                                    else:
+                                        excel_df = temp[1].stepchg[["TimeMin", "SOC", "Vol", "Crate", "Temp"]].copy()
+                                        excel_df.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
+                                                         index=False,
+                                                         header=[headername + "Time(min)", headername + "SOC",
+                                                                 headername + "Voltage(V)", headername + "Crate",
+                                                                 headername + "Temp."])
+                                        write_column_num += 5
+                                if self.ect_saveok.isChecked() and save_file_name:
+                                    continue_df = temp[1].stepchg[["TimeMin", "Vol", "Crate", "Temp"]].copy()
+                                    continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
+                                    continue_df["Curr"] = (continue_df["Crate"] * temp[0] / 1000).round(4)
+                                    continue_df["Vol"] = continue_df["Vol"].round(4)
+                                    continue_df["Temp"] = continue_df["Temp"].round(1)
+                                    continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
+                                    continue_df.to_csv(save_file_name + "_" + "%04d" % tab_no + ".csv",
+                                                       index=False, sep=',',
+                                                       header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
                         if all_profile:
                             last_namelist = step_namelist
                         else:
