@@ -9,8 +9,6 @@ import pyodbc
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
 from scipy.optimize import curve_fit, root_scalar
 from scipy.stats import linregress
 from datetime import datetime
@@ -182,9 +180,6 @@ def same_add(df, column_name):
     return df
     
 # 그래프 base 기본 설정 함수 (x라벨, y라벨, 그리드 양식)
-# 범례 표시 임계값: 이 수를 초과하면 그라데이션+컬러바로 전환
-LEGEND_THRESHOLD = 15
-
 def graph_base_parameter(graph_ax, xlabel, ylabel): 
     graph_ax.set_xlabel(xlabel, fontsize= 12, fontweight='bold')
     graph_ax.set_ylabel(ylabel, fontsize= 10, fontweight='bold')
@@ -8512,69 +8507,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
-        if getattr(self, '_has_colorbar', False):
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.88, 1])
-            self._has_colorbar = False
-        else:
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
     
-    def _setup_legend(self, axes_list, data_name, positions, fig=None):
+    def _setup_legend(self, axes_list, data_name, positions):
         """
-        범례 설정 - 항목 수에 따라 자동 전환
-        fig가 전달되고 범례 항목이 LEGEND_THRESHOLD를 초과하면 그라데이션+컬러바로 전환
+        범례 설정
         """
-        # 범례 항목 수 자동 감지
-        n_items = 0
-        if fig is not None:
-            counts = []
-            for ax in axes_list:
-                labeled = [l for l in ax.get_lines()
-                           if l.get_label() and not l.get_label().startswith('_')]
-                if len(labeled) > 0:
-                    counts.append(len(labeled))
-            n_items = min(counts) if counts else 0
-        
-        if n_items > LEGEND_THRESHOLD and fig is not None and len(data_name) != 0:
-            # 모드별 컬러맵 자동 선택
-            if self.AllProfile.isChecked():
-                cmap_name = 'turbo'
-                legend_title = 'Cell × Cycle'
-            elif self.CycProfile.isChecked():
-                cmap_name = 'viridis'
-                legend_title = 'Cycle'
-            else:
-                cmap_name = 'tab20' if n_items <= 20 else 'hsv'
-                legend_title = 'Channel'
-            
-            cmap = cm.get_cmap(cmap_name)
-            for ax in axes_list:
-                labeled = [l for l in ax.get_lines()
-                           if l.get_label() and not l.get_label().startswith('_')]
-                n_lines = len(labeled)
-                if n_lines == 0:
-                    continue
-                lines_per_item = max(1, round(n_lines / n_items))
-                for idx, line in enumerate(labeled):
-                    item_idx = min(idx // lines_per_item, n_items - 1)
-                    color = cmap(item_idx / max(n_items - 1, 1))
-                    line.set_color(color)
-                    line.set_label('')
-            
-            # 컬러바 추가
-            cbar_ax = fig.add_axes([0.90, 0.10, 0.02, 0.78])
-            norm = mcolors.Normalize(vmin=0, vmax=n_items - 1)
-            sm = cm.ScalarMappable(cmap=cmap, norm=norm)
-            sm.set_array([])
-            cb = fig.colorbar(sm, cax=cbar_ax)
-            cb.set_label(legend_title + f' ({n_items})', fontsize=9)
-            self._has_colorbar = True
+        if len(data_name) != 0:
+            for ax, pos in zip(axes_list, positions):
+                ax.legend(loc=pos)
         else:
-            # 기존 범례
-            if len(data_name) != 0:
-                for ax, pos in zip(axes_list, positions):
-                    ax.legend(loc=pos)
-            else:
-                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+            plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
     
     def _load_step_batch_task(self, task_info):
         """
@@ -9803,7 +9746,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 plt.suptitle(title, fontsize=15, fontweight='bold')
                                 axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
                                 positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                                self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                                self._setup_legend(axes_list, all_data_name, positions)
                             # 함수 사용으로 변경
                             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                             tab_no += 1
@@ -9843,7 +9786,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
                         positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                        self._setup_legend(axes_list, all_data_name, positions)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                 else:
@@ -9885,7 +9828,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
                             positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                            self._setup_legend(axes_list, all_data_name, positions)
                         # 함수 사용으로 변경
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
@@ -9972,7 +9915,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                             positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                            self._setup_legend(axes_list, all_data_name, positions)
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
@@ -10025,7 +9968,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     plt.suptitle(title, fontsize=15, fontweight='bold')
                     axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                     positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                    self._setup_legend(axes_list, all_data_name, positions)
                 self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                 tab_no += 1
                 output_fig(self.figsaveok, title)
@@ -10079,7 +10022,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                         positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                        self._setup_legend(axes_list, all_data_name, positions)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
@@ -10174,7 +10117,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                            self._setup_legend(axes_list, all_data_name, positions)
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
@@ -10234,7 +10177,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     plt.suptitle(title, fontsize=15, fontweight='bold')
                     axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                     positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                    self._setup_legend(axes_list, all_data_name, positions)
                 self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                 tab_no += 1
                 output_fig(self.figsaveok, title)
@@ -10295,7 +10238,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                         positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                        self._setup_legend(axes_list, all_data_name, positions)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
@@ -10385,7 +10328,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                            self._setup_legend(axes_list, all_data_name, positions)
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
@@ -10441,7 +10384,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     plt.suptitle(title, fontsize=15, fontweight='bold')
                     axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                     positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                    self._setup_legend(axes_list, all_data_name, positions)
                 self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                 tab_no += 1
                 output_fig(self.figsaveok, title)
@@ -10506,7 +10449,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                         positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                        self._setup_legend(axes_list, all_data_name, positions)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
@@ -10598,9 +10541,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                                 "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize= 15, fontweight='bold')
-                            axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                            positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                            if len(all_data_name) != 0:
+                                step_ax1.legend(loc="lower left")
+                                step_ax2.legend(loc="lower right")
+                                step_ax3.legend(loc="upper right")
+                                step_ax4.legend(loc="lower right")
+                                step_ax5.legend(loc="lower left")
+                                step_ax6.legend(loc="upper right")
+                            else:
+                                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
                             tab_layout.addWidget(toolbar)
                             tab_layout.addWidget(canvas)
                             self.cycle_tab.addTab(tab, str(tab_no))
@@ -10689,18 +10638,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(temp[1].stepchg) > 2:
                                     self.capacitytext.setText(str(temp[0]))
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                                   2.0, 4.8, 0.2, "Time(min)", "Voltage(V)", temp_lgnd)
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                                   2.0, 4.8, 0.2, "Time(min)", "Voltage(V)", temp_lgnd)
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o")
+                                                   2.0, 4.8, 0.2, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o")
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o")
+                                                   2.0, 4.8, 0.2, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o")
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
                                                    -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd)
-                                    graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                    graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, 2.0, 4.8, 0.2,
                                                    "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o")
-                                    graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                    graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, 2.0, 4.8, 0.2,
                                                    "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o")
                                     graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
                                                    0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
@@ -10740,7 +10689,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                             positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                            self._setup_legend(axes_list, all_data_name, positions)
                             
                             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                             if self.CycProfile.isChecked():
@@ -10752,7 +10701,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 plt.suptitle(title, fontsize=15, fontweight='bold')
                 axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                 positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+                self._setup_legend(axes_list, all_data_name, positions)
                 self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                 tab_no += 1
                 output_fig(self.figsaveok, title)
