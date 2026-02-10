@@ -8517,7 +8517,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if getattr(self, '_has_colorbar', False):
             plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.88, 1])
             self._has_colorbar = False
-            canvas.draw()  # 그라데이션 색상이 반영되도록 캔버스 즉시 렌더링
         else:
             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
     
@@ -8526,15 +8525,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         범례 설정 - 항목 수에 따라 자동 전환
         fig가 전달되고 범례 항목이 LEGEND_THRESHOLD 이상이면 그라데이션+컬러바로 전환
         """
-        # 범례 항목 수 자동 감지 (빈 라벨 포함, _로 시작하는 내부 라벨만 제외)
+        # 범례 항목 수 자동 감지 (ax.get_lines()로 플롯된 라인만 반환됨)
         n_items = 0
         if fig is not None:
             counts = []
             for ax in axes_list:
-                user_lines = [l for l in ax.get_lines()
-                              if not l.get_label().startswith('_')]
-                if len(user_lines) > 0:
-                    counts.append(len(user_lines))
+                n_lines = len(ax.get_lines())
+                if n_lines > 0:
+                    counts.append(n_lines)
             n_items = min(counts) if counts else 0
         
         if n_items >= LEGEND_THRESHOLD and fig is not None:
@@ -8549,21 +8547,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 cmap_name = 'tab20' if n_items <= 20 else 'hsv'
                 legend_title = 'Channel'
             
-            cmap = plt.colormaps.get_cmap(cmap_name)
+            cmap = cm.get_cmap(cmap_name)
             norm_val = max(n_items - 1, 1)
+            # 모든 축의 모든 플롯 라인에 그라데이션 색상 적용
             for ax in axes_list:
-                user_lines = [l for l in ax.get_lines()
-                              if not l.get_label().startswith('_')]
-                n_lines = len(user_lines)
-                if n_lines == 0:
+                lines = ax.get_lines()
+                if len(lines) == 0:
                     continue
-                for idx, line in enumerate(user_lines):
-                    # 라인 인덱스를 직접 n_items 범위로 매핑
+                for idx, line in enumerate(lines):
                     item_idx = min(idx, n_items - 1)
                     color = cmap(item_idx / norm_val)
                     line.set_color(color)
                     line.set_label('')
-                    line.set_zorder(2 + idx)  # 렌더링 순서 명시
             
             # 기존 범례 제거 (잔여 범례가 남지 않도록)
             for ax in axes_list:
@@ -8579,8 +8574,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             cb = fig.colorbar(sm, cax=cbar_ax)
             cb.set_label(legend_title + f' ({n_items})', fontsize=9)
             self._has_colorbar = True
-            # 캔버스에 색상 변경을 반영하도록 강제 갱신
-            fig.canvas.draw_idle()
+            # 색상 변경을 캔버스에 즉시 반영
+            fig.canvas.draw()
         else:
             # 기존 범례
             if len(data_name) != 0:
