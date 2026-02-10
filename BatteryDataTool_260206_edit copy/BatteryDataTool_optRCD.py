@@ -9766,6 +9766,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         )
         
         tab_no = 0
+        all_profile = self.AllProfile.isChecked()
+        # AllProfile: 루프 전에 fig/tab 1개만 생성
+        if all_profile:
+            fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
+                nrows=2, ncols=3, figsize=(14, 10))
+            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
+            last_step_namelist = None
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
@@ -9815,12 +9822,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             # 함수 사용으로 변경
                             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                             tab_no += 1
-                elif self.AllProfile.isChecked():
-                    # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                    fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                        nrows=2, ncols=3, figsize=(14, 10))
-                    tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                    all_step_namelist = None
+                elif all_profile:
+                    # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
                     for j, FolderBase in enumerate(subfolder):
                         chnlcount += 1
                         chnlcountmax = len(subfolder)
@@ -9830,9 +9833,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 cyccount += 1
                                 progressdata = 50 + progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax) * 0.5
                                 self.progressBar.setValue(int(progressdata))
-                                all_step_namelist = FolderBase.split("\\")
-                                headername = all_step_namelist[-2] + ", " + all_step_namelist[-1] + ", " + str(Step_CycNo) + "cy, "
-                                lgnd = all_step_namelist[-1] + " %04d" % Step_CycNo
+                                last_step_namelist = FolderBase.split("\\")
+                                headername = last_step_namelist[-2] + ", " + last_step_namelist[-1] + ", " + str(Step_CycNo) + "cy, "
+                                lgnd = last_step_namelist[-1] + " %04d" % Step_CycNo
                                 temp = loaded_data.get((i, j, Step_CycNo))
                                 if temp is None:
                                     if not is_pne:
@@ -9846,14 +9849,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         write_column_num = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
-                    if all_step_namelist:
-                        title = all_step_namelist[-2] + " All"
-                        plt.suptitle(title, fontsize=15, fontweight='bold')
-                        axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
-                        positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                    tab_no += 1
                 else:
                     for Step_CycNo in CycleNo:
                         fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
@@ -9897,6 +9892,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # 함수 사용으로 변경
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
+        # AllProfile: 루프 종료 후 한번에 finalize
+        if all_profile and last_step_namelist:
+            title = last_step_namelist[-2] + " All"
+            plt.suptitle(title, fontsize=15, fontweight='bold')
+            axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
+            positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
+            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            tab_no += 1
         if self.saveok.isChecked() and save_file_name:
             writer.close()
         self.progressBar.setValue(100)
@@ -9915,6 +9919,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         #함수 사용으로 변경
         writer, save_file_name = self._setup_file_writer()
         tab_no = 0
+        all_profile = self.AllProfile.isChecked()
+        # AllProfile: 루프 전에 fig/tab 1개만 생성
+        if all_profile:
+            fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
+                nrows=2, ncols=3, figsize=(14, 10))
+            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
+            last_Ratenamelist = None
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -9984,12 +9995,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
-            elif self.AllProfile.isChecked():
-                # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                all_Ratenamelist = None
+            elif all_profile:
+                # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
                 for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
@@ -9999,9 +10006,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
                             self.progressBar.setValue(int(progressdata))
-                            all_Ratenamelist = FolderBase.split("\\")
-                            headername = all_Ratenamelist[-2] + ", " + all_Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = all_Ratenamelist[-1] + " %04d" % CycNo
+                            last_Ratenamelist = FolderBase.split("\\")
+                            headername = last_Ratenamelist[-2] + ", " + last_Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
+                            lgnd = last_Ratenamelist[-1] + " %04d" % CycNo
                             if not is_pne:
                                 Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
                             else:
@@ -10028,15 +10035,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                             header=[headername + "time(min)", headername + "SOC",
                                                     headername + "Voltage", headername + "Crate", headername + "Temp."])
                                         writecolno += 5
-                if all_Ratenamelist:
-                    title = all_Ratenamelist[-2] + " All"
-                    plt.suptitle(title, fontsize=15, fontweight='bold')
-                    axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
-                    positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
             else:
                 for CycNo in CycleNo:
                     fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
@@ -10091,6 +10089,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
+        # AllProfile: 루프 종료 후 한번에 finalize
+        if all_profile and last_Ratenamelist:
+            title = last_Ratenamelist[-2] + " All"
+            plt.suptitle(title, fontsize=15, fontweight='bold')
+            axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
+            positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
+            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            tab_no += 1
+            output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
         self.progressBar.setValue(100)
@@ -10109,6 +10117,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 함수 사용으로 변경
         writer, save_file_name = self._setup_file_writer()
         tab_no = 0
+        all_profile = self.AllProfile.isChecked()
+        # AllProfile: 루프 전에 fig/tab 1개만 생성
+        if all_profile:
+            fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
+                nrows=2, ncols=3, figsize=(14, 10))
+            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
+            last_Chgnamelist = None
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -10186,12 +10201,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
-            elif self.AllProfile.isChecked():
-                # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                all_Chgnamelist = None
+            elif all_profile:
+                # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
                 for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
@@ -10201,9 +10212,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
                             self.progressBar.setValue(int(progressdata))
-                            all_Chgnamelist = FolderBase.split("\\")
-                            headername = all_Chgnamelist[-2] + ", " + all_Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = all_Chgnamelist[-1] + " %04d" % CycNo
+                            last_Chgnamelist = FolderBase.split("\\")
+                            headername = last_Chgnamelist[-2] + ", " + last_Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
+                            lgnd = last_Chgnamelist[-1] + " %04d" % CycNo
                             if not is_pne:
                                 Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             else:
@@ -10237,15 +10248,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                     headername + "Voltage", headername + "Crate", headername + "dQdV",
                                                     headername + "dVdQ", headername + "Temp."])
                                         writecolno += 8
-                if all_Chgnamelist:
-                    title = all_Chgnamelist[-2] + " All"
-                    plt.suptitle(title, fontsize=15, fontweight='bold')
-                    axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                    positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
             else:
                 for CycNo in CycleNo:
                     chnlcount += 1
@@ -10307,6 +10309,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
+        # AllProfile: 루프 종료 후 한번에 finalize
+        if all_profile and last_Chgnamelist:
+            title = last_Chgnamelist[-2] + " All"
+            plt.suptitle(title, fontsize=15, fontweight='bold')
+            axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
+            positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
+            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            tab_no += 1
+            output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
         self.progressBar.setValue(100)
@@ -10325,6 +10337,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         #함수 사용으로 변경    
         writer, save_file_name = self._setup_file_writer()
         tab_no = 0
+        all_profile = self.AllProfile.isChecked()
+        # AllProfile: 루프 전에 fig/tab 1개만 생성
+        if all_profile:
+            fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
+                nrows=2, ncols=3, figsize=(14, 10))
+            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
+            last_Dchgnamelist = None
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -10397,12 +10416,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
-            elif self.AllProfile.isChecked():
-                # 전체 통합: cyclefolder당 1탭, 모든 셀×사이클 오버레이
-                fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                all_Dchgnamelist = None
+            elif all_profile:
+                # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
                 for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
@@ -10412,9 +10427,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
                             self.progressBar.setValue(int(progressdata))
-                            all_Dchgnamelist = FolderBase.split("\\")
-                            headername = all_Dchgnamelist[-2] + ", " + all_Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = all_Dchgnamelist[-1] + " %04d" % CycNo
+                            last_Dchgnamelist = FolderBase.split("\\")
+                            headername = last_Dchgnamelist[-2] + ", " + last_Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
+                            lgnd = last_Dchgnamelist[-1] + " %04d" % CycNo
                             if not is_pne:
                                 Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             else:
@@ -10444,15 +10459,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                     headername + "Voltage", headername + "Crate", headername + "dQdV",
                                                     headername + "dVdQ", headername + "Temp."])
                                         writecolno += 8
-                if all_Dchgnamelist:
-                    title = all_Dchgnamelist[-2] + " All"
-                    plt.suptitle(title, fontsize=15, fontweight='bold')
-                    axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                    positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                    self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
             else:
                 for CycNo in CycleNo:
                     chnlcount += 1
@@ -10518,6 +10524,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
+        # AllProfile: 루프 종료 후 한번에 finalize
+        if all_profile and last_Dchgnamelist:
+            title = last_Dchgnamelist[-2] + " All"
+            plt.suptitle(title, fontsize=15, fontweight='bold')
+            axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
+            positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
+            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            tab_no += 1
+            output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
         self.progressBar.setValue(100)
