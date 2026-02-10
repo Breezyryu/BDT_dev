@@ -8523,20 +8523,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _setup_legend(self, axes_list, data_name, positions, fig=None):
         """
         범례 설정 - 항목 수에 따라 자동 전환
-        fig가 전달되고 범례 항목이 LEGEND_THRESHOLD를 초과하면 그라데이션+컬러바로 전환
+        fig가 전달되고 범례 항목이 LEGEND_THRESHOLD 이상이면 그라데이션+컬러바로 전환
         """
-        # 범례 항목 수 자동 감지
+        # 범례 항목 수 자동 감지 (빈 라벨 포함, _로 시작하는 내부 라벨만 제외)
         n_items = 0
         if fig is not None:
             counts = []
             for ax in axes_list:
-                labeled = [l for l in ax.get_lines()
-                           if l.get_label() and not l.get_label().startswith('_')]
-                if len(labeled) > 0:
-                    counts.append(len(labeled))
+                user_lines = [l for l in ax.get_lines()
+                              if not l.get_label().startswith('_')]
+                if len(user_lines) > 0:
+                    counts.append(len(user_lines))
             n_items = min(counts) if counts else 0
         
-        if n_items > LEGEND_THRESHOLD and fig is not None and len(data_name) != 0:
+        if n_items >= LEGEND_THRESHOLD and fig is not None:
             # 모드별 컬러맵 자동 선택
             if self.AllProfile.isChecked():
                 cmap_name = 'turbo'
@@ -8550,17 +8550,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             cmap = cm.get_cmap(cmap_name)
             for ax in axes_list:
-                labeled = [l for l in ax.get_lines()
-                           if l.get_label() and not l.get_label().startswith('_')]
-                n_lines = len(labeled)
+                user_lines = [l for l in ax.get_lines()
+                              if not l.get_label().startswith('_')]
+                n_lines = len(user_lines)
                 if n_lines == 0:
                     continue
                 lines_per_item = max(1, round(n_lines / n_items))
-                for idx, line in enumerate(labeled):
+                for idx, line in enumerate(user_lines):
                     item_idx = min(idx // lines_per_item, n_items - 1)
                     color = cmap(item_idx / max(n_items - 1, 1))
                     line.set_color(color)
                     line.set_label('')
+            
+            # 기존 범례 제거 (잔여 범례가 남지 않도록)
+            for ax in axes_list:
+                legend = ax.get_legend()
+                if legend:
+                    legend.remove()
             
             # 컬러바 추가
             cbar_ax = fig.add_axes([0.90, 0.10, 0.02, 0.78])
