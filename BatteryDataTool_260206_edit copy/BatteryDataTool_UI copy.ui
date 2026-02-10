@@ -1755,33 +1755,6 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                        </widget>
                       </item>
                       <item>
-                       <widget class="QRadioButton" name="AllProfile">
-                        <property name="minimumSize">
-                         <size>
-                          <width>0</width>
-                          <height>30</height>
-                         </size>
-                        </property>
-                        <property name="maximumSize">
-                         <size>
-                          <width>300</width>
-                          <height>30</height>
-                         </size>
-                        </property>
-                        <property name="font">
-                         <font>
-                          <family>맑은 고딕</family>
-                          <pointsize>9</pointsize>
-                          <weight>50</weight>
-                          <bold>false</bold>
-                         </font>
-                        </property>
-                        <property name="text">
-                         <string>전체 통합</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item>
                        <widget class="QCheckBox" name="chk_dqdv">
                         <property name="minimumSize">
                          <size>
