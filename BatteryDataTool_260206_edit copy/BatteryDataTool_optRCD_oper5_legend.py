@@ -798,254 +798,6 @@ def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
     return results
 
 
-# ─── PNE SaveData 일괄 로딩 헬퍼 (배치 공통) ───
-def _pne_load_profile_raw(raw_file_path, min_cycle, max_cycle, mincapacity, inirate):
-    """PNE SaveData 파일을 일괄 로딩하는 배치 공통 헬퍼.
-    min_cycle ~ max_cycle 범위의 원시 데이터를 1회 디스크 I/O로 취득한다.
-    Returns: (mincapacity, all_raw: pd.DataFrame|None, is_pne21_22: bool)
-    """
-    if (raw_file_path[-4:-1]) == "ter":
-        return (mincapacity, None, False)
-
-    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-
-    rawdir = raw_file_path + "\\Restore\\"
-    if not os.path.isdir(rawdir):
-        return (mincapacity, None, False)
-
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    save_end_data = None
-    file_index_list = None
-    for files in subfile:
-        if "SaveEndData" in files:
-            save_end_data = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                         header=None, encoding="cp949", on_bad_lines='skip')
-        if files == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(rawdir + files, sep=r"\s+", skiprows=0, engine="c",
-                               header=None, encoding="cp949", on_bad_lines='skip')
-            file_index_list = df2[3].str.replace(',', '').astype(int).tolist()
-
-    if save_end_data is None or file_index_list is None:
-        return (mincapacity, None, False)
-
-    # 파일 범위 결정
-    if min_cycle != 1:
-        index_min = save_end_data.loc[(save_end_data.loc[:, 27] == (min_cycle - 1)), 0].tolist()
-    else:
-        index_min = [0]
-    index_max = save_end_data.loc[(save_end_data.loc[:, 27] == max_cycle), 0].tolist()
-    if not index_max:
-        index_max = save_end_data.loc[(save_end_data.loc[:, 27] == save_end_data.loc[:, 27].max()), 0].tolist()
-
-    if len(index_min) == 0:
-        file_start = 0
-    else:
-        file_start = binary_search(file_index_list, index_min[-1] + 1) - 1
-    file_end = binary_search(file_index_list, index_max[-1]) - 1
-    if file_start < 0:
-        file_start = 0
-
-    # SaveData 일괄 로딩
-    all_raw = None
-    for files in subfile[file_start:(file_end + 1)]:
-        if "SaveData" in files:
-            chunk = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                header=None, encoding="cp949", on_bad_lines='skip')
-            if all_raw is None:
-                all_raw = chunk
-            else:
-                all_raw = pd.concat([all_raw, chunk], ignore_index=True)
-
-    is_pne21_22 = ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path)
-    return (mincapacity, all_raw, is_pne21_22)
-
-
-# ─── Rate Profile 배치 함수 ───
-def toyo_rate_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
-    """Toyo Rate 프로파일 배치 로딩: min_cap 1회 산정 후 사이클 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        results[inicycle] = toyo_rate_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
-    return results
-
-
-def pne_rate_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
-    """PNE Rate 프로파일 배치 로딩: SaveData 1회 로딩 후 사이클별 분배."""
-    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
-        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
-    results = {}
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))].copy()
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 21, 10, 7]]
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            cycle_raw = cycle_raw[(cycle_raw["Current[mA]"] >= cutoff)]
-            df.rateProfile = cycle_raw[["PassTime[Sec]", "Chgcap", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
-            df.rateProfile.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# ─── Chg Profile 배치 함수 ───
-def toyo_chg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """Toyo Chg 프로파일 배치 로딩: min_cap 1회 산정 후 사이클 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        results[inicycle] = toyo_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, smoothdegree)
-    return results
-
-
-def pne_chg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """PNE Chg 프로파일 배치 로딩: SaveData 1회 로딩 후 사이클별 분배."""
-    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
-        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
-    results = {}
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))].copy()
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 10, 14, 21, 7]]
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Chgcap", "Chgwh", "Temp1[Deg]", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.Profile = pd.concat(Profiles)
-            if hasattr(df, "Profile"):
-                df.Profile = df.Profile.reset_index()
-                df.Profile = df.Profile[(df.Profile["Current[mA]"] >= cutoff)]
-                sd = smoothdegree if smoothdegree != 0 else max(int(len(df.Profile) / 30), 1)
-                df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=sd)
-                df.Profile["delcap"] = df.Profile["Chgcap"].diff(periods=sd)
-                df.Profile["dQdV"] = df.Profile["delcap"] / df.Profile["delvol"]
-                df.Profile["dVdQ"] = df.Profile["delvol"] / df.Profile["delcap"]
-                df.Profile = df.Profile[["PassTime[Sec]", "Chgcap", "Chgwh", "Voltage[V]", "Current[mA]",
-                                         "dQdV", "dVdQ", "Temp1[Deg]"]]
-                df.Profile.columns = ["TimeMin", "SOC", "Energy", "Vol", "Crate", "dQdV", "dVdQ", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# ─── Dchg Profile 배치 함수 ───
-def toyo_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """Toyo Dchg 프로파일 배치 로딩: min_cap 1회 산정 후 사이클 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        results[inicycle] = toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, smoothdegree)
-    return results
-
-
-def pne_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """PNE Dchg 프로파일 배치 로딩: SaveData 1회 로딩 후 사이클별 분배."""
-    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
-        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
-    results = {}
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 2]))].copy()
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 11, 15, 21, 7]]
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Dchgcap", "Dchgwh", "Temp1[Deg]", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor * (-1)
-            cycle_raw["Dchgcap"] = cycle_raw["Dchgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Dchgcap"] += Profiles[-2]["Dchgcap"].max()
-                    df.Profile = pd.concat(Profiles)
-            if hasattr(df, 'Profile'):
-                df.Profile = df.Profile.reset_index()
-                df.Profile = df.Profile[(df.Profile["Voltage[V]"] >= cutoff)]
-                sd = smoothdegree if smoothdegree != 0 else max(int(len(df.Profile) / 30), 1)
-                df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=sd)
-                df.Profile["delcap"] = df.Profile["Dchgcap"].diff(periods=sd)
-                df.Profile["dQdV"] = df.Profile["delcap"] / df.Profile["delvol"]
-                df.Profile["dVdQ"] = df.Profile["delvol"] / df.Profile["delcap"]
-                df.Profile = df.Profile[["PassTime[Sec]", "Dchgcap", "Dchgwh", "Voltage[V]", "Current[mA]",
-                                         "dQdV", "dVdQ", "Temp1[Deg]"]]
-                df.Profile.columns = ["TimeMin", "SOC", "Energy", "Vol", "Crate", "dQdV", "dVdQ", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# ─── Continue Profile 배치 함수 ───
-def toyo_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate):
-    """Toyo Continue 프로파일 배치 로딩: min_cap 1회 산정 후 step_range 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for (start, end) in step_ranges:
-        results[(start, end)] = toyo_Profile_continue_data(raw_file_path, start, end, mincapacity, inirate)
-    return results
-
-
-def pne_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate, CDstate):
-    """PNE Continue 프로파일 배치 로딩: min_cap 1회 산정 후 step_range 반복."""
-    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for (start, end) in step_ranges:
-        results[(start, end)] = pne_Profile_continue_data(raw_file_path, start, end, mincapacity, inirate, CDstate)
-    return results
-
-
 # Toyo Step charge Profile data 처리
 def toyo_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate):
     df = pd.DataFrame()
@@ -1959,7 +1711,6 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
     31: 32: 33:date 34:time 35: 36: 37: 38: 39: 40: 
     41: 42: 43: 44:누적step(Loop, 완료 제외) 45:voltage max 46: '''
     df = pd.DataFrame()
-    CycfileSOC = pd.DataFrame()
     if (raw_file_path[-4:-1]) != "ter":
         if CDstate != "":
             # PNE 채널, 용량 산정
@@ -8900,84 +8651,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return results
     
-    # ─── 범용 프로파일 배치 병렬 로더 ───
-    def _load_profile_batch_task(self, task_info):
-        """
-        채널 단위 프로파일 배치 로딩 (ThreadPoolExecutor용).
-        profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
-        """
-        folder_path, profile_type, params, is_pne, folder_idx, subfolder_idx = task_info
-        try:
-            if profile_type == 'rate':
-                cycle_list, mincapacity, cutoff, inirate = params
-                if is_pne:
-                    batch_results = pne_rate_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate)
-                else:
-                    batch_results = toyo_rate_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate)
-            elif profile_type == 'chg':
-                cycle_list, mincapacity, cutoff, inirate, smoothdegree = params
-                if is_pne:
-                    batch_results = pne_chg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-                else:
-                    batch_results = toyo_chg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-            elif profile_type == 'dchg':
-                cycle_list, mincapacity, cutoff, inirate, smoothdegree = params
-                if is_pne:
-                    batch_results = pne_dchg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-                else:
-                    batch_results = toyo_dchg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-            elif profile_type == 'continue':
-                step_ranges, mincapacity, inirate, CDstate = params
-                if is_pne:
-                    batch_results = pne_continue_Profile_batch(folder_path, step_ranges, mincapacity, inirate, CDstate)
-                else:
-                    batch_results = toyo_continue_Profile_batch(folder_path, step_ranges, mincapacity, inirate)
-            else:
-                return (folder_idx, subfolder_idx, None)
-            return (folder_idx, subfolder_idx, batch_results)
-        except Exception as e:
-            print(f"[배치 로딩 오류] {profile_type} {folder_path}: {e}")
-            return (folder_idx, subfolder_idx, None)
-
-    def _load_all_profile_data_parallel(self, all_data_folder, profile_type, params, max_workers=4):
-        """
-        모든 폴더의 프로파일 데이터를 병렬로 로딩 (범용).
-        profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
-        params: 프로파일 타입별 파라미터 튜플
-        Returns: {(folder_idx, subfolder_idx, key): data, ...}
-          - rate/chg/dchg: key = cycle_no
-          - continue: key = (start, end) 튜플
-        """
-        tasks = []
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
-                is_pne = check_cycler(cyclefolder)
-                for j, folder_path in enumerate(subfolder):
-                    if "Pattern" not in folder_path:
-                        task = (folder_path, profile_type, params, is_pne, i, j)
-                        tasks.append(task)
-
-        results = {}
-        total_tasks = len(tasks)
-        completed = 0
-        if total_tasks == 0:
-            return results
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_profile_batch_task, task): task for task in tasks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    folder_idx, subfolder_idx, batch_results = result
-                    if batch_results:
-                        for key, data in batch_results.items():
-                            results[(folder_idx, subfolder_idx, key)] = data
-                completed += 1
-                self.progressBar.setValue(int(completed / total_tasks * 50))
-
-        return results
-
     def _plot_and_save_step_data(self, axes, stepchg, capacity, headername, lgnd, temp_lgnd,
                                   writer, write_column_num, save_file_name, Step_CycNo, save_csv=False):
         """
@@ -10261,12 +9934,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         #함수 사용으로 변경
         writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'rate', (CycleNo, mincapacity, mincrate, firstCrate), max_workers=4)
-        
         tab_no = 0
         all_profile = self.AllProfile.isChecked()
         # AllProfile: 루프 전에 fig/tab 1개만 생성
@@ -10284,7 +9951,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             #cyclefolder 당 1회만 호출
             is_pne = check_cycler(cyclefolder)
             if self.CycProfile.isChecked():
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
                         nrows=2, ncols=3, figsize=(14, 10))
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
@@ -10296,17 +9963,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Ratenamelist = FolderBase.split("\\")
                             headername = Ratenamelist[-2] + ", " + Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = "%04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Ratetemp = loaded_data.get((i, j, CycNo))
-                            if Ratetemp is None:
-                                if not is_pne:
-                                    Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                                else:
-                                    Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            if not is_pne:
+                                Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            else:
+                                Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
@@ -10349,7 +10013,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         output_fig(self.figsaveok, title)
             elif all_profile:
                 # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
@@ -10357,17 +10021,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             last_Ratenamelist = FolderBase.split("\\")
                             headername = last_Ratenamelist[-2] + ", " + last_Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = last_Ratenamelist[-1] + " %04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Ratetemp = loaded_data.get((i, j, CycNo))
-                            if Ratetemp is None:
-                                if not is_pne:
-                                    Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                                else:
-                                    Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            if not is_pne:
+                                Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            else:
+                                Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
                             temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
@@ -10399,22 +10060,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chnlcountmax = len(subfolder)
                     # [최적화] namelist 미초기화 방어
                     Ratenamelist = None
-                    for j, FolderBase in enumerate(subfolder):
+                    for FolderBase in subfolder:
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Ratenamelist = FolderBase.split("\\")
                             headername = Ratenamelist[-2] + ", " + Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = Ratenamelist[-1]
-                            # 병렬 로딩 결과 사용
-                            Ratetemp = loaded_data.get((i, j, CycNo))
-                            if Ratetemp is None:
-                                if not is_pne:
-                                    Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                                else:
-                                    Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            if not is_pne:
+                                Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            else:
+                                Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
@@ -10474,12 +10132,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 함수 사용으로 변경
         writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'chg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree), max_workers=4)
-        
         tab_no = 0
         all_profile = self.AllProfile.isChecked()
         # AllProfile: 루프 전에 fig/tab 1개만 생성
@@ -10497,7 +10149,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # [최적화] check_cycler 캐싱
             is_pne = check_cycler(cyclefolder)
             if self.CycProfile.isChecked():
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
@@ -10509,17 +10161,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Chgnamelist = FolderBase.split("\\")
                             headername = Chgnamelist[-2] + ", " + Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = "%04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Chgtemp = loaded_data.get((i, j, CycNo))
-                            if Chgtemp is None:
-                                if not is_pne:
-                                    Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            if not is_pne:
+                                Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            else:
+                                Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Chgtemp[1], "Profile"):
                                 if len(Chgtemp[1].Profile) > 2:
@@ -10570,7 +10219,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         output_fig(self.figsaveok, title)
             elif all_profile:
                 # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
@@ -10578,17 +10227,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             last_Chgnamelist = FolderBase.split("\\")
                             headername = last_Chgnamelist[-2] + ", " + last_Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = last_Chgnamelist[-1] + " %04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Chgtemp = loaded_data.get((i, j, CycNo))
-                            if Chgtemp is None:
-                                if not is_pne:
-                                    Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            if not is_pne:
+                                Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            else:
+                                Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Chgtemp[1], "Profile"):
                                 if len(Chgtemp[1].Profile) > 2:
@@ -10627,22 +10273,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                     
                     Chgnamelist = None
-                    for j, FolderBase in enumerate(subfolder):
+                    for FolderBase in subfolder:
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Chgnamelist = FolderBase.split("\\")
                             headername = Chgnamelist[-2] + ", " + Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = Chgnamelist[-1]
-                            # 병렬 로딩 결과 사용
-                            Chgtemp = loaded_data.get((i, j, CycNo))
-                            if Chgtemp is None:
-                                if not is_pne:
-                                    Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            if not is_pne:
+                                Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            else:
+                                Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Chgtemp[1], "Profile"):
                                 if len(Chgtemp[1].Profile) > 2:
@@ -10709,12 +10352,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         #함수 사용으로 변경    
         writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'dchg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree), max_workers=4)
-        
         tab_no = 0
         all_profile = self.AllProfile.isChecked()
         # AllProfile: 루프 전에 fig/tab 1개만 생성
@@ -10732,7 +10369,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             #cyclefolder 당 1회만 호출
             is_pne = check_cycler(cyclefolder)
             if self.CycProfile.isChecked():
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
@@ -10744,17 +10381,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Dchgnamelist = FolderBase.split("\\")
                             headername = Dchgnamelist[-2] + ", " + Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = "%04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Dchgtemp = loaded_data.get((i, j, CycNo))
-                            if Dchgtemp is None:
-                                if not is_pne:
-                                    Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            if not is_pne:
+                                Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            else:
+                                Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Dchgtemp[1], "Profile"):
                                 if len(Dchgtemp[1].Profile) > 2:
@@ -10800,7 +10434,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         output_fig(self.figsaveok, title)
             elif all_profile:
                 # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
@@ -10808,17 +10442,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             last_Dchgnamelist = FolderBase.split("\\")
                             headername = last_Dchgnamelist[-2] + ", " + last_Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = last_Dchgnamelist[-1] + " %04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Dchgtemp = loaded_data.get((i, j, CycNo))
-                            if Dchgtemp is None:
-                                if not is_pne:
-                                    Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            if not is_pne:
+                                Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            else:
+                                Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Dchgtemp[1], "Profile"):
                                 if len(Dchgtemp[1].Profile) > 2:
@@ -10852,22 +10483,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         nrows=2, ncols=3, figsize=(14, 10))
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                     Dchgnamelist = None
-                    for j, FolderBase in enumerate(subfolder):
+                    for FolderBase in subfolder:
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
                             progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Dchgnamelist = FolderBase.split("\\")
                             headername = Dchgnamelist[-2] + ", " + Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = Dchgnamelist[-1]
-                            # 병렬 로딩 결과 사용
-                            Dchgtemp = loaded_data.get((i, j, CycNo))
-                            if Dchgtemp is None:
-                                if not is_pne:
-                                    Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            if not is_pne:
+                                Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            else:
+                                Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                             if hasattr(Dchgtemp[1], "Profile"):
                                 if len(Dchgtemp[1].Profile) > 2:
@@ -11042,20 +10670,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             writer, save_file_name = self._setup_file_writer()
             self.ContinueConfirm.setEnabled(True)
             chg_dchg_dcir_no = list((self.stepnum.toPlainText().split(" ")))
-            
-            # step_ranges 사전 파싱 및 병렬 로딩
-            step_ranges = []
-            for dcir_step in chg_dchg_dcir_no:
-                if "-" in dcir_step:
-                    s, e = map(int, dcir_step.split("-"))
-                else:
-                    s = int(dcir_step)
-                    e = s
-                step_ranges.append((s, e))
-            self.progressBar.setValue(0)
-            loaded_data = self._load_all_profile_data_parallel(
-                all_data_folder, 'continue', (step_ranges, mincapacity, firstCrate, ""), max_workers=4)
-            
             tab_no = 0
             all_profile = self.AllProfile.isChecked()
             # AllProfile: 사전에 fig/tab 1개 생성
@@ -11072,7 +10686,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 folder_count += 1
                 #cyclefolder 당 1회만 호출
                 is_pne = check_cycler(cyclefolder)
-                for j, FolderBase in enumerate(subfolder):
+                for FolderBase in subfolder:
                     chnlcount += 1
                     chnlcountmax = len(subfolder)
                     for dcir_continue_step in chg_dchg_dcir_no:
@@ -11090,7 +10704,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cyccountmax = len(CycleNo)
                         cyccount += 1
                         progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                        self.progressBar.setValue(int(50 + progressdata * 0.5))
+                        self.progressBar.setValue(int(progressdata))
                         step_namelist = FolderBase.split("\\")
                         headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str(Step_CycNo)
                         if Step_CycNo == Step_CycEnd:
@@ -11103,13 +10717,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             lgnd = "%04d" % Step_CycNo
                         else:
                             lgnd = step_namelist[-1]
-                        # 병렬 로딩 결과 사용
-                        temp = loaded_data.get((i, j, (Step_CycNo, Step_CycEnd)))
-                        if temp is None:
-                            if not is_pne:
-                                temp = toyo_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
-                            else:
-                                temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
+                        if not is_pne:
+                            temp = toyo_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
+                        else:
+                            temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
                         if all_profile:
                             temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                         else:
