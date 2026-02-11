@@ -4,6 +4,7 @@ import re
 import bisect
 import warnings
 import json
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pyodbc
 import pandas as pd
@@ -1054,36 +1055,60 @@ def pne_data(raw_file_path, inicycle):
                         df.Profileraw = df.Profilerawtemp 
     return df
 
-# PNE에서 원하는 사이클이 들어있는 파일명을 찾는 코드
+# PNE 인덱스 파일 캐싱 (동일 경로 반복 I/O 제거)
+@lru_cache(maxsize=32)
+def _load_pne_index_files(rawdir):
+    """SaveEndData와 savingFileIndex_start를 1회만 읽어 캐싱"""
+    save_end = None
+    file_index = None
+    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
+    for fname in subfile:
+        if "SaveEndData" in fname:
+            save_end = pd.read_csv(
+                rawdir + fname, sep=",", skiprows=0, engine="c",
+                header=None, encoding="cp949", on_bad_lines='skip'
+            )
+        if fname == "savingFileIndex_start.csv":
+            df2 = pd.read_csv(
+                rawdir + fname, sep=r"\s+", skiprows=0, engine="c",
+                header=None, encoding="cp949", on_bad_lines='skip'
+            )
+            file_index = df2[3].str.replace(',', '').astype(int).tolist()
+    return save_end, file_index
+
+def pne_search_cycle_cache_clear():
+    """데이터 경로 변경 시 캐시 초기화"""
+    _load_pne_index_files.cache_clear()
+
+# PNE에서 원하는 사이클이 들어있는 파일명을 찾는 코드 (캐시 최적화)
 def pne_search_cycle(rawdir, start, end):
-    # Profile에 사용할 파일 선정
-    if os.path.isdir(rawdir):
-        subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-        for files in subfile:
-            # SaveEndData가 있는 파일 확인
-            if "SaveEndData" in files:
-                df = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c", header=None, encoding="cp949",
-                                 on_bad_lines='skip')
-                if start != 1:
-                    index_min = df.loc[(df.loc[:,27] == (start - 1)), 0].tolist()
-                else:
-                    index_min = [0]
-                index_max = df.loc[(df.loc[:,27] == end), 0].tolist()
-                if not index_max:
-                    index_max = df.loc[(df.loc[:,27] == df.loc[:,27].max()), 0].tolist()
-                df2 = pd.read_csv(rawdir + "savingFileIndex_start.csv", sep=r"\s+", skiprows=0, engine="c",
-                                  header=None, encoding="cp949", on_bad_lines='skip') #pandas>=3.0.0 / 기존 2.2.1
-                df2 = df2.loc[:,3].tolist()
-                index2 = []
-                for element in df2:
-                    new_element = int(element.replace(',', ''))
-                    index2.append(new_element)
-                if len(index_min) != 0:
-                    file_start = binary_search(index2, index_min[-1] + 1) - 1
-                    file_end = binary_search(index2, index_max[-1]) - 1
-                else:
-                    file_start = -1
-                    file_end = -1
+    if not os.path.isdir(rawdir):
+        return [-1, -1]
+    
+    save_end, file_index = _load_pne_index_files(rawdir)
+    
+    if save_end is None or file_index is None:
+        return [-1, -1]
+    
+    # start에 해당하는 인덱스 검색
+    if start != 1:
+        index_min = save_end.loc[save_end[27] == (start - 1), 0].tolist()
+    else:
+        index_min = [0]
+    
+    # end에 해당하는 인덱스 검색
+    index_max = save_end.loc[save_end[27] == end, 0].tolist()
+    if not index_max:
+        index_max = save_end.loc[save_end[27] == save_end[27].max(), 0].tolist()
+    
+    # 파일 위치 산정
+    if len(index_min) != 0:
+        file_start = binary_search(file_index, index_min[-1] + 1) - 1
+        file_end = binary_search(file_index, index_max[-1]) - 1
+    else:
+        file_start = -1
+        file_end = -1
+    
     return [file_start, file_end]
 
 # 연속된 데이터의 Profile을 찾아서 확인
