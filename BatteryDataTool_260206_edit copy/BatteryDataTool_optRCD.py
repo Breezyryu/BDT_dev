@@ -162,6 +162,18 @@ def check_cycler(raw_file_path):
     cycler = os.path.isdir(raw_file_path + "\\Pattern")
     return cycler
 
+# 코인셀/PNE21·22 μA 단위 사용 여부 판별
+_coincell_mode = False
+
+def set_coincell_mode(enabled):
+    """코인셀 체크박스 상태 설정 (처리 시작 전 호출)"""
+    global _coincell_mode
+    _coincell_mode = enabled
+
+def is_micro_unit(raw_file_path):
+    """PNE21/22 또는 코인셀 모드에서 μA/μAh 단위 사용 여부 판별"""
+    return ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path) or _coincell_mode
+
 # 주어진 문자열을 리스트로 변환
 def convert_steplist(input_str):
     output_list = []
@@ -757,8 +769,8 @@ def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
             results[cyc] = [mincapacity, pd.DataFrame()]
         return results
     
-    # PNE21/22 단위 변환 계수 결정
-    is_pne21_22 = ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path)
+    # PNE21/22/코인셀 단위 변환 계수 결정
+    is_pne21_22 = is_micro_unit(raw_file_path)
     current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
     cap_divisor = current_divisor
     
@@ -856,7 +868,7 @@ def _pne_load_profile_raw(raw_file_path, min_cycle, max_cycle, mincapacity, inir
             else:
                 all_raw = pd.concat([all_raw, chunk], ignore_index=True)
 
-    is_pne21_22 = ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path)
+    is_pne21_22 = is_micro_unit(raw_file_path)
     return (mincapacity, all_raw, is_pne21_22)
 
 
@@ -1469,9 +1481,13 @@ def pne_simul_cycle_data(raw_file_path, min_capacity, ini_crate):
         df_all = pd.DataFrame({"Temp": avg_temp.iloc[:,0], "Curr": min_crate.iloc[:,0], "Dchg": max_cap.iloc[:, 0],
                                "max_vol": max_vol.iloc[:, 0], "min_vol": min_vol.iloc[:, 0]})
         df_all["Temp"] = df_all["Temp"]/1000
-        df_all["Curr"] = - 1 * df_all["Curr"]/mincapacity/1000
+        if is_micro_unit(raw_file_path):
+            df_all["Curr"] = - 1 * df_all["Curr"]/mincapacity/1000000
+            df_all["Dchg"] = df_all["Dchg"]/mincapacity/1000000
+        else:
+            df_all["Curr"] = - 1 * df_all["Curr"]/mincapacity/1000
+            df_all["Dchg"] = df_all["Dchg"]/mincapacity/1000
         df_all["max_vol"] = df_all["max_vol"]/1000
-        df_all["Dchg"] = df_all["Dchg"]/mincapacity/1000
         df_all["min_vol"] = df_all["min_vol"]/1000
         df05 = df_all.query('0.490 < Curr < 0.510')
         j = 0
@@ -1579,7 +1595,7 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                         Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp", "volmax",
                                             "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
                         # PNE 기본 DCIR (연속 기준 10s pulse, 10s 이내 시간의 경우 단순 pulse 기준 끝나는 시간 기준)
-                        if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+                        if is_micro_unit(raw_file_path):
                             Cycleraw.DchgCap = Cycleraw.DchgCap/1000
                             Cycleraw.chgCap = Cycleraw.chgCap/1000
                             Cycleraw.Curr = Cycleraw.Curr/1000
@@ -1749,7 +1765,7 @@ def pne_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
             # 충전 단위 변환
             profile_raw.Profileraw["PassTime[Sec]"] = profile_raw.Profileraw["PassTime[Sec]"]/100/60
             profile_raw.Profileraw["Voltage[V]"] = profile_raw.Profileraw["Voltage[V]"]/1000000
-            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+            if is_micro_unit(raw_file_path):
                 profile_raw.Profileraw["Current[mA]"] = profile_raw.Profileraw["Current[mA]"]/mincapacity/1000000
                 profile_raw.Profileraw["Chgcap"] = profile_raw.Profileraw["Chgcap"]/mincapacity/1000000
             else:
@@ -1794,7 +1810,7 @@ def pne_rate_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
             # 충전 단위 변환
             Profileraw["PassTime[Sec]"] = Profileraw["PassTime[Sec]"]/100/60
             Profileraw["Voltage[V]"] = Profileraw["Voltage[V]"]/1000000
-            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+            if is_micro_unit(raw_file_path):
                 Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000000
                 Profileraw["Chgcap"] = Profileraw["Chgcap"]/mincapacity/1000000
             else:
@@ -1825,7 +1841,7 @@ def pne_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, 
             # 충전 단위 변환
             df.Profileraw["PassTime[Sec]"] = df.Profileraw["PassTime[Sec]"]/100/60
             df.Profileraw["Voltage[V]"] = df.Profileraw["Voltage[V]"]/1000000
-            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+            if is_micro_unit(raw_file_path):
                 df.Profileraw["Current[mA]"] = df.Profileraw["Current[mA]"]/mincapacity/1000000
                 df.Profileraw["Chgcap"] = df.Profileraw["Chgcap"]/mincapacity/1000000
             else:
@@ -1882,7 +1898,7 @@ def pne_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate,
             # 충전 단위 변환
             Profileraw["PassTime[Sec]"] = Profileraw["PassTime[Sec]"]/100/60
             Profileraw["Voltage[V]"] = Profileraw["Voltage[V]"]/1000000
-            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+            if is_micro_unit(raw_file_path):
                 Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000000 * (-1)
                 Profileraw["Dchgcap"] = Profileraw["Dchgcap"]/mincapacity/1000000
             else:
@@ -1933,7 +1949,7 @@ def pne_continue_profile_scale_change(raw_file_path, df, mincapacity):
     df["TotTime[Sec]"] = (df["TotTime[Sec]"] - df.loc[0, "TotTime[Sec]"])
     df["TotTime[Min]"] = (df["TotTime[Sec]"]/60)
     df["Voltage[V]"] = df["Voltage[V]"]/1000000
-    if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+    if is_micro_unit(raw_file_path):
         df["Crate"] = (df["Current[mA]"]/mincapacity/1000000).round(2)
         df["Current[mA]"] = (df["Current[mA]"]/1000000000)
         df["ChgCap"] = df["ChgCap"]/mincapacity/1000000
@@ -2093,7 +2109,7 @@ def pne_dcir_Profile_data(raw_file_path, inicycle, endcycle, mincapacity, inirat
             dcir_base.reset_index(drop=True, inplace=True)
             dcir_step = list(set(dcir_base["step"].tolist()))
             # 율별 pulse C-rate 확인
-            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+            if is_micro_unit(raw_file_path):
                 dcir_crate = [((dcir_base.loc[i, "Current[mA]"] / 1000000)/mincapacity).round(2) for i in range(0,4)]
             else:
                 dcir_crate = [((dcir_base.loc[i, "Current[mA]"] / 1000)/mincapacity).round(2) for i in range(0,4)]
@@ -2127,7 +2143,7 @@ def pne_dcir_Profile_data(raw_file_path, inicycle, endcycle, mincapacity, inirat
                 CycfileCap = CycfileCap.reset_index(drop=True)
                 if not CycfileCap.empty:
                     CycfileCap["AccCap"] = abs((CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000)
-                if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
+                if is_micro_unit(raw_file_path):
                     CycfileCap["AccCap"] = CycfileCap["AccCap"]/1000
                 if dcir_crate[-2] < 0:
                     CycfileCap["SOC"] = (1 - CycfileCap["AccCap"]/mincapacity) * 100
@@ -8717,6 +8733,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         - 경로 설정
         """
         button_widget.setDisabled(True)
+        # 코인셀 체크박스 상태를 모듈 전역 플래그에 반영
+        set_coincell_mode(self.chk_coincell.isChecked())
         
         config = self.Profile_ini_set()
         pne_path = self.pne_path_setting()
@@ -9069,6 +9087,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return results
     
     def cyc_ini_set(self):
+        # 코인셀 체크박스 상태를 모듈 전역 플래그에 반영
+        set_coincell_mode(self.chk_coincell.isChecked())
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
         if self.inicaprate.isChecked():
@@ -9082,6 +9102,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale
 
     def Profile_ini_set(self):
+        # 코인셀 체크박스 상태를 모듈 전역 플래그에 반영
+        set_coincell_mode(self.chk_coincell.isChecked())
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
         if self.inicaprate.isChecked():
