@@ -2760,8 +2760,8 @@ class Ui_sitool(object):
         self.horizontalLayout_108 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_108.setObjectName("horizontalLayout_108")
         self.chk_cyclepath = QtWidgets.QCheckBox(parent=self.CycTab)
-        self.chk_cyclepath.setMinimumSize(QtCore.QSize(240, 30))
-        self.chk_cyclepath.setMaximumSize(QtCore.QSize(100, 30))
+        self.chk_cyclepath.setMinimumSize(QtCore.QSize(120, 30))
+        self.chk_cyclepath.setMaximumSize(QtCore.QSize(240, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(9)
@@ -2772,8 +2772,8 @@ class Ui_sitool(object):
         self.chk_cyclepath.setObjectName("chk_cyclepath")
         self.horizontalLayout_108.addWidget(self.chk_cyclepath)
         self.chk_ectpath = QtWidgets.QCheckBox(parent=self.CycTab)
-        self.chk_ectpath.setMinimumSize(QtCore.QSize(240, 30))
-        self.chk_ectpath.setMaximumSize(QtCore.QSize(100, 30))
+        self.chk_ectpath.setMinimumSize(QtCore.QSize(120, 30))
+        self.chk_ectpath.setMaximumSize(QtCore.QSize(240, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(9)
@@ -2783,6 +2783,19 @@ class Ui_sitool(object):
         self.chk_ectpath.setChecked(False)
         self.chk_ectpath.setObjectName("chk_ectpath")
         self.horizontalLayout_108.addWidget(self.chk_ectpath)
+        self.horizontalLayout_108.addStretch(1)
+        self.chk_coincell_cyc = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_coincell_cyc.setMinimumSize(QtCore.QSize(80, 30))
+        self.chk_coincell_cyc.setMaximumSize(QtCore.QSize(100, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.chk_coincell_cyc.setFont(font)
+        self.chk_coincell_cyc.setChecked(False)
+        self.chk_coincell_cyc.setObjectName("chk_coincell_cyc")
+        self.horizontalLayout_108.addWidget(self.chk_coincell_cyc)
         self.verticalLayout_6.addLayout(self.horizontalLayout_108)
         self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
@@ -8206,6 +8219,7 @@ class Ui_sitool(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("sitool", "현황"))
         self.chk_cyclepath.setText(_translate("sitool", "지정Path사용"))
         self.chk_ectpath.setText(_translate("sitool", "ECT path 사용"))
+        self.chk_coincell_cyc.setText(_translate("sitool", "코인셀"))
         self.cycle_tab_reset.setText(_translate("sitool", "Tab Reset"))
         self.capacitygroup.setTitle(_translate("sitool", "용량 선택"))
         self.inicaprate.setText(_translate("sitool", "1) Cyclepath 이름 용량 기준\n"
@@ -8750,6 +8764,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         - 경로 설정
         """
         button_widget.setDisabled(True)
+        set_coincell_mode(self.chk_coincell_cyc.isChecked())
         
         config = self.Profile_ini_set()
         pne_path = self.pne_path_setting()
@@ -9102,6 +9117,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return results
     
     def cyc_ini_set(self):
+        set_coincell_mode(self.chk_coincell_cyc.isChecked())
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
         if self.inicaprate.isChecked():
