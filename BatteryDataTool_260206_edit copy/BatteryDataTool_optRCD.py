@@ -9311,149 +9311,149 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             all_data_name = pne_path[1]
             print(f"[DEBUG] 폴더 수: {len(all_data_folder)}, 폴더: {all_data_folder}")
             if pne_path[2]:
-            mincapacity = name_capacity(pne_path[2])
-        
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.indiv_cycle.setEnabled(True)
-        
-        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-        
-        # 데이터 로딩 (병렬 처리)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_cycle_data_parallel(
-            all_data_folder, mincapacity, firstCrate,
-            self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-            max_workers=4
-        )
-        print(f"[DEBUG] 로드된 데이터 키: {list(loaded_data.keys())}")
+                mincapacity = name_capacity(pne_path[2])
+            
+            # 파일 저장 설정
+            save_file_name = None
+            if self.saveok.isChecked():
+                save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+                if save_file_name:
+                    writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+            self.indiv_cycle.setEnabled(True)
+            
+            graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+            
+            # 데이터 로딩 (병렬 처리)
+            self.progressBar.setValue(0)
+            loaded_data = self._load_all_cycle_data_parallel(
+                all_data_folder, mincapacity, firstCrate,
+                self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
+                max_workers=4
+            )
+            print(f"[DEBUG] 로드된 데이터 키: {list(loaded_data.keys())}")
 
-        tab_no = 0
-        j = 0
-        total_folders = len(all_data_folder)
-        
-        for i, cyclefolder in enumerate(all_data_folder):
-            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+            tab_no = 0
+            j = 0
+            total_folders = len(all_data_folder)
             
-            # [수정] 루프 외부에서 변수 초기화
-            tab = None
-            tab_layout = None
-            canvas = None
-            toolbar = None
-            cycnamelist = None
-            has_valid_data = False
-            
-            if os.path.exists(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+            for i, cyclefolder in enumerate(all_data_folder):
+                fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
                 
-                for sub_idx, FolderBase in enumerate(subfolder):
-                    # 병렬 로딩된 데이터 검색
-                    if (i, sub_idx) not in loaded_data:
-                        continue
+                # [수정] 루프 외부에서 변수 초기화
+                tab = None
+                tab_layout = None
+                canvas = None
+                toolbar = None
+                cycnamelist = None
+                has_valid_data = False
+                
+                if os.path.exists(cyclefolder):
+                    subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
                     
-                    folder_path, cyctemp = loaded_data[(i, sub_idx)]
-                    if cyctemp is None:
-                        continue
+                    for sub_idx, FolderBase in enumerate(subfolder):
+                        # 병렬 로딩된 데이터 검색
+                        if (i, sub_idx) not in loaded_data:
+                            continue
+                        
+                        folder_path, cyctemp = loaded_data[(i, sub_idx)]
+                        if cyctemp is None:
+                            continue
+                        
+                        # [수정] cyctemp[1]이 None인 경우 스킵
+                        if cyctemp[1] is None:
+                            continue
+                        
+                        # tab 그래프 추가 (첫 번째 유효 데이터에서만 생성)
+                        if tab is None:
+                            tab = QtWidgets.QWidget()
+                            tab_layout = QtWidgets.QVBoxLayout(tab)
+                            canvas = FigureCanvas(fig)
+                            toolbar = NavigationToolbar(canvas, None)
+                        
+                        has_valid_data = True
+                        
+                        # 진행률 업데이트 (50% ~ 100%)
+                        progress_val = 50 + int((i + 1) / total_folders * 50)
+                        self.progressBar.setValue(progress_val)
+                        
+                        cycnamelist = FolderBase.split("\\")
+                        headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+                        
+                        # legend 설정
+                        if len(all_data_name) != 0 and j == i:
+                            lgnd = all_data_name[i]
+                            j = j + 1
+                        elif len(all_data_name) != 0 and j != i:
+                            lgnd = ""
+                        else:
+                            lgnd = extract_text_in_brackets(cycnamelist[-1])
+                        
+                        if hasattr(cyctemp[1], "NewData"):
+                            self.capacitytext.setText(str(cyctemp[0]))
+                            irscale = float(self.dcirscale.text())
+                            if irscale == 0 and cyctemp[0] != 0:
+                                irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                            
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
+                                               graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                            colorno = colorno + 1
+                            
+                            # Data output option
+                            if self.saveok.isChecked() and save_file_name:
+                                output_data(cyctemp[1].NewData, "방전용량", writecolno, 0, "Dchg", headername)
+                                output_data(cyctemp[1].NewData, "Rest End", writecolno, 0, "RndV", headername)
+                                output_data(cyctemp[1].NewData, "평균 전압", writecolno, 0, "AvgV", headername)
+                                output_data(cyctemp[1].NewData, "충방효율", writecolno, 0, "Eff", headername)
+                                output_data(cyctemp[1].NewData, "충전용량", writecolno, 0, "Chg", headername)
+                                output_data(cyctemp[1].NewData, "방충효율", writecolno, 0, "Eff2", headername)
+                                output_data(cyctemp[1].NewData, "방전Energy", writecolno, 0, "DchgEng", headername)
+                                cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
+                                if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                    cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
+                                    cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
+                                    cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
+                                    cyctempsoc70dcir = cyctemp[1].NewData.soc70_dcir.dropna(axis=0)
+                                    cyctempsoc70rssdcir = cyctemp[1].NewData.soc70_rss_dcir.dropna(axis=0)
+                                    output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "soc70_dcir", headername)
+                                    output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "soc70_rss_dcir", headername)
+                                    output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
+                                    output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
+                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                                else:
+                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                                output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
+                                writecolno = writecolno + 1
+                        
+                        plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
+                        ax1.legend(loc="lower left")
+                        ax2.legend(loc="lower right")
+                        ax3.legend(loc="upper right")
+                        ax4.legend(loc="upper right")
+                        ax5.legend(loc="upper right")
+                        ax6.legend(loc="lower right")
                     
-                    # [수정] cyctemp[1]이 None인 경우 스킵
-                    if cyctemp[1] is None:
-                        continue
-                    
-                    # tab 그래프 추가 (첫 번째 유효 데이터에서만 생성)
-                    if tab is None:
-                        tab = QtWidgets.QWidget()
-                        tab_layout = QtWidgets.QVBoxLayout(tab)
-                        canvas = FigureCanvas(fig)
-                        toolbar = NavigationToolbar(canvas, None)
-                    
-                    has_valid_data = True
-                    
-                    # 진행률 업데이트 (50% ~ 100%)
-                    progress_val = 50 + int((i + 1) / total_folders * 50)
-                    self.progressBar.setValue(progress_val)
-                    
-                    cycnamelist = FolderBase.split("\\")
-                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-                    
-                    # legend 설정
-                    if len(all_data_name) != 0 and j == i:
-                        lgnd = all_data_name[i]
-                        j = j + 1
-                    elif len(all_data_name) != 0 and j != i:
-                        lgnd = ""
+                    # [수정] 유효한 데이터가 있는 경우에만 탭 추가
+                    if has_valid_data and tab_layout is not None:
+                        tab_layout.addWidget(toolbar)
+                        tab_layout.addWidget(canvas)
+                        self.cycle_tab.addTab(tab, str(tab_no))
+                        self.cycle_tab.setCurrentWidget(tab)
+                        tab_no = tab_no + 1
+                        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                        if cycnamelist:
+                            output_fig(self.figsaveok, cycnamelist[-2])
+                        colorno = 0
                     else:
-                        lgnd = extract_text_in_brackets(cycnamelist[-1])
-                    
-                    if hasattr(cyctemp[1], "NewData"):
-                        self.capacitytext.setText(str(cyctemp[0]))
-                        irscale = float(self.dcirscale.text())
-                        if irscale == 0 and cyctemp[0] != 0:
-                            irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                        
-                        graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
-                                           graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        colorno = colorno + 1
-                        
-                        # Data output option
-                        if self.saveok.isChecked() and save_file_name:
-                            output_data(cyctemp[1].NewData, "방전용량", writecolno, 0, "Dchg", headername)
-                            output_data(cyctemp[1].NewData, "Rest End", writecolno, 0, "RndV", headername)
-                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, 0, "AvgV", headername)
-                            output_data(cyctemp[1].NewData, "충방효율", writecolno, 0, "Eff", headername)
-                            output_data(cyctemp[1].NewData, "충전용량", writecolno, 0, "Chg", headername)
-                            output_data(cyctemp[1].NewData, "방충효율", writecolno, 0, "Eff2", headername)
-                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, 0, "DchgEng", headername)
-                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
-                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
-                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
-                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
-                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
-                                cyctempsoc70dcir = cyctemp[1].NewData.soc70_dcir.dropna(axis=0)
-                                cyctempsoc70rssdcir = cyctemp[1].NewData.soc70_rss_dcir.dropna(axis=0)
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "soc70_dcir", headername)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "soc70_rss_dcir", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
-                            else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
-                            output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
-                            writecolno = writecolno + 1
-                    
-                    plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
-                    ax1.legend(loc="lower left")
-                    ax2.legend(loc="lower right")
-                    ax3.legend(loc="upper right")
-                    ax4.legend(loc="upper right")
-                    ax5.legend(loc="upper right")
-                    ax6.legend(loc="lower right")
-                
-                # [수정] 유효한 데이터가 있는 경우에만 탭 추가
-                if has_valid_data and tab_layout is not None:
-                    tab_layout.addWidget(toolbar)
-                    tab_layout.addWidget(canvas)
-                    self.cycle_tab.addTab(tab, str(tab_no))
-                    self.cycle_tab.setCurrentWidget(tab)
-                    tab_no = tab_no + 1
-                    plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                    if cycnamelist:
-                        output_fig(self.figsaveok, cycnamelist[-2])
-                    colorno = 0
-                else:
-                    plt.close(fig)  # 사용하지 않는 figure 닫기
-        
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-        self.progressBar.setValue(100)
-        plt.close()
-        print(f"[DEBUG] indiv_cyc 완료, tab_no={tab_no}")
+                        plt.close(fig)  # 사용하지 않는 figure 닫기
+            
+            if self.saveok.isChecked() and save_file_name:
+                writer.close()
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+            self.progressBar.setValue(100)
+            plt.close()
+            print(f"[DEBUG] indiv_cyc 완료, tab_no={tab_no}")
         except Exception as e:
             print(f"[ERROR] indiv_cyc_confirm_button 예외: {e}")
             traceback.print_exc()
