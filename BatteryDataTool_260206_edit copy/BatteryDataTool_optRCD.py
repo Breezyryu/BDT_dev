@@ -646,6 +646,56 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
     return [mincapacity, df]
 
 
+def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
+    """capacity.log 기반 논리 사이클 번호(1-based) → 원본 파일 범위(start, end) 매핑 생성.
+    toyo_cycle_data()와 동일한 사이클 재정의 로직(방전시작 보정, 연속 Condition 병합)을 적용.
+    Returns: (cycle_map, mincapacity)
+      cycle_map: {logical_cycle: (first_file_no, last_file_no)}
+    """
+    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
+    tempdata = toyo_cycle_import(raw_file_path)
+    if not (hasattr(tempdata, "dataraw") and not tempdata.dataraw.empty):
+        return {}, mincapacity
+
+    Cycleraw = tempdata.dataraw.copy()
+    Cycleraw["OriCycle"] = Cycleraw["TotlCycle"].copy()
+
+    # 방전 시작 시 data 변경 (toyo_cycle_data와 동일)
+    if Cycleraw.iloc[0]["Condition"] == 2 and len(Cycleraw) > 2:
+        if Cycleraw.iloc[1]["TotlCycle"] == 1:
+            Cycleraw.loc[Cycleraw["Condition"] == 2, "TotlCycle"] -= 1
+            Cycleraw = Cycleraw.drop(0, axis=0).reset_index(drop=True)
+
+    # 연속 동일 Condition 벡터 그룹 (toyo_cycle_data와 동일)
+    cond_series = Cycleraw["Condition"]
+    merge_group = ((cond_series != cond_series.shift()) | (~cond_series.isin([1, 2]))).cumsum()
+
+    # 그룹별 OriCycle 범위 + 요약 정보 추출
+    group_info = Cycleraw.groupby(merge_group).agg(
+        TotlCycle=("TotlCycle", "last"),
+        Condition=("Condition", "first"),
+        Cap=("Cap[mAh]", "sum"),
+        OriMin=("OriCycle", "min"),
+        OriMax=("OriCycle", "max")
+    ).reset_index(drop=True)
+
+    # 방전 그룹 중 유효 사이클만 필터링 (toyo_cycle_data의 Dchgdata 조건)
+    dchg_mask = (group_info["Condition"] == 2) & (group_info["Cap"] > mincapacity / 60)
+    dchg_indices = group_info[dchg_mask].index.tolist()
+
+    # 논리 사이클 → (시작파일, 끝파일) 매핑
+    cycle_map = {}
+    for logical_num, dchg_idx in enumerate(dchg_indices, start=1):
+        dchg_ori_max = int(group_info.loc[dchg_idx, "OriMax"])
+        # 직전 그룹이 충전(Condition=1)이면, 해당 충전의 OriMin이 사이클 시작
+        if dchg_idx > 0 and group_info.loc[dchg_idx - 1, "Condition"] == 1:
+            first_file = int(group_info.loc[dchg_idx - 1, "OriMin"])
+        else:
+            first_file = int(group_info.loc[dchg_idx, "OriMin"])
+        cycle_map[logical_num] = (first_file, dchg_ori_max)
+
+    return cycle_map, mincapacity
+
 
 def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
     """
@@ -1042,11 +1092,19 @@ def pne_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
 
 # ─── Continue Profile 배치 함수 ───
 def toyo_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate):
-    """Toyo Continue 프로파일 배치 로딩: min_cap 1회 산정 후 step_range 반복."""
+    """Toyo Continue 프로파일 배치 로딩: 논리 사이클 → 파일 번호 자동 변환 후 로딩."""
     mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
+    # 논리 사이클 → 파일 번호 매핑 자동 생성
+    cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
     results = {}
     for (start, end) in step_ranges:
-        results[(start, end)] = toyo_Profile_continue_data(raw_file_path, start, end, mincapacity, inirate)
+        # 논리 사이클 번호 → 원본 파일 번호 범위 변환
+        if cycle_map:
+            file_start = cycle_map.get(start, (start, start))[0]
+            file_end = cycle_map.get(end, (end, end))[1]
+        else:
+            file_start, file_end = start, end
+        results[(start, end)] = toyo_Profile_continue_data(raw_file_path, file_start, file_end, mincapacity, inirate)
     return results
 
 
@@ -11162,7 +11220,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         temp = loaded_data.get((i, j, (Step_CycNo, Step_CycEnd)))
                         if temp is None:
                             if not is_pne:
-                                temp = toyo_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
+                                # fallback: 논리 사이클 → 파일 번호 변환 후 로딩
+                                cm, _ = toyo_build_cycle_map(FolderBase, mincapacity, firstCrate)
+                                if cm:
+                                    fb_start = cm.get(Step_CycNo, (Step_CycNo, Step_CycNo))[0]
+                                    fb_end = cm.get(Step_CycEnd, (Step_CycEnd, Step_CycEnd))[1]
+                                else:
+                                    fb_start, fb_end = Step_CycNo, Step_CycEnd
+                                temp = toyo_Profile_continue_data(FolderBase, fb_start, fb_end, mincapacity, firstCrate)
                             else:
                                 temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
                         if all_profile:
