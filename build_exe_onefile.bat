@@ -1,6 +1,6 @@
 @echo off
 setlocal
-echo Building BatteryDataTool (onedir)...
+echo Building BatteryDataTool.exe with Icon...
 
 cd /d "%~dp0"
 
@@ -9,14 +9,11 @@ set "SCRIPT_PATH=%~dp0BatteryDataTool.py"
 set "ICON_PATH=%~dp0BatteryDataTool.ico"
 
 "%VENV_EXE%" ^
-    --onedir ^
+    --onefile ^
     --noconsole ^
     --noconfirm ^
+    --uac-admin ^
     --hidden-import fsspec ^
-    --exclude-module sklearn ^
-    --exclude-module scikit-learn ^
-    --exclude-module pytest ^
-    --exclude-module unittest ^
     --icon="%ICON_PATH%" ^
     "%SCRIPT_PATH%" ^
     --distpath "."
