@@ -1314,6 +1314,7 @@ def toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
 # Toyo Step charge Profile data 처리
 def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, inirate):
     df = pd.DataFrame()
+    CycfileSOC = pd.DataFrame()
     # 용량 산정
     tempmincap = toyo_min_cap(raw_file_path, mincapacity, inirate)
     mincapacity = tempmincap
@@ -1321,6 +1322,7 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
     if os.path.isfile(raw_file_path + "\\%06d" % inicycle):
         tempdata = toyo_Profile_import(raw_file_path, inicycle)
         df.stepchg = tempdata.dataraw
+        file_boundaries = [(0, inicycle)]
         if endcycle > inicycle:
             # 명시적 범위: inicycle+1 ~ endcycle까지 raw 데이터 연결
             for stepcyc in range(inicycle + 1, endcycle + 1):
@@ -1328,6 +1330,7 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
                     break
                 tempdata = toyo_Profile_import(raw_file_path, stepcyc)
                 if hasattr(tempdata, 'dataraw') and not tempdata.dataraw.empty:
+                    file_boundaries.append((len(df.stepchg), stepcyc))
                     df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
         else:
             # 단일 사이클: Condition < 2이면 후속 파일까지 확장 (기존 로직)
@@ -1338,24 +1341,63 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
                     stepcyc = stepcyc + 1
                     tempdata = toyo_Profile_import(raw_file_path, stepcyc)
                     maxcon = int(tempdata.dataraw["Condition"].max())
+                    file_boundaries.append((len(df.stepchg), stepcyc))
                     df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
         if not df.stepchg.empty:
             # PassTime 리셋 보정: 구간 전환 시 음수 diff를 0으로 클리핑 후 누적합
             df.stepchg = df.stepchg.reset_index(drop=True)
             time_diffs = df.stepchg["PassTime[Sec]"].diff().clip(lower=0).fillna(0)
             df.stepchg["PassTime[Sec]"] = time_diffs.cumsum()
+            # SOC 산정: 방전(Condition==2) 시 전류 부호 반전
+            signed_current = df.stepchg["Current[mA]"].copy()
+            signed_current.loc[df.stepchg["Condition"] == 2] *= -1
             df.stepchg["Cap[mAh]"] = 0.0
-            # 충전 용량 산정
             if len(df.stepchg) > 1:
-                increments = (time_diffs / 3600) * df.stepchg["Current[mA]"]
+                increments = (time_diffs / 3600) * signed_current
                 df.stepchg["Cap[mAh]"] = increments.cumsum().fillna(0.0)
-            # 충전 단위 변환
-            df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"]/60
-            df.stepchg["Current[mA]"] = df.stepchg["Current[mA]"]/mincapacity
-            df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"]/mincapacity
-            df.stepchg = df.stepchg[["PassTime[Sec]", "Cap[mAh]", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
-            df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
-    return [mincapacity, df]
+            # OCV/CCV: capacity.log에서 추출
+            cycdata = toyo_cycle_import(raw_file_path)
+            has_caplog = hasattr(cycdata, "dataraw") and not cycdata.dataraw.empty
+            if has_caplog:
+                cap_log = cycdata.dataraw
+                # 시계열 OCV/CCV: 파일 경계마다 sparse 값 삽입
+                df.stepchg["OCV"] = float('nan')
+                df.stepchg["CCV"] = float('nan')
+                for row_start, cycle_no in file_boundaries:
+                    matching = cap_log[cap_log["TotlCycle"] == cycle_no]
+                    if not matching.empty:
+                        df.stepchg.loc[row_start, "OCV"] = float(matching.iloc[0]["Ocv"])
+                        df.stepchg.loc[row_start, "CCV"] = float(matching.iloc[0]["PeakVolt[V]"])
+                # SOC vs OCV/CCV 테이블 (CycfileSOC)
+                relevant = cap_log[(cap_log["TotlCycle"] >= inicycle) & (cap_log["TotlCycle"] <= endcycle)]
+                chg_dchg = relevant[relevant["Condition"].isin([1, 2])].copy()
+                if not chg_dchg.empty:
+                    chg_dchg["signed_cap"] = chg_dchg["Cap[mAh]"].copy()
+                    chg_dchg.loc[chg_dchg["Condition"] == 2, "signed_cap"] *= -1
+                    chg_dchg["AccCap"] = chg_dchg["signed_cap"].cumsum()
+                    chg_dchg["AccCap"] = (chg_dchg["AccCap"] - chg_dchg["AccCap"].iloc[0]) / mincapacity
+                    CycfileSOC = pd.DataFrame({
+                        "AccCap": chg_dchg["AccCap"].values,
+                        "OCV": chg_dchg["Ocv"].astype(float).values,
+                        "CCV": chg_dchg["PeakVolt[V]"].astype(float).values
+                    })
+                # 단위 변환 (PNE 호환 출력)
+                df.stepchg["TimeSec"] = df.stepchg["PassTime[Sec]"].round(1)
+                df.stepchg["Curr"] = (signed_current / 1000.0).round(4)
+                df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"] / 60
+                df.stepchg["Current[mA]"] = signed_current / mincapacity
+                df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"] / mincapacity
+                df.stepchg = df.stepchg[["TimeSec", "PassTime[Sec]", "Cap[mAh]", "Voltage[V]",
+                                         "Curr", "Current[mA]", "Temp1[Deg]", "OCV", "CCV"]]
+                df.stepchg.columns = ["TimeSec", "TimeMin", "SOC", "Vol", "Curr", "Crate", "Temp", "OCV", "CCV"]
+            else:
+                # capacity.log 없는 경우: 기존 포맷 유지
+                df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"] / 60
+                df.stepchg["Current[mA]"] = signed_current / mincapacity
+                df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"] / mincapacity
+                df.stepchg = df.stepchg[["PassTime[Sec]", "Cap[mAh]", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
+                df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
+    return [mincapacity, df, CycfileSOC]
 
 # PNE Profile data 기본 input 처리
 def pne_data(raw_file_path, inicycle):
