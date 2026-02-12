@@ -9091,10 +9091,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
+            print(f"[DEBUG] 폴더 확인: {cyclefolder}, 존재: {os.path.exists(cyclefolder)}")
             if os.path.exists(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
                 is_pne = check_cycler(cyclefolder)
+                print(f"[DEBUG]   하위폴더 수: {len(subfolder)}, is_pne: {is_pne}")
                 for j, folder_path in enumerate(subfolder):
+                    print(f"[DEBUG]   하위폴더[{j}]: {folder_path}, Pattern포함: {'Pattern' in folder_path}")
                     if "Pattern" not in folder_path:
                         task_info = (folder_path, mincapacity, firstCrate, 
                                      dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
@@ -9102,6 +9105,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         results = {}
         total_tasks = len(tasks)
+        print(f"[DEBUG] 전체 task 수: {total_tasks}")
         completed = 0
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
