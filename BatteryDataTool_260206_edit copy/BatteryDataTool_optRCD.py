@@ -1262,19 +1262,15 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
     # data 기본 처리
     if os.path.isfile(raw_file_path + "\\%06d" % inicycle):
         tempdata = toyo_Profile_import(raw_file_path, inicycle)
-        lasttime = 0
         df.stepchg = tempdata.dataraw
-        lasttime = df.stepchg["PassTime[Sec]"].max()
         if endcycle > inicycle:
-            # 명시적 범위: inicycle+1 ~ endcycle까지 PassTime 누적
+            # 명시적 범위: inicycle+1 ~ endcycle까지 raw 데이터 연결
             for stepcyc in range(inicycle + 1, endcycle + 1):
                 if not os.path.isfile(raw_file_path + "\\%06d" % stepcyc):
                     break
                 tempdata = toyo_Profile_import(raw_file_path, stepcyc)
                 if hasattr(tempdata, 'dataraw') and not tempdata.dataraw.empty:
-                    tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
                     df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
-                    lasttime = df.stepchg["PassTime[Sec]"].max()
         else:
             # 단일 사이클: Condition < 2이면 후속 파일까지 확장 (기존 로직)
             if int(tempdata.dataraw["Condition"].max()) < 2:
@@ -1284,15 +1280,15 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
                     stepcyc = stepcyc + 1
                     tempdata = toyo_Profile_import(raw_file_path, stepcyc)
                     maxcon = int(tempdata.dataraw["Condition"].max())
-                    tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
                     df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
-                    lasttime = df.stepchg["PassTime[Sec]"].max()
         if not df.stepchg.empty:
+            # PassTime 리셋 보정: 구간 전환 시 음수 diff를 0으로 클리핑 후 누적합
+            df.stepchg = df.stepchg.reset_index(drop=True)
+            time_diffs = df.stepchg["PassTime[Sec]"].diff().clip(lower=0).fillna(0)
+            df.stepchg["PassTime[Sec]"] = time_diffs.cumsum()
             df.stepchg["Cap[mAh]"] = 0.0
             # 충전 용량 산정
-            df.stepchg = df.stepchg.reset_index(drop=True)
             if len(df.stepchg) > 1:
-                time_diffs = df.stepchg["PassTime[Sec]"].diff()
                 increments = (time_diffs / 3600) * df.stepchg["Current[mA]"]
                 df.stepchg["Cap[mAh]"] = increments.cumsum().fillna(0.0)
             # 충전 단위 변환
