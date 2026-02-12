@@ -15313,6 +15313,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
 # UI 실행
 if __name__ == "__main__":
+    # 슬롯 내부 예외를 콘솔에 출력
+    def _exception_hook(exctype, value, traceback):
+        sys.__excepthook__(exctype, value, traceback)
+    sys.excepthook = _exception_hook
+
     # HiDPI 스케일링을 명시적으로 비활성화합니다.
     # os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '0'
     # os.environ['QT_SCALE_FACTOR'] = '1.0'
