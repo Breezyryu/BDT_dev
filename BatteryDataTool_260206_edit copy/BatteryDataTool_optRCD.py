@@ -1262,21 +1262,31 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
     # data 기본 처리
     if os.path.isfile(raw_file_path + "\\%06d" % inicycle):
         tempdata = toyo_Profile_import(raw_file_path, inicycle)
-        stepcyc = inicycle
         lasttime = 0
-        if int(tempdata.dataraw["Condition"].max()) < 2:
-            df.stepchg = tempdata.dataraw
-            lasttime = df.stepchg["PassTime[Sec]"].max()
-            maxcon = 1
-            while maxcon == 1:
-                stepcyc = stepcyc + 1
+        df.stepchg = tempdata.dataraw
+        lasttime = df.stepchg["PassTime[Sec]"].max()
+        if endcycle > inicycle:
+            # 명시적 범위: inicycle+1 ~ endcycle까지 PassTime 누적
+            for stepcyc in range(inicycle + 1, endcycle + 1):
+                if not os.path.isfile(raw_file_path + "\\%06d" % stepcyc):
+                    break
                 tempdata = toyo_Profile_import(raw_file_path, stepcyc)
-                maxcon = int(tempdata.dataraw["Condition"].max())
-                tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
-                df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
-                lasttime = df.stepchg["PassTime[Sec]"].max()
+                if hasattr(tempdata, 'dataraw') and not tempdata.dataraw.empty:
+                    tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
+                    df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
+                    lasttime = df.stepchg["PassTime[Sec]"].max()
         else:
-            df.stepchg = tempdata.dataraw
+            # 단일 사이클: Condition < 2이면 후속 파일까지 확장 (기존 로직)
+            if int(tempdata.dataraw["Condition"].max()) < 2:
+                stepcyc = inicycle
+                maxcon = 1
+                while maxcon == 1:
+                    stepcyc = stepcyc + 1
+                    tempdata = toyo_Profile_import(raw_file_path, stepcyc)
+                    maxcon = int(tempdata.dataraw["Condition"].max())
+                    tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
+                    df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
+                    lasttime = df.stepchg["PassTime[Sec]"].max()
         if not df.stepchg.empty:
             df.stepchg["Cap[mAh]"] = 0.0
             # 충전 용량 산정
@@ -10574,9 +10584,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(Chgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Chgtemp[0]))
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
                                     if self.chk_dqdv.isChecked():
                                         graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
                                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
@@ -10586,11 +10596,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                     0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                     "dQdV", "Voltage(V)", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -10643,9 +10653,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(Chgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Chgtemp[0]))
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
                                     if self.chk_dqdv.isChecked():
                                         graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
                                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
@@ -10655,11 +10665,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                     0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                     "dQdV", "Voltage(V)", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -10697,9 +10707,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(Chgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Chgtemp[0]))
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
                                     if self.chk_dqdv.isChecked():
                                         graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
                                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
@@ -10710,11 +10720,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                     "dQdV", "Voltage(V)", temp_lgnd)
                                     
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
                                     graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -10809,19 +10819,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(Dchgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Dchgtemp[0]))
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
                                                   -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                   "dQdV", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
+                                                  -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
                                                   "DOD", "dVdQ", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -10873,19 +10883,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(Dchgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Dchgtemp[0]))
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
                                                   -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                   "dQdV", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
+                                                  -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
                                                   "DOD", "dVdQ", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -10922,20 +10932,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(Dchgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Dchgtemp[0]))
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
                                                   -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                                   "dQdV", "Voltage(V)", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
                                     # [버그수정] self.dvscale → dvscale (로컬 변수 사용)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  0, 1.3, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
+                                                  -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
                                                   "DOD", "dVdQ", temp_lgnd)
                                     graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  0, 1.3, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
