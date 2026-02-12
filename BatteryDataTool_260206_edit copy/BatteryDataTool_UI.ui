@@ -17,7 +17,7 @@
    </font>
   </property>
   <property name="windowTitle">
-   <string>BatteryDataTool v251103</string>
+   <string>BatteryDataTool v260212</string>
   </property>
   <widget class="QWidget" name="layoutWidget">
    <property name="geometry">
@@ -1840,7 +1840,7 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                         <property name="text">
                          <string>Cycle
 (원하는 스텝들을 띄어쓰기나 -로 표기)
-예) 3 4 5 8-9</string>
+예) 2 3-5 8-9</string>
                         </property>
                        </widget>
                       </item>
@@ -13680,7 +13680,7 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
            </font>
           </property>
           <property name="text">
-           <string>U: 3F A PNE17~21</string>
+           <string>U: 3F A PNE17~25</string>
           </property>
          </widget>
         </item>

@@ -697,6 +697,17 @@ class Ui_sitool(object):
         self.CellProfile.setFont(font)
         self.CellProfile.setObjectName("CellProfile")
         self.horizontalLayout_15.addWidget(self.CellProfile)
+        self.AllProfile = QtWidgets.QRadioButton(parent=self.tab_6)
+        self.AllProfile.setMinimumSize(QtCore.QSize(0, 30))
+        self.AllProfile.setMaximumSize(QtCore.QSize(300, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.AllProfile.setFont(font)
+        self.AllProfile.setObjectName("AllProfile")
+        self.horizontalLayout_15.addWidget(self.AllProfile)
         self.chk_dqdv = QtWidgets.QCheckBox(parent=self.tab_6)
         self.chk_dqdv.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_dqdv.setMaximumSize(QtCore.QSize(120, 30))
@@ -5666,7 +5677,7 @@ class Ui_sitool(object):
 
     def retranslateUi(self, sitool):
         _translate = QtCore.QCoreApplication.translate
-        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v251103"))
+        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v260212"))
         self.tb_room.setItemText(0, _translate("sitool", "R5 15F"))
         self.tb_room.setItemText(1, _translate("sitool", "R5 3F B-1"))
         self.tb_room.setItemText(2, _translate("sitool", "R5 3F B-2"))
@@ -5767,10 +5778,11 @@ class Ui_sitool(object):
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
         self.CycProfile.setText(_translate("sitool", "사이클 통합"))
         self.CellProfile.setText(_translate("sitool", "셀별 통합"))
+        self.AllProfile.setText(_translate("sitool", "전체 통합"))
         self.chk_dqdv.setText(_translate("sitool", "dQdV X/Y축 변환"))
         self.stepnumlb.setText(_translate("sitool", "Cycle\n"
 "(원하는 스텝들을 띄어쓰기나 -로 표기)\n"
-"예) 3 4 5 8-9"))
+"예) 2 3-5 8-9"))
         self.stepnum.setPlainText(_translate("sitool", "2"))
         self.smoothlb_3.setText(_translate("sitool", "전압 Y축 하한"))
         self.volrngyhl.setText(_translate("sitool", "2.5"))
@@ -6074,7 +6086,7 @@ class Ui_sitool(object):
         self.mount_pne_2.setText(_translate("sitool", "X: 15F B PNE3~5"))
         self.mount_pne_3.setText(_translate("sitool", "W: 3F B PNE1~8"))
         self.mount_pne_4.setText(_translate("sitool", "V: 3F B PNE9~16"))
-        self.mount_pne_5.setText(_translate("sitool", "U: 3F A PNE17~21"))
+        self.mount_pne_5.setText(_translate("sitool", "U: 3F A PNE17~25"))
         self.mount_all.setText(_translate("sitool", "All mount"))
         self.unmount_all.setText(_translate("sitool", "All unmount"))
         self.saveok.setText(_translate("sitool", "데이터 저장"))
