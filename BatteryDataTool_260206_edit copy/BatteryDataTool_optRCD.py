@@ -1361,23 +1361,41 @@ def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, i
             if has_caplog:
                 cap_log = cycdata.dataraw
                 # 시계열 OCV/CCV: 파일 경계마다 sparse 값 삽입
+                # 멀티 컨디션(충/방전) 파일 내 전환 지점도 처리
                 df.stepchg["OCV"] = float('nan')
                 df.stepchg["CCV"] = float('nan')
-                for row_start, cycle_no in file_boundaries:
+                for i, (row_start, cycle_no) in enumerate(file_boundaries):
                     matching = cap_log[cap_log["TotlCycle"] == cycle_no]
                     if not matching.empty:
+                        # 첫 번째 컨디션: 파일 시작 위치에 삽입
                         df.stepchg.loc[row_start, "OCV"] = float(matching.iloc[0]["Ocv"])
                         df.stepchg.loc[row_start, "CCV"] = float(matching.iloc[0]["PeakVolt[V]"])
-                # SOC vs OCV/CCV 테이블 (CycfileSOC)
+                        # 추가 컨디션(같은 파일 내 충→방전 전환 등)
+                        if len(matching) > 1:
+                            if i + 1 < len(file_boundaries):
+                                file_end = file_boundaries[i + 1][0]
+                            else:
+                                file_end = len(df.stepchg)
+                            file_data = df.stepchg.iloc[row_start:file_end]
+                            for k in range(1, len(matching)):
+                                cond_val = int(matching.iloc[k]["Condition"])
+                                cond_rows = file_data[file_data["Condition"] == cond_val]
+                                if not cond_rows.empty:
+                                    pos = cond_rows.index[0]
+                                    df.stepchg.loc[pos, "OCV"] = float(matching.iloc[k]["Ocv"])
+                                    df.stepchg.loc[pos, "CCV"] = float(matching.iloc[k]["PeakVolt[V]"])
+                # SOC vs OCV/CCV 테이블 (PNE 방식: ChgCap/DchgCap 분리, abs 적용)
                 relevant = cap_log[(cap_log["TotlCycle"] >= inicycle) & (cap_log["TotlCycle"] <= endcycle)]
                 chg_dchg = relevant[relevant["Condition"].isin([1, 2])].copy()
                 if not chg_dchg.empty:
-                    chg_dchg["signed_cap"] = chg_dchg["Cap[mAh]"].copy()
-                    chg_dchg.loc[chg_dchg["Condition"] == 2, "signed_cap"] *= -1
-                    chg_dchg["AccCap"] = chg_dchg["signed_cap"].cumsum()
-                    chg_dchg["AccCap"] = (chg_dchg["AccCap"] - chg_dchg["AccCap"].iloc[0]) / mincapacity
+                    chg_dchg = chg_dchg.reset_index(drop=True)
+                    chg_cap = chg_dchg["Cap[mAh]"].where(chg_dchg["Condition"] == 1, 0.0)
+                    dchg_cap = chg_dchg["Cap[mAh]"].where(chg_dchg["Condition"] == 2, 0.0)
+                    chg_dchg["AccCap"] = chg_cap.cumsum() - dchg_cap.cumsum()
+                    if len(chg_dchg) > 0:
+                        chg_dchg["AccCap"] = chg_dchg["AccCap"] - chg_dchg["AccCap"].iloc[0]
                     CycfileSOC = pd.DataFrame({
-                        "AccCap": chg_dchg["AccCap"].values,
+                        "AccCap": chg_dchg["AccCap"].abs().values / mincapacity,
                         "OCV": chg_dchg["Ocv"].astype(float).values,
                         "CCV": chg_dchg["PeakVolt[V]"].astype(float).values
                     })
