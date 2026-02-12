@@ -1,5 +1,6 @@
 import os
 import sys
+os.environ["QT_API"] = "PyQt6"
 import re
 import bisect
 import warnings
@@ -17,8 +18,8 @@ from scipy.stats import linregress
 from datetime import datetime
 from tkinter import filedialog, Tk
 from PyQt6 import QtCore, QtGui, QtWidgets
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from datetime import timezone
 import glob
 import xlwings as xw
