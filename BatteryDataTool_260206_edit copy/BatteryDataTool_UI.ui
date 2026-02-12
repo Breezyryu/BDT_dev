@@ -823,13 +823,13 @@
                  <widget class="QCheckBox" name="chk_cyclepath">
                   <property name="minimumSize">
                    <size>
-                    <width>240</width>
+                    <width>120</width>
                     <height>30</height>
                    </size>
                   </property>
                   <property name="maximumSize">
                    <size>
-                    <width>100</width>
+                    <width>240</width>
                     <height>30</height>
                    </size>
                   </property>
@@ -853,13 +853,13 @@
                  <widget class="QCheckBox" name="chk_ectpath">
                   <property name="minimumSize">
                    <size>
-                    <width>240</width>
+                    <width>120</width>
                     <height>30</height>
                    </size>
                   </property>
                   <property name="maximumSize">
                    <size>
-                    <width>100</width>
+                    <width>240</width>
                     <height>30</height>
                    </size>
                   </property>
@@ -2476,7 +2476,7 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                     </property>
                     <property name="maximumSize">
                      <size>
-                      <width>369</width>
+                      <width>396</width>
                       <height>30</height>
                      </size>
                     </property>
@@ -2495,31 +2495,13 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                   </item>
                   <item>
                    <spacer name="horizontalSpacer_3">
-                    <property name="minimumSize">
-                     <size>
-                      <width>201</width>
-                      <height>30</height>
-                     </size>
-                    </property>
-                    <property name="maximumSize">
-                     <size>
-                      <width>201</width>
-                      <height>30</height>
-                     </size>
-                    </property>
-                    <property name="font">
-                     <font>
-                      <family>맑은 고딕</family>
-                      <pointsize>9</pointsize>
-                     </font>
-                    </property>
                     <property name="orientation">
                      <enum>Qt::Horizontal</enum>
                     </property>
                     <property name="sizeHint" stdset="0">
                      <size>
-                      <width>20</width>
-                      <height>10</height>
+                      <width>40</width>
+                      <height>30</height>
                      </size>
                     </property>
                    </spacer>
@@ -2528,14 +2510,14 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                    <widget class="QCheckBox" name="chk_coincell">
                     <property name="minimumSize">
                      <size>
-                      <width>70</width>
-                      <height>18</height>
+                      <width>80</width>
+                      <height>24</height>
                      </size>
                     </property>
                     <property name="maximumSize">
                      <size>
-                      <width>70</width>
-                      <height>18</height>
+                      <width>80</width>
+                      <height>24</height>
                      </size>
                     </property>
                     <property name="font">
@@ -2720,6 +2702,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          <property name="text">
                           <string>방전 최대 C-rate</string>
                          </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
+                         </property>
                         </widget>
                        </item>
                        <item>
@@ -2779,6 +2764,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>변경할 용량 기준(mAh)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -2936,6 +2924,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          <property name="text">
                           <string>기존 전압 (mV)</string>
                          </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
+                         </property>
                         </widget>
                        </item>
                        <item>
@@ -2995,6 +2986,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>변경할 전압(mV)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -3103,33 +3097,16 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                 </item>
                 <item>
                  <spacer name="horizontalSpacer_14">
-                  <property name="minimumSize">
-                   <size>
-                    <width>17</width>
-                    <height>608</height>
-                   </size>
-                  </property>
-                  <property name="maximumSize">
-                   <size>
-                    <width>17</width>
-                    <height>608</height>
-                   </size>
-                  </property>
-                  <property name="font">
-                   <font>
-                    <family>맑은 고딕</family>
-                    <pointsize>9</pointsize>
-                    <weight>50</weight>
-                    <bold>false</bold>
-                   </font>
-                  </property>
                   <property name="orientation">
                    <enum>Qt::Horizontal</enum>
                   </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
                   <property name="sizeHint" stdset="0">
                    <size>
-                    <width>13</width>
-                    <height>13</height>
+                    <width>8</width>
+                    <height>0</height>
                    </size>
                   </property>
                  </spacer>
@@ -3188,6 +3165,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>기존 전류 (mA)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -3248,6 +3228,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>변경할 전류(mA)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -3405,6 +3388,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          <property name="text">
                           <string>기존 전압 (mV)</string>
                          </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
+                         </property>
                         </widget>
                        </item>
                        <item>
@@ -3464,6 +3450,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>변경할 전압(mV)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -3572,33 +3561,16 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                 </item>
                 <item>
                  <spacer name="horizontalSpacer_8">
-                  <property name="minimumSize">
-                   <size>
-                    <width>18</width>
-                    <height>608</height>
-                   </size>
-                  </property>
-                  <property name="maximumSize">
-                   <size>
-                    <width>18</width>
-                    <height>608</height>
-                   </size>
-                  </property>
-                  <property name="font">
-                   <font>
-                    <family>맑은 고딕</family>
-                    <pointsize>9</pointsize>
-                    <weight>50</weight>
-                    <bold>false</bold>
-                   </font>
-                  </property>
                   <property name="orientation">
                    <enum>Qt::Horizontal</enum>
                   </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
                   <property name="sizeHint" stdset="0">
                    <size>
-                    <width>13</width>
-                    <height>13</height>
+                    <width>8</width>
+                    <height>0</height>
                    </size>
                   </property>
                  </spacer>
@@ -3657,6 +3629,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>기존 전류 (mA)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -3717,6 +3692,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>변경할 전류(mA)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -3874,6 +3852,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          <property name="text">
                           <string>기존 전압 (mV)</string>
                          </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
+                         </property>
                         </widget>
                        </item>
                        <item>
@@ -3933,6 +3914,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                          </property>
                          <property name="text">
                           <string>변경할 전압(mV)</string>
+                         </property>
+                         <property name="alignment">
+                          <set>Qt::AlignCenter</set>
                          </property>
                         </widget>
                        </item>
@@ -4041,33 +4025,16 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                 </item>
                 <item>
                  <spacer name="horizontalSpacer_9">
-                  <property name="minimumSize">
-                   <size>
-                    <width>17</width>
-                    <height>608</height>
-                   </size>
-                  </property>
-                  <property name="maximumSize">
-                   <size>
-                    <width>17</width>
-                    <height>608</height>
-                   </size>
-                  </property>
-                  <property name="font">
-                   <font>
-                    <family>맑은 고딕</family>
-                    <pointsize>9</pointsize>
-                    <weight>50</weight>
-                    <bold>false</bold>
-                   </font>
-                  </property>
                   <property name="orientation">
                    <enum>Qt::Horizontal</enum>
                   </property>
+                  <property name="sizeType">
+                   <enum>QSizePolicy::Fixed</enum>
+                  </property>
                   <property name="sizeHint" stdset="0">
                    <size>
-                    <width>13</width>
-                    <height>13</height>
+                    <width>8</width>
+                    <height>0</height>
                    </size>
                   </property>
                  </spacer>
@@ -4124,6 +4091,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                        </property>
                        <property name="text">
                         <string>변경할 스텝</string>
+                       </property>
+                       <property name="alignment">
+                        <set>Qt::AlignCenter</set>
                        </property>
                       </widget>
                      </item>
@@ -4184,6 +4154,9 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                        </property>
                        <property name="text">
                         <string>추가로 더할 스텝</string>
+                       </property>
+                       <property name="alignment">
+                        <set>Qt::AlignCenter</set>
                        </property>
                       </widget>
                      </item>
@@ -4287,6 +4260,19 @@ PNE DCIR2 (SOC 70/50/30/15 방전, 1s Pulse/RSS) - 그래프 방전 70%</string>
                    </item>
                   </layout>
                  </widget>
+                </item>
+                <item>
+                 <spacer name="spacerItem_ptn_right">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>0</width>
+                    <height>0</height>
+                   </size>
+                  </property>
+                 </spacer>
                 </item>
                </layout>
               </item>

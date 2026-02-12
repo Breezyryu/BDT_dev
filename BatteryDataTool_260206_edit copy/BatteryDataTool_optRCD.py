@@ -3482,7 +3482,7 @@ class Ui_sitool(object):
         self.horizontalLayout_129.setObjectName("horizontalLayout_129")
         self.label_10 = QtWidgets.QLabel(parent=self.tab_2)
         self.label_10.setMinimumSize(QtCore.QSize(369, 30))
-        self.label_10.setMaximumSize(QtCore.QSize(16777215, 30))
+        self.label_10.setMaximumSize(QtCore.QSize(396, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(9)
