@@ -9298,16 +9298,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.close()
 
     def indiv_cyc_confirm_button(self):
-   
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        global writer
-        writecolno, colorno = 0, 0
-        
-        self.indiv_cycle.setDisabled(True)
-        pne_path = self.pne_path_setting()
-        all_data_folder = pne_path[0]
-        all_data_name = pne_path[1]
-        if pne_path[2]:
+        import traceback
+        try:
+            print("[DEBUG] indiv_cyc_confirm_button 시작")
+            firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+            global writer
+            writecolno, colorno = 0, 0
+            
+            self.indiv_cycle.setDisabled(True)
+            pne_path = self.pne_path_setting()
+            all_data_folder = pne_path[0]
+            all_data_name = pne_path[1]
+            print(f"[DEBUG] 폴더 수: {len(all_data_folder)}, 폴더: {all_data_folder}")
+            if pne_path[2]:
             mincapacity = name_capacity(pne_path[2])
         
         # 파일 저장 설정
@@ -9327,7 +9330,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
             max_workers=4
         )
-        
+        print(f"[DEBUG] 로드된 데이터 키: {list(loaded_data.keys())}")
 
         tab_no = 0
         j = 0
@@ -9450,6 +9453,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
+        print(f"[DEBUG] indiv_cyc 완료, tab_no={tab_no}")
+        except Exception as e:
+            print(f"[ERROR] indiv_cyc_confirm_button 예외: {e}")
+            traceback.print_exc()
 
     def overall_cyc_confirm_button(self):
         # 데이터 로딩 병렬 처리 적용
