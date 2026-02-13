@@ -13,10 +13,6 @@ set "ICON_PATH=%~dp0BatteryDataTool.ico"
     --noconsole ^
     --noconfirm ^
     --hidden-import fsspec ^
-    --exclude-module sklearn ^
-    --exclude-module scikit-learn ^
-    --exclude-module pytest ^
-    --exclude-module unittest ^
     --icon="%ICON_PATH%" ^
     "%SCRIPT_PATH%" ^
     --distpath "."

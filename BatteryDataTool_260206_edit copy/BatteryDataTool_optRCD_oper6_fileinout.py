@@ -29,60 +29,9 @@ import xlwings as xw
 
 # 경고 무시
 warnings.simplefilter("ignore")
-
-# ── Pro-Nature 테마 (Presentation + Nature 혼합) ──
-THEME = {
-    'PALETTE': ['#3C5488', '#E64B35', '#00A087', '#F39B7F', '#4DBBD5',
-                '#8491B4', '#B09C85', '#91D1C2', '#DC0000', '#7E6148'],
-    'FIG_FACECOLOR': '#FFFFFF',
-    'AX_FACECOLOR': '#FAFBFD',
-    'TITLE_SIZE': 15,
-    'LABEL_SIZE': 12,
-    'TICK_SIZE': 10,
-    'SCATTER_SIZE': 24,
-    'SCATTER_EMPTY_SIZE': 30,
-    'SCATTER_ALPHA': 0.8,
-    'SCATTER_SET_SIZE': 4,
-    'EDGE_WIDTH': 0.5,
-    'EDGE_COLOR': '#222222',
-    'LINE_WIDTH': 1.8,
-    'LINE_ALPHA': 0.85,
-    'MARKER_SIZE': 5,
-    'GRID_ALPHA': 0.18,
-    'GRID_STYLE': '--',
-    'GRID_WIDTH': 0.5,
-    'GRID_COLOR': '#666666',
-    'SPINE_COLOR': '#666666',
-    'SPINE_WIDTH': 0.6,
-    'CMAP': 'coolwarm',
-    'SUPTITLE_SIZE': 15,
-    'SUPTITLE_WEIGHT': 'bold',
-    'LEGEND_FONTSIZE': 'small',
-    'LEGEND_FRAMEALPHA': 0.85,
-    'LEGEND_EDGECOLOR': '#CCCCCC',
-    'DPI': 150,
-}
-
-# 한글 설정 + Pro-Nature rcParams 전역 적용
+# 한글 설정
 plt.rcParams["font.family"] = "Malgun gothic"
 plt.rcParams["axes.unicode_minus"] = False
-plt.rcParams["figure.facecolor"] = THEME['FIG_FACECOLOR']
-plt.rcParams["axes.facecolor"] = THEME['AX_FACECOLOR']
-plt.rcParams["axes.spines.top"] = False
-plt.rcParams["axes.spines.right"] = False
-plt.rcParams["axes.edgecolor"] = THEME['SPINE_COLOR']
-plt.rcParams["axes.linewidth"] = THEME['SPINE_WIDTH']
-plt.rcParams["axes.grid"] = True
-plt.rcParams["grid.alpha"] = THEME['GRID_ALPHA']
-plt.rcParams["grid.linestyle"] = THEME['GRID_STYLE']
-plt.rcParams["grid.linewidth"] = THEME['GRID_WIDTH']
-plt.rcParams["grid.color"] = THEME['GRID_COLOR']
-plt.rcParams["xtick.direction"] = "in"
-plt.rcParams["ytick.direction"] = "in"
-plt.rcParams["xtick.labelsize"] = THEME['TICK_SIZE']
-plt.rcParams["ytick.labelsize"] = THEME['TICK_SIZE']
-plt.rcParams["lines.linewidth"] = THEME['LINE_WIDTH']
-plt.rcParams["axes.prop_cycle"] = plt.cycler(color=THEME['PALETTE'])
 
 # timestamp 변환 함수 정의
 def to_timestamp(date_str):
@@ -251,11 +200,10 @@ def same_add(df, column_name):
 LEGEND_THRESHOLD = 15
 
 def graph_base_parameter(graph_ax, xlabel, ylabel): 
-    graph_ax.set_xlabel(xlabel, fontsize=THEME['LABEL_SIZE'], fontweight='bold')
-    graph_ax.set_ylabel(ylabel, fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
-    graph_ax.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
-    graph_ax.grid(True, which='both', linestyle=THEME['GRID_STYLE'],
-                  linewidth=THEME['GRID_WIDTH'], alpha=THEME['GRID_ALPHA'], color=THEME['GRID_COLOR'])
+    graph_ax.set_xlabel(xlabel, fontsize= 12, fontweight='bold')
+    graph_ax.set_ylabel(ylabel, fontsize= 10, fontweight='bold')
+    graph_ax.tick_params(direction='in')
+    graph_ax.grid(True, which='both', linestyle='--', linewidth=1.0)
 
 # Cycle 그래프 기본, x축, y축 min, max 및 범위 설정
 def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xscale, overall_xlimit):
@@ -278,55 +226,47 @@ def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xsc
 def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
     # 지정색이 없으면 기본색 사용
     if cyc_color != 0:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'], color=cyc_color,
-                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.scatter(x, y, label=tlabel, s=5, color=cyc_color)
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
-                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.scatter(x, y, label=tlabel, s=5)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 # Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
 def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
     # 지정색이 없으면 기본색 사용
     if cyc_color != 0:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
-                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.scatter(x, y, label=tlabel, s=8, edgecolors=cyc_color, facecolors ='none')
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
-                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.scatter(x, y, label=tlabel, s=8, facecolors = 'none')
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
                        dcir, ax1, ax2, ax3, ax4, ax5, ax6):
     graph_cycle(df.NewData.index, df.NewData.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
-                "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, graphcolor[colorno % 9])
     graph_cycle(df.NewData.index, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
-                "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, graphcolor[colorno % 9])
     graph_cycle(df.NewData.index, df.NewData.Temp, ax3, 0, 50, 5,
-                "Cycle", "Temperature (℃)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                "Cycle", "Temperature (℃)", temp_lgnd, xscale, graphcolor[colorno % 9])
     graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
-                "Cycle", "Rest End Voltage (V)", "", xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                "Cycle", "Rest End Voltage (V)", "", xscale, graphcolor[colorno % 9])
     graph_cycle_empty(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
-                      "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                      "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, graphcolor[colorno % 9])
     graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
-                      "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                      "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, graphcolor[colorno % 9])
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
         graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "", xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "", xscale, graphcolor[colorno % 9])
         graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+                    "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % 9])
     else:
         graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
-    colorno = colorno % len(THEME['PALETTE']) + 1
+                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % 9])
+    colorno = colorno % 9 + 1
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
-    ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+    ax.plot(x, y, label=tlabel)
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
     graph_base_parameter(ax, xlabel, ylabel)
@@ -334,10 +274,9 @@ def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
 # 연속 그래프 그리기
 def graph_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
     graph_base_parameter(ax, xlabel, ylabel)
@@ -345,10 +284,9 @@ def graph_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlab
 # 연속 그래프 그리기
 def graph_soc_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     ax.set_xticks(np.arange(0, 110, 10))
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
@@ -357,25 +295,23 @@ def graph_soc_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, 
 # OCV 기반 DCIR 그래프 그리기
 def graph_dcir(x, y, ax, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     graph_base_parameter(ax, xlabel, ylabel)
 
 # SOC별 DCIR 그래프 그리기
 def graph_soc_dcir(x, y, ax, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     ax.set_xticks(np.arange(0, 110, 10))
     graph_base_parameter(ax, xlabel, ylabel)
 
 # 충방전 Profile 그래프 그리기
 def graph_profile(x, y, ax, xlowlimit, xhighlimit, xlimitgap, ylowlimit, yhighlimit, ylimitgap, xlabel, ylabel, tlabel):
-    ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+    ax.plot(x, y, label=tlabel)
     ax.set_xticks(np.arange(xlowlimit, xhighlimit, xlimitgap))
     ax.set_xlim(xlowlimit, xhighlimit - xlimitgap)
     ax.set_yticks(np.arange(ylowlimit, yhighlimit, ylimitgap))
@@ -384,14 +320,13 @@ def graph_profile(x, y, ax, xlowlimit, xhighlimit, xlimitgap, ylowlimit, yhighli
 
 # set profile 그래프 그리기
 def graph_soc_set(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, xlimit):
-    _P = THEME['PALETTE']
-    colors = {3: _P[1], 4: _P[0], 5: _P[2], 6: _P[3], 7: _P[4], 8: _P[1], 9: _P[1]}
+    colors = {3: 'red', 4: 'blue', 5: 'green', 6: 'magenta', 7: 'cyan', 8: 'red', 9: 'red'}
     if xlimit == {0, 1, 2}:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1)
     elif xlimit in colors:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], color=colors[xlimit], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1, color = colors[xlimit])
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1)
     if limitgap != 0:
         ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
         ax.set_ylim(lowlimit, highlimit - limitgap)
@@ -399,8 +334,7 @@ def graph_soc_set(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabe
 
 # ECT SOC 에러 확인 그래프
 def graph_soc_err(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, xlimit):
-    _P = THEME['PALETTE']
-    colors = {3: _P[1], 4: _P[0], 5: _P[2], 6: _P[3], 7: _P[4], 8: _P[1], 9: _P[1]}
+    colors = {3: 'red', 4: 'blue', 5: 'green', 6: 'magenta', 7: 'cyan', 8: 'red', 9: 'red'}
     df = pd.DataFrame({'x': x, 'y': abs(y)})
     grouped = df.groupby(df['x']//5).mean()
     index_x = grouped.index * 5
@@ -413,12 +347,11 @@ def graph_soc_err(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabe
 
 # set profile 그래프 그리기
 def graph_set_profile(x, y, ax, y_llimit, y_hlimit, y_gap, xlabel, ylabel, tlabel, graphcolor, x_llimit, x_hlimit, x_gap):
-    _P = THEME['PALETTE']
-    colors = {1: _P[1], 2: _P[0], 3: _P[2], 4: _P[3], 5: _P[4]}
+    colors = {1: 'red', 2: 'blue', 3: 'green', 4: 'magenta', 5: 'cyan'}
     if graphcolor in colors:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], color=colors[graphcolor], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1, color=colors[graphcolor])
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1)
     if x_gap != 0:
         ax.set_xticks(np.arange(x_llimit, x_hlimit, x_gap))
         ax.set_xlim(x_llimit, x_hlimit - x_gap)
@@ -449,25 +382,22 @@ def graph_simulation(ax, x, y, pltcolor, pltlabel, x_limit, y_min, y_limit, xlab
 
 def graph_eu_set(ax, y_min, y_max):
     ax.set_ylim(y_min, y_max)
-    ax.set_ylabel('capacity ratio', fontsize=THEME['TITLE_SIZE'] + 3, fontweight='bold')
-    ax.set_xlabel('cycle', fontsize=THEME['TITLE_SIZE'] + 3, fontweight='bold')
+    ax.set_ylabel('capacity ratio', fontsize= 20, fontweight='bold')
+    ax.set_xlabel('cycle', fontsize= 20, fontweight='bold')
     ax.tick_params(direction='in')
-    ax.tick_params(axis='x', labelsize=THEME['TICK_SIZE'] + 4)
-    ax.tick_params(axis='y', labelsize=THEME['TICK_SIZE'] + 4)
-    ax.grid(True, which='both', linestyle=THEME['GRID_STYLE'],
-            linewidth=THEME['GRID_WIDTH'], alpha=THEME['GRID_ALPHA'])
-    ax.legend(prop={"size": THEME['TICK_SIZE'] + 4})
+    ax.tick_params(axis='x', labelsize=16)
+    ax.tick_params(axis='y', labelsize=16)
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax.legend(prop={"size": 16})
 
 def graph_default(ax, x, y, x_llimit, x_hlimit, x_gap, y_llimit, y_hlimit, y_gap,
-                  xlabel, ylabel, lgnd, size, graphcolor, facecolor, graphmarker):
-    _P = THEME['PALETTE']
-    colors = {0: _P[1], 1: _P[0], 2: _P[2], 3: _P[3], 4: _P[4]}
+                  xlabel, ylabel, lgnd, size, graphcolor,facecolor, graphmarker):
+    colors = {0: 'red', 1: 'blue', 2: 'green', 3: 'magenta', 4: 'cyan'}
     if graphcolor in colors:
         ax.scatter(x, y, label=lgnd, s=size, color=colors[graphcolor],
-                   edgecolors=colors[graphcolor], facecolors=colors[graphcolor],
-                   marker=graphmarker, alpha=THEME['SCATTER_ALPHA'])
+                   edgecolors=colors[graphcolor], facecolors=colors[graphcolor], marker = graphmarker)
     else:
-        ax.scatter(x, y, label=lgnd, s=size, alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=lgnd, s=size)
     if x_gap != 0:
         ax.set_xticks(np.arange(x_llimit, x_hlimit, x_gap))
         ax.set_xlim(x_llimit, x_hlimit - x_gap)
@@ -486,8 +416,7 @@ def output_para_fig(figsaveokchk, filename):
         if os.path.isfile('d:/'+ filename +'.png'):
             os.remove('d:/'+ filename +'.png')
         fig = plt.gcf()
-        fig.savefig('d:/'+ filename +'.png', dpi=THEME['DPI'],
-                    facecolor=THEME['FIG_FACECOLOR'], bbox_inches='tight')
+        fig.savefig('d:/'+ filename +'.png')
 
 # 그래프를 D드라이브에 그림 파일로 저장하는 옵션
 def output_fig(figsaveokchk, filename):
@@ -495,8 +424,7 @@ def output_fig(figsaveokchk, filename):
     if figsaveokchk.isChecked():
         if os.path.isfile('d:/'+ filename +'.png'):
             os.remove('d:/'+ filename +'.png')
-        plt.savefig('d:/'+ filename +'.png', dpi=THEME['DPI'],
-                    facecolor=THEME['FIG_FACECOLOR'], bbox_inches='tight')
+        plt.savefig('d:/'+ filename +'.png')
 
 # 랜덤한 값 생성 함수
 def generate_params(ca_mass_min, ca_mass_max, ca_slip_min, ca_slip_max, an_mass_min, an_mass_max, an_slip_min, an_slip_max):
@@ -9049,7 +8977,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 cmap_name = 'tab20' if n_items <= 20 else 'hsv'
                 legend_title = 'Channel'
             
-            cmap = plt.colormaps[cmap_name]
+            cmap = cm.get_cmap(cmap_name)
             norm_val = max(n_items - 1, 1)
             # 모든 축의 모든 플롯 라인에 그라데이션 색상 적용
             for ax in axes_list:
@@ -9074,21 +9002,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             sm = cm.ScalarMappable(cmap=cmap, norm=norm)
             sm.set_array([])
             cb = fig.colorbar(sm, cax=cbar_ax)
-            cb.set_label(legend_title + f' ({n_items})', fontsize=THEME['TICK_SIZE'])
+            cb.set_label(legend_title + f' ({n_items})', fontsize=9)
             self._has_colorbar = True
             # 색상 변경을 캔버스에 즉시 반영
             fig.canvas.draw()
         else:
             # 기존 범례
-            _leg_kw = dict(fontsize=THEME['LEGEND_SIZE'],
-                           framealpha=THEME['LEGEND_FRAMEALPHA'],
-                           edgecolor=THEME['LEGEND_EDGECOLOR'],
-                           fancybox=True)
             if len(data_name) != 0:
                 for ax, pos in zip(axes_list, positions):
-                    ax.legend(loc=pos, **_leg_kw)
+                    ax.legend(loc=pos)
             else:
-                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), **_leg_kw)
+                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
     
     def _load_step_batch_task(self, task_info):
         """
@@ -9397,7 +9321,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.AppCycState = True
         self.AppCycConfirm.setDisabled(True)
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
+                      '#17becf', ]
         filecount,colorno , columncount = 0, 0, 0
         dfoutput = pd.DataFrame()
         col_name_output = []
@@ -9509,7 +9434,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.indiv_cycle.setEnabled(True)
             
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
@@ -9613,7 +9538,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
                             writecolno = writecolno + 1
                     
-                    plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                    plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                     ax1.legend(loc="lower left")
                     ax2.legend(loc="lower right")
                     ax3.legend(loc="upper right")
@@ -9665,7 +9590,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.overall_cycle.setEnabled(True)
         
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
@@ -9769,20 +9694,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
                             writecolno = writecolno + 1
-                colorno = colorno % len(THEME['PALETTE']) + 1
+                colorno = colorno % 9 + 1
         
         # 범례 설정
         if len(all_data_name) != 0:
-            _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
-                        edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
-            ax1.legend(loc="lower left", bbox_to_anchor=(0, 0), borderaxespad=0.5, **_lkw)
-            ax2.legend(loc="lower right", bbox_to_anchor=(1, 0), borderaxespad=0.5, **_lkw)
-            ax3.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
-            ax4.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
-            ax5.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
-            ax6.legend(loc="lower right", bbox_to_anchor=(1, 0), borderaxespad=0.5, **_lkw)
+            ax1.legend(loc="lower left", fontsize='small', bbox_to_anchor=(0, 0), borderaxespad=0.5)
+            ax2.legend(loc="lower right", fontsize='small', bbox_to_anchor=(1, 0), borderaxespad=0.5)
+            ax3.legend(loc="upper right", fontsize='small', bbox_to_anchor=(1, 1), borderaxespad=0.5)
+            ax4.legend(loc="upper right", fontsize='small', bbox_to_anchor=(1, 1), borderaxespad=0.5)
+            ax5.legend(loc="upper right", fontsize='small', bbox_to_anchor=(1, 1), borderaxespad=0.5)
+            ax6.legend(loc="lower right", fontsize='small', bbox_to_anchor=(1, 0), borderaxespad=0.5)
         else:
-            ax6.legend(loc="lower right", **_lkw)
+            ax6.legend(loc="lower right", fontsize='small')
         
         # 파일 저장
         if overall_filename:
@@ -9844,7 +9767,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.link_cycle.setEnabled(True)
         
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
@@ -9951,7 +9874,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 범례 설정
         if cycnamelist:
             if len(all_data_name) != 0:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                 ax1.legend(loc="lower left")
                 ax2.legend(loc="lower right")
                 ax3.legend(loc="upper right")
@@ -9959,7 +9882,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax5.legend(loc="upper right")
                 ax6.legend(loc="lower right")
             else:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                 plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
@@ -9999,7 +9922,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.link_cycle.setEnabled(True)
         
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         writecolno, colorno, j, writecolnomax = 0, 0, 0, 0
         tab_no = 0
         total_files = len(alldatafilepath)
@@ -10124,7 +10047,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # 범례 설정
             if cycnamelist:
                 if len(all_data_name) != 0:
-                    plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                    plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                     ax1.legend(loc="lower left")
                     ax2.legend(loc="lower right")
                     ax3.legend(loc="upper right")
@@ -10132,7 +10055,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
                 else:
-                    plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                    plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                     plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
             
             # 탭 추가 (유효 데이터가 있는 경우에만)
@@ -10173,7 +10096,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.link_cycle.setEnabled(True)
         
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         
         # 모든 파일을 하나의 통합 그래프에 표시
         fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
@@ -10301,7 +10224,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # 범례 설정 (마지막 파일 처리 후)
             if cycnamelist:
                 if len(all_data_name) != 0:
-                    plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                    plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                     ax1.legend(loc="lower left")
                     ax2.legend(loc="lower right")
                     ax3.legend(loc="upper right")
@@ -10309,7 +10232,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
                 else:
-                    plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                    plt.suptitle(cycnamelist[-2], fontsize=15, fontweight='bold')
                     plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
@@ -10400,7 +10323,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                             writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
                             if step_namelist:
                                 title = step_namelist[-2] + "=" + step_namelist[-1]
-                                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                                plt.suptitle(title, fontsize=15, fontweight='bold')
                                 axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
                                 positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
                                 self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10470,7 +10393,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         #title/legend 모든 채널 플롯 완료 후 1회 실행
                         if step_namelist:
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                            plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
                             positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10480,7 +10403,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # AllProfile: 루프 종료 후 한번에 finalize
         if all_profile and last_step_namelist:
             title = last_step_namelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            plt.suptitle(title, fontsize=15, fontweight='bold')
             axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
             positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10582,7 +10505,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                             header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
                         if Ratenamelist:
                             title = Ratenamelist[-2] + "=" + Ratenamelist[-1]
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                            plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                             positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10682,7 +10605,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                     if Ratenamelist:
                         title = Ratenamelist[-2] + "=" + "%04d" % CycNo
-                        plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                        plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                         positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10692,7 +10615,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # AllProfile: 루프 종료 후 한번에 finalize
         if all_profile and last_Ratenamelist:
             title = last_Ratenamelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            plt.suptitle(title, fontsize=15, fontweight='bold')
             axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
             positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10803,7 +10726,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         if Chgnamelist:
                             title = Chgnamelist[-2] + "=" + Chgnamelist[-1]
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                            plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10917,7 +10840,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         writecolno += 8
                     if Chgnamelist:
                         title = Chgnamelist[-2] + "=" + "%04d" % CycNo
-                        plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                        plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                         positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -10927,7 +10850,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # AllProfile: 루프 종료 후 한번에 finalize
         if all_profile and last_Chgnamelist:
             title = last_Chgnamelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            plt.suptitle(title, fontsize=15, fontweight='bold')
             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -11033,7 +10956,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                             header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
                         if Dchgnamelist:
                             title = Dchgnamelist[-2] + "=" + Dchgnamelist[-1]
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                            plt.suptitle(title, fontsize=15, fontweight='bold')
                             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -11147,7 +11070,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                             header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
                     if Dchgnamelist:
                         title = Dchgnamelist[-2] + "=" + "%04d" % CycNo
-                        plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                        plt.suptitle(title, fontsize=15, fontweight='bold')
                         axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                         positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -11157,7 +11080,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # AllProfile: 루프 종료 후 한번에 finalize
         if all_profile and last_Dchgnamelist:
             title = last_Dchgnamelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            plt.suptitle(title, fontsize=15, fontweight='bold')
             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -11426,7 +11349,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             last_namelist = step_namelist
                         else:
                             title = step_namelist[-2] + "=" + step_namelist[-1] if self.CycProfile.isChecked() else step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                            plt.suptitle(title, fontsize=15, fontweight='bold')
                             
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                             positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
@@ -11439,7 +11362,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # AllProfile: 루프 종료 후 한번에 finalize
             if all_profile and last_namelist:
                 title = last_namelist[-2] + " All"
-                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                plt.suptitle(title, fontsize=15, fontweight='bold')
                 axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                 positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
                 self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -12771,7 +12694,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             fig, ((ax1), (ax2)) = plt.subplots(nrows=1, ncols=2, figsize=(8, 3))
             filecount = 0
             mincapa = int(self.SetMincapacity.text())
-            graphcolor = THEME['PALETTE']
+            graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
@@ -13213,7 +13136,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             canvas = FigureCanvas(fig)
             toolbar = NavigationToolbar(canvas, None)
             filecount = 0
-            graphcolor = THEME['PALETTE']
+            graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
@@ -13883,7 +13806,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if save_file_name:
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.pathappcycestimation.setEnabled(True)
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         for i, cyclefolder in enumerate(all_data_folder):
             # tab 그래프 추가
             fig, ax1 = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
@@ -13965,7 +13888,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                      label='가속 = %5.3f' % tuple(popt2[0] / p2))
                             ax1.plot(df2.x2, cyccapparameter02((df2.x2, df2.t2), *popt2) * cyctemp[4], '--', color=graphcolor[colorno],
                                      label='오차 = %5.3f' % r_squared2)
-                            colorno = colorno % len(THEME['PALETTE']) + 1
+                            colorno = colorno % 9 + 1
                             # Data output option
                             output_df_all = cyctemp[7][["Dchg", "Temp", "Curr", "max_vol", "min_vol"]]
                             output_df_05c = cyctemp[1][["Dchg", "Temp", "Curr", "max_vol", "min_vol"]]
@@ -14035,7 +13958,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.folderappcycestimation.setDisabled(True)
         pne_path = filedialog.askopenfilenames(initialdir="D://", title="Data File Name", defaultextension=".txt")
         self.folderappcycestimation.setEnabled(True)
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         for i, cyclefolder in enumerate(pne_path):
             # tab 그래프 추가
             if os.path.exists(cyclefolder):
@@ -14111,7 +14034,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                      label='0.2C 가속 = %5.3f' % tuple(popt2[0] / p2))
                             ax1.plot(df2.x2, cyccapparameter02((df2.x2, df2.t2), *popt2) * cyctemp[4], '--', color=graphcolor[colorno],
                                      label='0.2C 오차 = %5.3f' % r_squared2)
-                            colorno = colorno % len(THEME['PALETTE']) + 1
+                            colorno = colorno % 9 + 1
                             ax1.tick_params(axis='both', which='major', labelsize=12) 
                             ax1.legend(loc="center left", bbox_to_anchor=(1, 0.5))
                             ax1.set_ylim(float(self.simul_y_min.text()), float(self.simul_y_max.text()))
