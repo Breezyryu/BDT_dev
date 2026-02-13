@@ -1,6 +1,5 @@
 import os
 import sys
-os.environ["QT_API"] = "PyQt6"
 import re
 import bisect
 import warnings
@@ -57,7 +56,7 @@ THEME = {
     'CMAP': 'coolwarm',
     'SUPTITLE_SIZE': 15,
     'SUPTITLE_WEIGHT': 'bold',
-    'LEGEND_FONTSIZE': 'small',
+    'LEGEND_SIZE': 'small',
     'LEGEND_FRAMEALPHA': 0.85,
     'LEGEND_EDGECOLOR': '#CCCCCC',
     'DPI': 150,
@@ -274,30 +273,25 @@ def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xsc
         ax.set_ylim(lowlimit, highlimit)
     graph_base_parameter(ax, xlabel, ylabel)
 
-# Cycle 그래프 그리기 - 지정색 기준 사용
+# Cycle 그래프 그리기 - 지정색 기준 (line + marker)
 def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
-    # 지정색이 없으면 기본색 사용
+    _kw = dict(label=tlabel, marker='o', markersize=THEME['SCATTER_SET_SIZE'],
+               linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'], zorder=3)
     if cyc_color != 0:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'], color=cyc_color,
-                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.plot(x, y, color=cyc_color, **_kw)
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
-                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.plot(x, y, **_kw)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
-# Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
+# Cycle 그래프 그리기 - 지정색 기준 / marker 채우기 없음
 def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
-    # 지정색이 없으면 기본색 사용
+    _kw = dict(label=tlabel, marker='o', markersize=THEME['SCATTER_SET_SIZE'],
+               linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'],
+               markerfacecolor='none', zorder=3)
     if cyc_color != 0:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
-                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.plot(x, y, color=cyc_color, markeredgecolor=cyc_color, **_kw)
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
-                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.plot(x, y, **_kw)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
@@ -661,7 +655,6 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         Dchg = Dchgdata["Cap[mAh]"]
         Temp= Dchgdata["PeakTemp[Deg]"]
         DchgEng = Dchgdata["Pow[mWh]"]
-        Chg2 = Chg.shift(periods=-1)
         AvgV = Dchgdata["AveVolt[V]"]
         OriCycle = Dchgdata.loc[:,"OriCycle"]
         # dcir 기본 처리
@@ -696,9 +689,29 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                         n = n + dcirstep - 1
         dcir["Cyc"] = cyccal
         dcir = dcir.set_index(dcir["Cyc"])
-        # 충방전 효율 계산
-        Eff = Dchg/Chg
-        Eff2 = Chg2/Dchg
+        # ── 충방전 효율 계산 (병합 후 TotlCycle 인덱스 보정) ──
+        # Toyo 병합 시 Chg 인덱스(8,13,18…)와 Dchg 인덱스(9,14,19…)가
+        # 1칸씩 어긋나므로, 순서(위치) 기반으로 재정렬하여 매칭
+        if len(Dchg) > 0 and len(Chg) > 0:
+            # 초기 부분 방전(매칭 충전 없음) 제거
+            if Dchg.index[0] < Chg.index[0]:
+                Dchg = Dchg.iloc[1:]
+                Temp = Temp.iloc[1:]
+                DchgEng = DchgEng.iloc[1:]
+                AvgV = AvgV.iloc[1:]
+                OriCycle = OriCycle.iloc[1:]
+            # Chg/Ocv를 Dchg 인덱스에 위치 기반 재정렬
+            _nmin = min(len(Chg), len(Dchg))
+            Chg = pd.Series(Chg.values[:_nmin], index=Dchg.index[:_nmin])
+            Ocv = pd.Series(Ocv.values[:_nmin], index=Dchg.index[:_nmin])
+            Dchg = Dchg.iloc[:_nmin]
+            Temp = Temp.iloc[:_nmin]
+            DchgEng = DchgEng.iloc[:_nmin]
+            AvgV = AvgV.iloc[:_nmin]
+            OriCycle = OriCycle.iloc[:_nmin]
+        Chg2 = Chg.shift(periods=-1)
+        Eff = Dchg / Chg
+        Eff2 = Chg2 / Dchg
         # 용량 ratio
         Dchg = Dchg/mincapacity
         Chg = Chg/mincapacity
@@ -9475,7 +9488,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             dfoutput.to_excel(writer, sheet_name="Approval_cycle", header = col_name_output)
             writer.close()
         if filename != "":
-            plt.suptitle(filename, fontsize= 15, fontweight='bold')
+            plt.suptitle(filename, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
             plt.legend(loc="upper right")
             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
             self.progressBar.setValue(100)
@@ -11251,7 +11264,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                                 "Current(A)",
                                                                 "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                             positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
@@ -11560,7 +11573,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                 title = step_namelist[-2] + "=" + step_namelist[-1]
                                             else:
                                                 title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                                             step_ax1.legend(loc="lower right")
                                             step_ax2.legend(loc="upper right")
                                             step_ax3.legend(loc="lower right")
@@ -13976,9 +13989,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 output_df_02c.to_excel(writer, sheet_name="rate02c_cycle", startcol=writecolno)
                                 writecolno = writecolno + 6
                             if len(all_data_name) != 0:
-                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             else:
-                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             ax1.tick_params(axis='both', which='major', labelsize=12) 
                             ax1.legend(loc="center left", bbox_to_anchor=(1, 0.5))
                             ax1.set_ylim(float(self.simul_y_min.text()), float(self.simul_y_max.text()))
@@ -14119,7 +14132,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ax1.set_xlabel('cycle or day', fontsize = 14)
                             ax1.grid(which="major", axis="both", alpha=.5)
                             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             tab_layout.addWidget(toolbar)
                             tab_layout.addWidget(canvas)
                             self.cycle_simul_tab.addTab(tab, f"예측{num}")
