@@ -288,15 +288,15 @@ def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xsca
 
 # Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
 def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
-    # 지정색이 없으면 기본색 사용
+    # empty scatter는 테두리로만 보이므로 linewidths를 별도 지정
     if cyc_color != 0:
         ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+                   linewidths=0.6, zorder=3)
     else:
         ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+                   linewidths=0.6, zorder=3)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
