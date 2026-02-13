@@ -38,8 +38,8 @@ THEME = {
     'TITLE_SIZE': 15,
     'LABEL_SIZE': 12,
     'TICK_SIZE': 10,
-    'SCATTER_SIZE': 24,
-    'SCATTER_EMPTY_SIZE': 30,
+    'SCATTER_SIZE': 10,
+    'SCATTER_EMPTY_SIZE': 14,
     'SCATTER_ALPHA': 0.8,
     'SCATTER_SET_SIZE': 4,
     'EDGE_WIDTH': 0.5,
@@ -273,25 +273,30 @@ def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xsc
         ax.set_ylim(lowlimit, highlimit)
     graph_base_parameter(ax, xlabel, ylabel)
 
-# Cycle 그래프 그리기 - 지정색 기준 (line + marker)
+# Cycle 그래프 그리기 - 지정색 기준 사용
 def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
-    _kw = dict(label=tlabel, marker='o', markersize=THEME['SCATTER_SET_SIZE'],
-               linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'], zorder=3)
+    # 지정색이 없으면 기본색 사용
     if cyc_color != 0:
-        ax.plot(x, y, color=cyc_color, **_kw)
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'], color=cyc_color,
+                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
+                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
     else:
-        ax.plot(x, y, **_kw)
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
+                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
+                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
-# Cycle 그래프 그리기 - 지정색 기준 / marker 채우기 없음
+# Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
 def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
-    _kw = dict(label=tlabel, marker='o', markersize=THEME['SCATTER_SET_SIZE'],
-               linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'],
-               markerfacecolor='none', zorder=3)
+    # 지정색이 없으면 기본색 사용
     if cyc_color != 0:
-        ax.plot(x, y, color=cyc_color, markeredgecolor=cyc_color, **_kw)
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
+                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
+                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
     else:
-        ax.plot(x, y, **_kw)
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
+                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
+                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
