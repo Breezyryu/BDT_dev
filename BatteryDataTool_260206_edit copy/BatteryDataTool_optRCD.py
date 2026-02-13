@@ -44,8 +44,8 @@ THEME = {
     'SCATTER_SET_SIZE': 4,
     'EDGE_WIDTH': 0,
     'EDGE_COLOR': 'none',
-    'LINE_WIDTH': 1.8,
-    'LINE_ALPHA': 0.85,
+    'LINE_WIDTH': 1.4,
+    'LINE_ALPHA': 0.6,
     'MARKER_SIZE': 5,
     'GRID_ALPHA': 0.18,
     'GRID_STYLE': '--',
@@ -9790,9 +9790,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 colorno = colorno % len(THEME['PALETTE']) + 1
         
         # 범례 설정
+        _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
+                    edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
         if len(all_data_name) != 0:
-            _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
-                        edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
             ax1.legend(loc="lower left", bbox_to_anchor=(0, 0), borderaxespad=0.5, **_lkw)
             ax2.legend(loc="lower right", bbox_to_anchor=(1, 0), borderaxespad=0.5, **_lkw)
             ax3.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
