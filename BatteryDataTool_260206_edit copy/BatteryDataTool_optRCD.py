@@ -4328,6 +4328,18 @@ class Ui_sitool(object):
         self.verticalLayout_30.addWidget(self.chg_ptn_step)
         self.gridLayout_14.addLayout(self.verticalLayout_30, 0, 0, 1, 1, QtCore.Qt.AlignmentFlag.AlignHCenter)
         self.horizontalLayout_133.addWidget(self.groupBox_4)
+        # Toyo 패턴 변환 버튼
+        self.ptn_toyo_convert = QtWidgets.QPushButton(parent=self.tab_2)
+        self.ptn_toyo_convert.setMinimumSize(QtCore.QSize(140, 50))
+        self.ptn_toyo_convert.setMaximumSize(QtCore.QSize(140, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        self.ptn_toyo_convert.setFont(font)
+        self.ptn_toyo_convert.setObjectName("ptn_toyo_convert")
+        self.ptn_toyo_convert.setText("Toyo 패턴 변환")
+        self.horizontalLayout_133.addWidget(self.ptn_toyo_convert)
         spacerItem_ptn_right = QtWidgets.QSpacerItem(40, 608, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
         self.horizontalLayout_133.addItem(spacerItem_ptn_right)
         self.verticalLayout_9.addLayout(self.horizontalLayout_133)
@@ -8911,6 +8923,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.chg_ptn_endv.clicked.connect(self.ptn_change_endv_button)
         self.chg_ptn_step.clicked.connect(self.ptn_change_step_button)
         self.ptn_load.clicked.connect(self.ptn_load_button)
+        self.ptn_toyo_convert.clicked.connect(self.ptn_toyo_convert_button)
         # dVdQ fitting
         self.min_rms = np.inf
         self.mat_dvdq_btn.clicked.connect(self.dvdq_material_button)
@@ -15527,6 +15540,501 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_df_select.append(self.pne_ptn_merged_df.iloc[index.row(), 3])
         if len(self.ptn_df_select) == 0:
             self.ptn_df_select = [""]
+
+    # ===================================================================
+    # PNE → Toyo 패턴 변환 기능
+    # ===================================================================
+
+    # --- Toyo PATRN 서브스텝 템플릿 (PATRN1.1 기준 추출) ---
+    # LEFT 서브스텝 = 261 chars, RIGHT 서브스텝 = 272 chars, LOOP = 10 chars
+    TOYO_CHARGE_LEFT = (
+        " 10       399    4.47       0       -       -       -    39.9"
+        "       -       -       -       -       -      60       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -   0 - 0                      -       -0"
+        "  - -  010       -       -    60"
+    )
+    TOYO_CHARGE_CC_LEFT = (
+        " 10    2593.5    4.16       0       -       -       -    1995"
+        "       -       -       -       -       -      60       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -   0 - 0                      -       -0"
+        "  - -  0 0       -       -    60"
+    )
+    TOYO_REST_LEFT = (
+        " 30         0       0       0       -       -       -       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -   0 0 0                      -       -0"
+        "  0 0  0 0       -       -     -"
+    )
+    TOYO_DCHG_RIGHT = (
+        " 00       399       0       0                      2.75"
+        "       -       -       -       -       -      60       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -   0 - 0                    -       -0"
+        "                    - -  010       -       -    60 "
+    )
+    TOYO_DCHG_NO_INTERVAL_RIGHT = (
+        " 00       399       0       0                      2.75"
+        "       -       -       -       -       -       -       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -   0 - 0                    -       -0"
+        "                    - -  010       -       -    60 "
+    )
+    TOYO_REST_RIGHT = (
+        " 30         0       0       0                         -"
+        "       -       -       -       -       -       -       -"
+        "       -       -       -       -       -       -       -"
+        "       -       -   0 0 0                    -       -0"
+        "                    0 0  0 0       -       -     - "
+    )
+    TOYO_LOOP_NONE = " 1      01"
+    # 헤더 템플릿 (PATRN1.1 기준, 이름/라인수 제외한 고정 부분 = 202 바이트)
+    TOYO_HEADER_PREFIX = (
+        "0 00009       -        -    4.55"
+        "       0       -       -      60       0       -       -"
+        "  20000000000000000000000000000000000000000000000000000000000001"
+        "  10111001010000000000     11100  1 1   0   0   00"
+    )
+
+    @staticmethod
+    def _toyo_fmt_num(value):
+        """숫자를 Toyo PATRN 형식 문자열로 변환 (정수면 정수, 소수면 소수)"""
+        if value == 0:
+            return "0"
+        if value == int(value):
+            return str(int(value))
+        return f"{value:g}"
+
+    def _toyo_substitute(self, template, positions):
+        """템플릿 문자열의 지정 위치에 값을 right-justify로 대입"""
+        t = list(template)
+        for (start, end), value_str in positions:
+            field_width = end - start
+            t[start:end] = list(value_str.rjust(field_width))
+        return "".join(t)
+
+    def _toyo_build_charge_left(self, current_mA, voltage_V, endI_mA, is_cccv=True, interval_s=60):
+        """충전 LEFT 서브스텝 생성 (261 chars)"""
+        template = self.TOYO_CHARGE_LEFT if is_cccv else self.TOYO_CHARGE_CC_LEFT
+        subs = [
+            ((3, 13), self._toyo_fmt_num(current_mA)),
+            ((13, 21), self._toyo_fmt_num(voltage_V)),
+            ((53, 61), self._toyo_fmt_num(endI_mA)),
+        ]
+        if interval_s > 0:
+            subs.append(((101, 109), str(int(interval_s))))
+        return self._toyo_substitute(template, subs)
+
+    def _toyo_build_dchg_right(self, current_mA, endV_V, interval_s=60):
+        """방전 RIGHT 서브스텝 생성 (272 chars)"""
+        template = self.TOYO_DCHG_RIGHT if interval_s > 0 else self.TOYO_DCHG_NO_INTERVAL_RIGHT
+        subs = [
+            ((3, 13), self._toyo_fmt_num(current_mA)),
+            ((29, 55), self._toyo_fmt_num(endV_V)),
+        ]
+        if interval_s > 0:
+            subs.append(((95, 103), str(int(interval_s))))
+        return self._toyo_substitute(template, subs)
+
+    def _toyo_build_rest_left(self):
+        """휴지 LEFT 서브스텝 생성 (261 chars)"""
+        return self.TOYO_REST_LEFT
+
+    def _toyo_build_rest_right(self):
+        """휴지 RIGHT 서브스텝 생성 (272 chars)"""
+        return self.TOYO_REST_RIGHT
+
+    def _toyo_build_loop(self, target_line=0, count=0):
+        """루프 정보 문자열 생성 (10 chars)"""
+        if target_line <= 0 or count <= 0:
+            return self.TOYO_LOOP_NONE
+        return f" 1{target_line:>2}{count:>4}01"
+
+    def _toyo_build_line(self, left_sub, right_sub, loop_str):
+        """PATRN 데이터 라인 = LEFT(261) + RIGHT(272) + LOOP(10) = 543"""
+        return left_sub + right_sub + loop_str
+
+    def _toyo_build_header(self, pattern_name, num_lines):
+        """PATRN 헤더 라인 생성 (265 바이트, cp949 기준 42바이트 이름 필드)"""
+        # 이름을 cp949로 인코딩하여 42바이트에 맞춤
+        name_bytes = pattern_name.encode("cp949", errors="replace")[:42]
+        name_bytes = name_bytes.ljust(42, b" ")
+        # 상수 부분 (바이트 43~265)
+        suffix = self.TOYO_HEADER_PREFIX.encode("ascii")
+        line_count = f"{num_lines:>21}".encode("ascii")
+        return (name_bytes + suffix + line_count).decode("cp949")
+
+    def _toyo_build_option(self, capacity_mAh):
+        """Patrn.option 파일 내용 생성"""
+        return f"[BaseCellCapacity]\nPattern_BaseCellCapacity={int(capacity_mAh)}\n"
+
+    def _toyo_build_option2(self, line_types):
+        """Patrn.option2 파일 내용 생성 (PATRN 데이터 라인 단위)
+        
+        Args:
+            line_types: list of str, 각 PATRN 라인의 타입 ("active" 또는 "rest")
+                        RIGHT 서브스텝이 discharge면 "active", 아니면 "rest"
+        """
+        # 헤더 라인 (고정 266 chars)
+        header = (
+            "0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,-,-,-,-,-,-,-,0,1,-,-,,,-,-,TOYO,,-,-,-,"
+            "-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,"
+            "1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,1000,0,0,-,0,0,0,0,1,1,,1,,"
+        )
+        # 첫 번째 라인 (295 chars) — active/rest
+        first_active = (
+            "0,0,0,1,0,1,0,1,0,-,-,0,-,-,,,-,-,,,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
+            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
+        )
+        first_rest = (
+            "0,0,0,0,0,0,0,0,0,-,-,0,-,-,,,-,-,,,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
+            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
+        )
+        # 중간 라인 (299 chars) — active/rest
+        middle_active = (
+            "0,0,0,1,0,1,0,1,0,-,-,0,-,-,-,-,-,-,-,-,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
+            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
+        )
+        middle_rest = (
+            "0,0,0,0,0,0,0,0,0,-,-,0,-,-,-,-,-,-,-,-,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
+            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
+        )
+        # 마지막 라인 (295 chars) — 항상 end 형식
+        end_line = (
+            "0,0,0,0,0,0,0,0,0,-,-,0,-,-,-,-,,,-,-,,,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
+            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
+        )
+
+        lines = [header]
+        for i, ltype in enumerate(line_types):
+            if i == len(line_types) - 1:
+                lines.append(end_line)
+            elif i == 0:
+                lines.append(first_active if ltype == "active" else first_rest)
+            else:
+                lines.append(middle_active if ltype == "active" else middle_rest)
+        return "\n".join(lines) + "\n"
+
+    def _toyo_build_puls_dir(self, num_lines):
+        """Fld_Puls.DIR 파일 생성 (PATRN 데이터 라인 수만큼)"""
+        return ",\n" * num_lines
+
+    def _pne_steps_to_toyo_substeps(self, steps_df):
+        """PNE Step 테이블 rows → Toyo 서브스텝 리스트 변환
+        
+        Args:
+            steps_df: DataFrame with StepType, Iref, EndI, Vref_Charge, Vref_DisCharge, EndV, Value2
+        
+        Returns:
+            list of dicts: [{type, left_sub, right_sub, loop_target, loop_count}, ...]
+            각 dict = PATRN 데이터 라인 1개 (서브스텝 2개 쌍)
+        """
+        # PNE 스텝을 Toyo 서브스텝으로 변환 (Loop 제외)
+        substeps = []  # [(type_str, ...)]
+        pne_step_indices = []  # substeps와 1:1 매핑, PNE 원본 인덱스 (0-based)
+        loop_info = {}  # {substeps_index: (target_pne_step_1based, count)}
+        pne_idx = 0  # PNE DataFrame 행 인덱스 (0-based)
+
+        for idx, row in steps_df.iterrows():
+            step_type = int(row.get("StepType", 0))
+            iref = float(row.get("Iref", 0) or 0)
+            end_i = float(row.get("EndI", 0) or 0)
+            vref_chg = float(row.get("Vref_Charge", 0) or 0)
+            vref_dchg = float(row.get("Vref_DisCharge", 0) or 0)
+            end_v = float(row.get("EndV", 0) or 0)
+            value2 = str(row.get("Value2", "") or "").strip()
+
+            if step_type == 1:  # 충전
+                voltage_V = vref_chg / 1000.0 if vref_chg > 0 else 4.2
+                # CC-CV 판단: EndI/Iref < 0.3 → CV cutoff (소량 전류)
+                # EndI/Iref >= 0.3 → CC 모드 (용량 제한)
+                if end_i > 0 and iref > 0:
+                    is_cccv = (end_i / iref) < 0.3
+                else:
+                    is_cccv = False
+                end_val = end_i if end_i > 0 else iref
+                substeps.append(("charge", iref, voltage_V, end_val, is_cccv))
+                pne_step_indices.append(pne_idx)
+            elif step_type == 2:  # 방전
+                endV_V = vref_dchg / 1000.0 if vref_dchg > 0 else (end_v / 1000.0 if end_v > 0 else 3.0)
+                substeps.append(("discharge", iref, endV_V))
+                pne_step_indices.append(pne_idx)
+            elif step_type == 3 or step_type == 4:  # 휴지 / OCV
+                substeps.append(("rest",))
+                pne_step_indices.append(pne_idx)
+            elif step_type == 5:  # Impedance (펄스 측정)
+                # 짧은 방전 펄스로 변환
+                substeps.append(("discharge", iref, 0))
+                pne_step_indices.append(pne_idx)
+            elif step_type == 8:  # Loop
+                # Value2에서 loop 대상 스텝 번호 추출
+                import re as _re
+                nums = _re.findall(r'\d+', value2)
+                if nums:
+                    target_pne_step = int(nums[0])  # 1-based PNE step number
+                    loop_count = int(iref) if iref > 0 else 99
+                    loop_info[len(substeps)] = (target_pne_step, loop_count)
+                substeps.append(("loop",))
+                pne_step_indices.append(pne_idx)
+            elif step_type == 6:  # End
+                pne_idx += 1
+                continue  # 건너뜀
+            elif step_type == 9:  # Continuation
+                # 이전 스텝 컨텍스트에 따라 충전/방전
+                if len(substeps) > 0 and substeps[-1][0] == "charge":
+                    voltage_V = vref_chg / 1000.0 if vref_chg > 0 else 4.2
+                    if end_i > 0 and iref > 0:
+                        is_cccv = (end_i / iref) < 0.3
+                    else:
+                        is_cccv = False
+                    end_val = end_i if end_i > 0 else iref
+                    substeps.append(("charge", iref, voltage_V, end_val, is_cccv))
+                else:
+                    endV_V = vref_dchg / 1000.0 if vref_dchg > 0 else 3.0
+                    substeps.append(("discharge", iref, endV_V))
+                pne_step_indices.append(pne_idx)
+            else:
+                # 미지원 타입 → 휴지로 처리
+                substeps.append(("rest",))
+                pne_step_indices.append(pne_idx)
+
+            pne_idx += 1
+
+        # Loop 스텝 자체는 Toyo에서 별도 라인이 아님 → 제거하고 이전 라인에 loop 정보 부착
+        # 실제 서브스텝만 남기기 (loop 제외)
+        actual_substeps = []
+        actual_pne_indices = []  # actual_substeps와 1:1 매핑
+        actual_loop_attach = {}  # {actual_idx: (target_pne_step_1based, count)}
+        for i, sub in enumerate(substeps):
+            if sub[0] == "loop":
+                # 이전 actual 서브스텝에 loop 정보 부착
+                if i in loop_info and len(actual_substeps) > 0:
+                    actual_loop_attach[len(actual_substeps) - 1] = loop_info[i]
+            else:
+                actual_substeps.append(sub)
+                actual_pne_indices.append(pne_step_indices[i])
+
+        # 서브스텝을 라인으로 조립하면서 pne_idx → toyo_line 매핑 생성
+        patrn_lines = []
+        line_types = []  # option2용: 라인 당 "active"(RIGHT=방전) 또는 "rest"
+        pne_to_toyo_line = {}  # {pne_step_0based: toyo_line_1based}
+        queue = list(enumerate(zip(actual_substeps, actual_pne_indices)))  # [(actual_idx, (sub, pne_idx))]
+
+        while queue:
+            actual_idx_a, (sub_a, pne_idx_a) = queue.pop(0)
+            toyo_line_no = len(patrn_lines) + 1  # 현재 라인 번호 (1-based)
+
+            # pne_idx → toyo_line 매핑 등록
+            if pne_idx_a not in pne_to_toyo_line:
+                pne_to_toyo_line[pne_idx_a] = toyo_line_no
+
+            # LEFT 서브스텝 결정
+            if sub_a[0] == "charge":
+                _, curr, volt, end_val, is_cccv = sub_a
+                left = self._toyo_build_charge_left(curr, volt, end_val, is_cccv)
+                # RIGHT: 다음 서브스텝 소비
+                if queue:
+                    actual_idx_b, (sub_b, pne_idx_b) = queue.pop(0)
+                else:
+                    sub_b = ("rest",)
+                    actual_idx_b = -1
+                    pne_idx_b = -1
+            elif sub_a[0] == "discharge":
+                # 방전은 RIGHT로 → LEFT는 REST, sub_a를 RIGHT로 사용
+                left = self._toyo_build_rest_left()
+                sub_b = sub_a
+                actual_idx_b = actual_idx_a
+                pne_idx_b = pne_idx_a
+            else:  # rest, OCV 등
+                left = self._toyo_build_rest_left()
+                if queue:
+                    actual_idx_b, (sub_b, pne_idx_b) = queue.pop(0)
+                else:
+                    sub_b = ("rest",)
+                    actual_idx_b = -1
+                    pne_idx_b = -1
+
+            # pne_idx_b → toyo_line 매핑 등록
+            if pne_idx_b >= 0 and pne_idx_b not in pne_to_toyo_line:
+                pne_to_toyo_line[pne_idx_b] = toyo_line_no
+
+            # RIGHT 서브스텝 빌드 + 라인 타입 결정
+            right_is_discharge = False
+            if sub_b[0] == "discharge":
+                curr = sub_b[1]
+                endV = sub_b[2] if len(sub_b) > 2 else 3.0
+                # LEFT가 REST이면 interval 없음 (첫 라인 초기 방전 등)
+                iv = 0 if sub_a[0] == "rest" or sub_a[0] == "discharge" else 60
+                right = self._toyo_build_dchg_right(curr, endV, interval_s=iv)
+                right_is_discharge = True
+            elif sub_b[0] == "charge":
+                # 충전이 RIGHT에 오면 → REST RIGHT로 대체, 충전은 다음 라인 LEFT로 이월
+                right = self._toyo_build_rest_right()
+                queue.insert(0, (actual_idx_b, (sub_b, pne_idx_b)))  # 다시 큐 앞에 넣기
+                # pne_to_toyo_line 등록 취소 (다음 라인에서 다시 등록됨)
+                if pne_idx_b in pne_to_toyo_line and pne_to_toyo_line[pne_idx_b] == toyo_line_no:
+                    del pne_to_toyo_line[pne_idx_b]
+            else:  # rest
+                right = self._toyo_build_rest_right()
+
+            line_types.append("active" if right_is_discharge else "rest")
+
+            # Loop 정보 확인 — actual_idx 기반으로 actual_loop_attach 조회
+            loop_target = 0
+            loop_count = 0
+            for check_idx in [actual_idx_a, actual_idx_b]:
+                if check_idx >= 0 and check_idx in actual_loop_attach:
+                    target_pne_1based, count = actual_loop_attach[check_idx]
+                    # target_pne는 1-based PNE 스텝 번호
+                    # pne_to_toyo_line에서 해당 PNE 스텝의 Toyo 라인 번호 조회
+                    target_pne_0based = target_pne_1based - 1
+                    if target_pne_0based in pne_to_toyo_line:
+                        loop_target = pne_to_toyo_line[target_pne_0based]
+                    else:
+                        # 매핑이 없으면 근사 계산
+                        loop_target = max(1, (target_pne_1based + 1) // 2)
+                    loop_count = count
+
+            loop_str = self._toyo_build_loop(loop_target, loop_count)
+            line = self._toyo_build_line(left, right, loop_str)
+            patrn_lines.append(line)
+
+        return patrn_lines, line_types
+
+    def ptn_toyo_convert_button(self):
+        """PNE 패턴을 Toyo PATRN 파일로 변환"""
+        self.progressBar.setValue(0)
+        ptn_ori_path = str(self.ptn_ori_path.text())
+
+        # 선택된 패턴 확인
+        if (not hasattr(self, "ptn_df_select")) or len(self.ptn_df_select) == 0 or self.ptn_df_select[0] == "":
+            QtWidgets.QMessageBox.warning(self, "알림", "패턴을 먼저 선택하세요.\n패턴 Load 후 목록에서 행을 선택하세요.")
+            return
+
+        # MDB 경로 확인
+        if not os.path.isfile(ptn_ori_path):
+            ptn_ori_path = filedialog.askopenfilename(
+                initialdir="c:\\Program Files\\PNE CTSPro\\Database\\",
+                title="MDB 파일 선택",
+                filetypes=[("Access DB", "*.mdb *.accdb")]
+            )
+            if not ptn_ori_path:
+                return
+            self.ptn_ori_path.setText(str(ptn_ori_path))
+
+        # 출력 폴더 선택
+        output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Toyo 패턴 저장 폴더 선택")
+        if not output_dir:
+            return
+
+        # 패턴 번호 입력
+        patrn_num, ok = QtWidgets.QInputDialog.getInt(
+            self, "패턴 번호", "Toyo 패턴 번호 (PATRN{N}.1):", 1, 1, 999
+        )
+        if not ok:
+            return
+
+        # 용량 입력 (ptn_capacity 값 사용)
+        try:
+            capacity_mAh = float(self.ptn_capacity.text())
+        except (ValueError, AttributeError):
+            capacity_mAh = 1000
+
+        # MDB 연결
+        conn_str = (
+            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
+            r'DBQ=' + ptn_ori_path + ';'
+        )
+        try:
+            conn = pyodbc.connect(conn_str)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "오류", f"MDB 연결 실패:\n{e}")
+            return
+
+        results = []
+        for idx, test_id in enumerate(self.ptn_df_select):
+            current_patrn_num = patrn_num + idx
+
+            # Step 데이터 조회
+            steps_df = pd.read_sql(
+                f"SELECT * FROM Step WHERE TestID = {test_id} ORDER BY StepID", conn
+            )
+            if steps_df.empty:
+                results.append(f"TestID {test_id}: Step 데이터 없음")
+                continue
+
+            # TestName 조회
+            try:
+                test_info = pd.read_sql(
+                    f"SELECT TestName FROM TestName WHERE TestID = {test_id}", conn
+                )
+                pattern_name = test_info.iloc[0]["TestName"] if not test_info.empty else f"Pattern_{test_id}"
+            except Exception:
+                pattern_name = f"Pattern_{test_id}"
+
+            # PNE → Toyo 변환
+            try:
+                patrn_lines, line_types = self._pne_steps_to_toyo_substeps(steps_df)
+            except Exception as e:
+                results.append(f"TestID {test_id}: 변환 오류 - {e}")
+                continue
+
+            if not patrn_lines:
+                results.append(f"TestID {test_id}: 변환 결과 없음")
+                continue
+
+            num_lines = len(patrn_lines)
+
+            # 1) PATRN{N}.1 생성
+            header = self._toyo_build_header(pattern_name, num_lines)
+            patrn_content = header + "\n" + "\n".join(patrn_lines) + "\n"
+            patrn_path = os.path.join(output_dir, f"PATRN{current_patrn_num}.1")
+            with open(patrn_path, "w", encoding="cp949") as f:
+                f.write(patrn_content)
+
+            # 2) Patrn{N}.option 생성
+            option_content = self._toyo_build_option(capacity_mAh)
+            option_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option")
+            with open(option_path, "w", encoding="cp949") as f:
+                f.write(option_content)
+
+            # 3) Patrn{N}.option2 생성
+            option2_content = self._toyo_build_option2(line_types)
+            option2_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option2")
+            with open(option2_path, "w", encoding="cp949") as f:
+                f.write(option2_content)
+
+            # 4) Fld_Puls{N}.DIR 생성
+            puls_content = self._toyo_build_puls_dir(num_lines)
+            puls_path = os.path.join(output_dir, f"Fld_Puls{current_patrn_num}.DIR")
+            with open(puls_path, "w", encoding="cp949") as f:
+                f.write(puls_content)
+
+            # 5) Fld_Thermo{N}.DIR 생성 (빈 파일)
+            thermo_path = os.path.join(output_dir, f"Fld_Thermo{current_patrn_num}.DIR")
+            with open(thermo_path, "w", encoding="cp949") as f:
+                f.write("")
+
+            # 6) THPTNNO.1 생성 (빈 파일, 없으면)
+            thptn_path = os.path.join(output_dir, "THPTNNO.1")
+            if not os.path.exists(thptn_path):
+                with open(thptn_path, "w", encoding="cp949") as f:
+                    f.write("")
+
+            results.append(
+                f"TestID {test_id} → PATRN{current_patrn_num}.1 "
+                f"({num_lines}라인, {len(steps_df)}스텝)"
+            )
+            self.progressBar.setValue(int((idx + 1) / len(self.ptn_df_select) * 100))
+
+        conn.close()
+
+        # 결과 표시
+        msg = "Toyo 패턴 변환 완료\n\n" + "\n".join(results) + f"\n\n저장 위치: {output_dir}"
+        QtWidgets.QMessageBox.information(self, "변환 완료", msg)
+        self.progressBar.setValue(100)
 
 # UI 실행
 if __name__ == "__main__":
