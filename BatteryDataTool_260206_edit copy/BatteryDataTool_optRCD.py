@@ -9107,6 +9107,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         )
         overlay.setVisible(False)
         
+        # ── 닫기(접기) 버튼 (오버레이 내부) ──
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setStyleSheet(
+            f"QPushButton {{ font-size: 14px; font-weight: bold; border: none; "
+            f"background: transparent; color: {'#ccc' if _is_dark else '#666'}; }}"
+            f"QPushButton:hover {{ color: {'#fff' if _is_dark else '#000'}; }}"
+        )
+        overlay_layout.addWidget(close_btn)
+        
         # --- 1) 채널 리스트 (체크박스 + 클릭 하이라이트) - 2열 ---
         ch_list_left = QListWidget()
         ch_list_right = QListWidget()
@@ -9136,16 +9146,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         DIM_ALPHA = 0.15
         NORMAL_ALPHA = THEME['SCATTER_ALPHA']
         
+        # ── artist별 원래 색상 스냅샷 저장 (복원용) ──
+        _orig_colors = {}  # id(art) → {'fc': array, 'ec': array}
+        for lbl, info in channel_map.items():
+            for art in info['artists']:
+                _orig_colors[id(art)] = {
+                    'fc': art.get_facecolors().copy(),
+                    'ec': art.get_edgecolors().copy(),
+                }
+        
         def _restore_all():
-            """모든 채널을 원래 색상/알파로 복원"""
+            """모든 채널을 원래 색상/알파로 복원 (artist별)"""
             for lbl, info in channel_map.items():
-                orig_color = info['color']
                 for art in info['artists']:
-                    fc = art.get_facecolors()
-                    is_filled = len(fc) > 0 and fc[0][3] != 0
-                    if is_filled:
-                        art.set_facecolors(orig_color)
-                    art.set_edgecolors(orig_color)
+                    orig = _orig_colors.get(id(art))
+                    if orig is not None:
+                        art.set_facecolors(orig['fc'])
+                        art.set_edgecolors(orig['ec'])
                     art.set_alpha(NORMAL_ALPHA)
                     art.set_zorder(3)
             highlight_state['active'] = set()
@@ -9159,18 +9176,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return
             for lbl, info in channel_map.items():
                 if lbl in selected:
-                    orig_color = info['color']
                     for art in info['artists']:
-                        fc = art.get_facecolors()
-                        if len(fc) > 0 and fc[0][3] != 0:
-                            art.set_facecolors(orig_color)
-                        art.set_edgecolors(orig_color)
+                        orig = _orig_colors.get(id(art))
+                        if orig is not None:
+                            art.set_facecolors(orig['fc'])
+                            art.set_edgecolors(orig['ec'])
                         art.set_alpha(1.0)
                         art.set_zorder(10)
                 else:
                     for art in info['artists']:
                         fc = art.get_facecolors()
-                        if len(fc) > 0 and fc[0][3] != 0:
+                        is_filled = len(fc) > 0 and fc[0][3] != 0
+                        if is_filled:
                             art.set_facecolors(DIM_COLOR)
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
@@ -9202,19 +9219,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_w.itemClicked.connect(on_item_clicked)
             ch_w.itemChanged.connect(on_item_changed)
         
-        # --- 채널 리스트를 2열 레이아웃에 추가 ---
-        list_layout = QVBoxLayout()
-        list_label = QLabel("채널 선택 (클릭: 하이라이트)")
-        list_label.setStyleSheet("font-size: 12px; font-weight: bold;")
-        list_layout.addWidget(list_label)
-        list_row = QHBoxLayout()
-        list_row.addWidget(ch_list_left)
-        list_row.addWidget(ch_list_right)
-        list_layout.addLayout(list_row)
-        overlay_layout.addLayout(list_layout)
-        
-        # --- 전체 선택 / 전체 해제 버튼 ---
+        # --- 전체 선택 / 전체 해제 버튼 (체크박스 ON/OFF) ---
         btn_layout = QVBoxLayout()
+        chk_label = QLabel("표시")
+        chk_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        btn_layout.addWidget(chk_label)
         btn_all = QPushButton("전체 선택")
         btn_all.setFixedWidth(80)
         btn_all.setStyleSheet("font-size: 12px;")
@@ -9238,6 +9247,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         btn_layout.addWidget(btn_none)
         overlay_layout.addLayout(btn_layout)
         
+        # --- 하이라이트 전체 선택 / 전체 해제 버튼 (클릭 하이라이트) ---
+        hl_layout = QVBoxLayout()
+        hl_label = QLabel("하이라이트")
+        hl_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        hl_layout.addWidget(hl_label)
+        btn_hl_all = QPushButton("전체 선택")
+        btn_hl_all.setFixedWidth(80)
+        btn_hl_all.setStyleSheet("font-size: 12px;")
+        btn_hl_none = QPushButton("전체 해제")
+        btn_hl_none.setFixedWidth(80)
+        btn_hl_none.setStyleSheet("font-size: 12px;")
+        
+        def highlight_all():
+            highlight_state['active'] = set(channel_map.keys())
+            _apply_highlight()
+        
+        def highlight_none():
+            _restore_all()
+            canvas.draw_idle()
+        
+        btn_hl_all.clicked.connect(highlight_all)
+        btn_hl_none.clicked.connect(highlight_none)
+        hl_layout.addWidget(btn_hl_all)
+        hl_layout.addWidget(btn_hl_none)
+        overlay_layout.addLayout(hl_layout)
+        
         # --- 레전드 ON/OFF ---
         legend_checkbox = QCheckBox("Legend ON/OFF")
         legend_checkbox.setChecked(True)
@@ -9253,6 +9288,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         legend_checkbox.stateChanged.connect(toggle_legend)
         overlay_layout.addWidget(legend_checkbox)
         overlay_layout.addStretch()
+        
+        # --- 채널 리스트 (우측 끝) - 2열 ---
+        list_layout = QVBoxLayout()
+        list_label = QLabel("채널 선택 (클릭: 하이라이트)")
+        list_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        list_layout.addWidget(list_label)
+        list_row = QHBoxLayout()
+        list_row.addWidget(ch_list_left)
+        list_row.addWidget(ch_list_right)
+        list_layout.addLayout(list_row)
+        overlay_layout.addLayout(list_layout)
         
         # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
         def _reposition_overlay():
@@ -9275,6 +9321,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _reposition_overlay()
         
         toggle_btn.clicked.connect(_toggle_panel)
+        close_btn.clicked.connect(_toggle_panel)
         
         # ── 리사이즈 추적 (탭 크기 변경 시 오버레이 재배치) ──
         class _OverlayResizeFilter(QObject):
@@ -9884,6 +9931,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
                         ch_label = lgnd if lgnd else cycnamelist[-1]
+                        # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
+                        _base = ch_label
+                        _sfx = 2
+                        while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                            ch_label = f"{_base} ({_sfx})"
+                            _sfx += 1
                         if ch_label in channel_map:
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
@@ -10053,6 +10106,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ch_label = cycnamelist[-2].split('_')[-1]
                         if len(ch_label) > 20:
                             ch_label = ch_label[:20] + "..."
+                        # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
+                        _base = ch_label
+                        _sfx = 2
+                        while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                            ch_label = f"{_base} ({_sfx})"
+                            _sfx += 1
                         if ch_label in channel_map:
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
@@ -10222,6 +10281,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
                         ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
+                        # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
+                        _base = ch_label
+                        _sfx = 2
+                        while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                            ch_label = f"{_base} ({_sfx})"
+                            _sfx += 1
                         if ch_label in channel_map:
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
@@ -10398,6 +10463,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
                             ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
+                            _base = ch_label
+                            _sfx = 2
+                            while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                                ch_label = f"{_base} ({_sfx})"
+                                _sfx += 1
                             if ch_label in channel_map:
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
@@ -10578,6 +10648,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
                             ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
+                            _base = ch_label
+                            _sfx = 2
+                            while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                                ch_label = f"{_base} ({_sfx})"
+                                _sfx += 1
                             if ch_label in channel_map:
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
