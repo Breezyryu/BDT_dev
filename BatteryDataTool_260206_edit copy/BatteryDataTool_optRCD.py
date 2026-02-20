@@ -9386,9 +9386,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             # 서브 채널 클릭/체크 핸들러 (하위 개별 제어)
             def on_sub_item_clicked(item):
-                """서브 채널 개별 하이라이트 토글 (채널 그룹 하이라이트 모드 ON일 때만)"""
+                """서브 채널 개별 하이라이트 토글"""
                 if not highlight_state['enabled']:
-                    return
+                    # 전체 하이라이트 ON → 체크박스 해제, 클릭한 서브채널만 dim
+                    chk_hl_all.setChecked(False)  # _on_hl_all → 전체 dim + enabled=True
+                    # 모든 채널 하이라이트 적용
+                    highlight_state['active'] = set(channel_map.keys())
+                    _apply_highlight()
+                    # 클릭한 서브 채널만 dim 처리
                 label = _strip_numbering(item.text())
                 if label not in sub_channel_map:
                     return
@@ -10778,6 +10783,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         for k, datafilepath in enumerate(alldatafilepath):
             folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
+            j = 0  # 같은 LOT끼리 legend 중복 방지용 카운터
             writecolno = writecolnomax
             CycleMax = [0, 0, 0, 0, 0]
             link_writerownum = [0, 0, 0, 0, 0]
@@ -10833,12 +10839,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cycnamelist = FolderBase.split("\\")
                         headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                         
-                        if len(all_data_name) != 0 and i == 0 and sub_idx == 0:
-                            lgnd = all_data_name[i]
-                        elif len(all_data_name) != 0:
-                            lgnd = ""
+                        # 중복없이 같은 LOT끼리에서만 legend 추가
+                        if len(all_data_name) != 0 and j == i:
+                            temp_lgnd = all_data_name[i]
+                            j = j + 1
+                        elif len(all_data_name) == 0 and j == i:
+                            temp_lgnd = cycnamelist[-2].split('_')[-1]
+                            j = j + 1
                         else:
-                            lgnd = cycnamelist[-1]
+                            temp_lgnd = ""
+                        
+                        # 레전드 글자수 제한 (최대 20자)
+                        if len(temp_lgnd) > 20:
+                            temp_lgnd = temp_lgnd[:20] + "..."
                         
                         if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                             writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
@@ -10848,14 +10861,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.capacitytext.setText(str(cyctemp[0]))
                             if irscale == 0:
                                 irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                            if len(all_data_name) == 0:
-                                temp_lgnd = ""
-                            else:
-                                temp_lgnd = lgnd
                             
-                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                            ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
+                            # ch_label: 폴더(LOT) 단위 이름으로 통일 (동일 폴더 채널을 1개 항목으로 묶음)
+                            if len(all_data_name) != 0:
+                                ch_label = all_data_name[i]
+                            else:
+                                ch_label = cycnamelist[-2].split('_')[-1]
+                            if len(ch_label) > 20:
+                                ch_label = ch_label[:20] + "..."
                             _base = ch_label
                             _sfx = 2
                             while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
