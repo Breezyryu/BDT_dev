@@ -277,56 +277,51 @@ def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xsc
 def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
     # 지정색이 없으면 기본색 사용
     if cyc_color != 0:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'], color=cyc_color,
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'], color=cyc_color,
                    alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
                    linewidths=THEME['EDGE_WIDTH'], zorder=3)
     else:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
                    alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
                    linewidths=THEME['EDGE_WIDTH'], zorder=3)
-    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)
-    return sc    
+    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 # Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
 def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
     # empty scatter는 테두리로만 보이므로 linewidths를 별도 지정
     if cyc_color != 0:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
                    linewidths=0.6, zorder=3)
     else:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
+        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
                    linewidths=0.6, zorder=3)
-    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)
-    return sc    
+    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
                        dcir, ax1, ax2, ax3, ax4, ax5, ax6):
-    artists = []  # 이 채널의 모든 scatter artist 수집
-    color = graphcolor[colorno % len(THEME['PALETTE'])]
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
-                "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
-                "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Temp, ax3, 0, 50, 5,
-                "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
-                "Cycle", "Rest End Voltage (V)", "", xscale, color))
-    artists.append(graph_cycle_empty(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
-                      "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
-    artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
-                      "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
+    graph_cycle(df.NewData.index, df.NewData.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
+                "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+    graph_cycle(df.NewData.index, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
+                "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+    graph_cycle(df.NewData.index, df.NewData.Temp, ax3, 0, 50, 5,
+                "Cycle", "Temperature (℃)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+    graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
+                "Cycle", "Rest End Voltage (V)", "", xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+    graph_cycle_empty(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
+                      "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+    graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
+                      "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
-        artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "", xscale, color))
-        artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, color))
+        graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
+                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "", xscale, graphcolor[colorno % len(THEME['PALETTE'])])
+        graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
+                    "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
     else:
-        artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
+        graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
+                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % len(THEME['PALETTE'])])
     colorno = colorno % len(THEME['PALETTE']) + 1
-    return artists, color
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
@@ -9043,241 +9038,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         toolbar = NavigationToolbar(canvas, None)
         
         return tab, tab_layout, canvas, toolbar
-
-    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list):
-        """
-        Cycle 그래프 채널 제어 위젯 생성
-        channel_map: dict of {label: {'artists': [PathCollection...], 'color': original_color}}
-        
-        기능:
-        1) 채널 ON/OFF 체크박스 토글
-        2) 마커 크기 조절 슬라이더
-        3) 채널 클릭 시 하이라이트 (나머지 회색 처리)
-        4) 레전드 ON/OFF
-        """
-        from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                                      QListWidget, QListWidgetItem, QLabel,
-                                      QSlider, QCheckBox, QSpinBox, QPushButton)
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QColor
-        
-        control_widget = QWidget()
-        control_layout = QHBoxLayout(control_widget)
-        control_layout.setContentsMargins(5, 2, 5, 2)
-        
-        # --- 1) 채널 리스트 (체크박스 + 클릭 하이라이트) ---
-        ch_list = QListWidget()
-        ch_list.setMaximumHeight(120)
-        ch_list.setMinimumWidth(200)
-        ch_list.setStyleSheet("QListWidget { font-size: 10px; }")
-        
-        channel_keys = list(channel_map.keys())
-        for label in channel_keys:
-            item = QListWidgetItem(label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            # 색상 아이콘 표시
-            color = channel_map[label]['color']
-            item.setForeground(QColor(color))
-            ch_list.addItem(item)
-        
-        # 하이라이트 상태 추적
-        highlight_state = {'active': None}  # None = 모두 표시, str = 하이라이트 채널명
-        
-        DIM_COLOR = '#CCCCCC'
-        DIM_ALPHA = 0.15
-        NORMAL_ALPHA = THEME['SCATTER_ALPHA']
-        
-        def _restore_all():
-            """모든 채널을 원래 색상/알파로 복원"""
-            for lbl, info in channel_map.items():
-                orig_color = info['color']
-                for art in info['artists']:
-                    fc = art.get_facecolors()
-                    if len(fc) > 0 and fc[0][3] != 0:  # filled scatter
-                        art.set_facecolors(orig_color)
-                    ec = art.get_edgecolors()
-                    if len(ec) > 0:
-                        art.set_edgecolors(orig_color if fc[0][3] != 0 else orig_color)
-                    art.set_alpha(NORMAL_ALPHA)
-            highlight_state['active'] = None
-        
-        def _highlight_channel(selected_label):
-            """선택 채널 하이라이트, 나머지 회색 처리"""
-            if highlight_state['active'] == selected_label:
-                # 같은 채널 다시 클릭 → 복원
-                _restore_all()
-                canvas.draw_idle()
-                return
-            
-            for lbl, info in channel_map.items():
-                if lbl == selected_label:
-                    # 선택된 채널: 원래 색상, 높은 알파
-                    orig_color = info['color']
-                    for art in info['artists']:
-                        fc = art.get_facecolors()
-                        if len(fc) > 0 and fc[0][3] != 0:
-                            art.set_facecolors(orig_color)
-                        art.set_edgecolors(orig_color)
-                        art.set_alpha(1.0)
-                        art.set_zorder(10)
-                else:
-                    # 나머지: 회색, 낮은 알파
-                    for art in info['artists']:
-                        fc = art.get_facecolors()
-                        if len(fc) > 0 and fc[0][3] != 0:
-                            art.set_facecolors(DIM_COLOR)
-                        art.set_edgecolors(DIM_COLOR)
-                        art.set_alpha(DIM_ALPHA)
-                        art.set_zorder(1)
-            highlight_state['active'] = selected_label
-            canvas.draw_idle()
-        
-        def on_item_clicked(item):
-            """채널 클릭 → 하이라이트/딤"""
-            label = item.text()
-            _highlight_channel(label)
-        
-        def on_item_changed(item):
-            """체크 상태 변경 → 채널 ON/OFF"""
-            label = item.text()
-            visible = item.checkState() == Qt.CheckState.Checked
-            if label in channel_map:
-                for art in channel_map[label]['artists']:
-                    art.set_visible(visible)
-            canvas.draw_idle()
-        
-        ch_list.itemClicked.connect(on_item_clicked)
-        ch_list.itemChanged.connect(on_item_changed)
-        
-        # --- 채널 리스트를 레이아웃에 추가 ---
-        list_layout = QVBoxLayout()
-        list_label = QLabel("채널 선택 (클릭: 하이라이트)")
-        list_label.setStyleSheet("font-size: 10px; font-weight: bold;")
-        list_layout.addWidget(list_label)
-        list_layout.addWidget(ch_list)
-        control_layout.addLayout(list_layout)
-        
-        # --- 2) 마커 크기 조절 ---
-        size_layout = QVBoxLayout()
-        size_label = QLabel("마커 크기")
-        size_label.setStyleSheet("font-size: 10px; font-weight: bold;")
-        size_spin = QSpinBox()
-        size_spin.setRange(1, 80)
-        size_spin.setValue(THEME['SCATTER_SIZE'])
-        size_spin.setFixedWidth(60)
-        
-        def on_size_changed(val):
-            for info in channel_map.values():
-                for art in info['artists']:
-                    fc = art.get_facecolors()
-                    if len(fc) > 0 and fc[0][3] != 0:
-                        art.set_sizes([val])
-                    else:
-                        art.set_sizes([val + 4])  # empty는 약간 더 크게
-            canvas.draw_idle()
-        
-        size_spin.valueChanged.connect(on_size_changed)
-        size_layout.addWidget(size_label)
-        size_layout.addWidget(size_spin)
-        control_layout.addLayout(size_layout)
-        
-        # --- 3) 알파(투명도) 조절 ---
-        alpha_layout = QVBoxLayout()
-        alpha_label = QLabel("투명도")
-        alpha_label.setStyleSheet("font-size: 10px; font-weight: bold;")
-        alpha_slider = QSlider(Qt.Orientation.Horizontal)
-        alpha_slider.setRange(5, 100)
-        alpha_slider.setValue(int(THEME['SCATTER_ALPHA'] * 100))
-        alpha_slider.setFixedWidth(100)
-        alpha_value_label = QLabel(f"{THEME['SCATTER_ALPHA']:.2f}")
-        alpha_value_label.setStyleSheet("font-size: 10px;")
-        
-        def on_alpha_changed(val):
-            alpha = val / 100.0
-            alpha_value_label.setText(f"{alpha:.2f}")
-            # 하이라이트 모드가 아닐 때만 전체 적용
-            if highlight_state['active'] is None:
-                for info in channel_map.values():
-                    for art in info['artists']:
-                        art.set_alpha(alpha)
-                canvas.draw_idle()
-        
-        alpha_slider.valueChanged.connect(on_alpha_changed)
-        alpha_layout.addWidget(alpha_label)
-        alpha_layout.addWidget(alpha_slider)
-        alpha_layout.addWidget(alpha_value_label)
-        control_layout.addLayout(alpha_layout)
-        
-        # --- 4) 레전드 ON/OFF ---
-        legend_checkbox = QCheckBox("Legend ON/OFF")
-        legend_checkbox.setChecked(True)
-        legend_checkbox.setStyleSheet("font-size: 10px;")
-        
-        def toggle_legend(state):
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    legend.set_visible(state == Qt.CheckState.Checked.value)
-            canvas.draw_idle()
-        
-        legend_checkbox.stateChanged.connect(toggle_legend)
-        
-        # --- 5) 전체 선택 / 전체 해제 버튼 ---
-        btn_layout = QVBoxLayout()
-        btn_all = QPushButton("전체 선택")
-        btn_all.setFixedWidth(70)
-        btn_all.setStyleSheet("font-size: 10px;")
-        btn_none = QPushButton("전체 해제")
-        btn_none.setFixedWidth(70)
-        btn_none.setStyleSheet("font-size: 10px;")
-        btn_reset = QPushButton("초기화")
-        btn_reset.setFixedWidth(70)
-        btn_reset.setStyleSheet("font-size: 10px;")
-        
-        def select_all():
-            for i in range(ch_list.count()):
-                ch_list.item(i).setCheckState(Qt.CheckState.Checked)
-        
-        def select_none():
-            for i in range(ch_list.count()):
-                ch_list.item(i).setCheckState(Qt.CheckState.Unchecked)
-        
-        def reset_all():
-            _restore_all()
-            select_all()
-            size_spin.setValue(THEME['SCATTER_SIZE'])
-            alpha_slider.setValue(int(THEME['SCATTER_ALPHA'] * 100))
-            canvas.draw_idle()
-        
-        btn_all.clicked.connect(select_all)
-        btn_none.clicked.connect(select_none)
-        btn_reset.clicked.connect(reset_all)
-        btn_layout.addWidget(btn_all)
-        btn_layout.addWidget(btn_none)
-        btn_layout.addWidget(btn_reset)
-        control_layout.addLayout(btn_layout)
-        
-        control_layout.addWidget(legend_checkbox)
-        control_layout.addStretch()
-        
-        return control_widget
     
-    def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
-                            channel_map, fig, axes_list):
-        """
-        Cycle 탭 최종화 - 채널 제어 위젯 포함
-        """
-        # 채널이 있을 때만 제어 위젯 추가
-        if channel_map:
-            control = self._create_cycle_channel_control(channel_map, canvas, fig, axes_list)
-            tab_layout.addWidget(control)
-        tab_layout.addWidget(toolbar)
-        tab_layout.addWidget(canvas)
-        self.cycle_tab.addTab(tab, str(tab_no))
-        self.cycle_tab.setCurrentWidget(tab)
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no):
         """
         탭 최종
@@ -9803,7 +9564,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             toolbar = None
             cycnamelist = None
             has_valid_data = False
-            channel_map = {}  # 채널 제어용 artist 수집
             
             if os.path.exists(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
@@ -9852,13 +9612,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if irscale == 0 and cyctemp[0] != 0:
                             irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
                         
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
+                        graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = lgnd if lgnd else cycnamelist[-1]
-                        if ch_label in channel_map:
-                            channel_map[ch_label]['artists'].extend(_artists)
-                        else:
-                            channel_map[ch_label] = {'artists': _artists, 'color': _color}
                         colorno = colorno + 1
                         
                         # Data output option
@@ -9899,10 +9654,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 
                 # [수정] 유효한 데이터가 있는 경우에만 탭 추가
                 if has_valid_data and tab_layout is not None:
-                    axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-                    self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list)
+                    tab_layout.addWidget(toolbar)
+                    tab_layout.addWidget(canvas)
+                    self.cycle_tab.addTab(tab, str(tab_no))
+                    self.cycle_tab.setCurrentWidget(tab)
                     tab_no = tab_no + 1
+                    plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                     if cycnamelist:
                         output_fig(self.figsaveok, cycnamelist[-2])
                     colorno = 0
@@ -9960,7 +9717,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         canvas = None
         toolbar = None
         has_valid_data = False
-        channel_map = {}  # 채널 제어용 artist 수집
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -10015,13 +9771,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             overall_xlimit = len(cyctemp[1].NewData.index)
                         
                         # dcir2, mkdcir 중복 제거
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd,
+                        graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd,
                                            colorno, graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = temp_lgnd if temp_lgnd else cycnamelist[-1]
-                        if ch_label in channel_map:
-                            channel_map[ch_label]['artists'].extend(_artists)
-                        else:
-                            channel_map[ch_label] = {'artists': _artists, 'color': _color}
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
@@ -10073,9 +9824,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
+            # 레전드 온/오프 체크박스 추가
+            legend_checkbox = QtWidgets.QCheckBox("Legend ON/OFF")
+            legend_checkbox.setChecked(True)
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-            self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+            
+            def toggle_legend(state):
+                for ax in axes_list:
+                    legend = ax.get_legend()
+                    if legend:
+                        legend.set_visible(state == QtCore.Qt.CheckState.Checked.value)
+                canvas.draw()
+            
+            legend_checkbox.stateChanged.connect(toggle_legend)
+            
+            tab_layout.addWidget(legend_checkbox)
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
             tab_no = tab_no + 1
         else:
             plt.close(fig)
@@ -10130,7 +9897,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         toolbar = None
         cycnamelist = None
         has_valid_data = False
-        channel_map = {}  # 채널 제어용 artist 수집
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -10184,21 +9950,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             temp_lgnd = lgnd
                         
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                        graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
-                        if ch_label in channel_map:
-                            channel_map[ch_label]['artists'].extend(_artists)
-                        else:
-                            channel_map[ch_label] = {'artists': _artists, 'color': _color}
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
-                            output_data(cyctemp[1].NewData, "방전용럅", writecolno, writerowno, "Dchg", headername)
+                            output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
                             output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
                             output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
                             output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
-                            output_data(cyctemp[1].NewData, "충전용럅", writecolno, writerowno, "Chg", headername)
+                            output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
                             output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
                             output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
                             cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
@@ -10234,9 +9995,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
-            axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-            self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
             tab_no = tab_no + 1
             if cycnamelist:
                 output_fig(self.figsaveok, cycnamelist[-2])
@@ -10306,7 +10068,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             toolbar = None
             cycnamelist = None
             has_valid_data = False
-            channel_map = {}  # 채널 제어용 artist 수집
             total_folders = len(all_data_folder)
             
             for i, cyclefolder in enumerate(all_data_folder):
@@ -10360,13 +10121,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 temp_lgnd = lgnd
                             
-                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                            ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
-                            if ch_label in channel_map:
-                                channel_map[ch_label]['artists'].extend(_artists)
-                            else:
-                                channel_map[ch_label] = {'artists': _artists, 'color': _color}
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
@@ -10412,10 +10168,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             # 탭 추가 (유효 데이터가 있는 경우에만)
             if has_valid_data and tab_layout is not None:
-                axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-                self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                         channel_map, fig, axes_list)
+                tab_layout.addWidget(toolbar)
+                tab_layout.addWidget(canvas)
+                self.cycle_tab.addTab(tab, str(tab_no))
+                self.cycle_tab.setCurrentWidget(tab)
                 tab_no = tab_no + 1
+                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                 if cycnamelist:
                     output_fig(self.figsaveok, cycnamelist[-2])
             else:
@@ -10461,7 +10219,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         toolbar = None
         cycnamelist = None
         has_valid_data = False
-        channel_map = {}  # 채널 제어용 artist 수집
         
         for k, datafilepath in enumerate(alldatafilepath):
             folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
@@ -10540,13 +10297,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 temp_lgnd = lgnd
                             
-                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                            ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
-                            if ch_label in channel_map:
-                                channel_map[ch_label]['artists'].extend(_artists)
-                            else:
-                                channel_map[ch_label] = {'artists': _artists, 'color': _color}
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
@@ -10593,10 +10345,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
-            axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-            self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
             tab_no = tab_no + 1
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
             if cycnamelist:
                 output_fig(self.figsaveok, cycnamelist[-2])
         else:
