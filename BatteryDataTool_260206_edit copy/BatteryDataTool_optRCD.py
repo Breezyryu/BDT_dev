@@ -9062,9 +9062,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
         
-        # ── 토글 버튼 (레이아웃에 추가됨, 22px 고정) ──
-        toggle_btn = QPushButton("▶ 채널 제어")
-        toggle_btn.setFixedHeight(24)
+        # ── 토글 버튼 (컴팩트, toolbar 옆에 배치) ──
+        toggle_btn = QPushButton("▶ CH")
+        toggle_btn.setFixedSize(50, 22)
+        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.setStyleSheet(
             "QPushButton { font-size: 10px; font-weight: bold; text-align: left; "
             "padding-left: 8px; border: 1px solid #ccc; background: #f5f5f5; }"
@@ -9092,8 +9093,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _list_style = "QListWidget { font-size: 12px; }"
         
         toggle_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 12px; font-weight: bold; text-align: left; "
-            f"padding-left: 8px; border: 1px solid {_btn_border}; background: {_btn_bg}; }}"
+            f"QPushButton {{ font-size: 10px; font-weight: bold; "
+            f"border: 1px solid {_btn_border}; border-radius: 3px; "
+            f"background: {_btn_bg}; padding: 2px 4px; }}"
             f"QPushButton:hover {{ background: {_btn_hover}; }}"
         )
         
@@ -9118,41 +9120,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         )
         overlay_layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
         
-        # --- 1) 채널 리스트: 왼쪽=기존 그룹, 오른쪽=색깔별 개별 채널 ---
+        # --- 1) 채널 리스트: 모든 채널 개별 표시 ---
         import re as _re
-        ch_list_left = QListWidget()   # 기존 그룹 리스트
-        ch_list_right = QListWidget()  # 색깔별 모든 채널
-        for w in (ch_list_left, ch_list_right):
-            w.setMinimumWidth(120)
-            w.setMaximumWidth(200)
-            w.setStyleSheet(_list_style)
+        ch_list = QListWidget()
+        ch_list.setMinimumWidth(120)
+        ch_list.setMaximumWidth(200)
+        ch_list.setStyleSheet(_list_style)
         
-        # 기존 그룹 맵 구성 (dedup 접미사 제거하여 그룹화)
-        base_channel_map = {}  # base_label → {'artists': [...], 'color': color, 'children': [label, ...]}
-        for label, info in channel_map.items():
-            base = _re.sub(r'\s*\(\d+\)$', '', label)
-            if base not in base_channel_map:
-                base_channel_map[base] = {'artists': list(info['artists']), 'color': info['color'], 'children': [label]}
-            else:
-                base_channel_map[base]['artists'].extend(info['artists'])
-                base_channel_map[base]['children'].append(label)
-        
-        # 왼쪽 열: 기존 그룹 리스트
-        for base_label in base_channel_map:
-            item = QListWidgetItem(base_label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            item.setForeground(QColor(base_channel_map[base_label]['color']))
-            ch_list_left.addItem(item)
-        
-        # 오른쪽 열: 색깔별 모든 채널 리스트
-        for label in channel_map:
-            item = QListWidgetItem(label)
+        # 모든 채널 개별 리스트 (넘버링 추가, 0-padded)
+        _ch_total = len(channel_map)
+        _nw = len(str(_ch_total))  # 자릿수
+        for idx, label in enumerate(channel_map, 1):
+            item = QListWidgetItem(f"{idx:0{_nw}d}. {label}")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             item.setForeground(QColor(channel_map[label]['color']))
-            ch_list_right.addItem(item)
-        ch_lists = [ch_list_left, ch_list_right]
+            ch_list.addItem(item)
         
         # 하이라이트 상태 추적 (다중 선택)
         highlight_state = {'active': set()}
@@ -9221,101 +9204,47 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 active.add(selected_label)
             _apply_highlight()
         
-        def on_left_clicked(item):
-            """그룹 하이라이트 토글 (기존 리스트)"""
-            base_label = item.text()
-            if base_label in base_channel_map:
-                children = base_channel_map[base_label]['children']
-                active = highlight_state['active']
-                all_active = all(c in active for c in children)
-                if all_active:
-                    for c in children:
-                        active.discard(c)
-                else:
-                    for c in children:
-                        active.add(c)
-                _apply_highlight()
+        def _strip_numbering(text):
+            """'1. label' → 'label' (넘버링 접두사 제거)"""
+            return _re.sub(r'^\d+\.\s*', '', text)
         
-        def on_right_clicked(item):
-            """개별 채널 하이라이트 토글 (색깔별)"""
-            label = item.text()
+        def on_item_clicked(item):
+            """개별 채널 하이라이트 토글"""
+            label = _strip_numbering(item.text())
             _highlight_channel(label)
         
-        def on_left_changed(item):
-            """그룹 표시/숨김"""
-            base_label = item.text()
-            visible = item.checkState() == Qt.CheckState.Checked
-            if base_label in base_channel_map:
-                for art in base_channel_map[base_label]['artists']:
-                    art.set_visible(visible)
-            canvas.draw()
-        
-        def on_right_changed(item):
+        def on_item_changed(item):
             """개별 채널 표시/숨김"""
-            label = item.text()
+            label = _strip_numbering(item.text())
             visible = item.checkState() == Qt.CheckState.Checked
             if label in channel_map:
                 for art in channel_map[label]['artists']:
                     art.set_visible(visible)
             canvas.draw()
         
-        ch_list_left.itemClicked.connect(on_left_clicked)
-        ch_list_left.itemChanged.connect(on_left_changed)
-        ch_list_right.itemClicked.connect(on_right_clicked)
-        ch_list_right.itemChanged.connect(on_right_changed)
+        ch_list.itemClicked.connect(on_item_clicked)
+        ch_list.itemChanged.connect(on_item_changed)
         
-        # --- 전체 표시 / 전체 하이라이트 체크박스 (리스트 상단에 통합) ---
-        _chk_guard = {'updating': False}  # 재진입 방지
+        # --- 전체 표시 / 전체 하이라이트 체크박스 ---
+        _chk_guard = {'updating': False}
         
-        _compact_chk = "font-size: 10px; padding: 0; margin: 0;"
-        chk_show_all_left = QCheckBox("전체 표시")
-        chk_show_all_left.setChecked(True)
-        chk_show_all_left.setStyleSheet(_compact_chk + " font-weight: bold;")
-        chk_hl_all_left = QCheckBox("전체 하이라이트")
-        chk_hl_all_left.setChecked(False)
-        chk_hl_all_left.setStyleSheet(_compact_chk)
+        _compact_chk = "font-size: 12px; padding: 0; margin: 0;"
+        chk_show_all = QCheckBox(f"({_ch_total}) 전체 표시")
+        chk_show_all.setChecked(True)
+        chk_show_all.setStyleSheet(_compact_chk + " font-weight: bold;")
+        chk_hl_all = QCheckBox(f"({_ch_total}) 전체 하이라이트")
+        chk_hl_all.setChecked(False)
+        chk_hl_all.setStyleSheet(_compact_chk)
         
-        chk_show_all_right = QCheckBox("전체 표시")
-        chk_show_all_right.setChecked(True)
-        chk_show_all_right.setStyleSheet(_compact_chk + " font-weight: bold;")
-        chk_hl_all_right = QCheckBox("전체 하이라이트")
-        chk_hl_all_right.setChecked(False)
-        chk_hl_all_right.setStyleSheet(_compact_chk)
-        
-        def _on_show_all_left(state):
+        def _on_show_all(state):
             if _chk_guard['updating']: return
             _chk_guard['updating'] = True
             checked = state == Qt.CheckState.Checked.value
-            for i in range(ch_list_left.count()):
-                ch_list_left.item(i).setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            for i in range(ch_list.count()):
+                ch_list.item(i).setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
             _chk_guard['updating'] = False
         
-        def _on_show_all_right(state):
-            if _chk_guard['updating']: return
-            _chk_guard['updating'] = True
-            checked = state == Qt.CheckState.Checked.value
-            for i in range(ch_list_right.count()):
-                ch_list_right.item(i).setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-            _chk_guard['updating'] = False
-        
-        def _on_hl_all_left(state):
-            checked = state == Qt.CheckState.Checked.value
-            active = highlight_state['active']
-            if checked:
-                for base_label in base_channel_map:
-                    for c in base_channel_map[base_label]['children']:
-                        active.add(c)
-            else:
-                for base_label in base_channel_map:
-                    for c in base_channel_map[base_label]['children']:
-                        active.discard(c)
-            if not active:
-                _restore_all()
-                canvas.draw()
-            else:
-                _apply_highlight()
-        
-        def _on_hl_all_right(state):
+        def _on_hl_all(state):
             checked = state == Qt.CheckState.Checked.value
             if checked:
                 highlight_state['active'] = set(channel_map.keys())
@@ -9324,10 +9253,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _restore_all()
                 canvas.draw()
         
-        chk_show_all_left.stateChanged.connect(_on_show_all_left)
-        chk_hl_all_left.stateChanged.connect(_on_hl_all_left)
-        chk_show_all_right.stateChanged.connect(_on_show_all_right)
-        chk_hl_all_right.stateChanged.connect(_on_hl_all_right)
+        chk_show_all.stateChanged.connect(_on_show_all)
+        chk_hl_all.stateChanged.connect(_on_hl_all)
         
         # --- 레전드 ON/OFF ---
         legend_checkbox = QCheckBox("Legend")
@@ -9343,41 +9270,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         legend_checkbox.stateChanged.connect(toggle_legend)
         
-        # --- 전체 레이아웃: legend + 왼쪽(그룹) + 오른쪽(색깔별) ---
-        list_row = QHBoxLayout()
-        list_row.setSpacing(4)
+        # --- 전체 레이아웃: legend + 채널 그룹 ---
+        list_col = QVBoxLayout()
+        list_col.setSpacing(1)
+        list_lbl = QLabel("채널 그룹")
+        list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
+        list_col.addWidget(list_lbl)
+        list_col.addWidget(chk_show_all)
+        list_col.addWidget(chk_hl_all)
+        list_col.addWidget(ch_list)
         
-        # 왼쪽 열
-        left_col = QVBoxLayout()
-        left_col.setSpacing(1)
-        left_lbl = QLabel("채널 그룹")
-        left_lbl.setStyleSheet("font-size: 10px; font-weight: bold; padding: 0; margin: 0;")
-        left_col.addWidget(left_lbl)
-        left_col.addWidget(chk_show_all_left)
-        left_col.addWidget(chk_hl_all_left)
-        left_col.addWidget(ch_list_left)
-        
-        # 오른쪽 열
-        right_col = QVBoxLayout()
-        right_col.setSpacing(1)
-        right_lbl = QLabel("색깔별 채널")
-        right_lbl.setStyleSheet("font-size: 10px; font-weight: bold; padding: 0; margin: 0;")
-        right_col.addWidget(right_lbl)
-        right_col.addWidget(chk_show_all_right)
-        right_col.addWidget(chk_hl_all_right)
-        right_col.addWidget(ch_list_right)
-        
-        list_row.addLayout(left_col)
-        list_row.addLayout(right_col)
-        
-        # legend 체크박스는 리스트 아래에 추가
+        # legend 체크박스
         ctrl_col = QVBoxLayout()
         ctrl_col.setSpacing(1)
         ctrl_col.addWidget(legend_checkbox)
         ctrl_col.addStretch()
         
         overlay_layout.addLayout(ctrl_col)
-        overlay_layout.addLayout(list_row)
+        overlay_layout.addLayout(list_col)
         
         # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
         def _reposition_overlay():
@@ -9401,7 +9311,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         def _toggle_panel():
             vis = not overlay.isVisible()
             overlay.setVisible(vis)
-            toggle_btn.setText("▼ 채널 제어" if vis else "▶ 채널 제어")
+            toggle_btn.setText("▼ CH" if vis else "▶ CH")
             if vis:
                 _reposition_overlay()
         
@@ -9440,8 +9350,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
                 channel_map, canvas, fig, axes_list, args_parent_tab=tab)
-            tab_layout.addWidget(toggle_btn)
-        tab_layout.addWidget(toolbar)
+            # toolbar + toggle_btn 을 한 줄에 배치
+            toolbar_row = QHBoxLayout()
+            toolbar_row.setContentsMargins(0, 0, 0, 0)
+            toolbar_row.setSpacing(4)
+            toolbar_row.addWidget(toolbar)
+            toolbar_row.addWidget(toggle_btn)
+            tab_layout.addLayout(toolbar_row)
+        else:
+            tab_layout.addWidget(toolbar)
         tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
