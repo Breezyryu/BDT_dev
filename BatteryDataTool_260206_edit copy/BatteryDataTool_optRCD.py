@@ -266,7 +266,7 @@ def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xsc
     else:
         xlimit = xscale
         xrangemax = xscale
-    xrangegap = ((xlimit >= 400) + (xlimit >= 800) * 2 + (xlimit >= 1200) * 4 + (xlimit >= 2000) * 2 + 1) * 50
+    xrangegap = ((xlimit >= 400) + (xlimit >= 800) + (xlimit >= 1500) * 2 + (xlimit >= 3000) * 2 + (xlimit >= 6000) * 4 + 1) * 50
     ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
     if highlimit != 0:
         ax.set_yticks(np.arange(lowlimit, highlimit, y_gap))
@@ -284,7 +284,7 @@ def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xsca
         sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
                    alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
                    linewidths=THEME['EDGE_WIDTH'], zorder=3)
-    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)
+    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
     return sc    
 
 # Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
@@ -298,7 +298,7 @@ def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel
         sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
                    linewidths=0.6, zorder=3)
-    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)
+    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
     return sc    
 
 def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
