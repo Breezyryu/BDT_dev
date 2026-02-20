@@ -9089,8 +9089,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ch_list_right.addItem(item)
         ch_lists = [ch_list_left, ch_list_right]
         
-        # 하이라이트 상태 추적
-        highlight_state = {'active': None}  # None = 모두 표시, str = 하이라이트 채널명
+        # 하이라이트 상태 추적 (다중 선택)
+        highlight_state = {'active': set()}  # 빈 set = 모두 표시, set(...) = 하이라이트 채널명들
         
         DIM_COLOR = '#CCCCCC'
         DIM_ALPHA = 0.15
@@ -9108,19 +9108,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if len(ec) > 0:
                         art.set_edgecolors(orig_color if fc[0][3] != 0 else orig_color)
                     art.set_alpha(NORMAL_ALPHA)
-            highlight_state['active'] = None
+                    art.set_zorder(3)
+            highlight_state['active'] = set()
         
-        def _highlight_channel(selected_label):
-            """선택 채널 하이라이트, 나머지 회색 처리"""
-            if highlight_state['active'] == selected_label:
-                # 같은 채널 다시 클릭 → 복원
+        def _apply_highlight():
+            """현재 active set 기준으로 하이라이트/딤 적용"""
+            selected = highlight_state['active']
+            if not selected:
                 _restore_all()
                 canvas.draw_idle()
                 return
-            
             for lbl, info in channel_map.items():
-                if lbl == selected_label:
-                    # 선택된 채널: 원래 색상, 높은 알파
+                if lbl in selected:
                     orig_color = info['color']
                     for art in info['artists']:
                         fc = art.get_facecolors()
@@ -9130,7 +9129,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_alpha(1.0)
                         art.set_zorder(10)
                 else:
-                    # 나머지: 회색, 낮은 알파
                     for art in info['artists']:
                         fc = art.get_facecolors()
                         if len(fc) > 0 and fc[0][3] != 0:
@@ -9138,8 +9136,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-            highlight_state['active'] = selected_label
             canvas.draw_idle()
+        
+        def _highlight_channel(selected_label):
+            """채널 토글: 선택 set에 추가/제거"""
+            active = highlight_state['active']
+            if selected_label in active:
+                active.discard(selected_label)
+            else:
+                active.add(selected_label)
+            _apply_highlight()
         
         def on_item_clicked(item):
             """채널 클릭 → 하이라이트/딤"""
