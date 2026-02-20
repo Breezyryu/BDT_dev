@@ -9208,8 +9208,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             canvas.draw()
         
         def _highlight_channel(selected_label):
-            """채널 토글: 하이라이트 모드 ON일 때만 동작"""
+            """채널 토글: 전체 하이라이트 ON이면 해제 후 클릭 채널만 dim"""
             if not highlight_state['enabled']:
+                # 전체 하이라이트 ON → 체크박스 해제, 클릭한 채널만 dim
+                chk_hl_all.setChecked(False)  # _on_hl_all → 전체 dim + enabled=True
+                highlight_state['active'] = set(channel_map.keys()) - {selected_label}
+                _apply_highlight()
                 return
             active = highlight_state['active']
             if selected_label in active:
