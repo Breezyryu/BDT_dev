@@ -9346,6 +9346,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         Cycle 탭 최종화 - 채널 제어 위젯 포함 (오버레이 방식)
         """
+        from PyQt6.QtWidgets import QHBoxLayout
         # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
