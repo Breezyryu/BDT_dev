@@ -9046,29 +9046,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list):
         """
-        Cycle 그래프 채널 제어 위젯 생성 (접기/펼치기 토글)
+        Cycle 그래프 채널 제어 위젯 생성 (오버레이 토글)
         channel_map: dict of {label: {'artists': [PathCollection...], 'color': original_color}}
+        펼쳐도 figure 위에 오버레이 → figure 크기 불변
         
-        기능:
-        1) 채널 ON/OFF 체크박스 토글
-        2) 채널 클릭 시 하이라이트 (나머지 회색 처리)
-        3) 레전드 ON/OFF
-        4) 접기/펼치기 토글 (기본 접힌 상태 → figure 최대화)
+        Returns: toggle_btn (QPushButton) - 레이아웃에 추가할 토글 버튼
+        오버레이 패널은 parent_tab의 자식으로 생성 (레이아웃 밖)
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                                       QListWidget, QListWidgetItem, QLabel,
                                       QCheckBox, QPushButton, QFrame)
-        from PyQt6.QtCore import Qt
+        from PyQt6.QtCore import Qt, QObject, QEvent, QPoint
         from PyQt6.QtGui import QColor
         from math import ceil
         
-        # ── 최상위 컨테이너 ──
-        outer_widget = QWidget()
-        outer_layout = QVBoxLayout(outer_widget)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(0)
+        parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
         
-        # ── 토글 버튼 (항상 표시) ──
+        # ── 토글 버튼 (레이아웃에 추가됨, 22px 고정) ──
         toggle_btn = QPushButton("▶ 채널 제어")
         toggle_btn.setFixedHeight(22)
         toggle_btn.setStyleSheet(
@@ -9076,21 +9070,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "padding-left: 8px; border: 1px solid #ccc; background: #f5f5f5; }"
             "QPushButton:hover { background: #e0e0e0; }"
         )
-        outer_layout.addWidget(toggle_btn)
         
-        # ── 접히는 콘텐츠 영역 ──
-        content_frame = QFrame()
-        content_layout = QHBoxLayout(content_frame)
-        content_layout.setContentsMargins(5, 2, 5, 2)
-        content_frame.setVisible(False)  # 기본 접힌 상태
-        outer_layout.addWidget(content_frame)
-        
-        # 토글 동작
-        def _toggle_panel():
-            visible = not content_frame.isVisible()
-            content_frame.setVisible(visible)
-            toggle_btn.setText("▼ 채널 제어" if visible else "▶ 채널 제어")
-        toggle_btn.clicked.connect(_toggle_panel)
+        # ── 오버레이 패널 (parent_tab의 자식, 레이아웃 밖 → figure 크기 불변) ──
+        overlay = QFrame(parent_tab)
+        overlay_layout = QHBoxLayout(overlay)
+        overlay_layout.setContentsMargins(8, 4, 8, 4)
+        overlay.setStyleSheet(
+            "QFrame { background: rgba(255, 255, 255, 0.93); "
+            "border: 1px solid #999; border-radius: 4px; }"
+        )
+        overlay.setVisible(False)
         
         # --- 1) 채널 리스트 (체크박스 + 클릭 하이라이트) - 2열 ---
         ch_list_left = QListWidget()
@@ -9196,7 +9185,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         list_row.addWidget(ch_list_left)
         list_row.addWidget(ch_list_right)
         list_layout.addLayout(list_row)
-        content_layout.addLayout(list_layout)
+        overlay_layout.addLayout(list_layout)
         
         # --- 전체 선택 / 전체 해제 버튼 ---
         btn_layout = QVBoxLayout()
@@ -9221,7 +9210,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         btn_none.clicked.connect(select_none)
         btn_layout.addWidget(btn_all)
         btn_layout.addWidget(btn_none)
-        content_layout.addLayout(btn_layout)
+        overlay_layout.addLayout(btn_layout)
         
         # --- 레전드 ON/OFF ---
         legend_checkbox = QCheckBox("Legend ON/OFF")
@@ -9236,20 +9225,53 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             canvas.draw_idle()
         
         legend_checkbox.stateChanged.connect(toggle_legend)
-        content_layout.addWidget(legend_checkbox)
-        content_layout.addStretch()
+        overlay_layout.addWidget(legend_checkbox)
+        overlay_layout.addStretch()
         
-        return outer_widget
+        # ── 오버레이 위치 조정 ──
+        def _reposition_overlay():
+            """토글 버튼 바로 아래에 오버레이 위치 조정"""
+            if overlay.isVisible():
+                btn_bottom = toggle_btn.mapTo(parent_tab, QPoint(0, toggle_btn.height()))
+                overlay.move(4, btn_bottom.y() + 2)
+                overlay.setFixedWidth(parent_tab.width() - 8)
+                overlay.adjustSize()
+                overlay.raise_()
+        
+        def _toggle_panel():
+            vis = not overlay.isVisible()
+            overlay.setVisible(vis)
+            toggle_btn.setText("▼ 채널 제어" if vis else "▶ 채널 제어")
+            if vis:
+                _reposition_overlay()
+        
+        toggle_btn.clicked.connect(_toggle_panel)
+        
+        # ── 리사이즈 추적 (탭 크기 변경 시 오버레이 재배치) ──
+        class _OverlayResizeFilter(QObject):
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.Resize:
+                    _reposition_overlay()
+                return False
+        
+        _rf = _OverlayResizeFilter(parent_tab)
+        parent_tab.installEventFilter(_rf)
+        # GC 방지: 토글 버튼에 참조 보관
+        toggle_btn._overlay_ref = overlay
+        toggle_btn._resize_filter_ref = _rf
+        
+        return toggle_btn
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list):
         """
-        Cycle 탭 최종화 - 채널 제어 위젯 포함
+        Cycle 탭 최종화 - 채널 제어 위젯 포함 (오버레이 방식)
         """
-        # 채널이 있을 때만 제어 위젯 추가
+        # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
         if channel_map:
-            control = self._create_cycle_channel_control(channel_map, canvas, fig, axes_list)
-            tab_layout.addWidget(control)
+            toggle_btn = self._create_cycle_channel_control(
+                channel_map, canvas, fig, axes_list, args_parent_tab=tab)
+            tab_layout.addWidget(toggle_btn)
         tab_layout.addWidget(toolbar)
         tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
