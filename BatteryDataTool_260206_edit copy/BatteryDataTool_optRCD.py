@@ -313,7 +313,7 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
                 "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
     artists.append(graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
                 "Cycle", "Rest End Voltage (V)", "", xscale, color))
-    artists.append(graph_cycle_empty(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
+    artists.append(graph_cycle(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
                       "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
     artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
                       "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
@@ -9102,11 +9102,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 orig_color = info['color']
                 for art in info['artists']:
                     fc = art.get_facecolors()
-                    if len(fc) > 0 and fc[0][3] != 0:  # filled scatter
+                    is_filled = len(fc) > 0 and fc[0][3] != 0
+                    if is_filled:
                         art.set_facecolors(orig_color)
-                    ec = art.get_edgecolors()
-                    if len(ec) > 0:
-                        art.set_edgecolors(orig_color if fc[0][3] != 0 else orig_color)
+                    art.set_edgecolors(orig_color)
                     art.set_alpha(NORMAL_ALPHA)
                     art.set_zorder(3)
             highlight_state['active'] = set()
@@ -9198,9 +9197,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         btn_none = QPushButton("전체 해제")
         btn_none.setFixedWidth(70)
         btn_none.setStyleSheet("font-size: 10px;")
-        btn_reset = QPushButton("초기화")
-        btn_reset.setFixedWidth(70)
-        btn_reset.setStyleSheet("font-size: 10px;")
         
         def select_all():
             for ch_w in ch_lists:
@@ -9212,17 +9208,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for i in range(ch_w.count()):
                     ch_w.item(i).setCheckState(Qt.CheckState.Unchecked)
         
-        def reset_all():
-            _restore_all()
-            select_all()
-            canvas.draw_idle()
-        
         btn_all.clicked.connect(select_all)
         btn_none.clicked.connect(select_none)
-        btn_reset.clicked.connect(reset_all)
         btn_layout.addWidget(btn_all)
         btn_layout.addWidget(btn_none)
-        btn_layout.addWidget(btn_reset)
         control_layout.addLayout(btn_layout)
         
         control_layout.addWidget(legend_checkbox)
