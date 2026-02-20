@@ -9046,27 +9046,53 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list):
         """
-        Cycle 그래프 채널 제어 위젯 생성
+        Cycle 그래프 채널 제어 위젯 생성 (접기/펼치기 토글)
         channel_map: dict of {label: {'artists': [PathCollection...], 'color': original_color}}
         
         기능:
         1) 채널 ON/OFF 체크박스 토글
-        2) 마커 크기 조절 슬라이더
-        3) 채널 클릭 시 하이라이트 (나머지 회색 처리)
-        4) 레전드 ON/OFF
+        2) 채널 클릭 시 하이라이트 (나머지 회색 처리)
+        3) 레전드 ON/OFF
+        4) 접기/펼치기 토글 (기본 접힌 상태 → figure 최대화)
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                                       QListWidget, QListWidgetItem, QLabel,
-                                      QSlider, QCheckBox, QSpinBox, QPushButton)
+                                      QCheckBox, QPushButton, QFrame)
         from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QColor
+        from math import ceil
         
-        control_widget = QWidget()
-        control_layout = QHBoxLayout(control_widget)
-        control_layout.setContentsMargins(5, 2, 5, 2)
+        # ── 최상위 컨테이너 ──
+        outer_widget = QWidget()
+        outer_layout = QVBoxLayout(outer_widget)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+        
+        # ── 토글 버튼 (항상 표시) ──
+        toggle_btn = QPushButton("▶ 채널 제어")
+        toggle_btn.setFixedHeight(22)
+        toggle_btn.setStyleSheet(
+            "QPushButton { font-size: 10px; font-weight: bold; text-align: left; "
+            "padding-left: 8px; border: 1px solid #ccc; background: #f5f5f5; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+        )
+        outer_layout.addWidget(toggle_btn)
+        
+        # ── 접히는 콘텐츠 영역 ──
+        content_frame = QFrame()
+        content_layout = QHBoxLayout(content_frame)
+        content_layout.setContentsMargins(5, 2, 5, 2)
+        content_frame.setVisible(False)  # 기본 접힌 상태
+        outer_layout.addWidget(content_frame)
+        
+        # 토글 동작
+        def _toggle_panel():
+            visible = not content_frame.isVisible()
+            content_frame.setVisible(visible)
+            toggle_btn.setText("▼ 채널 제어" if visible else "▶ 채널 제어")
+        toggle_btn.clicked.connect(_toggle_panel)
         
         # --- 1) 채널 리스트 (체크박스 + 클릭 하이라이트) - 2열 ---
-        from math import ceil
         ch_list_left = QListWidget()
         ch_list_right = QListWidget()
         for w in (ch_list_left, ch_list_right):
@@ -9080,7 +9106,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
-            # 색상 아이콘 표시
             color = channel_map[label]['color']
             item.setForeground(QColor(color))
             if idx < half:
@@ -9090,7 +9115,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ch_lists = [ch_list_left, ch_list_right]
         
         # 하이라이트 상태 추적 (다중 선택)
-        highlight_state = {'active': set()}  # 빈 set = 모두 표시, set(...) = 하이라이트 채널명들
+        highlight_state = {'active': set()}
         
         DIM_COLOR = '#CCCCCC'
         DIM_ALPHA = 0.15
@@ -9147,12 +9172,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _apply_highlight()
         
         def on_item_clicked(item):
-            """채널 클릭 → 하이라이트/딤"""
             label = item.text()
             _highlight_channel(label)
         
         def on_item_changed(item):
-            """체크 상태 변경 → 채널 ON/OFF"""
             label = item.text()
             visible = item.checkState() == Qt.CheckState.Checked
             if label in channel_map:
@@ -9173,23 +9196,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         list_row.addWidget(ch_list_left)
         list_row.addWidget(ch_list_right)
         list_layout.addLayout(list_row)
-        control_layout.addLayout(list_layout)
+        content_layout.addLayout(list_layout)
         
-        # --- 4) 레전드 ON/OFF ---
-        legend_checkbox = QCheckBox("Legend ON/OFF")
-        legend_checkbox.setChecked(True)
-        legend_checkbox.setStyleSheet("font-size: 10px;")
-        
-        def toggle_legend(state):
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    legend.set_visible(state == Qt.CheckState.Checked.value)
-            canvas.draw_idle()
-        
-        legend_checkbox.stateChanged.connect(toggle_legend)
-        
-        # --- 5) 전체 선택 / 전체 해제 버튼 ---
+        # --- 전체 선택 / 전체 해제 버튼 ---
         btn_layout = QVBoxLayout()
         btn_all = QPushButton("전체 선택")
         btn_all.setFixedWidth(70)
@@ -9212,12 +9221,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         btn_none.clicked.connect(select_none)
         btn_layout.addWidget(btn_all)
         btn_layout.addWidget(btn_none)
-        control_layout.addLayout(btn_layout)
+        content_layout.addLayout(btn_layout)
         
-        control_layout.addWidget(legend_checkbox)
-        control_layout.addStretch()
+        # --- 레전드 ON/OFF ---
+        legend_checkbox = QCheckBox("Legend ON/OFF")
+        legend_checkbox.setChecked(True)
+        legend_checkbox.setStyleSheet("font-size: 10px;")
         
-        return control_widget
+        def toggle_legend(state):
+            for ax in axes_list:
+                legend = ax.get_legend()
+                if legend:
+                    legend.set_visible(state == Qt.CheckState.Checked.value)
+            canvas.draw_idle()
+        
+        legend_checkbox.stateChanged.connect(toggle_legend)
+        content_layout.addWidget(legend_checkbox)
+        content_layout.addStretch()
+        
+        return outer_widget
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list):
