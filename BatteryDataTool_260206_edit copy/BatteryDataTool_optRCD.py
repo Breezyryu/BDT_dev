@@ -9973,7 +9973,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # dcir2, mkdcir 중복 제거
                         _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd,
                                            colorno, graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = temp_lgnd if temp_lgnd else cycnamelist[-1]
+                        # ch_label: 폴더(LOT) 단위 이름으로 통일 (동일 폴더 채널을 1개 항목으로 묶음)
+                        if len(all_data_name) != 0:
+                            ch_label = all_data_name[i]
+                        else:
+                            ch_label = cycnamelist[-2].split('_')[-1]
+                        if len(ch_label) > 20:
+                            ch_label = ch_label[:20] + "..."
                         if ch_label in channel_map:
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
