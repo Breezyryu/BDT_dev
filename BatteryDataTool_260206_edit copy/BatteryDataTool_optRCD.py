@@ -9044,7 +9044,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return tab, tab_layout, canvas, toolbar
 
-    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list):
+    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None):
         """
         Cycle 그래프 채널 제어 위젯 생성 (오버레이 토글)
         channel_map: dict of {label: {'artists': [PathCollection...], 'color': original_color}}
