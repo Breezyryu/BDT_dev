@@ -9044,7 +9044,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return tab, tab_layout, canvas, toolbar
 
-    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None):
+    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None):
         """
         Cycle 그래프 채널 제어 위젯 생성 (오버레이 토글)
         channel_map: dict of {label: {'artists': [PathCollection...], 'color': original_color}}
@@ -9250,7 +9250,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             checked = state == Qt.CheckState.Checked.value
             highlight_state['enabled'] = checked
             if checked:
-                # 하이라이트 모드 ON: 모든 채널 회색(dim), 클릭으로 개별 선택
+                # 하이라이트 모드 ON: 서브 채널 하이라이트와 상호 배제
+                sub_chk = highlight_state.get('sub_hl_checkbox')
+                if sub_chk is not None:
+                    sub_chk.setChecked(False)
+                # 모든 채널 회색(dim), 클릭으로 개별 선택
                 highlight_state['active'] = set()
                 # 모두 dim 처리
                 for lbl, info in channel_map.items():
@@ -9306,6 +9310,152 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         overlay_layout.addLayout(ctrl_col)
         overlay_layout.addLayout(list_col)
         
+        # --- 2) 서브 채널 리스트 (sub_channel_map 있을 때만) ---
+        if sub_channel_map and len(sub_channel_map) > 1:
+            sub_list = QListWidget()
+            sub_list.setMinimumWidth(120)
+            sub_list.setMaximumWidth(200)
+            sub_list.setStyleSheet(_list_style)
+            
+            _sub_total = len(sub_channel_map)
+            _snw = len(str(_sub_total))
+            for idx, label in enumerate(sub_channel_map, 1):
+                item = QListWidgetItem(f"{idx:0{_snw}d}. {label}")
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked)
+                item.setForeground(QColor(sub_channel_map[label]['color']))
+                sub_list.addItem(item)
+            
+            # 서브 채널 하이라이트 상태
+            sub_highlight_state = {'active': set(), 'enabled': False}
+            
+            def _sub_restore_all():
+                """서브 채널 기준 원래 색상/알파 복원"""
+                for lbl, info in sub_channel_map.items():
+                    for art in info['artists']:
+                        orig = _orig_colors.get(id(art))
+                        art.set_alpha(NORMAL_ALPHA)
+                        if orig is not None:
+                            art.set_facecolors(orig['fc'].copy())
+                            art.set_edgecolors(orig['ec'].copy())
+                        art.set_zorder(3)
+                sub_highlight_state['active'] = set()
+            
+            def _sub_apply_highlight():
+                """서브 채널 기준 하이라이트/딤"""
+                selected = sub_highlight_state['active']
+                if not selected:
+                    _sub_restore_all()
+                    canvas.draw()
+                    return
+                for lbl, info in sub_channel_map.items():
+                    if lbl in selected:
+                        for art in info['artists']:
+                            orig = _orig_colors.get(id(art))
+                            art.set_alpha(1.0)
+                            if orig is not None:
+                                art.set_facecolors(orig['fc'].copy())
+                                art.set_edgecolors(orig['ec'].copy())
+                            art.set_zorder(10)
+                    else:
+                        for art in info['artists']:
+                            orig = _orig_colors.get(id(art))
+                            is_filled = True
+                            if orig is not None:
+                                is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                            if is_filled:
+                                art.set_facecolors(DIM_COLOR)
+                            art.set_edgecolors(DIM_COLOR)
+                            art.set_alpha(DIM_ALPHA)
+                            art.set_zorder(1)
+                canvas.draw()
+            
+            def _sub_highlight_channel(selected_label):
+                """서브 채널 하이라이트 토글"""
+                if not sub_highlight_state['enabled']:
+                    return
+                active = sub_highlight_state['active']
+                if selected_label in active:
+                    active.discard(selected_label)
+                else:
+                    active.add(selected_label)
+                _sub_apply_highlight()
+            
+            def on_sub_item_clicked(item):
+                label = _strip_numbering(item.text())
+                _sub_highlight_channel(label)
+            
+            def on_sub_item_changed(item):
+                label = _strip_numbering(item.text())
+                visible = item.checkState() == Qt.CheckState.Checked
+                if label in sub_channel_map:
+                    for art in sub_channel_map[label]['artists']:
+                        art.set_visible(visible)
+                canvas.draw()
+            
+            sub_list.itemClicked.connect(on_sub_item_clicked)
+            sub_list.itemChanged.connect(on_sub_item_changed)
+            
+            # 서브 채널 전체 표시 / 하이라이트 체크박스
+            _sub_chk_guard = {'updating': False}
+            chk_sub_show_all = QCheckBox(f"({_sub_total}) 전체 표시")
+            chk_sub_show_all.setChecked(True)
+            chk_sub_show_all.setStyleSheet(_compact_chk + " font-weight: bold;")
+            chk_sub_hl_all = QCheckBox(f"({_sub_total}) 전체 하이라이트")
+            chk_sub_hl_all.setChecked(False)
+            chk_sub_hl_all.setStyleSheet(_compact_chk)
+            
+            def _on_sub_show_all(state):
+                if _sub_chk_guard['updating']:
+                    return
+                _sub_chk_guard['updating'] = True
+                checked = state == Qt.CheckState.Checked.value
+                for i in range(sub_list.count()):
+                    sub_list.item(i).setCheckState(
+                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+                _sub_chk_guard['updating'] = False
+            
+            def _on_sub_hl_all(state):
+                checked = state == Qt.CheckState.Checked.value
+                sub_highlight_state['enabled'] = checked
+                if checked:
+                    # 서브 하이라이트 ON → 채널 그룹 하이라이트 OFF (상호 배제)
+                    chk_hl_all.setChecked(False)
+                    sub_highlight_state['active'] = set()
+                    for lbl, info in sub_channel_map.items():
+                        for art in info['artists']:
+                            orig = _orig_colors.get(id(art))
+                            is_filled = True
+                            if orig is not None:
+                                is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                            if is_filled:
+                                art.set_facecolors(DIM_COLOR)
+                            art.set_edgecolors(DIM_COLOR)
+                            art.set_alpha(DIM_ALPHA)
+                            art.set_zorder(1)
+                    canvas.draw()
+                else:
+                    _sub_restore_all()
+                    canvas.draw()
+            
+            chk_sub_show_all.stateChanged.connect(_on_sub_show_all)
+            chk_sub_hl_all.stateChanged.connect(_on_sub_hl_all)
+            
+            # 상호 배제 참조 저장 (채널 그룹 → 서브 채널)
+            highlight_state['sub_hl_checkbox'] = chk_sub_hl_all
+            
+            # 서브 채널 열 레이아웃
+            sub_list_col = QVBoxLayout()
+            sub_list_col.setSpacing(1)
+            sub_list_lbl = QLabel("서브 채널")
+            sub_list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
+            sub_list_col.addWidget(sub_list_lbl)
+            sub_list_col.addWidget(chk_sub_show_all)
+            sub_list_col.addWidget(chk_sub_hl_all)
+            sub_list_col.addWidget(sub_list)
+            
+            overlay_layout.addLayout(sub_list_col)
+        
         # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
         def _reposition_overlay():
             """우측 상단에서 아래로 펼쳐지는 오버레이"""
@@ -9359,7 +9509,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return toggle_btn
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
-                            channel_map, fig, axes_list):
+                            channel_map, fig, axes_list, sub_channel_map=None):
         """
         Cycle 탭 최종화 - 채널 제어 위젯 포함 (오버레이 방식)
         """
@@ -9367,7 +9517,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
-                channel_map, canvas, fig, axes_list, args_parent_tab=tab)
+                channel_map, canvas, fig, axes_list, args_parent_tab=tab,
+                sub_channel_map=sub_channel_map)
             # toolbar + toggle_btn 을 한 줄에 배치
             toolbar_row = QHBoxLayout()
             toolbar_row.setContentsMargins(0, 0, 0, 0)
@@ -9908,6 +10059,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             cycnamelist = None
             has_valid_data = False
             channel_map = {}  # 채널 제어용 artist 수집
+            sub_channel_map = {}  # 서브 채널별 artist 수집
             
             if os.path.exists(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
@@ -9969,6 +10121,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
                             channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                        # 서브 채널 개별 추적
+                        sub_label = cycnamelist[-1]
+                        _sub_base = sub_label
+                        _sub_sfx = 2
+                        while sub_label in sub_channel_map:
+                            sub_label = f"{_sub_base} ({_sub_sfx})"
+                            _sub_sfx += 1
+                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                         colorno = colorno + 1
                         
                         # Data output option
@@ -10011,7 +10171,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if has_valid_data and tab_layout is not None:
                     axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list)
+                                             channel_map, fig, axes_list, sub_channel_map)
                     tab_no = tab_no + 1
                     if cycnamelist:
                         output_fig(self.figsaveok, cycnamelist[-2])
@@ -10071,6 +10231,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         toolbar = None
         has_valid_data = False
         channel_map = {}  # 채널 제어용 artist 수집
+        sub_channel_map = {}  # 서브 채널별 artist 수집
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -10144,6 +10305,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
                             channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                        # 서브 채널 개별 추적
+                        sub_label = cycnamelist[-1]
+                        _sub_base = sub_label
+                        _sub_sfx = 2
+                        while sub_label in sub_channel_map:
+                            sub_label = f"{_sub_base} ({_sub_sfx})"
+                            _sub_sfx += 1
+                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
@@ -10197,7 +10366,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
             self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+                                     channel_map, fig, axes_list, sub_channel_map)
             tab_no = tab_no + 1
         else:
             plt.close(fig)
@@ -10253,6 +10422,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         cycnamelist = None
         has_valid_data = False
         channel_map = {}  # 채널 제어용 artist 수집
+        sub_channel_map = {}  # 서브 채널별 artist 수집
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -10319,6 +10489,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
                             channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                        # 서브 채널 개별 추적
+                        sub_label = cycnamelist[-1]
+                        _sub_base = sub_label
+                        _sub_sfx = 2
+                        while sub_label in sub_channel_map:
+                            sub_label = f"{_sub_base} ({_sub_sfx})"
+                            _sub_sfx += 1
+                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
@@ -10364,7 +10542,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
             self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+                                     channel_map, fig, axes_list, sub_channel_map)
             tab_no = tab_no + 1
             if cycnamelist:
                 output_fig(self.figsaveok, cycnamelist[-2])
@@ -10435,6 +10613,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             cycnamelist = None
             has_valid_data = False
             channel_map = {}  # 채널 제어용 artist 수집
+            sub_channel_map = {}  # 서브 채널별 artist 수집
             total_folders = len(all_data_folder)
             
             for i, cyclefolder in enumerate(all_data_folder):
@@ -10500,6 +10679,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
                                 channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                            # 서브 채널 개별 추적
+                            sub_label = cycnamelist[-1]
+                            _sub_base = sub_label
+                            _sub_sfx = 2
+                            while sub_label in sub_channel_map:
+                                sub_label = f"{_sub_base} ({_sub_sfx})"
+                                _sub_sfx += 1
+                            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
@@ -10547,7 +10734,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if has_valid_data and tab_layout is not None:
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
                 self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                         channel_map, fig, axes_list)
+                                         channel_map, fig, axes_list, sub_channel_map)
                 tab_no = tab_no + 1
                 if cycnamelist:
                     output_fig(self.figsaveok, cycnamelist[-2])
@@ -10595,6 +10782,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         cycnamelist = None
         has_valid_data = False
         channel_map = {}  # 채널 제어용 artist 수집
+        sub_channel_map = {}  # 서브 채널별 artist 수집
         
         for k, datafilepath in enumerate(alldatafilepath):
             folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
@@ -10685,6 +10873,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
                                 channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                            # 서브 채널 개별 추적
+                            sub_label = cycnamelist[-1]
+                            _sub_base = sub_label
+                            _sub_sfx = 2
+                            while sub_label in sub_channel_map:
+                                sub_label = f"{_sub_base} ({_sub_sfx})"
+                                _sub_sfx += 1
+                            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
@@ -10733,7 +10929,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
             self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+                                     channel_map, fig, axes_list, sub_channel_map)
             tab_no = tab_no + 1
             if cycnamelist:
                 output_fig(self.figsaveok, cycnamelist[-2])
