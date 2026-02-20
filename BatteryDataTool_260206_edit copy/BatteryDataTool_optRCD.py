@@ -9138,7 +9138,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.addItem(item)
         
         # 하이라이트 상태 추적 (다중 선택)
-        highlight_state = {'active': set()}
+        highlight_state = {'active': set(), 'enabled': False}
         
         DIM_COLOR = '#CCCCCC'
         DIM_ALPHA = 0.15
@@ -9196,7 +9196,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             canvas.draw()
         
         def _highlight_channel(selected_label):
-            """채널 토글: 선택 set에 추가/제거"""
+            """채널 토글: 하이라이트 모드 ON일 때만 동작"""
+            if not highlight_state['enabled']:
+                return
             active = highlight_state['active']
             if selected_label in active:
                 active.discard(selected_label)
@@ -9246,10 +9248,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         def _on_hl_all(state):
             checked = state == Qt.CheckState.Checked.value
+            highlight_state['enabled'] = checked
             if checked:
-                highlight_state['active'] = set(channel_map.keys())
-                _apply_highlight()
+                # 하이라이트 모드 ON: 모든 채널 회색(dim), 클릭으로 개별 선택
+                highlight_state['active'] = set()
+                # 모두 dim 처리
+                for lbl, info in channel_map.items():
+                    for art in info['artists']:
+                        orig = _orig_colors.get(id(art))
+                        is_filled = True
+                        if orig is not None:
+                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                        if is_filled:
+                            art.set_facecolors(DIM_COLOR)
+                        art.set_edgecolors(DIM_COLOR)
+                        art.set_alpha(DIM_ALPHA)
+                        art.set_zorder(1)
+                canvas.draw()
             else:
+                # 하이라이트 모드 OFF: 모든 채널 원래 색상 복원
                 _restore_all()
                 canvas.draw()
         
