@@ -9135,6 +9135,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             item.setForeground(QColor(channel_map[label]['color']))
+            item.setToolTip(label)
             ch_list.addItem(item)
         
         # 하이라이트 상태 추적 (다중 선택)
@@ -9170,7 +9171,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             """현재 active set 기준으로 하이라이트/딤 적용"""
             selected = highlight_state['active']
             if not selected:
-                _restore_all()
+                # 선택 없음 → 모두 dim 유지
+                for lbl, info in channel_map.items():
+                    for art in info['artists']:
+                        orig = _orig_colors.get(id(art))
+                        is_filled = True
+                        if orig is not None:
+                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                        if is_filled:
+                            art.set_facecolors(DIM_COLOR)
+                        art.set_edgecolors(DIM_COLOR)
+                        art.set_alpha(DIM_ALPHA)
+                        art.set_zorder(1)
                 canvas.draw()
                 return
             for lbl, info in channel_map.items():
@@ -9231,11 +9243,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _chk_guard = {'updating': False}
         
         _compact_chk = "font-size: 12px; padding: 0; margin: 0;"
-        chk_show_all = QCheckBox(f"({_ch_total}) 전체 표시")
+        chk_show_all = QCheckBox("전체 표시")
         chk_show_all.setChecked(True)
         chk_show_all.setStyleSheet(_compact_chk + " font-weight: bold;")
-        chk_hl_all = QCheckBox(f"({_ch_total}) 전체 하이라이트")
-        chk_hl_all.setChecked(False)
+        chk_hl_all = QCheckBox("전체 하이라이트")
+        chk_hl_all.setChecked(True)
         chk_hl_all.setStyleSheet(_compact_chk)
         
         def _on_show_all(state):
@@ -9248,12 +9260,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         def _on_hl_all(state):
             checked = state == Qt.CheckState.Checked.value
-            highlight_state['enabled'] = checked
+            highlight_state['enabled'] = not checked  # OFF일 때 개별 선택 활성화
             if checked:
-                # 하이라이트 모드 ON: 서브 채널 하이라이트와 상호 배제
+                # 체크 ON: 모든 채널 원래 색상 복원
+                _restore_all()
+                canvas.draw()
+            else:
+                # 체크 OFF: 서브 채널 하이라이트와 상호 배제
                 sub_chk = highlight_state.get('sub_hl_checkbox')
                 if sub_chk is not None:
-                    sub_chk.setChecked(False)
+                    sub_chk.setChecked(True)
                 # 모든 채널 회색(dim), 클릭으로 개별 선택
                 highlight_state['active'] = set()
                 # 모두 dim 처리
@@ -9268,10 +9284,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-                canvas.draw()
-            else:
-                # 하이라이트 모드 OFF: 모든 채널 원래 색상 복원
-                _restore_all()
                 canvas.draw()
         
         chk_show_all.stateChanged.connect(_on_show_all)
@@ -9294,7 +9306,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 전체 레이아웃: legend + 채널 그룹 ---
         list_col = QVBoxLayout()
         list_col.setSpacing(1)
-        list_lbl = QLabel("채널 그룹")
+        list_lbl = QLabel(f"채널 그룹 ({_ch_total})")
         list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
         list_col.addWidget(list_lbl)
         list_col.addWidget(chk_show_all)
@@ -9324,6 +9336,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
                 item.setForeground(QColor(sub_channel_map[label]['color']))
+                item.setToolTip(label)
                 sub_list.addItem(item)
             
             # 서브 채널 하이라이트 상태
@@ -9345,7 +9358,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 """서브 채널 기준 하이라이트/딤"""
                 selected = sub_highlight_state['active']
                 if not selected:
-                    _sub_restore_all()
+                    # 선택 없음 → 모두 dim 유지
+                    for lbl, info in sub_channel_map.items():
+                        for art in info['artists']:
+                            orig = _orig_colors.get(id(art))
+                            is_filled = True
+                            if orig is not None:
+                                is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                            if is_filled:
+                                art.set_facecolors(DIM_COLOR)
+                            art.set_edgecolors(DIM_COLOR)
+                            art.set_alpha(DIM_ALPHA)
+                            art.set_zorder(1)
                     canvas.draw()
                     return
                 for lbl, info in sub_channel_map.items():
@@ -9398,11 +9422,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             # 서브 채널 전체 표시 / 하이라이트 체크박스
             _sub_chk_guard = {'updating': False}
-            chk_sub_show_all = QCheckBox(f"({_sub_total}) 전체 표시")
+            chk_sub_show_all = QCheckBox("전체 표시")
             chk_sub_show_all.setChecked(True)
             chk_sub_show_all.setStyleSheet(_compact_chk + " font-weight: bold;")
-            chk_sub_hl_all = QCheckBox(f"({_sub_total}) 전체 하이라이트")
-            chk_sub_hl_all.setChecked(False)
+            chk_sub_hl_all = QCheckBox("전체 하이라이트")
+            chk_sub_hl_all.setChecked(True)
             chk_sub_hl_all.setStyleSheet(_compact_chk)
             
             def _on_sub_show_all(state):
@@ -9417,10 +9441,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             def _on_sub_hl_all(state):
                 checked = state == Qt.CheckState.Checked.value
-                sub_highlight_state['enabled'] = checked
+                sub_highlight_state['enabled'] = not checked  # OFF일 때 개별 선택 활성화
                 if checked:
-                    # 서브 하이라이트 ON → 채널 그룹 하이라이트 OFF (상호 배제)
-                    chk_hl_all.setChecked(False)
+                    # 체크 ON: 모든 서브 채널 원래 색상 복원
+                    _sub_restore_all()
+                    canvas.draw()
+                else:
+                    # 체크 OFF: 채널 그룹 하이라이트와 상호 배제
+                    chk_hl_all.setChecked(True)
                     sub_highlight_state['active'] = set()
                     for lbl, info in sub_channel_map.items():
                         for art in info['artists']:
@@ -9434,9 +9462,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             art.set_alpha(DIM_ALPHA)
                             art.set_zorder(1)
                     canvas.draw()
-                else:
-                    _sub_restore_all()
-                    canvas.draw()
             
             chk_sub_show_all.stateChanged.connect(_on_sub_show_all)
             chk_sub_hl_all.stateChanged.connect(_on_sub_hl_all)
@@ -9447,7 +9472,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # 서브 채널 열 레이아웃
             sub_list_col = QVBoxLayout()
             sub_list_col.setSpacing(1)
-            sub_list_lbl = QLabel("서브 채널")
+            sub_list_lbl = QLabel(f"서브 채널 ({_sub_total})")
             sub_list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
             sub_list_col.addWidget(sub_list_lbl)
             sub_list_col.addWidget(chk_sub_show_all)
