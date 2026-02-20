@@ -9266,11 +9266,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _restore_all()
                 canvas.draw()
             else:
-                # 체크 OFF: 서브 채널 하이라이트와 상호 배제
-                sub_chk = highlight_state.get('sub_hl_checkbox')
-                if sub_chk is not None:
-                    sub_chk.setChecked(True)
-                # 모든 채널 회색(dim), 클릭으로 개별 선택
+                # 체크 OFF: 모든 채널 회색(dim), 클릭으로 개별 선택
                 highlight_state['active'] = set()
                 # 모두 dim 처리
                 for lbl, info in channel_map.items():
@@ -9339,77 +9335,95 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 item.setToolTip(label)
                 sub_list.addItem(item)
             
-            # 서브 채널 하이라이트 상태
-            sub_highlight_state = {'active': set(), 'enabled': False}
+            # ── 채널 그룹 → 서브 채널 연동 (표시/숨김) ──
+            _sub_chk_guard = {'updating': False}
             
-            def _sub_restore_all():
-                """서브 채널 기준 원래 색상/알파 복원"""
-                for lbl, info in sub_channel_map.items():
-                    for art in info['artists']:
+            def _get_sub_items_for_group(group_label):
+                """채널 그룹에 속한 서브 채널 항목 리스트 반환"""
+                result = []
+                for i in range(sub_list.count()):
+                    sub_item = sub_list.item(i)
+                    sub_label = _strip_numbering(sub_item.text())
+                    if sub_label in sub_channel_map:
+                        if sub_channel_map[sub_label].get('parent') == group_label:
+                            result.append((sub_item, sub_label))
+                return result
+            
+            # on_item_changed 재정의: 채널 그룹 표시/숨김 → 하위 서브 채널도 연동
+            ch_list.itemChanged.disconnect(on_item_changed)
+            
+            def on_item_changed_linked(item):
+                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경"""
+                label = _strip_numbering(item.text())
+                visible = item.checkState() == Qt.CheckState.Checked
+                if label in channel_map:
+                    for art in channel_map[label]['artists']:
+                        art.set_visible(visible)
+                # 하위 서브 채널 항목 체크 상태도 동기화
+                if not _sub_chk_guard['updating']:
+                    _sub_chk_guard['updating'] = True
+                    for sub_item, sub_label in _get_sub_items_for_group(label):
+                        sub_item.setCheckState(
+                            Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
+                    _sub_chk_guard['updating'] = False
+                canvas.draw()
+            
+            ch_list.itemChanged.connect(on_item_changed_linked)
+            
+            # on_item_clicked 재정의: 채널 그룹 하이라이트 → 하위 서브 채널도 연동
+            ch_list.itemClicked.disconnect(on_item_clicked)
+            
+            def on_item_clicked_linked(item):
+                """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경"""
+                label = _strip_numbering(item.text())
+                _highlight_channel(label)
+            
+            ch_list.itemClicked.connect(on_item_clicked_linked)
+            
+            # 서브 채널 클릭/체크 핸들러 (하위 개별 제어)
+            def on_sub_item_clicked(item):
+                """서브 채널 개별 하이라이트 토글 (채널 그룹 하이라이트 모드 ON일 때만)"""
+                if not highlight_state['enabled']:
+                    return
+                label = _strip_numbering(item.text())
+                if label not in sub_channel_map:
+                    return
+                info = sub_channel_map[label]
+                active = highlight_state['active']
+                parent = info.get('parent', '')
+                # 부모 그룹이 하이라이트에 포함되어 있으면 → 부모를 빼고 같은 그룹의 다른 서브만 추가
+                # 부모 그룹이 없으면 → 서브 채널 단독 토글
+                # 서브 채널 개별 artist를 직접 제어
+                artists = info['artists']
+                # 토글: 현재 하이라이트 상태 확인 (alpha 기준)
+                is_highlighted = any(art.get_alpha() == 1.0 for art in artists)
+                if is_highlighted:
+                    # dim 처리
+                    for art in artists:
                         orig = _orig_colors.get(id(art))
-                        art.set_alpha(NORMAL_ALPHA)
+                        is_filled = True
+                        if orig is not None:
+                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                        if is_filled:
+                            art.set_facecolors(DIM_COLOR)
+                        art.set_edgecolors(DIM_COLOR)
+                        art.set_alpha(DIM_ALPHA)
+                        art.set_zorder(1)
+                else:
+                    # 하이라이트 처리
+                    for art in artists:
+                        orig = _orig_colors.get(id(art))
+                        art.set_alpha(1.0)
                         if orig is not None:
                             art.set_facecolors(orig['fc'].copy())
                             art.set_edgecolors(orig['ec'].copy())
-                        art.set_zorder(3)
-                sub_highlight_state['active'] = set()
-            
-            def _sub_apply_highlight():
-                """서브 채널 기준 하이라이트/딤"""
-                selected = sub_highlight_state['active']
-                if not selected:
-                    # 선택 없음 → 모두 dim 유지
-                    for lbl, info in sub_channel_map.items():
-                        for art in info['artists']:
-                            orig = _orig_colors.get(id(art))
-                            is_filled = True
-                            if orig is not None:
-                                is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                            if is_filled:
-                                art.set_facecolors(DIM_COLOR)
-                            art.set_edgecolors(DIM_COLOR)
-                            art.set_alpha(DIM_ALPHA)
-                            art.set_zorder(1)
-                    canvas.draw()
-                    return
-                for lbl, info in sub_channel_map.items():
-                    if lbl in selected:
-                        for art in info['artists']:
-                            orig = _orig_colors.get(id(art))
-                            art.set_alpha(1.0)
-                            if orig is not None:
-                                art.set_facecolors(orig['fc'].copy())
-                                art.set_edgecolors(orig['ec'].copy())
-                            art.set_zorder(10)
-                    else:
-                        for art in info['artists']:
-                            orig = _orig_colors.get(id(art))
-                            is_filled = True
-                            if orig is not None:
-                                is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                            if is_filled:
-                                art.set_facecolors(DIM_COLOR)
-                            art.set_edgecolors(DIM_COLOR)
-                            art.set_alpha(DIM_ALPHA)
-                            art.set_zorder(1)
+                        art.set_zorder(10)
                 canvas.draw()
             
-            def _sub_highlight_channel(selected_label):
-                """서브 채널 하이라이트 토글"""
-                if not sub_highlight_state['enabled']:
-                    return
-                active = sub_highlight_state['active']
-                if selected_label in active:
-                    active.discard(selected_label)
-                else:
-                    active.add(selected_label)
-                _sub_apply_highlight()
-            
-            def on_sub_item_clicked(item):
-                label = _strip_numbering(item.text())
-                _sub_highlight_channel(label)
-            
             def on_sub_item_changed(item):
+                """서브 채널 개별 표시/숨김"""
+                if _sub_chk_guard['updating']:
+                    return
                 label = _strip_numbering(item.text())
                 visible = item.checkState() == Qt.CheckState.Checked
                 if label in sub_channel_map:
@@ -9420,63 +9434,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             sub_list.itemClicked.connect(on_sub_item_clicked)
             sub_list.itemChanged.connect(on_sub_item_changed)
             
-            # 서브 채널 전체 표시 / 하이라이트 체크박스
-            _sub_chk_guard = {'updating': False}
-            chk_sub_show_all = QCheckBox("전체 표시")
-            chk_sub_show_all.setChecked(True)
-            chk_sub_show_all.setStyleSheet(_compact_chk + " font-weight: bold;")
-            chk_sub_hl_all = QCheckBox("전체 하이라이트")
-            chk_sub_hl_all.setChecked(True)
-            chk_sub_hl_all.setStyleSheet(_compact_chk)
-            
-            def _on_sub_show_all(state):
-                if _sub_chk_guard['updating']:
-                    return
-                _sub_chk_guard['updating'] = True
-                checked = state == Qt.CheckState.Checked.value
-                for i in range(sub_list.count()):
-                    sub_list.item(i).setCheckState(
-                        Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-                _sub_chk_guard['updating'] = False
-            
-            def _on_sub_hl_all(state):
-                checked = state == Qt.CheckState.Checked.value
-                sub_highlight_state['enabled'] = not checked  # OFF일 때 개별 선택 활성화
-                if checked:
-                    # 체크 ON: 모든 서브 채널 원래 색상 복원
-                    _sub_restore_all()
-                    canvas.draw()
-                else:
-                    # 체크 OFF: 채널 그룹 하이라이트와 상호 배제
-                    chk_hl_all.setChecked(True)
-                    sub_highlight_state['active'] = set()
-                    for lbl, info in sub_channel_map.items():
-                        for art in info['artists']:
-                            orig = _orig_colors.get(id(art))
-                            is_filled = True
-                            if orig is not None:
-                                is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                            if is_filled:
-                                art.set_facecolors(DIM_COLOR)
-                            art.set_edgecolors(DIM_COLOR)
-                            art.set_alpha(DIM_ALPHA)
-                            art.set_zorder(1)
-                    canvas.draw()
-            
-            chk_sub_show_all.stateChanged.connect(_on_sub_show_all)
-            chk_sub_hl_all.stateChanged.connect(_on_sub_hl_all)
-            
-            # 상호 배제 참조 저장 (채널 그룹 → 서브 채널)
-            highlight_state['sub_hl_checkbox'] = chk_sub_hl_all
-            
-            # 서브 채널 열 레이아웃
+            # 서브 채널 열 레이아웃 (전체 표시/하이라이트 체크박스 없음)
             sub_list_col = QVBoxLayout()
             sub_list_col.setSpacing(1)
             sub_list_lbl = QLabel(f"서브 채널 ({_sub_total})")
             sub_list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
             sub_list_col.addWidget(sub_list_lbl)
-            sub_list_col.addWidget(chk_sub_show_all)
-            sub_list_col.addWidget(chk_sub_hl_all)
             sub_list_col.addWidget(sub_list)
             
             overlay_layout.addLayout(sub_list_col)
@@ -10196,7 +10159,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if has_valid_data and tab_layout is not None:
                     axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list, sub_channel_map)
+                                             channel_map, fig, axes_list)
                     tab_no = tab_no + 1
                     if cycnamelist:
                         output_fig(self.figsaveok, cycnamelist[-2])
@@ -10567,7 +10530,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
             self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list, sub_channel_map)
+                                     channel_map, fig, axes_list)
             tab_no = tab_no + 1
             if cycnamelist:
                 output_fig(self.figsaveok, cycnamelist[-2])
@@ -10759,7 +10722,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if has_valid_data and tab_layout is not None:
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
                 self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                         channel_map, fig, axes_list, sub_channel_map)
+                                         channel_map, fig, axes_list)
                 tab_no = tab_no + 1
                 if cycnamelist:
                     output_fig(self.figsaveok, cycnamelist[-2])
