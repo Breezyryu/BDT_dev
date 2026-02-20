@@ -38,8 +38,8 @@ THEME = {
     'TITLE_SIZE': 15,
     'LABEL_SIZE': 12,
     'TICK_SIZE': 10,
-    'SCATTER_SIZE': 4,
-    'SCATTER_EMPTY_SIZE': 14,
+    'SCATTER_SIZE': 7,
+    'SCATTER_EMPTY_SIZE': 7,
     'SCATTER_ALPHA': 0.55,
     'SCATTER_SET_SIZE': 4,
     'EDGE_WIDTH': 0,
@@ -9064,11 +9064,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # ── 토글 버튼 (레이아웃에 추가됨, 22px 고정) ──
         toggle_btn = QPushButton("▶ 채널 제어")
-        toggle_btn.setFixedHeight(22)
+        toggle_btn.setFixedHeight(24)
         toggle_btn.setStyleSheet(
             "QPushButton { font-size: 10px; font-weight: bold; text-align: left; "
             "padding-left: 8px; border: 1px solid #ccc; background: #f5f5f5; }"
             "QPushButton:hover { background: #e0e0e0; }"
+        )
+        
+        # ── 다크/라이트 테마 자동 감지 ──
+        from PyQt6.QtWidgets import QApplication
+        _palette = QApplication.instance().palette()
+        _bg = _palette.color(_palette.ColorRole.Window)
+        _is_dark = _bg.lightness() < 128
+        if _is_dark:
+            _overlay_bg = "rgba(45, 45, 48, 0.95)"
+            _overlay_border = "#555"
+            _btn_bg = "#3c3c3c"
+            _btn_hover = "#505050"
+            _btn_border = "#666"
+            _list_style = "QListWidget { font-size: 12px; color: #ddd; background: #2d2d30; }"
+        else:
+            _overlay_bg = "rgba(255, 255, 255, 0.95)"
+            _overlay_border = "#999"
+            _btn_bg = "#f5f5f5"
+            _btn_hover = "#e0e0e0"
+            _btn_border = "#ccc"
+            _list_style = "QListWidget { font-size: 12px; }"
+        
+        toggle_btn.setStyleSheet(
+            f"QPushButton {{ font-size: 12px; font-weight: bold; text-align: left; "
+            f"padding-left: 8px; border: 1px solid {_btn_border}; background: {_btn_bg}; }}"
+            f"QPushButton:hover {{ background: {_btn_hover}; }}"
         )
         
         # ── 오버레이 패널 (parent_tab의 자식, 레이아웃 밖 → figure 크기 불변) ──
@@ -9076,8 +9102,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         overlay_layout = QHBoxLayout(overlay)
         overlay_layout.setContentsMargins(8, 4, 8, 4)
         overlay.setStyleSheet(
-            "QFrame { background: rgba(255, 255, 255, 0.93); "
-            "border: 1px solid #999; border-radius: 4px; }"
+            f"QFrame {{ background: {_overlay_bg}; "
+            f"border: 1px solid {_overlay_border}; border-radius: 4px; }}"
         )
         overlay.setVisible(False)
         
@@ -9087,7 +9113,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for w in (ch_list_left, ch_list_right):
             w.setMaximumHeight(120)
             w.setMinimumWidth(140)
-            w.setStyleSheet("QListWidget { font-size: 10px; }")
+            w.setStyleSheet(_list_style)
         
         channel_keys = list(channel_map.keys())
         half = ceil(len(channel_keys) / 2)
@@ -9179,7 +9205,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 채널 리스트를 2열 레이아웃에 추가 ---
         list_layout = QVBoxLayout()
         list_label = QLabel("채널 선택 (클릭: 하이라이트)")
-        list_label.setStyleSheet("font-size: 10px; font-weight: bold;")
+        list_label.setStyleSheet("font-size: 12px; font-weight: bold;")
         list_layout.addWidget(list_label)
         list_row = QHBoxLayout()
         list_row.addWidget(ch_list_left)
@@ -9190,11 +9216,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 전체 선택 / 전체 해제 버튼 ---
         btn_layout = QVBoxLayout()
         btn_all = QPushButton("전체 선택")
-        btn_all.setFixedWidth(70)
-        btn_all.setStyleSheet("font-size: 10px;")
+        btn_all.setFixedWidth(80)
+        btn_all.setStyleSheet("font-size: 12px;")
         btn_none = QPushButton("전체 해제")
-        btn_none.setFixedWidth(70)
-        btn_none.setStyleSheet("font-size: 10px;")
+        btn_none.setFixedWidth(80)
+        btn_none.setStyleSheet("font-size: 12px;")
         
         def select_all():
             for ch_w in ch_lists:
@@ -9215,7 +9241,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 레전드 ON/OFF ---
         legend_checkbox = QCheckBox("Legend ON/OFF")
         legend_checkbox.setChecked(True)
-        legend_checkbox.setStyleSheet("font-size: 10px;")
+        legend_checkbox.setStyleSheet("font-size: 12px;")
         
         def toggle_legend(state):
             for ax in axes_list:
@@ -9228,14 +9254,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         overlay_layout.addWidget(legend_checkbox)
         overlay_layout.addStretch()
         
-        # ── 오버레이 위치 조정 ──
+        # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
         def _reposition_overlay():
-            """토글 버튼 바로 아래에 오버레이 위치 조정"""
+            """토글 버튼 바로 위에 오버레이 위치 조정"""
             if overlay.isVisible():
-                btn_bottom = toggle_btn.mapTo(parent_tab, QPoint(0, toggle_btn.height()))
-                overlay.move(4, btn_bottom.y() + 2)
                 overlay.setFixedWidth(parent_tab.width() - 8)
                 overlay.adjustSize()
+                btn_top = toggle_btn.mapTo(parent_tab, QPoint(0, 0))
+                overlay_y = btn_top.y() - overlay.height() - 2
+                if overlay_y < 0:
+                    overlay_y = 0
+                overlay.move(4, overlay_y)
                 overlay.raise_()
         
         def _toggle_panel():
