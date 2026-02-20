@@ -38,7 +38,7 @@ THEME = {
     'TITLE_SIZE': 15,
     'LABEL_SIZE': 12,
     'TICK_SIZE': 10,
-    'SCATTER_SIZE': 10,
+    'SCATTER_SIZE': 4,
     'SCATTER_EMPTY_SIZE': 14,
     'SCATTER_ALPHA': 0.55,
     'SCATTER_SET_SIZE': 4,
@@ -9065,21 +9065,29 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         control_layout = QHBoxLayout(control_widget)
         control_layout.setContentsMargins(5, 2, 5, 2)
         
-        # --- 1) 채널 리스트 (체크박스 + 클릭 하이라이트) ---
-        ch_list = QListWidget()
-        ch_list.setMaximumHeight(120)
-        ch_list.setMinimumWidth(200)
-        ch_list.setStyleSheet("QListWidget { font-size: 10px; }")
+        # --- 1) 채널 리스트 (체크박스 + 클릭 하이라이트) - 2열 ---
+        from math import ceil
+        ch_list_left = QListWidget()
+        ch_list_right = QListWidget()
+        for w in (ch_list_left, ch_list_right):
+            w.setMaximumHeight(120)
+            w.setMinimumWidth(140)
+            w.setStyleSheet("QListWidget { font-size: 10px; }")
         
         channel_keys = list(channel_map.keys())
-        for label in channel_keys:
+        half = ceil(len(channel_keys) / 2)
+        for idx, label in enumerate(channel_keys):
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             # 색상 아이콘 표시
             color = channel_map[label]['color']
             item.setForeground(QColor(color))
-            ch_list.addItem(item)
+            if idx < half:
+                ch_list_left.addItem(item)
+            else:
+                ch_list_right.addItem(item)
+        ch_lists = [ch_list_left, ch_list_right]
         
         # 하이라이트 상태 추적
         highlight_state = {'active': None}  # None = 모두 표시, str = 하이라이트 채널명
@@ -9147,67 +9155,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     art.set_visible(visible)
             canvas.draw_idle()
         
-        ch_list.itemClicked.connect(on_item_clicked)
-        ch_list.itemChanged.connect(on_item_changed)
+        for ch_w in (ch_list_left, ch_list_right):
+            ch_w.itemClicked.connect(on_item_clicked)
+            ch_w.itemChanged.connect(on_item_changed)
         
-        # --- 채널 리스트를 레이아웃에 추가 ---
+        # --- 채널 리스트를 2열 레이아웃에 추가 ---
         list_layout = QVBoxLayout()
         list_label = QLabel("채널 선택 (클릭: 하이라이트)")
         list_label.setStyleSheet("font-size: 10px; font-weight: bold;")
         list_layout.addWidget(list_label)
-        list_layout.addWidget(ch_list)
+        list_row = QHBoxLayout()
+        list_row.addWidget(ch_list_left)
+        list_row.addWidget(ch_list_right)
+        list_layout.addLayout(list_row)
         control_layout.addLayout(list_layout)
-        
-        # --- 2) 마커 크기 조절 ---
-        size_layout = QVBoxLayout()
-        size_label = QLabel("마커 크기")
-        size_label.setStyleSheet("font-size: 10px; font-weight: bold;")
-        size_spin = QSpinBox()
-        size_spin.setRange(1, 80)
-        size_spin.setValue(THEME['SCATTER_SIZE'])
-        size_spin.setFixedWidth(60)
-        
-        def on_size_changed(val):
-            for info in channel_map.values():
-                for art in info['artists']:
-                    fc = art.get_facecolors()
-                    if len(fc) > 0 and fc[0][3] != 0:
-                        art.set_sizes([val])
-                    else:
-                        art.set_sizes([val + 4])  # empty는 약간 더 크게
-            canvas.draw_idle()
-        
-        size_spin.valueChanged.connect(on_size_changed)
-        size_layout.addWidget(size_label)
-        size_layout.addWidget(size_spin)
-        control_layout.addLayout(size_layout)
-        
-        # --- 3) 알파(투명도) 조절 ---
-        alpha_layout = QVBoxLayout()
-        alpha_label = QLabel("투명도")
-        alpha_label.setStyleSheet("font-size: 10px; font-weight: bold;")
-        alpha_slider = QSlider(Qt.Orientation.Horizontal)
-        alpha_slider.setRange(5, 100)
-        alpha_slider.setValue(int(THEME['SCATTER_ALPHA'] * 100))
-        alpha_slider.setFixedWidth(100)
-        alpha_value_label = QLabel(f"{THEME['SCATTER_ALPHA']:.2f}")
-        alpha_value_label.setStyleSheet("font-size: 10px;")
-        
-        def on_alpha_changed(val):
-            alpha = val / 100.0
-            alpha_value_label.setText(f"{alpha:.2f}")
-            # 하이라이트 모드가 아닐 때만 전체 적용
-            if highlight_state['active'] is None:
-                for info in channel_map.values():
-                    for art in info['artists']:
-                        art.set_alpha(alpha)
-                canvas.draw_idle()
-        
-        alpha_slider.valueChanged.connect(on_alpha_changed)
-        alpha_layout.addWidget(alpha_label)
-        alpha_layout.addWidget(alpha_slider)
-        alpha_layout.addWidget(alpha_value_label)
-        control_layout.addLayout(alpha_layout)
         
         # --- 4) 레전드 ON/OFF ---
         legend_checkbox = QCheckBox("Legend ON/OFF")
@@ -9236,18 +9197,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         btn_reset.setStyleSheet("font-size: 10px;")
         
         def select_all():
-            for i in range(ch_list.count()):
-                ch_list.item(i).setCheckState(Qt.CheckState.Checked)
+            for ch_w in ch_lists:
+                for i in range(ch_w.count()):
+                    ch_w.item(i).setCheckState(Qt.CheckState.Checked)
         
         def select_none():
-            for i in range(ch_list.count()):
-                ch_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+            for ch_w in ch_lists:
+                for i in range(ch_w.count()):
+                    ch_w.item(i).setCheckState(Qt.CheckState.Unchecked)
         
         def reset_all():
             _restore_all()
             select_all()
-            size_spin.setValue(THEME['SCATTER_SIZE'])
-            alpha_slider.setValue(int(THEME['SCATTER_ALPHA'] * 100))
             canvas.draw_idle()
         
         btn_all.clicked.connect(select_all)
