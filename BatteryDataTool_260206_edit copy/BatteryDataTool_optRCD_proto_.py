@@ -22,6 +22,13 @@ from datetime import timezone
 import glob
 import xlwings as xw
 
+try:
+    import pybamm
+    HAS_PYBAMM = True
+except ImportError:
+    HAS_PYBAMM = False
+
+
 # pip 추가 항목: xlsxwriter
 # Malgun gothic을 기본 글꼴로 설정
 
@@ -2669,6 +2676,139 @@ def set_battery_status_log_Profile(rawdatafile, mincapacity, selectcyc, setcond)
             df.ChgProfile.delCap = df.ChgProfile.delTime * df.ChgProfile.Curr
             df.ChgProfile.SOC2 = df.ChgProfile.delCap.cumsum() * 100
     return df
+
+# ===== PyBaMM 시뮬레이션 엔진 =====
+def run_pybamm_simulation(model_name, params_dict, experiment_config):
+    """PyBaMM 전기화학 시뮬레이션 실행
+
+    Parameters
+    ----------
+    model_name : str
+        "SPM", "SPMe", "DFN" 중 하나
+    params_dict : dict
+        테이블에서 읽은 파라미터 값 (키: 한글 파라미터명, 값: float/str)
+    experiment_config : dict
+        mode: "ccv" | "custom" | "gitt"
+        ccv 모드 → chg_crate, dchg_crate, v_max, v_min, cv_cutoff, cycles
+        custom 모드 → steps (list[str])
+        gitt 모드 → pattern_type, pulse_current, pulse_time, rest_time, repeats, v_min
+
+    Returns
+    -------
+    pybamm.Solution
+    """
+    # 1) 모델 생성
+    model_map = {
+        "SPM": pybamm.lithium_ion.SPM,
+        "SPMe": pybamm.lithium_ion.SPMe,
+        "DFN": pybamm.lithium_ion.DFN,
+    }
+    if model_name not in model_map:
+        raise ValueError(f"지원하지 않는 모델: {model_name}")
+    model = model_map[model_name]()
+
+    # 2) 파라미터 적용
+    param = model.default_parameter_values
+    # 테이블 값 → PyBaMM 파라미터 매핑
+    _key_map = {
+        "양극 두께":              ("Positive electrode thickness [m]", 1e-6),
+        "양극 입자 반경":          ("Positive particle radius [m]", 1e-6),
+        "양극 활물질 비율":        ("Positive electrode active material volume fraction", 1),
+        "양극 확산계수":           ("Positive electrode diffusivity [m2.s-1]", 1),
+        "양극 반응속도상수":       ("Positive electrode exchange-current density [A.m-2]", 1),
+        "양극 Bruggeman":         ("Positive electrode Bruggeman coefficient (electrolyte)", 1),
+        "음극 두께":              ("Negative electrode thickness [m]", 1e-6),
+        "음극 입자 반경":          ("Negative particle radius [m]", 1e-6),
+        "음극 활물질 비율":        ("Negative electrode active material volume fraction", 1),
+        "음극 확산계수":           ("Negative electrode diffusivity [m2.s-1]", 1),
+        "음극 반응속도상수":       ("Negative electrode exchange-current density [A.m-2]", 1),
+        "음극 Bruggeman":         ("Negative electrode Bruggeman coefficient (electrolyte)", 1),
+        "분리막 두께":             ("Separator thickness [m]", 1e-6),
+        "분리막 Bruggeman":       ("Separator Bruggeman coefficient (electrolyte)", 1),
+        "전해질 농도":             ("Initial concentration in electrolyte [mol.m-3]", 1),
+        "전극 면적":              ("Electrode width [m]", 1),
+        "셀 용량":                ("Nominal cell capacity [A.h]", 1),
+        "온도":                   ("Ambient temperature [K]", 1),  # 별도 변환
+    }
+    for kr_name, val_str in params_dict.items():
+        if kr_name in _key_map:
+            pybamm_key, scale = _key_map[kr_name]
+            val = float(val_str)
+            if kr_name == "온도":
+                val = val + 273.15  # °C → K
+            else:
+                val = val * scale
+            # 상수값만 덮어씀 (함수형 파라미터는 건너뜀)
+            try:
+                param[pybamm_key] = val
+            except Exception:
+                pass
+
+    # 초기 SOC 설정
+    ini_soc_pos = float(params_dict.get("양극 초기 SOC", 0.8))
+    ini_soc_neg = float(params_dict.get("음극 초기 SOC", 0.03))
+    # PyBaMM은 셀 레벨 SOC로 초기화 (0~1 범위)
+    init_soc = ini_soc_neg  # 음극 SOC가 높을수록 셀 SOC가 낮음 → 근사값 사용
+
+    # 3) 실험 설정 (Experiment) 조합
+    mode = experiment_config.get("mode", "ccv")
+
+    if mode == "ccv":
+        chg_c = experiment_config.get("chg_crate", 1.0)
+        dchg_c = experiment_config.get("dchg_crate", 1.0)
+        v_max = experiment_config.get("v_max", 4.2)
+        v_min = experiment_config.get("v_min", 2.5)
+        cv_cutoff = experiment_config.get("cv_cutoff", 0.05)
+        cycles = int(experiment_config.get("cycles", 1))
+        exp_steps = [
+            f"Charge at {chg_c}C until {v_max}V",
+            f"Hold at {v_max}V until {cv_cutoff}C",
+            f"Discharge at {dchg_c}C until {v_min}V",
+        ]
+        experiment = pybamm.Experiment(exp_steps * cycles)
+
+    elif mode in ("charge", "discharge"):
+        steps = experiment_config.get("steps", [])
+        if not steps:
+            raise ValueError("충방전 스텝이 비어있습니다. 스텝을 추가해주세요.")
+        cycles = int(experiment_config.get("cycles", 1))
+        experiment = pybamm.Experiment(steps * cycles)
+
+    elif mode == "custom":
+        steps = experiment_config.get("steps", [])
+        if not steps:
+            raise ValueError("커스텀 모드: 실험 단계가 비어있습니다.")
+        experiment = pybamm.Experiment(steps)
+
+    elif mode == "gitt":
+        pattern_type = experiment_config.get("pattern_type", "GITT")
+        pulse_c = experiment_config.get("pulse_current", 0.5)
+        pulse_t = experiment_config.get("pulse_time", 600)
+        rest_t = experiment_config.get("rest_time", 3600)
+        repeats = int(experiment_config.get("repeats", 20))
+        v_min = experiment_config.get("v_min", 2.5)
+
+        if pattern_type == "GITT":
+            step_pair = [
+                f"Discharge at {pulse_c}C for {pulse_t}s or until {v_min}V",
+                f"Rest for {rest_t}s",
+            ]
+        else:  # HPPC
+            step_pair = [
+                f"Discharge at {pulse_c}C for {pulse_t}s or until {v_min}V",
+                f"Rest for {rest_t}s",
+                f"Charge at {pulse_c}C for {pulse_t}s or until 4.2V",
+                f"Rest for {rest_t}s",
+            ]
+        experiment = pybamm.Experiment(step_pair * repeats)
+    else:
+        raise ValueError(f"지원하지 않는 모드: {mode}")
+
+    # 4) 시뮬레이션 실행
+    sim = pybamm.Simulation(model, experiment=experiment, parameter_values=param)
+    solution = sim.solve(initial_soc=init_soc)
+    return solution
+
 
 class Ui_sitool(object):
     def setupUi(self, sitool):
@@ -7835,6 +7975,408 @@ class Ui_sitool(object):
         self.line_6.setObjectName("line_6")
         self.horizontalLayout_171.addWidget(self.line_6)
         self.tabWidget.addTab(self.FitTab, "")
+        # ===== PyBaMM 전기화학 시뮬레이션 탭 =====
+        self.PyBaMMTab = QtWidgets.QWidget()
+        self.PyBaMMTab.setObjectName("PyBaMMTab")
+        self.pybamm_main_layout = QtWidgets.QHBoxLayout(self.PyBaMMTab)
+        self.pybamm_main_layout.setObjectName("pybamm_main_layout")
+        # --- 좌측 입력 패널 ---
+        self.pybamm_left_panel = QtWidgets.QVBoxLayout()
+        self.pybamm_left_panel.setObjectName("pybamm_left_panel")
+        # [1] 모델 선택 GroupBox
+        self.pybamm_model_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
+        self.pybamm_model_group.setMinimumSize(QtCore.QSize(340, 60))
+        self.pybamm_model_group.setMaximumSize(QtCore.QSize(340, 60))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        self.pybamm_model_group.setFont(font)
+        self.pybamm_model_group.setObjectName("pybamm_model_group")
+        self.pybamm_model_group.setTitle("모델 선택")
+        self.pybamm_model_hlayout = QtWidgets.QHBoxLayout(self.pybamm_model_group)
+        self.pybamm_model_hlayout.setObjectName("pybamm_model_hlayout")
+        self.pybamm_model_label = QtWidgets.QLabel(parent=self.pybamm_model_group)
+        self.pybamm_model_label.setText("모델:")
+        self.pybamm_model_label.setFont(font)
+        self.pybamm_model_hlayout.addWidget(self.pybamm_model_label)
+        self.pybamm_model_combo = QtWidgets.QComboBox(parent=self.pybamm_model_group)
+        self.pybamm_model_combo.setMinimumSize(QtCore.QSize(200, 25))
+        self.pybamm_model_combo.setFont(font)
+        self.pybamm_model_combo.addItems(["SPM", "SPMe", "DFN"])
+        self.pybamm_model_combo.setObjectName("pybamm_model_combo")
+        self.pybamm_model_hlayout.addWidget(self.pybamm_model_combo)
+        self.pybamm_left_panel.addWidget(self.pybamm_model_group)
+        # [2] 파라미터 세트 GroupBox
+        self.pybamm_param_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
+        self.pybamm_param_group.setMinimumSize(QtCore.QSize(340, 70))
+        self.pybamm_param_group.setMaximumSize(QtCore.QSize(340, 16777215))
+        self.pybamm_param_group.setFont(font)
+        self.pybamm_param_group.setObjectName("pybamm_param_group")
+        self.pybamm_param_group.setTitle("전극 물성 파라미터")
+        self.pybamm_param_vlayout = QtWidgets.QVBoxLayout(self.pybamm_param_group)
+        self.pybamm_param_vlayout.setObjectName("pybamm_param_vlayout")
+        self.pybamm_preset_hlayout = QtWidgets.QHBoxLayout()
+        self.pybamm_preset_label = QtWidgets.QLabel(parent=self.pybamm_param_group)
+        self.pybamm_preset_label.setText("프리셋:")
+        self.pybamm_preset_label.setFont(font)
+        self.pybamm_preset_hlayout.addWidget(self.pybamm_preset_label)
+        self.pybamm_param_combo = QtWidgets.QComboBox(parent=self.pybamm_param_group)
+        self.pybamm_param_combo.setMinimumSize(QtCore.QSize(130, 25))
+        self.pybamm_param_combo.setFont(font)
+        self.pybamm_param_combo.addItems(["Chen2020", "Marquis2019", "Ecker2015", "사용자 정의"])
+        self.pybamm_param_combo.setObjectName("pybamm_param_combo")
+        self.pybamm_preset_hlayout.addWidget(self.pybamm_param_combo)
+        self.pybamm_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_param_group)
+        self.pybamm_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_edit_btn.setFont(font)
+        self.pybamm_edit_btn.setText("파라미터 편집")
+        self.pybamm_edit_btn.setCheckable(True)
+        self.pybamm_edit_btn.setChecked(False)
+        self.pybamm_edit_btn.setObjectName("pybamm_edit_btn")
+        self.pybamm_preset_hlayout.addWidget(self.pybamm_edit_btn)
+        self.pybamm_param_vlayout.addLayout(self.pybamm_preset_hlayout)
+        self.pybamm_param_table = QtWidgets.QTableWidget(parent=self.pybamm_param_group)
+        self.pybamm_param_table.setMinimumSize(QtCore.QSize(320, 440))
+        self.pybamm_param_table.setMaximumSize(QtCore.QSize(320, 440))
+        self.pybamm_param_table.setFont(font)
+        self.pybamm_param_table.setColumnCount(3)
+        self.pybamm_param_table.setHorizontalHeaderLabels(["파라미터", "값", "단위"])
+        self.pybamm_param_table.setColumnWidth(0, 150)
+        self.pybamm_param_table.setColumnWidth(1, 80)
+        self.pybamm_param_table.setColumnWidth(2, 60)
+        self.pybamm_param_table.setRowCount(20)
+        _pybamm_param_rows = [
+            ("양극 두께", "85.2", "μm"), ("양극 입자 반경", "5.22", "μm"),
+            ("양극 활물질 비율", "0.665", "-"), ("양극 확산계수", "4e-15", "m²/s"),
+            ("양극 반응속도상수", "6.48e-7", "m/s"), ("양극 초기 SOC", "0.8", "-"),
+            ("양극 Bruggeman", "1.5", "-"),
+            ("음극 두께", "75.6", "μm"), ("음극 입자 반경", "5.86", "μm"),
+            ("음극 활물질 비율", "0.75", "-"), ("음극 확산계수", "3.3e-14", "m²/s"),
+            ("음극 반응속도상수", "6.71e-7", "m/s"), ("음극 초기 SOC", "0.03", "-"),
+            ("음극 Bruggeman", "1.5", "-"),
+            ("분리막 두께", "12.0", "μm"), ("분리막 Bruggeman", "1.5", "-"),
+            ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "0.1027", "m²"),
+            ("셀 용량", "5.0", "Ah"), ("온도", "25", "°C"),
+        ]
+        for _row, (_name, _val, _unit) in enumerate(_pybamm_param_rows):
+            self.pybamm_param_table.setItem(_row, 0, QtWidgets.QTableWidgetItem(_name))
+            self.pybamm_param_table.setItem(_row, 1, QtWidgets.QTableWidgetItem(_val))
+            self.pybamm_param_table.setItem(_row, 2, QtWidgets.QTableWidgetItem(_unit))
+            self.pybamm_param_table.item(_row, 0).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self.pybamm_param_table.item(_row, 2).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+        self.pybamm_param_table.setObjectName("pybamm_param_table")
+        self.pybamm_param_table.setVisible(False)
+        self.pybamm_param_vlayout.addWidget(self.pybamm_param_table)
+        self.pybamm_left_panel.addWidget(self.pybamm_param_group)
+        # [3] 충방전 패턴 GroupBox
+        self.pybamm_exp_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
+        self.pybamm_exp_group.setMinimumSize(QtCore.QSize(340, 400))
+        self.pybamm_exp_group.setMaximumSize(QtCore.QSize(340, 16777215))
+        self.pybamm_exp_group.setFont(font)
+        self.pybamm_exp_group.setObjectName("pybamm_exp_group")
+        self.pybamm_exp_group.setTitle("충방전 패턴")
+        self.pybamm_exp_vlayout = QtWidgets.QVBoxLayout(self.pybamm_exp_group)
+        self.pybamm_exp_vlayout.setObjectName("pybamm_exp_vlayout")
+        # 모드 선택 라디오버튼 (4개)
+        self.pybamm_mode_hlayout1 = QtWidgets.QHBoxLayout()
+        self.pybamm_mode_charge = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
+        self.pybamm_mode_charge.setText("충전")
+        self.pybamm_mode_charge.setFont(font)
+        self.pybamm_mode_charge.setChecked(True)
+        self.pybamm_mode_charge.setObjectName("pybamm_mode_charge")
+        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_charge)
+        self.pybamm_mode_discharge = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
+        self.pybamm_mode_discharge.setText("방전")
+        self.pybamm_mode_discharge.setFont(font)
+        self.pybamm_mode_discharge.setObjectName("pybamm_mode_discharge")
+        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_discharge)
+        self.pybamm_mode_gitt = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
+        self.pybamm_mode_gitt.setText("GITT/HPPC")
+        self.pybamm_mode_gitt.setFont(font)
+        self.pybamm_mode_gitt.setObjectName("pybamm_mode_gitt")
+        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_gitt)
+        self.pybamm_mode_custom = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
+        self.pybamm_mode_custom.setText("커스텀")
+        self.pybamm_mode_custom.setFont(font)
+        self.pybamm_mode_custom.setObjectName("pybamm_mode_custom")
+        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_custom)
+        self.pybamm_exp_vlayout.addLayout(self.pybamm_mode_hlayout1)
+        # QStackedWidget: 패턴 모드별 입력 전환
+        self.pybamm_exp_stack = QtWidgets.QStackedWidget(parent=self.pybamm_exp_group)
+        self.pybamm_exp_stack.setObjectName("pybamm_exp_stack")
+
+        # --- Stack Page 0: 충전 (스텝 리스트) ---
+        self.pybamm_chg_page = QtWidgets.QWidget()
+        self.pybamm_chg_page.setObjectName("pybamm_chg_page")
+        self.pybamm_chg_vlayout = QtWidgets.QVBoxLayout(self.pybamm_chg_page)
+        # 스텝 추가 입력바
+        self.pybamm_chg_add_hlayout = QtWidgets.QHBoxLayout()
+        self.pybamm_chg_step_type = QtWidgets.QComboBox(parent=self.pybamm_chg_page)
+        self.pybamm_chg_step_type.setFont(font)
+        self.pybamm_chg_step_type.addItems(["CC", "CV", "CCCV", "Rest"])
+        self.pybamm_chg_step_type.setMinimumSize(QtCore.QSize(65, 25))
+        self.pybamm_chg_step_type.setObjectName("pybamm_chg_step_type")
+        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_step_type)
+        self.pybamm_chg_crate = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
+        self.pybamm_chg_crate.setFont(font)
+        self.pybamm_chg_crate.setPlaceholderText("C-rate")
+        self.pybamm_chg_crate.setText("1.0")
+        self.pybamm_chg_crate.setMinimumSize(QtCore.QSize(45, 25))
+        self.pybamm_chg_crate.setMaximumSize(QtCore.QSize(50, 25))
+        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_crate)
+        self.pybamm_chg_vcut = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
+        self.pybamm_chg_vcut.setFont(font)
+        self.pybamm_chg_vcut.setPlaceholderText("전압/시간")
+        self.pybamm_chg_vcut.setText("4.2")
+        self.pybamm_chg_vcut.setMinimumSize(QtCore.QSize(45, 25))
+        self.pybamm_chg_vcut.setMaximumSize(QtCore.QSize(55, 25))
+        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_vcut)
+        self.pybamm_chg_cutoff = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
+        self.pybamm_chg_cutoff.setFont(font)
+        self.pybamm_chg_cutoff.setPlaceholderText("CV cutoff")
+        self.pybamm_chg_cutoff.setText("0.05")
+        self.pybamm_chg_cutoff.setMinimumSize(QtCore.QSize(45, 25))
+        self.pybamm_chg_cutoff.setMaximumSize(QtCore.QSize(55, 25))
+        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_cutoff)
+        self.pybamm_chg_add_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
+        self.pybamm_chg_add_btn.setFont(font)
+        self.pybamm_chg_add_btn.setText("+")
+        self.pybamm_chg_add_btn.setMinimumSize(QtCore.QSize(30, 25))
+        self.pybamm_chg_add_btn.setMaximumSize(QtCore.QSize(30, 25))
+        self.pybamm_chg_add_btn.setObjectName("pybamm_chg_add_btn")
+        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_add_btn)
+        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_add_hlayout)
+        # 충전 스텝 리스트
+        self.pybamm_chg_list = QtWidgets.QListWidget(parent=self.pybamm_chg_page)
+        self.pybamm_chg_list.setFont(font)
+        self.pybamm_chg_list.setMinimumSize(QtCore.QSize(310, 180))
+        self.pybamm_chg_list.setObjectName("pybamm_chg_list")
+        self.pybamm_chg_list.addItems([
+            "CC  |  Charge at 1C until 4.2V",
+            "CV  |  Hold at 4.2V until C/50",
+        ])
+        self.pybamm_chg_vlayout.addWidget(self.pybamm_chg_list)
+        # 삭제 버튼
+        self.pybamm_chg_del_hlayout = QtWidgets.QHBoxLayout()
+        self.pybamm_chg_del_hlayout.addItem(QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_chg_del_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
+        self.pybamm_chg_del_btn.setFont(font)
+        self.pybamm_chg_del_btn.setText("선택 삭제")
+        self.pybamm_chg_del_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_chg_del_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_chg_del_btn.setObjectName("pybamm_chg_del_btn")
+        self.pybamm_chg_del_hlayout.addWidget(self.pybamm_chg_del_btn)
+        self.pybamm_chg_clear_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
+        self.pybamm_chg_clear_btn.setFont(font)
+        self.pybamm_chg_clear_btn.setText("전체 삭제")
+        self.pybamm_chg_clear_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_chg_clear_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_chg_clear_btn.setObjectName("pybamm_chg_clear_btn")
+        self.pybamm_chg_del_hlayout.addWidget(self.pybamm_chg_clear_btn)
+        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_del_hlayout)
+        # 사이클 수
+        self.pybamm_chg_cyc_hlayout = QtWidgets.QHBoxLayout()
+        _chg_cyc_lbl = QtWidgets.QLabel(parent=self.pybamm_chg_page)
+        _chg_cyc_lbl.setText("사이클 수:")
+        _chg_cyc_lbl.setFont(font)
+        self.pybamm_chg_cyc_hlayout.addWidget(_chg_cyc_lbl)
+        self.pybamm_chg_cycles = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
+        self.pybamm_chg_cycles.setFont(font)
+        self.pybamm_chg_cycles.setText("1")
+        self.pybamm_chg_cycles.setMinimumSize(QtCore.QSize(50, 25))
+        self.pybamm_chg_cycles.setMaximumSize(QtCore.QSize(60, 25))
+        self.pybamm_chg_cyc_hlayout.addWidget(self.pybamm_chg_cycles)
+        self.pybamm_chg_cyc_hlayout.addItem(QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_cyc_hlayout)
+        self.pybamm_exp_stack.addWidget(self.pybamm_chg_page)
+
+        # --- Stack Page 1: 방전 (스텝 리스트) ---
+        self.pybamm_dchg_page = QtWidgets.QWidget()
+        self.pybamm_dchg_page.setObjectName("pybamm_dchg_page")
+        self.pybamm_dchg_vlayout = QtWidgets.QVBoxLayout(self.pybamm_dchg_page)
+        # 스텝 추가 입력바
+        self.pybamm_dchg_add_hlayout = QtWidgets.QHBoxLayout()
+        self.pybamm_dchg_step_type = QtWidgets.QComboBox(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_step_type.setFont(font)
+        self.pybamm_dchg_step_type.addItems(["CC", "CV", "CCCV", "Rest"])
+        self.pybamm_dchg_step_type.setMinimumSize(QtCore.QSize(65, 25))
+        self.pybamm_dchg_step_type.setObjectName("pybamm_dchg_step_type")
+        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_step_type)
+        self.pybamm_dchg_crate = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_crate.setFont(font)
+        self.pybamm_dchg_crate.setPlaceholderText("C-rate")
+        self.pybamm_dchg_crate.setText("1.0")
+        self.pybamm_dchg_crate.setMinimumSize(QtCore.QSize(45, 25))
+        self.pybamm_dchg_crate.setMaximumSize(QtCore.QSize(50, 25))
+        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_crate)
+        self.pybamm_dchg_vcut = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_vcut.setFont(font)
+        self.pybamm_dchg_vcut.setPlaceholderText("전압/시간")
+        self.pybamm_dchg_vcut.setText("2.5")
+        self.pybamm_dchg_vcut.setMinimumSize(QtCore.QSize(45, 25))
+        self.pybamm_dchg_vcut.setMaximumSize(QtCore.QSize(55, 25))
+        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_vcut)
+        self.pybamm_dchg_cutoff = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_cutoff.setFont(font)
+        self.pybamm_dchg_cutoff.setPlaceholderText("CV cutoff")
+        self.pybamm_dchg_cutoff.setText("0.05")
+        self.pybamm_dchg_cutoff.setMinimumSize(QtCore.QSize(45, 25))
+        self.pybamm_dchg_cutoff.setMaximumSize(QtCore.QSize(55, 25))
+        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_cutoff)
+        self.pybamm_dchg_add_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_add_btn.setFont(font)
+        self.pybamm_dchg_add_btn.setText("+")
+        self.pybamm_dchg_add_btn.setMinimumSize(QtCore.QSize(30, 25))
+        self.pybamm_dchg_add_btn.setMaximumSize(QtCore.QSize(30, 25))
+        self.pybamm_dchg_add_btn.setObjectName("pybamm_dchg_add_btn")
+        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_add_btn)
+        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_add_hlayout)
+        # 방전 스텝 리스트
+        self.pybamm_dchg_list = QtWidgets.QListWidget(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_list.setFont(font)
+        self.pybamm_dchg_list.setMinimumSize(QtCore.QSize(310, 180))
+        self.pybamm_dchg_list.setObjectName("pybamm_dchg_list")
+        self.pybamm_dchg_list.addItems([
+            "CC  |  Discharge at 1C until 2.5V",
+        ])
+        self.pybamm_dchg_vlayout.addWidget(self.pybamm_dchg_list)
+        # 삭제 버튼
+        self.pybamm_dchg_del_hlayout = QtWidgets.QHBoxLayout()
+        self.pybamm_dchg_del_hlayout.addItem(QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_dchg_del_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_del_btn.setFont(font)
+        self.pybamm_dchg_del_btn.setText("선택 삭제")
+        self.pybamm_dchg_del_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_dchg_del_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_dchg_del_btn.setObjectName("pybamm_dchg_del_btn")
+        self.pybamm_dchg_del_hlayout.addWidget(self.pybamm_dchg_del_btn)
+        self.pybamm_dchg_clear_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_clear_btn.setFont(font)
+        self.pybamm_dchg_clear_btn.setText("전체 삭제")
+        self.pybamm_dchg_clear_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_dchg_clear_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_dchg_clear_btn.setObjectName("pybamm_dchg_clear_btn")
+        self.pybamm_dchg_del_hlayout.addWidget(self.pybamm_dchg_clear_btn)
+        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_del_hlayout)
+        # 사이클 수
+        self.pybamm_dchg_cyc_hlayout = QtWidgets.QHBoxLayout()
+        _dchg_cyc_lbl = QtWidgets.QLabel(parent=self.pybamm_dchg_page)
+        _dchg_cyc_lbl.setText("사이클 수:")
+        _dchg_cyc_lbl.setFont(font)
+        self.pybamm_dchg_cyc_hlayout.addWidget(_dchg_cyc_lbl)
+        self.pybamm_dchg_cycles = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_cycles.setFont(font)
+        self.pybamm_dchg_cycles.setText("1")
+        self.pybamm_dchg_cycles.setMinimumSize(QtCore.QSize(50, 25))
+        self.pybamm_dchg_cycles.setMaximumSize(QtCore.QSize(60, 25))
+        self.pybamm_dchg_cyc_hlayout.addWidget(self.pybamm_dchg_cycles)
+        self.pybamm_dchg_cyc_hlayout.addItem(QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_cyc_hlayout)
+        self.pybamm_exp_stack.addWidget(self.pybamm_dchg_page)
+
+        # --- Stack Page 2: GITT/HPPC ---
+        self.pybamm_gitt_page = QtWidgets.QWidget()
+        self.pybamm_gitt_page.setObjectName("pybamm_gitt_page")
+        self.pybamm_gitt_grid = QtWidgets.QGridLayout(self.pybamm_gitt_page)
+        _gitt_labels = ["패턴 유형:", "펄스 전류 (C):", "펄스 시간 (s):", "휴지 시간 (s):", "반복 횟수:", "전압 하한 (V):"]
+        _gitt_defaults = ["", "0.5", "600", "3600", "20", "2.5"]
+        self.pybamm_gitt_inputs = {}
+        for _i, (_lbl_text, _default) in enumerate(zip(_gitt_labels, _gitt_defaults)):
+            _lbl = QtWidgets.QLabel(parent=self.pybamm_gitt_page)
+            _lbl.setText(_lbl_text)
+            _lbl.setFont(font)
+            self.pybamm_gitt_grid.addWidget(_lbl, _i, 0)
+            if _i == 0:
+                self.pybamm_gitt_type = QtWidgets.QComboBox(parent=self.pybamm_gitt_page)
+                self.pybamm_gitt_type.addItems(["GITT", "HPPC"])
+                self.pybamm_gitt_type.setFont(font)
+                self.pybamm_gitt_type.setMinimumSize(QtCore.QSize(80, 25))
+                self.pybamm_gitt_type.setObjectName("pybamm_gitt_type")
+                self.pybamm_gitt_grid.addWidget(self.pybamm_gitt_type, _i, 1)
+            else:
+                _le = QtWidgets.QLineEdit(parent=self.pybamm_gitt_page)
+                _le.setText(_default)
+                _le.setMinimumSize(QtCore.QSize(80, 25))
+                _le.setMaximumSize(QtCore.QSize(120, 25))
+                _le.setFont(font)
+                _le.setObjectName(f"pybamm_gitt_{_i}")
+                self.pybamm_gitt_grid.addWidget(_le, _i, 1)
+                self.pybamm_gitt_inputs[_lbl_text] = _le
+        self.pybamm_exp_stack.addWidget(self.pybamm_gitt_page)
+
+        # --- Stack Page 3: 커스텀 프로토콜 ---
+        self.pybamm_custom_page = QtWidgets.QWidget()
+        self.pybamm_custom_page.setObjectName("pybamm_custom_page")
+        self.pybamm_custom_layout = QtWidgets.QVBoxLayout(self.pybamm_custom_page)
+        self.pybamm_custom_hint = QtWidgets.QLabel(parent=self.pybamm_custom_page)
+        self.pybamm_custom_hint.setText('PyBaMM Experiment 문법 입력\n예: "Charge at 1C until 4.2V",\n    "Hold at 4.2V until C/50"')
+        self.pybamm_custom_hint.setFont(font)
+        self.pybamm_custom_hint.setWordWrap(True)
+        self.pybamm_custom_layout.addWidget(self.pybamm_custom_hint)
+        self.pybamm_custom_text = QtWidgets.QPlainTextEdit(parent=self.pybamm_custom_page)
+        self.pybamm_custom_text.setMinimumSize(QtCore.QSize(300, 120))
+        self.pybamm_custom_text.setMaximumSize(QtCore.QSize(320, 150))
+        self.pybamm_custom_text.setFont(font)
+        self.pybamm_custom_text.setPlainText('"Charge at 1C until 4.2V",\n"Hold at 4.2V until C/50",\n"Discharge at 1C until 2.5V"')
+        self.pybamm_custom_text.setObjectName("pybamm_custom_text")
+        self.pybamm_custom_layout.addWidget(self.pybamm_custom_text)
+        self.pybamm_exp_stack.addWidget(self.pybamm_custom_page)
+
+        self.pybamm_exp_stack.setCurrentIndex(0)
+        self.pybamm_exp_vlayout.addWidget(self.pybamm_exp_stack)
+        self.pybamm_left_panel.addWidget(self.pybamm_exp_group)
+        # [4] 실행 버튼 + 프로그레스바
+        self.pybamm_run_hlayout = QtWidgets.QHBoxLayout()
+        self.pybamm_run_btn = QtWidgets.QPushButton(parent=self.PyBaMMTab)
+        self.pybamm_run_btn.setMinimumSize(QtCore.QSize(160, 40))
+        self.pybamm_run_btn.setMaximumSize(QtCore.QSize(160, 40))
+        font_bold = QtGui.QFont()
+        font_bold.setFamily("맑은 고딕")
+        font_bold.setPointSize(10)
+        font_bold.setBold(True)
+        self.pybamm_run_btn.setFont(font_bold)
+        self.pybamm_run_btn.setText("시뮬레이션 실행")
+        self.pybamm_run_btn.setObjectName("pybamm_run_btn")
+        self.pybamm_run_hlayout.addWidget(self.pybamm_run_btn)
+        self.pybamm_reset_btn = QtWidgets.QPushButton(parent=self.PyBaMMTab)
+        self.pybamm_reset_btn.setMinimumSize(QtCore.QSize(100, 40))
+        self.pybamm_reset_btn.setMaximumSize(QtCore.QSize(100, 40))
+        self.pybamm_reset_btn.setFont(font)
+        self.pybamm_reset_btn.setText("탭 초기화")
+        self.pybamm_reset_btn.setObjectName("pybamm_reset_btn")
+        self.pybamm_run_hlayout.addWidget(self.pybamm_reset_btn)
+        self.pybamm_left_panel.addLayout(self.pybamm_run_hlayout)
+        self.pybamm_progress = QtWidgets.QProgressBar(parent=self.PyBaMMTab)
+        self.pybamm_progress.setMinimumSize(QtCore.QSize(340, 20))
+        self.pybamm_progress.setMaximumSize(QtCore.QSize(340, 20))
+        self.pybamm_progress.setValue(0)
+        self.pybamm_progress.setObjectName("pybamm_progress")
+        self.pybamm_left_panel.addWidget(self.pybamm_progress)
+        # 좌측 하단 여백
+        self.pybamm_left_panel.addItem(QtWidgets.QSpacerItem(
+            20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding))
+        self.pybamm_main_layout.addLayout(self.pybamm_left_panel)
+        # --- 우측 결과 영역 (GroupBox) ---
+        self.pybamm_result_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
+        self.pybamm_result_group.setFont(font)
+        self.pybamm_result_group.setObjectName("pybamm_result_group")
+        self.pybamm_result_group.setTitle("시뮬레이션 결과")
+        self.pybamm_result_vlayout = QtWidgets.QVBoxLayout(self.pybamm_result_group)
+        self.pybamm_result_vlayout.setObjectName("pybamm_result_vlayout")
+        self.pybamm_plot_tab = QtWidgets.QTabWidget(parent=self.pybamm_result_group)
+        self.pybamm_plot_tab.setMinimumSize(QtCore.QSize(1200, 830))
+        self.pybamm_plot_tab.setMaximumSize(QtCore.QSize(1200, 830))
+        self.pybamm_plot_tab.setFont(font)
+        self.pybamm_plot_tab.setObjectName("pybamm_plot_tab")
+        self.pybamm_result_vlayout.addWidget(self.pybamm_plot_tab)
+        self.pybamm_main_layout.addWidget(self.pybamm_result_group)
+        self.tabWidget.addTab(self.PyBaMMTab, "")
+        # ===== PyBaMM 탭 끝 =====
         self.verticalLayout_38.addWidget(self.tabWidget)
         self.horizontalLayout_23 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_23.setObjectName("horizontalLayout_23")
@@ -8423,6 +8965,7 @@ class Ui_sitool(object):
         self.FdTextEdit_2.setText(_translate("sitool", "1"))
         self.FdTextEdit_4.setText(_translate("sitool", "1"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.FitTab), _translate("sitool", "실수명 예측"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.PyBaMMTab), _translate("sitool", "전기화학 시뮬레이션"))
         self.mount_toyo.setText(_translate("sitool", "Z: 15F B Toyo"))
         self.mount_pne_1.setText(_translate("sitool", "Y: 15F B PNE1~2"))
         self.mount_pne_2.setText(_translate("sitool", "X: 15F B PNE3~5"))
@@ -8563,6 +9106,35 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 필드 수명 예측 관련 버튼
         self.SimulConfirm.clicked.connect(self.simulation_confirm_button)
         self.SimulTabResetConfirm.clicked.connect(self.simulation_tab_reset_confirm_button)
+        # PyBaMM 시뮬레이션 탭 시그널
+        self.pybamm_mode_charge.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(0) if checked else None)
+        self.pybamm_mode_discharge.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(1) if checked else None)
+        self.pybamm_mode_gitt.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(2) if checked else None)
+        self.pybamm_mode_custom.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(3) if checked else None)
+        self.pybamm_run_btn.clicked.connect(self.pybamm_run_button)
+        self.pybamm_reset_btn.clicked.connect(self.pybamm_tab_reset_button)
+        self.pybamm_param_combo.currentIndexChanged.connect(self._pybamm_load_preset)
+        self.pybamm_edit_btn.toggled.connect(self._pybamm_toggle_param_table)
+        # 충/방전 스텝 리스트 버튼
+        self.pybamm_chg_add_btn.clicked.connect(self._pybamm_chg_add_step)
+        self.pybamm_chg_del_btn.clicked.connect(lambda: self._pybamm_del_step(self.pybamm_chg_list))
+        self.pybamm_chg_clear_btn.clicked.connect(self.pybamm_chg_list.clear)
+        self.pybamm_dchg_add_btn.clicked.connect(self._pybamm_dchg_add_step)
+        self.pybamm_dchg_del_btn.clicked.connect(lambda: self._pybamm_del_step(self.pybamm_dchg_list))
+        self.pybamm_dchg_clear_btn.clicked.connect(self.pybamm_dchg_list.clear)
+        # PyBaMM 미설치 시 탭 비활성화
+        if not HAS_PYBAMM:
+            self.pybamm_run_btn.setDisabled(True)
+            self.pybamm_run_btn.setText("PyBaMM 미설치")
+            _pybamm_warn = QtWidgets.QLabel("\u26a0 PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치 후 재시작하세요.")
+            _pybamm_warn.setStyleSheet("color: #CC0000; font-size: 11px; padding: 8px;")
+            _pybamm_warn.setWordWrap(True)
+            self.pybamm_plot_tab.addTab(QtWidgets.QWidget(), "")
+            self.pybamm_plot_tab.setTabText(0, "안내")
+            _warn_layout = QtWidgets.QVBoxLayout(self.pybamm_plot_tab.widget(0))
+            _warn_layout.addWidget(_pybamm_warn)
+            _warn_layout.addItem(QtWidgets.QSpacerItem(
+                20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding))
         # 패턴 수정 버튼
         self.chg_ptn.clicked.connect(self.ptn_change_pattern_button)
         self.chg_ptn_refi.clicked.connect(self.ptn_change_refi_button)
@@ -16255,6 +16827,315 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         msg = "Toyo 패턴 변환 완료\n\n" + "\n".join(results) + f"\n\n저장 위치: {output_dir}"
         QtWidgets.QMessageBox.information(self, "변환 완료", msg)
         self.progressBar.setValue(100)
+
+    # ===== PyBaMM 시뮬레이션 탭 핸들러 =====
+    def pybamm_run_button(self):
+        """시뮬레이션 실행 버튼 핸들러"""
+        if not HAS_PYBAMM:
+            QtWidgets.QMessageBox.warning(self, "PyBaMM", "PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치해주세요.")
+            return
+        self.pybamm_progress.setValue(0)
+        self.pybamm_progress.setRange(0, 100)
+        self.pybamm_run_btn.setDisabled(True)
+        QtWidgets.QApplication.processEvents()
+        # 기존 플롯 탭 초기화
+        while self.pybamm_plot_tab.count() > 0:
+            self.pybamm_plot_tab.removeTab(0)
+
+        # 1) UI에서 파라미터 수집
+        params_dict = {}
+        for row in range(self.pybamm_param_table.rowCount()):
+            name_item = self.pybamm_param_table.item(row, 0)
+            val_item = self.pybamm_param_table.item(row, 1)
+            if name_item and val_item:
+                params_dict[name_item.text()] = val_item.text()
+        self.pybamm_progress.setValue(10)
+        QtWidgets.QApplication.processEvents()
+
+        # 2) 실험 설정 수집
+        experiment_config = {}
+        if self.pybamm_mode_charge.isChecked():
+            experiment_config["mode"] = "charge"
+            experiment_config["steps"] = self._pybamm_collect_list_steps(self.pybamm_chg_list)
+            experiment_config["cycles"] = int(self.pybamm_chg_cycles.text() or "1")
+        elif self.pybamm_mode_discharge.isChecked():
+            experiment_config["mode"] = "discharge"
+            experiment_config["steps"] = self._pybamm_collect_list_steps(self.pybamm_dchg_list)
+            experiment_config["cycles"] = int(self.pybamm_dchg_cycles.text() or "1")
+        elif self.pybamm_mode_gitt.isChecked():
+            experiment_config["mode"] = "gitt"
+            experiment_config["pattern_type"] = self.pybamm_gitt_type.currentText()
+            gitt_keys = ["pulse_current", "pulse_time", "rest_time", "repeats", "v_min"]
+            gitt_labels = list(self.pybamm_gitt_inputs.keys())
+            for key, lbl in zip(gitt_keys, gitt_labels):
+                experiment_config[key] = float(self.pybamm_gitt_inputs[lbl].text())
+        elif self.pybamm_mode_custom.isChecked():
+            experiment_config["mode"] = "custom"
+            raw_text = self.pybamm_custom_text.toPlainText().strip()
+            steps = [s.strip().strip('"').strip("'") for s in raw_text.split(",") if s.strip()]
+            experiment_config["steps"] = steps
+        self.pybamm_progress.setValue(20)
+        QtWidgets.QApplication.processEvents()
+
+        # 3) 시뮬레이션 실행
+        model_name = self.pybamm_model_combo.currentText()
+        try:
+            self.pybamm_progress.setRange(0, 0)  # indeterminate 모드
+            QtWidgets.QApplication.processEvents()
+            sol = run_pybamm_simulation(model_name, params_dict, experiment_config)
+        except Exception as e:
+            self.pybamm_progress.setRange(0, 100)
+            self.pybamm_progress.setValue(0)
+            self.pybamm_run_btn.setDisabled(False)
+            QtWidgets.QMessageBox.critical(self, "시뮬레이션 오류",
+                f"시뮬레이션 실행 중 오류 발생:\n{type(e).__name__}: {e}")
+            return
+        self.pybamm_progress.setRange(0, 100)  # 확정 모드 복귀
+        self.pybamm_progress.setValue(60)
+
+        # 4) 결과 데이터 추출
+        t = sol["Time [s]"].entries
+        t_min = t / 60.0
+        V = sol["Terminal voltage [V]"].entries
+        I = sol["Current [A]"].entries
+
+        # 용량 계산
+        try:
+            Q = sol["Discharge capacity [A.h]"].entries
+        except Exception:
+            Q = np.cumsum(np.abs(I) * np.diff(t, prepend=t[0])) / 3600.0
+
+        # SOC
+        try:
+            soc = sol["X-averaged negative particle surface concentration [mol.m-3]"].entries
+            soc = soc / soc[0] if soc[0] != 0 else soc
+        except Exception:
+            soc = np.zeros_like(t)
+
+        # 전극 전위
+        try:
+            V_pos = sol["X-averaged positive electrode potential [V]"].entries
+        except Exception:
+            try:
+                V_pos = sol["Positive electrode potential [V]"].entries
+            except Exception:
+                V_pos = None
+        try:
+            V_neg = sol["X-averaged negative electrode potential [V]"].entries
+        except Exception:
+            try:
+                V_neg = sol["Negative electrode potential [V]"].entries
+            except Exception:
+                V_neg = None
+
+        # 전극 표면 리튬 농도
+        try:
+            c_pos = sol["X-averaged positive particle surface concentration [mol.m-3]"].entries
+        except Exception:
+            c_pos = None
+        try:
+            c_neg = sol["X-averaged negative particle surface concentration [mol.m-3]"].entries
+        except Exception:
+            c_neg = None
+
+        self.pybamm_progress.setValue(75)
+
+        palette = THEME['PALETTE']
+
+        # ── Tab 1: 전압 커브 (V vs Time, V vs Capacity) ──
+        fig1, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(12, 5), dpi=THEME['DPI'])
+        fig1.set_facecolor(THEME['FIG_FACECOLOR'])
+        ax1a.plot(t_min, V, color=palette[0], linewidth=THEME['LINE_WIDTH'])
+        ax1a.set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+        ax1a.set_ylabel("Voltage [V]", fontsize=THEME['LABEL_SIZE'])
+        ax1a.set_title("Voltage vs Time", fontsize=THEME['TITLE_SIZE'])
+        ax1b.plot(Q, V, color=palette[1], linewidth=THEME['LINE_WIDTH'])
+        ax1b.set_xlabel("Capacity [Ah]", fontsize=THEME['LABEL_SIZE'])
+        ax1b.set_ylabel("Voltage [V]", fontsize=THEME['LABEL_SIZE'])
+        ax1b.set_title("Voltage vs Capacity", fontsize=THEME['TITLE_SIZE'])
+        fig1.tight_layout()
+        tab1, layout1, canvas1, toolbar1 = self._create_plot_tab(fig1, 1)
+        layout1.addWidget(toolbar1)
+        layout1.addWidget(canvas1)
+        self.pybamm_plot_tab.addTab(tab1, "전압 커브")
+
+        # ── Tab 2: 종합 모니터링 (Current, Voltage, SOC vs Time) ──
+        fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(12, 7), dpi=THEME['DPI'], sharex=True)
+        fig2.set_facecolor(THEME['FIG_FACECOLOR'])
+        ax2a.plot(t_min, I, color=palette[0], linewidth=THEME['LINE_WIDTH'])
+        ax2a.set_ylabel("Current [A]", fontsize=THEME['LABEL_SIZE'])
+        ax2a.set_title("종합 모니터링", fontsize=THEME['TITLE_SIZE'])
+        ax2b.plot(t_min, V, color=palette[1], linewidth=THEME['LINE_WIDTH'])
+        ax2b.set_ylabel("Voltage [V]", fontsize=THEME['LABEL_SIZE'])
+        ax2c.plot(t_min, soc, color=palette[2], linewidth=THEME['LINE_WIDTH'])
+        ax2c.set_ylabel("Surface Conc. [norm]", fontsize=THEME['LABEL_SIZE'])
+        ax2c.set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+        fig2.tight_layout()
+        tab2, layout2, canvas2, toolbar2 = self._create_plot_tab(fig2, 2)
+        layout2.addWidget(toolbar2)
+        layout2.addWidget(canvas2)
+        self.pybamm_plot_tab.addTab(tab2, "종합 모니터링")
+
+        # ── Tab 3: 전극 분포 (Cathode/Anode potential, Li concentration) ──
+        fig3, axes3 = plt.subplots(2, 2, figsize=(12, 7), dpi=THEME['DPI'])
+        fig3.set_facecolor(THEME['FIG_FACECOLOR'])
+        if V_pos is not None:
+            axes3[0, 0].plot(t_min, V_pos, color=palette[1], linewidth=THEME['LINE_WIDTH'])
+        axes3[0, 0].set_ylabel("Potential [V]", fontsize=THEME['LABEL_SIZE'])
+        axes3[0, 0].set_title("양극 전위", fontsize=THEME['TITLE_SIZE'])
+        if V_neg is not None:
+            axes3[0, 1].plot(t_min, V_neg, color=palette[0], linewidth=THEME['LINE_WIDTH'])
+        axes3[0, 1].set_ylabel("Potential [V]", fontsize=THEME['LABEL_SIZE'])
+        axes3[0, 1].set_title("음극 전위", fontsize=THEME['TITLE_SIZE'])
+        if c_pos is not None:
+            axes3[1, 0].plot(t_min, c_pos, color=palette[3], linewidth=THEME['LINE_WIDTH'])
+        axes3[1, 0].set_ylabel("Conc. [mol/m³]", fontsize=THEME['LABEL_SIZE'])
+        axes3[1, 0].set_title("양극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'])
+        axes3[1, 0].set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+        if c_neg is not None:
+            axes3[1, 1].plot(t_min, c_neg, color=palette[4], linewidth=THEME['LINE_WIDTH'])
+        axes3[1, 1].set_ylabel("Conc. [mol/m³]", fontsize=THEME['LABEL_SIZE'])
+        axes3[1, 1].set_title("음극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'])
+        axes3[1, 1].set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+        fig3.tight_layout()
+        tab3, layout3, canvas3, toolbar3 = self._create_plot_tab(fig3, 3)
+        layout3.addWidget(toolbar3)
+        layout3.addWidget(canvas3)
+        self.pybamm_plot_tab.addTab(tab3, "전극 분포")
+
+        # ── Tab 4: dVdQ 분석 ──
+        fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(12, 5), dpi=THEME['DPI'])
+        fig4.set_facecolor(THEME['FIG_FACECOLOR'])
+        # 충전/방전 분리
+        chg_mask = I > 0
+        dchg_mask = I < 0
+        for ax, mask, title, color in [
+            (ax4a, chg_mask, "dV/dQ (충전)", palette[1]),
+            (ax4b, dchg_mask, "dV/dQ (방전)", palette[0]),
+        ]:
+            if np.sum(mask) > 2:
+                Q_seg = Q[mask]
+                V_seg = V[mask]
+                dQ = np.diff(Q_seg)
+                dV = np.diff(V_seg)
+                # 0 나눗셈 방지
+                valid = np.abs(dQ) > 1e-12
+                if np.sum(valid) > 0:
+                    dvdq = dV[valid] / dQ[valid]
+                    Q_mid = (Q_seg[:-1][valid] + Q_seg[1:][valid]) / 2
+                    ax.plot(Q_mid, dvdq, color=color, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+            ax.set_xlabel("Capacity [Ah]", fontsize=THEME['LABEL_SIZE'])
+            ax.set_ylabel("dV/dQ [V/Ah]", fontsize=THEME['LABEL_SIZE'])
+            ax.set_title(title, fontsize=THEME['TITLE_SIZE'])
+        fig4.tight_layout()
+        tab4, layout4, canvas4, toolbar4 = self._create_plot_tab(fig4, 4)
+        layout4.addWidget(toolbar4)
+        layout4.addWidget(canvas4)
+        self.pybamm_plot_tab.addTab(tab4, "dVdQ 분석")
+
+        self.pybamm_progress.setValue(100)
+        self.pybamm_plot_tab.setCurrentIndex(0)
+        self.pybamm_run_btn.setDisabled(False)
+
+    def pybamm_tab_reset_button(self):
+        """PyBaMM 플롯 탭 초기화"""
+        while self.pybamm_plot_tab.count() > 0:
+            self.pybamm_plot_tab.removeTab(0)
+        self.pybamm_progress.setValue(0)
+        # 충/방전 스텝 리스트 초기화
+        self.pybamm_chg_list.clear()
+        self.pybamm_chg_list.addItems([
+            "CC  |  Charge at 1C until 4.2V",
+            "CV  |  Hold at 4.2V until C/50",
+        ])
+        self.pybamm_chg_cycles.setText("1")
+        self.pybamm_dchg_list.clear()
+        self.pybamm_dchg_list.addItems([
+            "CC  |  Discharge at 1C until 2.5V",
+        ])
+        self.pybamm_dchg_cycles.setText("1")
+        self.pybamm_mode_charge.setChecked(True)
+
+    def _pybamm_toggle_param_table(self, checked):
+        """파라미터 테이블 표시/숨김 토글"""
+        self.pybamm_param_table.setVisible(checked)
+        self.pybamm_edit_btn.setText("편집 닫기" if checked else "파라미터 편집")
+
+    def _pybamm_chg_add_step(self):
+        """충전 스텝 리스트에 항목 추가"""
+        step_type = self.pybamm_chg_step_type.currentText()
+        crate = self.pybamm_chg_crate.text().strip() or "1.0"
+        vcut = self.pybamm_chg_vcut.text().strip() or "4.2"
+        cutoff = self.pybamm_chg_cutoff.text().strip() or "0.05"
+        if step_type == "CC":
+            self.pybamm_chg_list.addItem(f"CC  |  Charge at {crate}C until {vcut}V")
+        elif step_type == "CV":
+            self.pybamm_chg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+        elif step_type == "CCCV":
+            self.pybamm_chg_list.addItem(f"CC  |  Charge at {crate}C until {vcut}V")
+            self.pybamm_chg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+        elif step_type == "Rest":
+            self.pybamm_chg_list.addItem(f"Rest  |  Rest for {vcut} seconds")
+
+    def _pybamm_dchg_add_step(self):
+        """방전 스텝 리스트에 항목 추가"""
+        step_type = self.pybamm_dchg_step_type.currentText()
+        crate = self.pybamm_dchg_crate.text().strip() or "1.0"
+        vcut = self.pybamm_dchg_vcut.text().strip() or "2.5"
+        cutoff = self.pybamm_dchg_cutoff.text().strip() or "0.05"
+        if step_type == "CC":
+            self.pybamm_dchg_list.addItem(f"CC  |  Discharge at {crate}C until {vcut}V")
+        elif step_type == "CV":
+            self.pybamm_dchg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+        elif step_type == "CCCV":
+            self.pybamm_dchg_list.addItem(f"CC  |  Discharge at {crate}C until {vcut}V")
+            self.pybamm_dchg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+        elif step_type == "Rest":
+            self.pybamm_dchg_list.addItem(f"Rest  |  Rest for {vcut} seconds")
+
+    def _pybamm_del_step(self, list_widget):
+        """선택된 스텝 항목 삭제"""
+        row = list_widget.currentRow()
+        if row >= 0:
+            list_widget.takeItem(row)
+
+    def _pybamm_collect_list_steps(self, list_widget):
+        """QListWidget에서 PyBaMM Experiment 문자열 리스트 추출"""
+        steps = []
+        for i in range(list_widget.count()):
+            text = list_widget.item(i).text()
+            if "|" in text:
+                steps.append(text.split("|", 1)[1].strip())
+            else:
+                steps.append(text.strip())
+        return steps
+
+    def _pybamm_load_preset(self, index):
+        """프리셋 파라미터 세트 로드"""
+        # fmt: off
+        presets = {
+            "Chen2020": [
+                "85.2", "5.22", "0.665", "4e-15", "6.48e-7", "0.8", "1.5",
+                "75.6", "5.86", "0.75", "3.3e-14", "6.71e-7", "0.03", "1.5",
+                "12.0", "1.5", "1000", "0.1027", "5.0", "25",
+            ],
+            "Marquis2019": [
+                "100.0", "10.0", "0.665", "3.9e-14", "3.42e-6", "0.5", "1.5",
+                "100.0", "10.0", "0.75", "3.9e-14", "6.48e-7", "0.8", "1.5",
+                "25.0", "1.5", "1000", "0.1027", "5.0", "25",
+            ],
+            "Ecker2015": [
+                "73.0", "3.5", "0.665", "5.9e-18", "5e-7", "0.8", "1.5",
+                "73.5", "5.0", "0.75", "1.74e-15", "1.76e-7", "0.03", "1.5",
+                "20.0", "1.5", "1000", "0.1027", "5.0", "25",
+            ],
+        }
+        # fmt: on
+        combo_text = self.pybamm_param_combo.currentText()
+        if combo_text in presets:
+            values = presets[combo_text]
+            for row, val in enumerate(values):
+                self.pybamm_param_table.item(row, 1).setText(val)
 
 # UI 실행
 if __name__ == "__main__":
