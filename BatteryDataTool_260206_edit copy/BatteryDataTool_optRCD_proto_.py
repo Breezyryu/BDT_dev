@@ -2744,14 +2744,27 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
             except Exception:
                 pass
 
-    # 초기 SOC 설정
-    ini_soc_pos = float(params_dict.get("양극 초기 SOC", 0.8))
-    ini_soc_neg = float(params_dict.get("음극 초기 SOC", 0.03))
-    # PyBaMM은 셀 레벨 SOC로 초기화 (0~1 범위)
-    init_soc = ini_soc_neg  # 음극 SOC가 높을수록 셀 SOC가 낮음 → 근사값 사용
-
-    # 3) 실험 설정 (Experiment) 조합
+    # 초기 SOC 설정 (셀 레벨, 0=방전 1=만충)
+    # 충전 모드 → 낮은 SOC에서 시작, 방전 모드 → 높은 SOC에서 시작
     mode = experiment_config.get("mode", "ccv")
+    _user_soc = params_dict.get("초기 SOC", "auto")
+    if _user_soc != "auto":
+        try:
+            init_soc = float(_user_soc)
+        except ValueError:
+            init_soc = None
+    else:
+        init_soc = None
+
+    if init_soc is None:
+        if mode in ("charge",):
+            init_soc = 0.1   # 충전: 거의 빈 상태에서 시작
+        elif mode in ("discharge", "gitt"):
+            init_soc = 0.8   # 방전/GITT: 충전된 상태에서 시작
+        elif mode == "ccv":
+            init_soc = 0.03  # CC-CV 풀사이클: 빈 상태에서 시작
+        else:
+            init_soc = 0.5   # 커스텀: 중간값
 
     if mode == "ccv":
         chg_c = experiment_config.get("chg_crate", 1.0)
@@ -8045,7 +8058,7 @@ class Ui_sitool(object):
         self.pybamm_param_table.setColumnWidth(0, 150)
         self.pybamm_param_table.setColumnWidth(1, 80)
         self.pybamm_param_table.setColumnWidth(2, 60)
-        self.pybamm_param_table.setRowCount(20)
+        self.pybamm_param_table.setRowCount(21)
         _pybamm_param_rows = [
             ("양극 두께", "85.2", "μm"), ("양극 입자 반경", "5.22", "μm"),
             ("양극 활물질 비율", "0.665", "-"), ("양극 확산계수", "4e-15", "m²/s"),
@@ -8058,6 +8071,7 @@ class Ui_sitool(object):
             ("분리막 두께", "12.0", "μm"), ("분리막 Bruggeman", "1.5", "-"),
             ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "0.1027", "m²"),
             ("셀 용량", "5.0", "Ah"), ("온도", "25", "°C"),
+            ("초기 SOC", "auto", "0~1"),
         ]
         for _row, (_name, _val, _unit) in enumerate(_pybamm_param_rows):
             self.pybamm_param_table.setItem(_row, 0, QtWidgets.QTableWidgetItem(_name))
@@ -16893,6 +16907,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_progress.setRange(0, 100)  # 확정 모드 복귀
         self.pybamm_progress.setValue(60)
 
+        # EmptySolution 체크
+        if isinstance(sol, pybamm.EmptySolution) or not hasattr(sol, "__getitem__"):
+            self.pybamm_progress.setValue(0)
+            self.pybamm_run_btn.setDisabled(False)
+            QtWidgets.QMessageBox.warning(self, "시뮬레이션 결과 없음",
+                "시뮬레이션이 빈 결과를 반환했습니다.\n"
+                "실험 스텝이 올바른지, 초기 SOC와 전압 범위가\n"
+                "모순되지 않는지 확인해주세요.")
+            return
+
         # 4) 결과 데이터 추출
         t = sol["Time [s]"].entries
         t_min = t / 60.0
@@ -17117,17 +17141,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "Chen2020": [
                 "85.2", "5.22", "0.665", "4e-15", "6.48e-7", "0.8", "1.5",
                 "75.6", "5.86", "0.75", "3.3e-14", "6.71e-7", "0.03", "1.5",
-                "12.0", "1.5", "1000", "0.1027", "5.0", "25",
+                "12.0", "1.5", "1000", "0.1027", "5.0", "25", "auto",
             ],
             "Marquis2019": [
                 "100.0", "10.0", "0.665", "3.9e-14", "3.42e-6", "0.5", "1.5",
                 "100.0", "10.0", "0.75", "3.9e-14", "6.48e-7", "0.8", "1.5",
-                "25.0", "1.5", "1000", "0.1027", "5.0", "25",
+                "25.0", "1.5", "1000", "0.1027", "5.0", "25", "auto",
             ],
             "Ecker2015": [
                 "73.0", "3.5", "0.665", "5.9e-18", "5e-7", "0.8", "1.5",
                 "73.5", "5.0", "0.75", "1.74e-15", "1.76e-7", "0.03", "1.5",
-                "20.0", "1.5", "1000", "0.1027", "5.0", "25",
+                "20.0", "1.5", "1000", "0.1027", "5.0", "25", "auto",
             ],
         }
         # fmt: on
