@@ -2754,11 +2754,11 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
 
     if init_soc is None:
         if mode in ("charge",):
-            init_soc = 0.1   # 충전: 거의 빈 상태에서 시작
+            init_soc = 0.0   # 충전: 완전 방전 상태에서 시작
         elif mode in ("discharge", "gitt"):
-            init_soc = 0.8   # 방전/GITT: 충전된 상태에서 시작
+            init_soc = 1.0   # 방전/GITT: 만충 상태에서 시작
         elif mode == "ccv":
-            init_soc = 0.03  # CC-CV 풀사이클: 빈 상태에서 시작
+            init_soc = 0.0   # CC-CV 풀사이클: 빈 상태에서 시작
         else:
             init_soc = 0.5   # 커스텀: 중간값
 
@@ -8397,7 +8397,7 @@ class Ui_sitool(object):
         self.pybamm_init_soc.setFont(font)
         self.pybamm_init_soc.setText("auto")
         self.pybamm_init_soc.setPlaceholderText("0~1 또는 auto")
-        self.pybamm_init_soc.setToolTip("auto: 모드별 자동 설정 (충전=0.1, 방전=0.8)\n직접 입력: 0~1 사이 값")
+        self.pybamm_init_soc.setToolTip("auto: 모드별 자동 설정 (충전=0.0, 방전=1.0)\n직접 입력: 0~1 사이 값")
         self.pybamm_init_soc.setMinimumSize(QtCore.QSize(50, 25))
         self.pybamm_init_soc.setMaximumSize(QtCore.QSize(60, 25))
         self.pybamm_init_soc.setObjectName("pybamm_init_soc")
@@ -8418,7 +8418,7 @@ class Ui_sitool(object):
         self.pybamm_period_hlayout.addWidget(_period_lbl)
         self.pybamm_period = QtWidgets.QLineEdit(parent=self.pybamm_exp_group)
         self.pybamm_period.setFont(font)
-        self.pybamm_period.setText("auto")
+        self.pybamm_period.setText("10")
         self.pybamm_period.setPlaceholderText("초 단위 또는 auto")
         self.pybamm_period.setToolTip("auto: PyBaMM 기본값 (~60초)\n직접 입력: 출력 데이터 시간 간격 (초)\n예: 10 → 10초마다 데이터 출력")
         self.pybamm_period.setMinimumSize(QtCore.QSize(50, 25))
@@ -8455,12 +8455,6 @@ class Ui_sitool(object):
         self.pybamm_reset_btn.setObjectName("pybamm_reset_btn")
         self.pybamm_run_hlayout.addWidget(self.pybamm_reset_btn)
         self.pybamm_left_panel.addLayout(self.pybamm_run_hlayout)
-        self.pybamm_progress = QtWidgets.QProgressBar(parent=self.PyBaMMTab)
-        self.pybamm_progress.setMinimumSize(QtCore.QSize(340, 20))
-        self.pybamm_progress.setMaximumSize(QtCore.QSize(340, 20))
-        self.pybamm_progress.setValue(0)
-        self.pybamm_progress.setObjectName("pybamm_progress")
-        self.pybamm_left_panel.addWidget(self.pybamm_progress)
         # 좌측 하단 여백
         self.pybamm_left_panel.addItem(QtWidgets.QSpacerItem(
             20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding))
@@ -8473,15 +8467,19 @@ class Ui_sitool(object):
         self.pybamm_result_vlayout = QtWidgets.QVBoxLayout(self.pybamm_result_group)
         self.pybamm_result_vlayout.setObjectName("pybamm_result_vlayout")
         self.pybamm_plot_tab = QtWidgets.QTabWidget(parent=self.pybamm_result_group)
-        self.pybamm_plot_tab.setMinimumSize(QtCore.QSize(1350, 830))
-        self.pybamm_plot_tab.setMaximumSize(QtCore.QSize(1350, 830))
+        self.pybamm_plot_tab.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding)
         self.pybamm_plot_tab.setFont(font)
         self.pybamm_plot_tab.setTabsClosable(True)
         self.pybamm_plot_tab.tabCloseRequested.connect(self._pybamm_close_run_tab)
         self.pybamm_plot_tab.setObjectName("pybamm_plot_tab")
         self._pybamm_run_counter = 0  # 누적 실행 카운터
         self.pybamm_result_vlayout.addWidget(self.pybamm_plot_tab)
-        self.pybamm_main_layout.addWidget(self.pybamm_result_group)
+        self.pybamm_result_group.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.pybamm_main_layout.addWidget(self.pybamm_result_group, 1)  # stretch=1
         self.tabWidget.addTab(self.PyBaMMTab, "")
         # ===== PyBaMM 탭 끝 =====
         self.verticalLayout_38.addWidget(self.tabWidget)
@@ -16941,8 +16939,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if not HAS_PYBAMM:
             QtWidgets.QMessageBox.warning(self, "PyBaMM", "PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치해주세요.")
             return
-        self.pybamm_progress.setValue(0)
-        self.pybamm_progress.setRange(0, 100)
+        self.progressBar.setValue(0)
+        self.progressBar.setRange(0, 100)
         self.pybamm_run_btn.setDisabled(True)
         QtWidgets.QApplication.processEvents()
 
@@ -16953,7 +16951,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             val_item = self.pybamm_param_table.item(row, 1)
             if name_item and val_item:
                 params_dict[name_item.text()] = val_item.text()
-        self.pybamm_progress.setValue(10)
+        self.progressBar.setValue(10)
         QtWidgets.QApplication.processEvents()
 
         # 2) 실험 설정 수집
@@ -16982,28 +16980,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         experiment_config["init_soc"] = self.pybamm_init_soc.text().strip()
         # 출력 간격 (period)
         experiment_config["period"] = self.pybamm_period.text().strip()
-        self.pybamm_progress.setValue(20)
+        self.progressBar.setValue(20)
         QtWidgets.QApplication.processEvents()
 
         # 3) 시뮬레이션 실행
         model_name = self.pybamm_model_combo.currentText()
         try:
-            self.pybamm_progress.setRange(0, 0)  # indeterminate 모드
+            self.progressBar.setRange(0, 0)  # indeterminate 모드
             QtWidgets.QApplication.processEvents()
             sol = run_pybamm_simulation(model_name, params_dict, experiment_config)
         except Exception as e:
-            self.pybamm_progress.setRange(0, 100)
-            self.pybamm_progress.setValue(0)
+            self.progressBar.setRange(0, 100)
+            self.progressBar.setValue(0)
             self.pybamm_run_btn.setDisabled(False)
             QtWidgets.QMessageBox.critical(self, "시뮬레이션 오류",
                 f"시뮬레이션 실행 중 오류 발생:\n{type(e).__name__}: {e}")
             return
-        self.pybamm_progress.setRange(0, 100)  # 확정 모드 복귀
-        self.pybamm_progress.setValue(60)
+        self.progressBar.setRange(0, 100)  # 확정 모드 복귀
+        self.progressBar.setValue(60)
 
         # EmptySolution 체크
         if isinstance(sol, pybamm.EmptySolution) or not hasattr(sol, "__getitem__"):
-            self.pybamm_progress.setValue(0)
+            self.progressBar.setValue(0)
             self.pybamm_run_btn.setDisabled(False)
             QtWidgets.QMessageBox.warning(self, "시뮬레이션 결과 없음",
                 "시뮬레이션이 빈 결과를 반환했습니다.\n"
@@ -17058,7 +17056,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         except Exception:
             c_neg = None
 
-        self.pybamm_progress.setValue(75)
+        self.progressBar.setValue(75)
 
         palette = THEME['PALETTE']
 
@@ -17087,7 +17085,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         fig1.tight_layout()
         tab1, layout1, canvas1, toolbar1 = self._create_plot_tab(fig1, 1)
         layout1.addWidget(toolbar1)
-        layout1.addWidget(canvas1)
+        scroll1 = QtWidgets.QScrollArea()
+        scroll1.setWidgetResizable(True)
+        scroll1.setWidget(canvas1)
+        layout1.addWidget(scroll1)
         inner_tab.addTab(tab1, "전압 커브")
 
         # ── Sub 2: 종합 모니터링 (Current, Voltage, SOC vs Time) ──
@@ -17103,7 +17104,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         fig2.tight_layout()
         tab2, layout2, canvas2, toolbar2 = self._create_plot_tab(fig2, 2)
         layout2.addWidget(toolbar2)
-        layout2.addWidget(canvas2)
+        scroll2 = QtWidgets.QScrollArea()
+        scroll2.setWidgetResizable(True)
+        scroll2.setWidget(canvas2)
+        layout2.addWidget(scroll2)
         inner_tab.addTab(tab2, "종합 모니터링")
 
         # ── Sub 3: 전극 분포 (Cathode/Anode potential, Li concentration) ──
@@ -17128,7 +17132,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         fig3.tight_layout()
         tab3, layout3, canvas3, toolbar3 = self._create_plot_tab(fig3, 3)
         layout3.addWidget(toolbar3)
-        layout3.addWidget(canvas3)
+        scroll3 = QtWidgets.QScrollArea()
+        scroll3.setWidgetResizable(True)
+        scroll3.setWidget(canvas3)
+        layout3.addWidget(scroll3)
         inner_tab.addTab(tab3, "전극 분포")
 
         # ── Sub 4: dVdQ 분석 ──
@@ -17155,14 +17162,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         fig4.tight_layout()
         tab4, layout4, canvas4, toolbar4 = self._create_plot_tab(fig4, 4)
         layout4.addWidget(toolbar4)
-        layout4.addWidget(canvas4)
+        scroll4 = QtWidgets.QScrollArea()
+        scroll4.setWidgetResizable(True)
+        scroll4.setWidget(canvas4)
+        layout4.addWidget(scroll4)
         inner_tab.addTab(tab4, "dVdQ 분석")
 
         # 상위 탭에 Run 추가 (누적)
         self.pybamm_plot_tab.addTab(inner_tab, run_tab_title)
         self.pybamm_plot_tab.setCurrentWidget(inner_tab)
 
-        self.pybamm_progress.setValue(100)
+        self.progressBar.setValue(100)
         self.pybamm_run_btn.setDisabled(False)
 
     def _pybamm_close_run_tab(self, index):
@@ -17174,7 +17184,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         while self.pybamm_plot_tab.count() > 0:
             self.pybamm_plot_tab.removeTab(0)
         self._pybamm_run_counter = 0
-        self.pybamm_progress.setValue(0)
+        self.progressBar.setValue(0)
         # 프리셋 첫 번째(Chen2020)로 복원 → 패턴 자동 연동
         self.pybamm_param_combo.setCurrentIndex(0)
         self._pybamm_load_preset(0)
@@ -17364,7 +17374,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.pybamm_chg_cycles.setText("1")
             self.pybamm_dchg_cycles.setText("1")
             self.pybamm_init_soc.setText("auto")
-            self.pybamm_period.setText("auto")
+            self.pybamm_period.setText("10")
 
 # UI 실행
 if __name__ == "__main__":
