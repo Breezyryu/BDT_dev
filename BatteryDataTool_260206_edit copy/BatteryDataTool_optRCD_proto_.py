@@ -17076,7 +17076,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inner_tab.setFont(self.pybamm_plot_tab.font())
 
         # ── Sub 1: 전압 커브 (V vs Time, V vs Capacity) ──
-        fig1, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(14, 8))
+        fig1, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(13, 7))
         fig1.set_facecolor(THEME['FIG_FACECOLOR'])
         ax1a.plot(t_min, V, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
         graph_base_parameter(ax1a, "Time [min]", "Voltage [V]")
@@ -17091,7 +17091,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inner_tab.addTab(tab1, "전압 커브")
 
         # ── Sub 2: 종합 모니터링 (Current, Voltage, SOC vs Time) ──
-        fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(14, 8), sharex=True)
+        fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(13, 7), sharex=True)
         fig2.set_facecolor(THEME['FIG_FACECOLOR'])
         ax2a.plot(t_min, I, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
         graph_base_parameter(ax2a, "", "Current [A]")
@@ -17107,7 +17107,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inner_tab.addTab(tab2, "종합 모니터링")
 
         # ── Sub 3: 전극 분포 (Cathode/Anode potential, Li concentration) ──
-        fig3, axes3 = plt.subplots(2, 2, figsize=(14, 8))
+        fig3, axes3 = plt.subplots(2, 2, figsize=(13, 7))
         fig3.set_facecolor(THEME['FIG_FACECOLOR'])
         if V_pos is not None:
             axes3[0, 0].plot(t_min, V_pos, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
@@ -17132,7 +17132,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inner_tab.addTab(tab3, "전극 분포")
 
         # ── Sub 4: dVdQ 분석 ──
-        fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(14, 8))
+        fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(13, 7))
         fig4.set_facecolor(THEME['FIG_FACECOLOR'])
         chg_mask = I > 0
         dchg_mask = I < 0
