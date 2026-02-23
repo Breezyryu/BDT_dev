@@ -17185,37 +17185,57 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_param_table.setVisible(checked)
         self.pybamm_edit_btn.setText("편집 닫기" if checked else "파라미터 편집")
 
+    def _pybamm_insert_step(self, list_widget, *items):
+        """선택 항목 뒤에 삽입, 선택 없으면 끝에 추가"""
+        row = list_widget.currentRow()
+        if row >= 0:
+            insert_at = row + 1
+        else:
+            insert_at = list_widget.count()
+        for i, text in enumerate(items):
+            list_widget.insertItem(insert_at + i, text)
+        # 삽입된 마지막 항목 선택
+        list_widget.setCurrentRow(insert_at + len(items) - 1)
+
     def _pybamm_chg_add_step(self):
-        """충전 스텝 리스트에 항목 추가"""
+        """충전 스텝 리스트에 항목 추가 (선택 항목 뒤에 삽입)"""
         step_type = self.pybamm_chg_step_type.currentText()
         crate = self.pybamm_chg_crate.text().strip() or "1.0"
         vcut = self.pybamm_chg_vcut.text().strip() or "4.2"
         cutoff = self.pybamm_chg_cutoff.text().strip() or "0.05"
         if step_type == "CC":
-            self.pybamm_chg_list.addItem(f"CC  |  Charge at {crate}C until {vcut}V")
+            self._pybamm_insert_step(self.pybamm_chg_list,
+                f"CC  |  Charge at {crate}C until {vcut}V")
         elif step_type == "CV":
-            self.pybamm_chg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+            self._pybamm_insert_step(self.pybamm_chg_list,
+                f"CV  |  Hold at {vcut}V until {cutoff}C")
         elif step_type == "CCCV":
-            self.pybamm_chg_list.addItem(f"CC  |  Charge at {crate}C until {vcut}V")
-            self.pybamm_chg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+            self._pybamm_insert_step(self.pybamm_chg_list,
+                f"CC  |  Charge at {crate}C until {vcut}V",
+                f"CV  |  Hold at {vcut}V until {cutoff}C")
         elif step_type == "Rest":
-            self.pybamm_chg_list.addItem(f"Rest  |  Rest for {vcut} seconds")
+            self._pybamm_insert_step(self.pybamm_chg_list,
+                f"Rest  |  Rest for {vcut} seconds")
 
     def _pybamm_dchg_add_step(self):
-        """방전 스텝 리스트에 항목 추가"""
+        """방전 스텝 리스트에 항목 추가 (선택 항목 뒤에 삽입)"""
         step_type = self.pybamm_dchg_step_type.currentText()
         crate = self.pybamm_dchg_crate.text().strip() or "1.0"
         vcut = self.pybamm_dchg_vcut.text().strip() or "2.5"
         cutoff = self.pybamm_dchg_cutoff.text().strip() or "0.05"
         if step_type == "CC":
-            self.pybamm_dchg_list.addItem(f"CC  |  Discharge at {crate}C until {vcut}V")
+            self._pybamm_insert_step(self.pybamm_dchg_list,
+                f"CC  |  Discharge at {crate}C until {vcut}V")
         elif step_type == "CV":
-            self.pybamm_dchg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+            self._pybamm_insert_step(self.pybamm_dchg_list,
+                f"CV  |  Hold at {vcut}V until {cutoff}C")
         elif step_type == "CCCV":
-            self.pybamm_dchg_list.addItem(f"CC  |  Discharge at {crate}C until {vcut}V")
-            self.pybamm_dchg_list.addItem(f"CV  |  Hold at {vcut}V until {cutoff}C")
+            self._pybamm_insert_step(self.pybamm_dchg_list,
+                f"CC  |  Discharge at {crate}C until {vcut}V",
+                f"CV  |  Hold at {vcut}V until {cutoff}C")
         elif step_type == "Rest":
-            self.pybamm_dchg_list.addItem(f"Rest  |  Rest for {vcut} seconds")
+            self._pybamm_insert_step(self.pybamm_dchg_list,
+                f"Rest  |  Rest for {vcut} seconds")
 
     def _pybamm_del_step(self, list_widget):
         """선택된 스텝 항목 삭제"""
