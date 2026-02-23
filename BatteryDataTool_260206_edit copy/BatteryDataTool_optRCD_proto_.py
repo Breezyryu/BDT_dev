@@ -8032,7 +8032,11 @@ class Ui_sitool(object):
         self.pybamm_param_combo = QtWidgets.QComboBox(parent=self.pybamm_param_group)
         self.pybamm_param_combo.setMinimumSize(QtCore.QSize(130, 25))
         self.pybamm_param_combo.setFont(font)
-        self.pybamm_param_combo.addItems(["Chen2020", "Marquis2019", "Ecker2015", "사용자 정의"])
+        self.pybamm_param_combo.addItems([
+            "Chen2020", "Ai2020", "Ecker2015", "Marquis2019", "Mohtat2020",
+            "NCA_Kim2011", "OKane2022", "ORegan2022", "Prada2013", "Ramadass2004",
+            "사용자 정의",
+        ])
         self.pybamm_param_combo.setObjectName("pybamm_param_combo")
         self.pybamm_preset_hlayout.addWidget(self.pybamm_param_combo)
         self.pybamm_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_param_group)
@@ -8056,14 +8060,14 @@ class Ui_sitool(object):
         self.pybamm_param_table.setColumnWidth(2, 60)
         self.pybamm_param_table.setRowCount(14)
         _pybamm_param_rows = [
-            ("양극 두께", "85.2", "μm"), ("양극 입자 반경", "5.22", "μm"),
+            ("양극 두께", "75.6", "μm"), ("양극 입자 반경", "5.22", "μm"),
             ("양극 활물질 비율", "0.665", "-"),
             ("양극 Bruggeman", "1.5", "-"),
-            ("음극 두께", "75.6", "μm"), ("음극 입자 반경", "5.86", "μm"),
+            ("음극 두께", "85.2", "μm"), ("음극 입자 반경", "5.86", "μm"),
             ("음극 활물질 비율", "0.75", "-"),
             ("음극 Bruggeman", "1.5", "-"),
             ("분리막 두께", "12.0", "μm"), ("분리막 Bruggeman", "1.5", "-"),
-            ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "0.1027", "m²"),
+            ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "1.58", "m²"),
             ("셀 용량", "5.0", "Ah"), ("온도", "25", "°C"),
         ]
         for _row, (_name, _val, _unit) in enumerate(_pybamm_param_rows):
@@ -16984,19 +16988,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         except Exception:
             soc = np.zeros_like(t)
 
-        # 전극 전위
+        # 전극 개방회로 전위 (OCP)
+        # Note: "electrode potential" = 고체상 전위(φ_s)로 음극은 기준전극(≈0V)
+        #       "open-circuit potential" = SOC에 따른 실제 전기화학적 전위
         try:
-            V_pos = sol["X-averaged positive electrode potential [V]"].entries
+            V_pos = sol["X-averaged positive electrode open-circuit potential [V]"].entries
         except Exception:
             try:
-                V_pos = sol["Positive electrode potential [V]"].entries
+                V_pos = sol["Positive electrode open-circuit potential [V]"].entries
             except Exception:
                 V_pos = None
         try:
-            V_neg = sol["X-averaged negative electrode potential [V]"].entries
+            V_neg = sol["X-averaged negative electrode open-circuit potential [V]"].entries
         except Exception:
             try:
-                V_neg = sol["Negative electrode potential [V]"].entries
+                V_neg = sol["Negative electrode open-circuit potential [V]"].entries
             except Exception:
                 V_neg = None
 
@@ -17063,12 +17069,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         fig3.set_facecolor(THEME['FIG_FACECOLOR'])
         if V_pos is not None:
             axes3[0, 0].plot(t_min, V_pos, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(axes3[0, 0], "Time [min]", "Potential [V]")
-        axes3[0, 0].set_title("양극 전위", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+        graph_base_parameter(axes3[0, 0], "Time [min]", "OCP [V]")
+        axes3[0, 0].set_title("양극 OCP", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         if V_neg is not None:
             axes3[0, 1].plot(t_min, V_neg, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(axes3[0, 1], "Time [min]", "Potential [V]")
-        axes3[0, 1].set_title("음극 전위", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+        graph_base_parameter(axes3[0, 1], "Time [min]", "OCP [V]")
+        axes3[0, 1].set_title("음극 OCP", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         if c_pos is not None:
             axes3[1, 0].plot(t_min, c_pos, color=palette[3], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
         graph_base_parameter(axes3[1, 0], "Time [min]", "Conc. [mol/m³]")
@@ -17127,20 +17133,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.pybamm_plot_tab.removeTab(0)
         self._pybamm_run_counter = 0
         self.pybamm_progress.setValue(0)
-        # 충/방전 스텝 리스트 초기화
-        self.pybamm_chg_list.clear()
-        self.pybamm_chg_list.addItems([
-            "CC  |  Charge at 1C until 4.2V",
-            "CV  |  Hold at 4.2V until C/50",
-        ])
-        self.pybamm_chg_cycles.setText("1")
-        self.pybamm_dchg_list.clear()
-        self.pybamm_dchg_list.addItems([
-            "CC  |  Discharge at 1C until 2.5V",
-        ])
-        self.pybamm_dchg_cycles.setText("1")
+        # 프리셋 첫 번째(Chen2020)로 복원 → 패턴 자동 연동
+        self.pybamm_param_combo.setCurrentIndex(0)
+        self._pybamm_load_preset(0)
         self.pybamm_mode_charge.setChecked(True)
-        self.pybamm_init_soc.setText("auto")
 
     def _pybamm_toggle_param_table(self, checked):
         """파라미터 테이블 표시/숨김 토글"""
@@ -17199,21 +17195,59 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _pybamm_load_preset(self, index):
         """프리셋 파라미터 세트 로드"""
         # fmt: off
+        # 순서: 양극두께 양극입자 양극활물질 양극Brug
+        #       음극두께 음극입자 음극활물질 음극Brug
+        #       분리막두께 분리막Brug 전해질농도 전극면적 셀용량 온도
         presets = {
             "Chen2020": [
-                "85.2", "5.22", "0.665", "1.5",
-                "75.6", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "0.1027", "5.0", "25",
+                "75.6", "5.22", "0.665", "1.5",
+                "85.2", "5.86", "0.75", "1.5",
+                "12.0", "1.5", "1000", "1.58", "5.0", "25",
             ],
-            "Marquis2019": [
-                "100.0", "10.0", "0.665", "1.5",
-                "100.0", "10.0", "0.75", "1.5",
-                "25.0", "1.5", "1000", "0.1027", "5.0", "25",
+            "Ai2020": [
+                "68.0", "3.0", "0.62", "1.83",
+                "76.5", "5.0", "0.61", "2.91",
+                "25.0", "1.5", "1000", "0.047", "2.28", "25",
             ],
             "Ecker2015": [
-                "73.0", "3.5", "0.665", "1.5",
-                "73.5", "5.0", "0.75", "1.5",
-                "20.0", "1.5", "1000", "0.1027", "5.0", "25",
+                "54.0", "6.5", "0.408", "1.54",
+                "74.0", "13.7", "0.372", "1.64",
+                "20.0", "1.98", "1000", "0.085", "0.156", "25",
+            ],
+            "Marquis2019": [
+                "100.0", "10.0", "0.5", "1.5",
+                "100.0", "10.0", "0.6", "1.5",
+                "25.0", "1.5", "1000", "0.207", "0.68", "25",
+            ],
+            "Mohtat2020": [
+                "67.0", "3.5", "0.445", "1.5",
+                "62.0", "2.5", "0.61", "1.5",
+                "12.0", "1.5", "1000", "0.205", "5.0", "25",
+            ],
+            "NCA_Kim2011": [
+                "50.0", "1.63", "0.41", "2.0",
+                "70.0", "0.508", "0.51", "2.0",
+                "25.0", "2.0", "1200", "0.14", "0.43", "25",
+            ],
+            "OKane2022": [
+                "75.6", "5.22", "0.665", "1.5",
+                "85.2", "5.86", "0.75", "1.5",
+                "12.0", "1.5", "1000", "1.58", "5.0", "25",
+            ],
+            "ORegan2022": [
+                "75.6", "5.22", "0.665", "1.5",
+                "85.2", "5.86", "0.75", "1.5",
+                "12.0", "1.5", "1000", "1.58", "5.0", "25",
+            ],
+            "Prada2013": [
+                "80.0", "0.05", "0.374", "1.5",
+                "34.0", "5.0", "0.58", "1.5",
+                "25.0", "1.5", "1200", "0.3", "2.3", "25",
+            ],
+            "Ramadass2004": [
+                "80.0", "2.0", "0.59", "4.0",
+                "88.0", "2.0", "0.49", "4.0",
+                "25.0", "1.98", "1000", "1.061", "1.0", "25",
             ],
         }
         # fmt: on
@@ -17222,6 +17256,52 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             values = presets[combo_text]
             for row, val in enumerate(values):
                 self.pybamm_param_table.item(row, 1).setText(val)
+
+        # ── 프리셋별 충방전 패턴 연동 ──
+        # fmt: off
+        patterns = {
+            #  chg_steps,  dchg_steps,  upper_v, lower_v
+            "Chen2020":     (["CC  |  Charge at 1C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.5V"]),
+            "Ai2020":       (["CC  |  Charge at 1C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 1C until 3.0V"]),
+            "Ecker2015":    (["CC  |  Charge at 1C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.5V"]),
+            "Marquis2019":  (["CC  |  Charge at 1C until 4.1V",
+                             "CV  |  Hold at 4.1V until C/50"],
+                            ["CC  |  Discharge at 1C until 3.105V"]),
+            "Mohtat2020":   (["CC  |  Charge at 1C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.8V"]),
+            "NCA_Kim2011":  (["CC  |  Charge at 0.5C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 0.5C until 2.7V"]),
+            "OKane2022":    (["CC  |  Charge at 1C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.5V"]),
+            "ORegan2022":   (["CC  |  Charge at 1C until 4.4V",
+                             "CV  |  Hold at 4.4V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.5V"]),
+            "Prada2013":    (["CC  |  Charge at 1C until 3.6V",
+                             "CV  |  Hold at 3.6V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.0V"]),
+            "Ramadass2004": (["CC  |  Charge at 1C until 4.2V",
+                             "CV  |  Hold at 4.2V until C/50"],
+                            ["CC  |  Discharge at 1C until 2.8V"]),
+        }
+        # fmt: on
+        if combo_text in patterns:
+            chg_steps, dchg_steps = patterns[combo_text]
+            self.pybamm_chg_list.clear()
+            self.pybamm_chg_list.addItems(chg_steps)
+            self.pybamm_dchg_list.clear()
+            self.pybamm_dchg_list.addItems(dchg_steps)
+            self.pybamm_chg_cycles.setText("1")
+            self.pybamm_dchg_cycles.setText("1")
+            self.pybamm_init_soc.setText("auto")
 
 # UI 실행
 if __name__ == "__main__":
