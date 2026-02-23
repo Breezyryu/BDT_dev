@@ -8006,8 +8006,15 @@ class Ui_sitool(object):
         self.PyBaMMTab.setObjectName("PyBaMMTab")
         self.pybamm_main_layout = QtWidgets.QHBoxLayout(self.PyBaMMTab)
         self.pybamm_main_layout.setObjectName("pybamm_main_layout")
-        # --- 좌측 입력 패널 ---
-        self.pybamm_left_panel = QtWidgets.QVBoxLayout()
+        # --- 좌측 입력 패널 (QScrollArea 래핑) ---
+        self.pybamm_left_scroll = QtWidgets.QScrollArea(parent=self.PyBaMMTab)
+        self.pybamm_left_scroll.setWidgetResizable(True)
+        self.pybamm_left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.pybamm_left_scroll.setMinimumWidth(360)
+        self.pybamm_left_scroll.setMaximumWidth(360)
+        self.pybamm_left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.pybamm_left_container = QtWidgets.QWidget()
+        self.pybamm_left_panel = QtWidgets.QVBoxLayout(self.pybamm_left_container)
         self.pybamm_left_panel.setObjectName("pybamm_left_panel")
         # [1] 모델 선택 GroupBox
         self.pybamm_model_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
@@ -8458,7 +8465,8 @@ class Ui_sitool(object):
         # 좌측 하단 여백
         self.pybamm_left_panel.addItem(QtWidgets.QSpacerItem(
             20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding))
-        self.pybamm_main_layout.addLayout(self.pybamm_left_panel)
+        self.pybamm_left_scroll.setWidget(self.pybamm_left_container)
+        self.pybamm_main_layout.addWidget(self.pybamm_left_scroll)
         # --- 우측 결과 영역 (GroupBox) ---
         self.pybamm_result_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
         self.pybamm_result_group.setFont(font)
