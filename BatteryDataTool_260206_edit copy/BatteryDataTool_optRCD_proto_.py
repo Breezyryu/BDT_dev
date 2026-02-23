@@ -2714,14 +2714,10 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
         "양극 두께":              ("Positive electrode thickness [m]", 1e-6),
         "양극 입자 반경":          ("Positive particle radius [m]", 1e-6),
         "양극 활물질 비율":        ("Positive electrode active material volume fraction", 1),
-        "양극 확산계수":           ("Positive electrode diffusivity [m2.s-1]", 1),
-        "양극 반응속도상수":       ("Positive electrode exchange-current density [A.m-2]", 1),
         "양극 Bruggeman":         ("Positive electrode Bruggeman coefficient (electrolyte)", 1),
         "음극 두께":              ("Negative electrode thickness [m]", 1e-6),
         "음극 입자 반경":          ("Negative particle radius [m]", 1e-6),
         "음극 활물질 비율":        ("Negative electrode active material volume fraction", 1),
-        "음극 확산계수":           ("Negative electrode diffusivity [m2.s-1]", 1),
-        "음극 반응속도상수":       ("Negative electrode exchange-current density [A.m-2]", 1),
         "음극 Bruggeman":         ("Negative electrode Bruggeman coefficient (electrolyte)", 1),
         "분리막 두께":             ("Separator thickness [m]", 1e-6),
         "분리막 Bruggeman":       ("Separator Bruggeman coefficient (electrolyte)", 1),
@@ -2747,8 +2743,8 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
     # 초기 SOC 설정 (셀 레벨, 0=방전 1=만충)
     # 충전 모드 → 낮은 SOC에서 시작, 방전 모드 → 높은 SOC에서 시작
     mode = experiment_config.get("mode", "ccv")
-    _user_soc = params_dict.get("초기 SOC", "auto")
-    if _user_soc != "auto":
+    _user_soc = experiment_config.get("init_soc", "auto")
+    if _user_soc and _user_soc != "auto":
         try:
             init_soc = float(_user_soc)
         except ValueError:
@@ -8058,20 +8054,17 @@ class Ui_sitool(object):
         self.pybamm_param_table.setColumnWidth(0, 150)
         self.pybamm_param_table.setColumnWidth(1, 80)
         self.pybamm_param_table.setColumnWidth(2, 60)
-        self.pybamm_param_table.setRowCount(21)
+        self.pybamm_param_table.setRowCount(14)
         _pybamm_param_rows = [
             ("양극 두께", "85.2", "μm"), ("양극 입자 반경", "5.22", "μm"),
-            ("양극 활물질 비율", "0.665", "-"), ("양극 확산계수", "4e-15", "m²/s"),
-            ("양극 반응속도상수", "6.48e-7", "m/s"), ("양극 초기 SOC", "0.8", "-"),
+            ("양극 활물질 비율", "0.665", "-"),
             ("양극 Bruggeman", "1.5", "-"),
             ("음극 두께", "75.6", "μm"), ("음극 입자 반경", "5.86", "μm"),
-            ("음극 활물질 비율", "0.75", "-"), ("음극 확산계수", "3.3e-14", "m²/s"),
-            ("음극 반응속도상수", "6.71e-7", "m/s"), ("음극 초기 SOC", "0.03", "-"),
+            ("음극 활물질 비율", "0.75", "-"),
             ("음극 Bruggeman", "1.5", "-"),
             ("분리막 두께", "12.0", "μm"), ("분리막 Bruggeman", "1.5", "-"),
             ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "0.1027", "m²"),
             ("셀 용량", "5.0", "Ah"), ("온도", "25", "°C"),
-            ("초기 SOC", "auto", "0~1"),
         ]
         for _row, (_name, _val, _unit) in enumerate(_pybamm_param_rows):
             self.pybamm_param_table.setItem(_row, 0, QtWidgets.QTableWidgetItem(_name))
@@ -8124,6 +8117,21 @@ class Ui_sitool(object):
         self.pybamm_chg_page = QtWidgets.QWidget()
         self.pybamm_chg_page.setObjectName("pybamm_chg_page")
         self.pybamm_chg_vlayout = QtWidgets.QVBoxLayout(self.pybamm_chg_page)
+        # 제목 행
+        self.pybamm_chg_hdr_hlayout = QtWidgets.QHBoxLayout()
+        _chg_hdr_font = QtGui.QFont()
+        _chg_hdr_font.setFamily("맑은 고딕")
+        _chg_hdr_font.setPointSize(8)
+        _chg_hdr_font.setBold(True)
+        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff(C)", 55), ("", 30)]:
+            _hdr = QtWidgets.QLabel(parent=self.pybamm_chg_page)
+            _hdr.setText(_txt)
+            _hdr.setFont(_chg_hdr_font)
+            _hdr.setMinimumSize(QtCore.QSize(_w, 15))
+            _hdr.setMaximumSize(QtCore.QSize(_w, 15))
+            _hdr.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.pybamm_chg_hdr_hlayout.addWidget(_hdr)
+        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_hdr_hlayout)
         # 스텝 추가 입력바
         self.pybamm_chg_add_hlayout = QtWidgets.QHBoxLayout()
         self.pybamm_chg_step_type = QtWidgets.QComboBox(parent=self.pybamm_chg_page)
@@ -8211,6 +8219,21 @@ class Ui_sitool(object):
         self.pybamm_dchg_page = QtWidgets.QWidget()
         self.pybamm_dchg_page.setObjectName("pybamm_dchg_page")
         self.pybamm_dchg_vlayout = QtWidgets.QVBoxLayout(self.pybamm_dchg_page)
+        # 제목 행
+        self.pybamm_dchg_hdr_hlayout = QtWidgets.QHBoxLayout()
+        _dchg_hdr_font = QtGui.QFont()
+        _dchg_hdr_font.setFamily("맑은 고딕")
+        _dchg_hdr_font.setPointSize(8)
+        _dchg_hdr_font.setBold(True)
+        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff(C)", 55), ("", 30)]:
+            _hdr = QtWidgets.QLabel(parent=self.pybamm_dchg_page)
+            _hdr.setText(_txt)
+            _hdr.setFont(_dchg_hdr_font)
+            _hdr.setMinimumSize(QtCore.QSize(_w, 15))
+            _hdr.setMaximumSize(QtCore.QSize(_w, 15))
+            _hdr.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.pybamm_dchg_hdr_hlayout.addWidget(_hdr)
+        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_hdr_hlayout)
         # 스텝 추가 입력바
         self.pybamm_dchg_add_hlayout = QtWidgets.QHBoxLayout()
         self.pybamm_dchg_step_type = QtWidgets.QComboBox(parent=self.pybamm_dchg_page)
@@ -8343,6 +8366,29 @@ class Ui_sitool(object):
 
         self.pybamm_exp_stack.setCurrentIndex(0)
         self.pybamm_exp_vlayout.addWidget(self.pybamm_exp_stack)
+        # 시작 SOC 입력 (모든 모드 공용)
+        self.pybamm_soc_hlayout = QtWidgets.QHBoxLayout()
+        _soc_lbl = QtWidgets.QLabel(parent=self.pybamm_exp_group)
+        _soc_lbl.setText("시작 SOC:")
+        _soc_lbl.setFont(font)
+        self.pybamm_soc_hlayout.addWidget(_soc_lbl)
+        self.pybamm_init_soc = QtWidgets.QLineEdit(parent=self.pybamm_exp_group)
+        self.pybamm_init_soc.setFont(font)
+        self.pybamm_init_soc.setText("auto")
+        self.pybamm_init_soc.setPlaceholderText("0~1 또는 auto")
+        self.pybamm_init_soc.setToolTip("auto: 모드별 자동 설정 (충전=0.1, 방전=0.8)\n직접 입력: 0~1 사이 값")
+        self.pybamm_init_soc.setMinimumSize(QtCore.QSize(50, 25))
+        self.pybamm_init_soc.setMaximumSize(QtCore.QSize(60, 25))
+        self.pybamm_init_soc.setObjectName("pybamm_init_soc")
+        self.pybamm_soc_hlayout.addWidget(self.pybamm_init_soc)
+        _soc_hint = QtWidgets.QLabel(parent=self.pybamm_exp_group)
+        _soc_hint.setText("(0=방전, 1=만충, auto=자동)")
+        _soc_hint.setFont(font)
+        _soc_hint.setStyleSheet("color: #888888;")
+        self.pybamm_soc_hlayout.addWidget(_soc_hint)
+        self.pybamm_soc_hlayout.addItem(QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_exp_vlayout.addLayout(self.pybamm_soc_hlayout)
         self.pybamm_left_panel.addWidget(self.pybamm_exp_group)
         # [4] 실행 버튼 + 프로그레스바
         self.pybamm_run_hlayout = QtWidgets.QHBoxLayout()
@@ -16888,6 +16934,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             raw_text = self.pybamm_custom_text.toPlainText().strip()
             steps = [s.strip().strip('"').strip("'") for s in raw_text.split(",") if s.strip()]
             experiment_config["steps"] = steps
+        # 시작 SOC
+        experiment_config["init_soc"] = self.pybamm_init_soc.text().strip()
         self.pybamm_progress.setValue(20)
         QtWidgets.QApplication.processEvents()
 
@@ -17079,6 +17127,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ])
         self.pybamm_dchg_cycles.setText("1")
         self.pybamm_mode_charge.setChecked(True)
+        self.pybamm_init_soc.setText("auto")
 
     def _pybamm_toggle_param_table(self, checked):
         """파라미터 테이블 표시/숨김 토글"""
@@ -17139,19 +17188,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # fmt: off
         presets = {
             "Chen2020": [
-                "85.2", "5.22", "0.665", "4e-15", "6.48e-7", "0.8", "1.5",
-                "75.6", "5.86", "0.75", "3.3e-14", "6.71e-7", "0.03", "1.5",
-                "12.0", "1.5", "1000", "0.1027", "5.0", "25", "auto",
+                "85.2", "5.22", "0.665", "1.5",
+                "75.6", "5.86", "0.75", "1.5",
+                "12.0", "1.5", "1000", "0.1027", "5.0", "25",
             ],
             "Marquis2019": [
-                "100.0", "10.0", "0.665", "3.9e-14", "3.42e-6", "0.5", "1.5",
-                "100.0", "10.0", "0.75", "3.9e-14", "6.48e-7", "0.8", "1.5",
-                "25.0", "1.5", "1000", "0.1027", "5.0", "25", "auto",
+                "100.0", "10.0", "0.665", "1.5",
+                "100.0", "10.0", "0.75", "1.5",
+                "25.0", "1.5", "1000", "0.1027", "5.0", "25",
             ],
             "Ecker2015": [
-                "73.0", "3.5", "0.665", "5.9e-18", "5e-7", "0.8", "1.5",
-                "73.5", "5.0", "0.75", "1.74e-15", "1.76e-7", "0.03", "1.5",
-                "20.0", "1.5", "1000", "0.1027", "5.0", "25", "auto",
+                "73.0", "3.5", "0.665", "1.5",
+                "73.5", "5.0", "0.75", "1.5",
+                "20.0", "1.5", "1000", "0.1027", "5.0", "25",
             ],
         }
         # fmt: on
