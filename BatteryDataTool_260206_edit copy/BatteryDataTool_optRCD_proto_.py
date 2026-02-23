@@ -8429,10 +8429,13 @@ class Ui_sitool(object):
         self.pybamm_result_vlayout = QtWidgets.QVBoxLayout(self.pybamm_result_group)
         self.pybamm_result_vlayout.setObjectName("pybamm_result_vlayout")
         self.pybamm_plot_tab = QtWidgets.QTabWidget(parent=self.pybamm_result_group)
-        self.pybamm_plot_tab.setMinimumSize(QtCore.QSize(1200, 830))
-        self.pybamm_plot_tab.setMaximumSize(QtCore.QSize(1200, 830))
+        self.pybamm_plot_tab.setMinimumSize(QtCore.QSize(1350, 830))
+        self.pybamm_plot_tab.setMaximumSize(QtCore.QSize(1350, 830))
         self.pybamm_plot_tab.setFont(font)
+        self.pybamm_plot_tab.setTabsClosable(True)
+        self.pybamm_plot_tab.tabCloseRequested.connect(self._pybamm_close_run_tab)
         self.pybamm_plot_tab.setObjectName("pybamm_plot_tab")
+        self._pybamm_run_counter = 0  # 누적 실행 카운터
         self.pybamm_result_vlayout.addWidget(self.pybamm_plot_tab)
         self.pybamm_main_layout.addWidget(self.pybamm_result_group)
         self.tabWidget.addTab(self.PyBaMMTab, "")
@@ -16898,9 +16901,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_progress.setRange(0, 100)
         self.pybamm_run_btn.setDisabled(True)
         QtWidgets.QApplication.processEvents()
-        # 기존 플롯 탭 초기화
-        while self.pybamm_plot_tab.count() > 0:
-            self.pybamm_plot_tab.removeTab(0)
 
         # 1) UI에서 파라미터 수집
         params_dict = {}
@@ -17014,71 +17014,78 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         palette = THEME['PALETTE']
 
-        # ── Tab 1: 전압 커브 (V vs Time, V vs Capacity) ──
-        fig1, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(12, 5), dpi=THEME['DPI'])
+        # ── 누적 실행: 상위 Run 탭 + 내부 4개 서브탭 ──
+        self._pybamm_run_counter += 1
+        run_no = self._pybamm_run_counter
+        mode_label = experiment_config.get('mode', '?')
+        mode_names = {'charge': '충전', 'discharge': '방전',
+                      'gitt': 'GITT', 'custom': '커스텀', 'ccv': 'CC-CV'}
+        mode_str = mode_names.get(mode_label, mode_label)
+        run_tab_title = f"Run {run_no}  ({model_name}, {mode_str})"
+
+        # 내부 서브 QTabWidget
+        inner_tab = QtWidgets.QTabWidget()
+        inner_tab.setFont(self.pybamm_plot_tab.font())
+
+        # ── Sub 1: 전압 커브 (V vs Time, V vs Capacity) ──
+        fig1, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(14, 8))
         fig1.set_facecolor(THEME['FIG_FACECOLOR'])
-        ax1a.plot(t_min, V, color=palette[0], linewidth=THEME['LINE_WIDTH'])
-        ax1a.set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
-        ax1a.set_ylabel("Voltage [V]", fontsize=THEME['LABEL_SIZE'])
-        ax1a.set_title("Voltage vs Time", fontsize=THEME['TITLE_SIZE'])
-        ax1b.plot(Q, V, color=palette[1], linewidth=THEME['LINE_WIDTH'])
-        ax1b.set_xlabel("Capacity [Ah]", fontsize=THEME['LABEL_SIZE'])
-        ax1b.set_ylabel("Voltage [V]", fontsize=THEME['LABEL_SIZE'])
-        ax1b.set_title("Voltage vs Capacity", fontsize=THEME['TITLE_SIZE'])
+        ax1a.plot(t_min, V, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(ax1a, "Time [min]", "Voltage [V]")
+        ax1a.set_title("Voltage vs Time", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+        ax1b.plot(Q, V, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(ax1b, "Capacity [Ah]", "Voltage [V]")
+        ax1b.set_title("Voltage vs Capacity", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         fig1.tight_layout()
         tab1, layout1, canvas1, toolbar1 = self._create_plot_tab(fig1, 1)
         layout1.addWidget(toolbar1)
         layout1.addWidget(canvas1)
-        self.pybamm_plot_tab.addTab(tab1, "전압 커브")
+        inner_tab.addTab(tab1, "전압 커브")
 
-        # ── Tab 2: 종합 모니터링 (Current, Voltage, SOC vs Time) ──
-        fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(12, 7), dpi=THEME['DPI'], sharex=True)
+        # ── Sub 2: 종합 모니터링 (Current, Voltage, SOC vs Time) ──
+        fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(14, 8), sharex=True)
         fig2.set_facecolor(THEME['FIG_FACECOLOR'])
-        ax2a.plot(t_min, I, color=palette[0], linewidth=THEME['LINE_WIDTH'])
-        ax2a.set_ylabel("Current [A]", fontsize=THEME['LABEL_SIZE'])
-        ax2a.set_title("종합 모니터링", fontsize=THEME['TITLE_SIZE'])
-        ax2b.plot(t_min, V, color=palette[1], linewidth=THEME['LINE_WIDTH'])
-        ax2b.set_ylabel("Voltage [V]", fontsize=THEME['LABEL_SIZE'])
-        ax2c.plot(t_min, soc, color=palette[2], linewidth=THEME['LINE_WIDTH'])
-        ax2c.set_ylabel("Surface Conc. [norm]", fontsize=THEME['LABEL_SIZE'])
-        ax2c.set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+        ax2a.plot(t_min, I, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(ax2a, "", "Current [A]")
+        ax2a.set_title("종합 모니터링", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+        ax2b.plot(t_min, V, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(ax2b, "", "Voltage [V]")
+        ax2c.plot(t_min, soc, color=palette[2], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(ax2c, "Time [min]", "Surface Conc. [norm]")
         fig2.tight_layout()
         tab2, layout2, canvas2, toolbar2 = self._create_plot_tab(fig2, 2)
         layout2.addWidget(toolbar2)
         layout2.addWidget(canvas2)
-        self.pybamm_plot_tab.addTab(tab2, "종합 모니터링")
+        inner_tab.addTab(tab2, "종합 모니터링")
 
-        # ── Tab 3: 전극 분포 (Cathode/Anode potential, Li concentration) ──
-        fig3, axes3 = plt.subplots(2, 2, figsize=(12, 7), dpi=THEME['DPI'])
+        # ── Sub 3: 전극 분포 (Cathode/Anode potential, Li concentration) ──
+        fig3, axes3 = plt.subplots(2, 2, figsize=(14, 8))
         fig3.set_facecolor(THEME['FIG_FACECOLOR'])
         if V_pos is not None:
-            axes3[0, 0].plot(t_min, V_pos, color=palette[1], linewidth=THEME['LINE_WIDTH'])
-        axes3[0, 0].set_ylabel("Potential [V]", fontsize=THEME['LABEL_SIZE'])
-        axes3[0, 0].set_title("양극 전위", fontsize=THEME['TITLE_SIZE'])
+            axes3[0, 0].plot(t_min, V_pos, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(axes3[0, 0], "Time [min]", "Potential [V]")
+        axes3[0, 0].set_title("양극 전위", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         if V_neg is not None:
-            axes3[0, 1].plot(t_min, V_neg, color=palette[0], linewidth=THEME['LINE_WIDTH'])
-        axes3[0, 1].set_ylabel("Potential [V]", fontsize=THEME['LABEL_SIZE'])
-        axes3[0, 1].set_title("음극 전위", fontsize=THEME['TITLE_SIZE'])
+            axes3[0, 1].plot(t_min, V_neg, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(axes3[0, 1], "Time [min]", "Potential [V]")
+        axes3[0, 1].set_title("음극 전위", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         if c_pos is not None:
-            axes3[1, 0].plot(t_min, c_pos, color=palette[3], linewidth=THEME['LINE_WIDTH'])
-        axes3[1, 0].set_ylabel("Conc. [mol/m³]", fontsize=THEME['LABEL_SIZE'])
-        axes3[1, 0].set_title("양극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'])
-        axes3[1, 0].set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+            axes3[1, 0].plot(t_min, c_pos, color=palette[3], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(axes3[1, 0], "Time [min]", "Conc. [mol/m³]")
+        axes3[1, 0].set_title("양극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         if c_neg is not None:
-            axes3[1, 1].plot(t_min, c_neg, color=palette[4], linewidth=THEME['LINE_WIDTH'])
-        axes3[1, 1].set_ylabel("Conc. [mol/m³]", fontsize=THEME['LABEL_SIZE'])
-        axes3[1, 1].set_title("음극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'])
-        axes3[1, 1].set_xlabel("Time [min]", fontsize=THEME['LABEL_SIZE'])
+            axes3[1, 1].plot(t_min, c_neg, color=palette[4], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        graph_base_parameter(axes3[1, 1], "Time [min]", "Conc. [mol/m³]")
+        axes3[1, 1].set_title("음극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         fig3.tight_layout()
         tab3, layout3, canvas3, toolbar3 = self._create_plot_tab(fig3, 3)
         layout3.addWidget(toolbar3)
         layout3.addWidget(canvas3)
-        self.pybamm_plot_tab.addTab(tab3, "전극 분포")
+        inner_tab.addTab(tab3, "전극 분포")
 
-        # ── Tab 4: dVdQ 분석 ──
-        fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(12, 5), dpi=THEME['DPI'])
+        # ── Sub 4: dVdQ 분석 ──
+        fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(14, 8))
         fig4.set_facecolor(THEME['FIG_FACECOLOR'])
-        # 충전/방전 분리
         chg_mask = I > 0
         dchg_mask = I < 0
         for ax, mask, title, color in [
@@ -17090,29 +17097,35 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 V_seg = V[mask]
                 dQ = np.diff(Q_seg)
                 dV = np.diff(V_seg)
-                # 0 나눗셈 방지
                 valid = np.abs(dQ) > 1e-12
                 if np.sum(valid) > 0:
                     dvdq = dV[valid] / dQ[valid]
                     Q_mid = (Q_seg[:-1][valid] + Q_seg[1:][valid]) / 2
                     ax.plot(Q_mid, dvdq, color=color, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-            ax.set_xlabel("Capacity [Ah]", fontsize=THEME['LABEL_SIZE'])
-            ax.set_ylabel("dV/dQ [V/Ah]", fontsize=THEME['LABEL_SIZE'])
-            ax.set_title(title, fontsize=THEME['TITLE_SIZE'])
+            graph_base_parameter(ax, "Capacity [Ah]", "dV/dQ [V/Ah]")
+            ax.set_title(title, fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
         fig4.tight_layout()
         tab4, layout4, canvas4, toolbar4 = self._create_plot_tab(fig4, 4)
         layout4.addWidget(toolbar4)
         layout4.addWidget(canvas4)
-        self.pybamm_plot_tab.addTab(tab4, "dVdQ 분석")
+        inner_tab.addTab(tab4, "dVdQ 분석")
+
+        # 상위 탭에 Run 추가 (누적)
+        self.pybamm_plot_tab.addTab(inner_tab, run_tab_title)
+        self.pybamm_plot_tab.setCurrentWidget(inner_tab)
 
         self.pybamm_progress.setValue(100)
-        self.pybamm_plot_tab.setCurrentIndex(0)
         self.pybamm_run_btn.setDisabled(False)
 
+    def _pybamm_close_run_tab(self, index):
+        """개별 Run 탭 닫기 (× 버튼)"""
+        self.pybamm_plot_tab.removeTab(index)
+
     def pybamm_tab_reset_button(self):
-        """PyBaMM 플롯 탭 초기화"""
+        """PyBaMM 플롯 탭 전체 초기화"""
         while self.pybamm_plot_tab.count() > 0:
             self.pybamm_plot_tab.removeTab(0)
+        self._pybamm_run_counter = 0
         self.pybamm_progress.setValue(0)
         # 충/방전 스텝 리스트 초기화
         self.pybamm_chg_list.clear()
