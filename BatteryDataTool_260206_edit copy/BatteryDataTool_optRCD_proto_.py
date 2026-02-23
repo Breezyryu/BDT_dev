@@ -2813,6 +2813,23 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
     else:
         raise ValueError(f"지원하지 않는 모드: {mode}")
 
+    # period(출력 간격) 적용
+    _period_str = experiment_config.get("period", "auto")
+    if _period_str and _period_str != "auto":
+        try:
+            _period_sec = float(_period_str)
+            if _period_sec > 0:
+                _new_steps = []
+                for _step in experiment.steps:
+                    _raw = str(_step)
+                    # 이미 period가 포함되어 있으면 건너뜀
+                    if "period" not in _raw.lower():
+                        _raw += f" ({_period_sec:g} second period)"
+                    _new_steps.append(_raw)
+                experiment = pybamm.Experiment(_new_steps)
+        except (ValueError, TypeError):
+            pass  # 잘못된 입력은 무시 → 기본 period 사용
+
     # 4) 시뮬레이션 실행
     sim = pybamm.Simulation(model, experiment=experiment, parameter_values=param)
     solution = sim.solve(initial_soc=init_soc)
@@ -8393,6 +8410,29 @@ class Ui_sitool(object):
         self.pybamm_soc_hlayout.addItem(QtWidgets.QSpacerItem(
             40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
         self.pybamm_exp_vlayout.addLayout(self.pybamm_soc_hlayout)
+        # 출력 간격 (period) 입력
+        self.pybamm_period_hlayout = QtWidgets.QHBoxLayout()
+        _period_lbl = QtWidgets.QLabel(parent=self.pybamm_exp_group)
+        _period_lbl.setText("출력 간격:")
+        _period_lbl.setFont(font)
+        self.pybamm_period_hlayout.addWidget(_period_lbl)
+        self.pybamm_period = QtWidgets.QLineEdit(parent=self.pybamm_exp_group)
+        self.pybamm_period.setFont(font)
+        self.pybamm_period.setText("auto")
+        self.pybamm_period.setPlaceholderText("초 단위 또는 auto")
+        self.pybamm_period.setToolTip("auto: PyBaMM 기본값 (~60초)\n직접 입력: 출력 데이터 시간 간격 (초)\n예: 10 → 10초마다 데이터 출력")
+        self.pybamm_period.setMinimumSize(QtCore.QSize(50, 25))
+        self.pybamm_period.setMaximumSize(QtCore.QSize(60, 25))
+        self.pybamm_period.setObjectName("pybamm_period")
+        self.pybamm_period_hlayout.addWidget(self.pybamm_period)
+        _period_hint = QtWidgets.QLabel(parent=self.pybamm_exp_group)
+        _period_hint.setText("초  (auto=기본 ~60s)")
+        _period_hint.setFont(font)
+        _period_hint.setStyleSheet("color: #888888;")
+        self.pybamm_period_hlayout.addWidget(_period_hint)
+        self.pybamm_period_hlayout.addItem(QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_exp_vlayout.addLayout(self.pybamm_period_hlayout)
         self.pybamm_left_panel.addWidget(self.pybamm_exp_group)
         # [4] 실행 버튼 + 프로그레스바
         self.pybamm_run_hlayout = QtWidgets.QHBoxLayout()
@@ -9180,7 +9220,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_mode_custom.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(3) if checked else None)
         self.pybamm_run_btn.clicked.connect(self.pybamm_run_button)
         self.pybamm_reset_btn.clicked.connect(self.pybamm_tab_reset_button)
-        self.pybamm_param_combo.currentIndexChanged.connect(self._pybamm_load_preset)
+        self.pybamm_param_combo.activated.connect(self._pybamm_load_preset)
         self.pybamm_edit_btn.toggled.connect(self._pybamm_toggle_param_table)
         # 충/방전 스텝 리스트 버튼
         self.pybamm_chg_add_btn.clicked.connect(self._pybamm_chg_add_step)
@@ -16940,6 +16980,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             experiment_config["steps"] = steps
         # 시작 SOC
         experiment_config["init_soc"] = self.pybamm_init_soc.text().strip()
+        # 출력 간격 (period)
+        experiment_config["period"] = self.pybamm_period.text().strip()
         self.pybamm_progress.setValue(20)
         QtWidgets.QApplication.processEvents()
 
@@ -17302,6 +17344,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.pybamm_chg_cycles.setText("1")
             self.pybamm_dchg_cycles.setText("1")
             self.pybamm_init_soc.setText("auto")
+            self.pybamm_period.setText("auto")
 
 # UI 실행
 if __name__ == "__main__":
