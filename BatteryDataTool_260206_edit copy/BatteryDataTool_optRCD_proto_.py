@@ -8074,8 +8074,8 @@ class Ui_sitool(object):
         self.pybamm_preset_hlayout.addWidget(self.pybamm_edit_btn)
         self.pybamm_param_vlayout.addLayout(self.pybamm_preset_hlayout)
         self.pybamm_param_table = QtWidgets.QTableWidget(parent=self.pybamm_param_group)
-        self.pybamm_param_table.setMinimumSize(QtCore.QSize(320, 440))
-        self.pybamm_param_table.setMaximumSize(QtCore.QSize(320, 440))
+        self.pybamm_param_table.setMinimumSize(QtCore.QSize(320, 460))
+        self.pybamm_param_table.setMaximumSize(QtCore.QSize(320, 460))
         self.pybamm_param_table.setFont(font)
         self.pybamm_param_table.setColumnCount(3)
         self.pybamm_param_table.setHorizontalHeaderLabels(["파라미터", "값", "단위"])
@@ -8151,7 +8151,8 @@ class Ui_sitool(object):
         _chg_hdr_font.setFamily("맑은 고딕")
         _chg_hdr_font.setPointSize(8)
         _chg_hdr_font.setBold(True)
-        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff(C)", 55), ("", 30)]:
+        self._pybamm_chg_hdr_labels = []
+        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff", 55), ("", 30)]:
             _hdr = QtWidgets.QLabel(parent=self.pybamm_chg_page)
             _hdr.setText(_txt)
             _hdr.setFont(_chg_hdr_font)
@@ -8159,6 +8160,7 @@ class Ui_sitool(object):
             _hdr.setMaximumSize(QtCore.QSize(_w, 15))
             _hdr.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.pybamm_chg_hdr_hlayout.addWidget(_hdr)
+            self._pybamm_chg_hdr_labels.append(_hdr)
         self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_hdr_hlayout)
         # 스텝 추가 입력바
         self.pybamm_chg_add_hlayout = QtWidgets.QHBoxLayout()
@@ -8184,8 +8186,9 @@ class Ui_sitool(object):
         self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_vcut)
         self.pybamm_chg_cutoff = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
         self.pybamm_chg_cutoff.setFont(font)
-        self.pybamm_chg_cutoff.setPlaceholderText("CV cutoff")
-        self.pybamm_chg_cutoff.setText("0.05")
+        self.pybamm_chg_cutoff.setPlaceholderText("C/s/m/h")
+        self.pybamm_chg_cutoff.setText("0.05C")
+        self.pybamm_chg_cutoff.setToolTip("CV: 0.05C, C/50  |  Rest: 600s, 10m, 1h")
         self.pybamm_chg_cutoff.setMinimumSize(QtCore.QSize(45, 25))
         self.pybamm_chg_cutoff.setMaximumSize(QtCore.QSize(55, 25))
         self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_cutoff)
@@ -8200,6 +8203,7 @@ class Ui_sitool(object):
         # 충전 스텝 리스트
         self.pybamm_chg_list = QtWidgets.QListWidget(parent=self.pybamm_chg_page)
         self.pybamm_chg_list.setFont(font)
+        self.pybamm_chg_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.pybamm_chg_list.setMinimumSize(QtCore.QSize(310, 180))
         self.pybamm_chg_list.setObjectName("pybamm_chg_list")
         self.pybamm_chg_list.addItems([
@@ -8207,10 +8211,17 @@ class Ui_sitool(object):
             "CV  |  Hold at 4.2V until C/50",
         ])
         self.pybamm_chg_vlayout.addWidget(self.pybamm_chg_list)
-        # 삭제 버튼
+        # 수정/삭제 버튼
         self.pybamm_chg_del_hlayout = QtWidgets.QHBoxLayout()
         self.pybamm_chg_del_hlayout.addItem(QtWidgets.QSpacerItem(
             40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_chg_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
+        self.pybamm_chg_edit_btn.setFont(font)
+        self.pybamm_chg_edit_btn.setText("선택 수정")
+        self.pybamm_chg_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_chg_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_chg_edit_btn.setObjectName("pybamm_chg_edit_btn")
+        self.pybamm_chg_del_hlayout.addWidget(self.pybamm_chg_edit_btn)
         self.pybamm_chg_del_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
         self.pybamm_chg_del_btn.setFont(font)
         self.pybamm_chg_del_btn.setText("선택 삭제")
@@ -8253,7 +8264,8 @@ class Ui_sitool(object):
         _dchg_hdr_font.setFamily("맑은 고딕")
         _dchg_hdr_font.setPointSize(8)
         _dchg_hdr_font.setBold(True)
-        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff(C)", 55), ("", 30)]:
+        self._pybamm_dchg_hdr_labels = []
+        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff", 55), ("", 30)]:
             _hdr = QtWidgets.QLabel(parent=self.pybamm_dchg_page)
             _hdr.setText(_txt)
             _hdr.setFont(_dchg_hdr_font)
@@ -8261,6 +8273,7 @@ class Ui_sitool(object):
             _hdr.setMaximumSize(QtCore.QSize(_w, 15))
             _hdr.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.pybamm_dchg_hdr_hlayout.addWidget(_hdr)
+            self._pybamm_dchg_hdr_labels.append(_hdr)
         self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_hdr_hlayout)
         # 스텝 추가 입력바
         self.pybamm_dchg_add_hlayout = QtWidgets.QHBoxLayout()
@@ -8286,8 +8299,9 @@ class Ui_sitool(object):
         self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_vcut)
         self.pybamm_dchg_cutoff = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
         self.pybamm_dchg_cutoff.setFont(font)
-        self.pybamm_dchg_cutoff.setPlaceholderText("CV cutoff")
-        self.pybamm_dchg_cutoff.setText("0.05")
+        self.pybamm_dchg_cutoff.setPlaceholderText("C/s/m/h")
+        self.pybamm_dchg_cutoff.setText("0.05C")
+        self.pybamm_dchg_cutoff.setToolTip("CV: 0.05C, C/50  |  Rest: 600s, 10m, 1h")
         self.pybamm_dchg_cutoff.setMinimumSize(QtCore.QSize(45, 25))
         self.pybamm_dchg_cutoff.setMaximumSize(QtCore.QSize(55, 25))
         self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_cutoff)
@@ -8302,16 +8316,24 @@ class Ui_sitool(object):
         # 방전 스텝 리스트
         self.pybamm_dchg_list = QtWidgets.QListWidget(parent=self.pybamm_dchg_page)
         self.pybamm_dchg_list.setFont(font)
+        self.pybamm_dchg_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.pybamm_dchg_list.setMinimumSize(QtCore.QSize(310, 180))
         self.pybamm_dchg_list.setObjectName("pybamm_dchg_list")
         self.pybamm_dchg_list.addItems([
             "CC  |  Discharge at 1C until 2.5V",
         ])
         self.pybamm_dchg_vlayout.addWidget(self.pybamm_dchg_list)
-        # 삭제 버튼
+        # 수정/삭제 버튼
         self.pybamm_dchg_del_hlayout = QtWidgets.QHBoxLayout()
         self.pybamm_dchg_del_hlayout.addItem(QtWidgets.QSpacerItem(
             40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
+        self.pybamm_dchg_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
+        self.pybamm_dchg_edit_btn.setFont(font)
+        self.pybamm_dchg_edit_btn.setText("선택 수정")
+        self.pybamm_dchg_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
+        self.pybamm_dchg_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_dchg_edit_btn.setObjectName("pybamm_dchg_edit_btn")
+        self.pybamm_dchg_del_hlayout.addWidget(self.pybamm_dchg_edit_btn)
         self.pybamm_dchg_del_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
         self.pybamm_dchg_del_btn.setFont(font)
         self.pybamm_dchg_del_btn.setText("선택 삭제")
@@ -9220,21 +9242,59 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.SimulConfirm.clicked.connect(self.simulation_confirm_button)
         self.SimulTabResetConfirm.clicked.connect(self.simulation_tab_reset_confirm_button)
         # PyBaMM 시뮬레이션 탭 시그널
-        self.pybamm_mode_charge.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(0) if checked else None)
-        self.pybamm_mode_discharge.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(1) if checked else None)
-        self.pybamm_mode_gitt.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(2) if checked else None)
-        self.pybamm_mode_custom.toggled.connect(lambda checked: self.pybamm_exp_stack.setCurrentIndex(3) if checked else None)
+        self.pybamm_mode_charge.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(0), self._pybamm_refresh_scroll()) if checked else None)
+        self.pybamm_mode_discharge.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(1), self._pybamm_refresh_scroll()) if checked else None)
+        self.pybamm_mode_gitt.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(2), self._pybamm_refresh_scroll()) if checked else None)
+        self.pybamm_mode_custom.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(3), self._pybamm_refresh_scroll()) if checked else None)
         self.pybamm_run_btn.clicked.connect(self.pybamm_run_button)
         self.pybamm_reset_btn.clicked.connect(self.pybamm_tab_reset_button)
         self.pybamm_param_combo.activated.connect(self._pybamm_load_preset)
         self.pybamm_edit_btn.toggled.connect(self._pybamm_toggle_param_table)
         # 충/방전 스텝 리스트 버튼
         self.pybamm_chg_add_btn.clicked.connect(self._pybamm_chg_add_step)
+        self.pybamm_chg_edit_btn.clicked.connect(
+            lambda: self._pybamm_edit_step(
+                self.pybamm_chg_list, self.pybamm_chg_step_type,
+                self.pybamm_chg_crate, self.pybamm_chg_vcut, self.pybamm_chg_cutoff, "chg"))
         self.pybamm_chg_del_btn.clicked.connect(lambda: self._pybamm_del_step(self.pybamm_chg_list))
         self.pybamm_chg_clear_btn.clicked.connect(self.pybamm_chg_list.clear)
+        self.pybamm_chg_list.itemDoubleClicked.connect(
+            lambda item: self._pybamm_load_step_to_fields(
+                item, self.pybamm_chg_step_type,
+                self.pybamm_chg_crate, self.pybamm_chg_vcut, self.pybamm_chg_cutoff, "chg"))
         self.pybamm_dchg_add_btn.clicked.connect(self._pybamm_dchg_add_step)
+        self.pybamm_dchg_edit_btn.clicked.connect(
+            lambda: self._pybamm_edit_step(
+                self.pybamm_dchg_list, self.pybamm_dchg_step_type,
+                self.pybamm_dchg_crate, self.pybamm_dchg_vcut, self.pybamm_dchg_cutoff, "dchg"))
         self.pybamm_dchg_del_btn.clicked.connect(lambda: self._pybamm_del_step(self.pybamm_dchg_list))
         self.pybamm_dchg_clear_btn.clicked.connect(self.pybamm_dchg_list.clear)
+        # Ctrl+C / Ctrl+V 단축키
+        _chg_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.pybamm_chg_list)
+        _chg_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _chg_copy.activated.connect(lambda: self._pybamm_copy_steps(self.pybamm_chg_list))
+        _chg_paste = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Paste, self.pybamm_chg_list)
+        _chg_paste.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _chg_paste.activated.connect(lambda: self._pybamm_paste_steps(self.pybamm_chg_list))
+        _dchg_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.pybamm_dchg_list)
+        _dchg_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _dchg_copy.activated.connect(lambda: self._pybamm_copy_steps(self.pybamm_dchg_list))
+        _dchg_paste = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Paste, self.pybamm_dchg_list)
+        _dchg_paste.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _dchg_paste.activated.connect(lambda: self._pybamm_paste_steps(self.pybamm_dchg_list))
+        _chg_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, self.pybamm_chg_list)
+        _chg_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _chg_del.activated.connect(lambda: self._pybamm_del_step(self.pybamm_chg_list))
+        _dchg_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, self.pybamm_dchg_list)
+        _dchg_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _dchg_del.activated.connect(lambda: self._pybamm_del_step(self.pybamm_dchg_list))
+        # 유형 변경 시 입력 필드 동적 전환
+        self.pybamm_chg_step_type.currentTextChanged.connect(
+            lambda t: self._pybamm_update_step_fields(
+                t, self.pybamm_chg_crate, self.pybamm_chg_vcut, self.pybamm_chg_cutoff, "chg"))
+        self.pybamm_dchg_step_type.currentTextChanged.connect(
+            lambda t: self._pybamm_update_step_fields(
+                t, self.pybamm_dchg_crate, self.pybamm_dchg_vcut, self.pybamm_dchg_cutoff, "dchg"))
         # PyBaMM 미설치 시 탭 비활성화
         if not HAS_PYBAMM:
             self.pybamm_run_btn.setDisabled(True)
@@ -17017,58 +17077,108 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 "모순되지 않는지 확인해주세요.")
             return
 
-        # 4) 결과 데이터 추출
+        # 4) 결과 데이터 추출 ─────────────────────────────────────
+        def _safe(key):
+            """sol에서 변수를 안전하게 추출; 없으면 None.
+            2D (공간×시간) 배열이면 공간 축(axis=0) 평균으로 1D 변환."""
+            try:
+                arr = sol[key].entries
+                if arr is not None and arr.ndim == 2:
+                    arr = np.mean(arr, axis=0)
+                return arr
+            except Exception:
+                return None
+
         t = sol["Time [s]"].entries
         t_min = t / 60.0
         V = sol["Terminal voltage [V]"].entries
         I = sol["Current [A]"].entries
 
-        # 용량 계산
-        try:
-            Q = sol["Discharge capacity [A.h]"].entries
-        except Exception:
+        # 용량 (항상 양수로 표시)
+        Q = _safe("Discharge capacity [A.h]")
+        if Q is None:
             Q = np.cumsum(np.abs(I) * np.diff(t, prepend=t[0])) / 3600.0
+        Q = np.abs(Q)
 
-        # SOC
-        try:
-            soc = sol["X-averaged negative particle surface concentration [mol.m-3]"].entries
-            soc = soc / soc[0] if soc[0] != 0 else soc
-        except Exception:
-            soc = np.zeros_like(t)
+        # ── 일반 Plot 변수 ──
+        # 1.3 전극 전위 & OCP
+        pos_potential   = _safe("X-averaged positive electrode potential [V]")
+        pos_ocp         = _safe("X-averaged positive electrode open-circuit potential [V]")
+        if pos_ocp is None:
+            pos_ocp = _safe("Positive electrode open-circuit potential [V]")
+        neg_potential   = _safe("X-averaged negative electrode potential [V]")
+        neg_ocp         = _safe("X-averaged negative electrode open-circuit potential [V]")
+        if neg_ocp is None:
+            neg_ocp = _safe("Negative electrode open-circuit potential [V]")
+        # 1.4 전극 리튬화 정도
+        pos_lith = _safe("X-averaged positive electrode extent of lithiation")
+        neg_lith = _safe("X-averaged negative electrode extent of lithiation")
+        # 1.5 셀 온도
+        T_cell = _safe("Volume-averaged cell temperature [°C]")
+        if T_cell is None:
+            T_K = _safe("Volume-averaged cell temperature [K]")
+            if T_K is not None:
+                T_cell = T_K - 273.15
+        # 1.6 발열량
+        heat_ohmic = _safe("Volume-averaged Ohmic heating [W.m-3]")
+        heat_irrev = _safe("Volume-averaged irreversible electrochemical heating [W.m-3]")
+        heat_rev   = _safe("Volume-averaged reversible heating [W.m-3]")
 
-        # 전극 개방회로 전위 (OCP)
-        # Note: "electrode potential" = 고체상 전위(φ_s)로 음극은 기준전극(≈0V)
-        #       "open-circuit potential" = SOC에 따른 실제 전기화학적 전위
-        try:
-            V_pos = sol["X-averaged positive electrode open-circuit potential [V]"].entries
-        except Exception:
-            try:
-                V_pos = sol["Positive electrode open-circuit potential [V]"].entries
-            except Exception:
-                V_pos = None
-        try:
-            V_neg = sol["X-averaged negative electrode open-circuit potential [V]"].entries
-        except Exception:
-            try:
-                V_neg = sol["Negative electrode open-circuit potential [V]"].entries
-            except Exception:
-                V_neg = None
-
-        # 전극 표면 리튬 농도
-        try:
-            c_pos = sol["X-averaged positive particle surface concentration [mol.m-3]"].entries
-        except Exception:
-            c_pos = None
-        try:
-            c_neg = sol["X-averaged negative particle surface concentration [mol.m-3]"].entries
-        except Exception:
-            c_neg = None
+        # ── 상세 Plot 변수 ──
+        # 2.1 과전압 분해  ── 양극/음극 평균 후 합산
+        _pos_rxn = _safe("X-averaged positive electrode reaction overpotential [V]")
+        _neg_rxn = _safe("X-averaged negative electrode reaction overpotential [V]")
+        ovp_reaction = None
+        if _pos_rxn is not None and _neg_rxn is not None:
+            ovp_reaction = _pos_rxn + _neg_rxn
+        elif _pos_rxn is not None:
+            ovp_reaction = _pos_rxn
+        elif _neg_rxn is not None:
+            ovp_reaction = _neg_rxn
+        ovp_elyte_ohm = _safe("X-averaged electrolyte ohmic losses [V]")
+        ovp_solid_ohm = _safe("X-averaged solid phase ohmic losses [V]")
+        _pos_conc = _safe("X-averaged positive electrode concentration overpotential [V]")
+        _neg_conc = _safe("X-averaged negative electrode concentration overpotential [V]")
+        ovp_conc = None
+        if _pos_conc is not None and _neg_conc is not None:
+            ovp_conc = _pos_conc + _neg_conc
+        elif _pos_conc is not None:
+            ovp_conc = _pos_conc
+        elif _neg_conc is not None:
+            ovp_conc = _neg_conc
+        # 2.2 입자 농도
+        c_pos_surf = _safe("X-averaged positive particle surface concentration [mol.m-3]")
+        c_pos_bulk = _safe("X-averaged positive particle concentration [mol.m-3]")
+        c_neg_surf = _safe("X-averaged negative particle surface concentration [mol.m-3]")
+        c_neg_bulk = _safe("X-averaged negative particle concentration [mol.m-3]")
+        # 2.3 전해질 농도
+        elyte_c_pos = _safe("X-averaged positive electrolyte concentration [mol.m-3]")
+        elyte_c_sep = _safe("X-averaged separator electrolyte concentration [mol.m-3]")
+        elyte_c_neg = _safe("X-averaged negative electrolyte concentration [mol.m-3]")
+        # 2.4 전해질 전위
+        elyte_p_pos = _safe("X-averaged positive electrolyte potential [V]")
+        elyte_p_sep = _safe("X-averaged separator electrolyte potential [V]")
+        elyte_p_neg = _safe("X-averaged negative electrolyte potential [V]")
+        # 2.5 계면 전류 밀도
+        j_pos = _safe("X-averaged positive electrode interfacial current density [A.m-2]")
+        j_neg = _safe("X-averaged negative electrode interfacial current density [A.m-2]")
+        # 2.6 리튬 석출 위험도
+        plating_ovp = _safe("X-averaged lithium plating reaction overpotential [V]")
 
         self.progressBar.setValue(75)
 
         palette = THEME['PALETTE']
+        LW = THEME['LINE_WIDTH']
+        LA = THEME['LINE_ALPHA']
+        TS = THEME['TITLE_SIZE']
+        TW = THEME['SUPTITLE_WEIGHT']
 
-        # ── 누적 실행: 상위 Run 탭 + 내부 4개 서브탭 ──
+        def _no_data(ax, msg="N/A"):
+            """데이터 없는 subplot에 안내 텍스트 표시"""
+            ax.text(0.5, 0.5, msg, transform=ax.transAxes,
+                    ha='center', va='center', fontsize=12, color='#999999')
+
+        # ── 누적 실행: 상위 Run 탭 + 내부 서브탭 ──
         self._pybamm_run_counter += 1
         run_no = self._pybamm_run_counter
         mode_label = experiment_config.get('mode', '?')
@@ -17077,104 +17187,246 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         mode_str = mode_names.get(mode_label, mode_label)
         run_tab_title = f"Run {run_no}  ({model_name}, {mode_str})"
 
-        # 내부 서브 QTabWidget
         inner_tab = QtWidgets.QTabWidget()
         inner_tab.setFont(self.pybamm_plot_tab.font())
 
-        # ── Sub 1: 전압 커브 (V vs Time, V vs Capacity) ──
-        fig1, (ax1a, ax1b) = plt.subplots(1, 2, figsize=(13, 7))
-        fig1.set_facecolor(THEME['FIG_FACECOLOR'])
-        ax1a.plot(t_min, V, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(ax1a, "Time [min]", "Voltage [V]")
-        ax1a.set_title("Voltage vs Time", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        ax1b.plot(Q, V, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(ax1b, "Capacity [Ah]", "Voltage [V]")
-        ax1b.set_title("Voltage vs Capacity", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        fig1.tight_layout()
-        tab1, layout1, canvas1, toolbar1 = self._create_plot_tab(fig1, 1)
-        layout1.addWidget(toolbar1)
-        scroll1 = QtWidgets.QScrollArea()
-        scroll1.setWidgetResizable(True)
-        scroll1.setWidget(canvas1)
-        layout1.addWidget(scroll1)
-        inner_tab.addTab(tab1, "전압 커브")
+        # ================================================================
+        # ██  탭 1: 일반 Plot (General Performance)  ─  2×3  ██
+        # ================================================================
+        fig_g, axes_g = plt.subplots(2, 3, figsize=(18, 10))
+        fig_g.set_facecolor(THEME['FIG_FACECOLOR'])
+        for _ax_row in axes_g:
+            for _ax in _ax_row:
+                _ax.set_facecolor(THEME['AX_FACECOLOR'])
 
-        # ── Sub 2: 종합 모니터링 (Current, Voltage, SOC vs Time) ──
-        fig2, (ax2a, ax2b, ax2c) = plt.subplots(3, 1, figsize=(13, 7), sharex=True)
-        fig2.set_facecolor(THEME['FIG_FACECOLOR'])
-        ax2a.plot(t_min, I, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(ax2a, "", "Current [A]")
-        ax2a.set_title("종합 모니터링", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        ax2b.plot(t_min, V, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(ax2b, "", "Voltage [V]")
-        ax2c.plot(t_min, soc, color=palette[2], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(ax2c, "Time [min]", "Surface Conc. [norm]")
-        fig2.tight_layout()
-        tab2, layout2, canvas2, toolbar2 = self._create_plot_tab(fig2, 2)
-        layout2.addWidget(toolbar2)
-        scroll2 = QtWidgets.QScrollArea()
-        scroll2.setWidgetResizable(True)
-        scroll2.setWidget(canvas2)
-        layout2.addWidget(scroll2)
-        inner_tab.addTab(tab2, "종합 모니터링")
+        # [1.1] Cell Voltage & Current ─ 좌: V, 우: I (twinx)
+        ax = axes_g[0, 0]
+        ax.plot(t_min, V, color=palette[0], linewidth=LW, alpha=LA, label="Voltage")
+        graph_base_parameter(ax, "Time [min]", "Terminal Voltage [V]")
+        ax.set_title("Cell Voltage & Current", fontsize=TS, fontweight=TW)
+        ax_r = ax.twinx()
+        ax_r.plot(t_min, I, color=palette[1], linewidth=LW, alpha=LA, label="Current")
+        ax_r.set_ylabel("Current [A]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
+        ax_r.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
+        # 두 축 범례 합치기
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = ax_r.get_legend_handles_labels()
+        ax.legend(h1 + h2, l1 + l2, fontsize=8, loc='best')
 
-        # ── Sub 3: 전극 분포 (Cathode/Anode potential, Li concentration) ──
-        fig3, axes3 = plt.subplots(2, 2, figsize=(13, 7))
-        fig3.set_facecolor(THEME['FIG_FACECOLOR'])
-        if V_pos is not None:
-            axes3[0, 0].plot(t_min, V_pos, color=palette[1], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(axes3[0, 0], "Time [min]", "OCP [V]")
-        axes3[0, 0].set_title("양극 OCP", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        if V_neg is not None:
-            axes3[0, 1].plot(t_min, V_neg, color=palette[0], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(axes3[0, 1], "Time [min]", "OCP [V]")
-        axes3[0, 1].set_title("음극 OCP", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        if c_pos is not None:
-            axes3[1, 0].plot(t_min, c_pos, color=palette[3], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(axes3[1, 0], "Time [min]", "Conc. [mol/m³]")
-        axes3[1, 0].set_title("양극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        if c_neg is not None:
-            axes3[1, 1].plot(t_min, c_neg, color=palette[4], linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-        graph_base_parameter(axes3[1, 1], "Time [min]", "Conc. [mol/m³]")
-        axes3[1, 1].set_title("음극 표면 Li 농도", fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        fig3.tight_layout()
-        tab3, layout3, canvas3, toolbar3 = self._create_plot_tab(fig3, 3)
-        layout3.addWidget(toolbar3)
-        scroll3 = QtWidgets.QScrollArea()
-        scroll3.setWidgetResizable(True)
-        scroll3.setWidget(canvas3)
-        layout3.addWidget(scroll3)
-        inner_tab.addTab(tab3, "전극 분포")
+        # [1.2] V-Q Curve
+        ax = axes_g[0, 1]
+        ax.plot(Q, V, color=palette[1], linewidth=LW, alpha=LA)
+        graph_base_parameter(ax, "Capacity [A.h]", "Terminal Voltage [V]")
+        ax.set_title("V-Q Curve", fontsize=TS, fontweight=TW)
 
-        # ── Sub 4: dVdQ 분석 ──
-        fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(13, 7))
-        fig4.set_facecolor(THEME['FIG_FACECOLOR'])
-        chg_mask = I > 0
-        dchg_mask = I < 0
-        for ax, mask, title, color in [
-            (ax4a, chg_mask, "dV/dQ (충전)", palette[1]),
-            (ax4b, dchg_mask, "dV/dQ (방전)", palette[0]),
-        ]:
-            if np.sum(mask) > 2:
-                Q_seg = Q[mask]
-                V_seg = V[mask]
-                dQ = np.diff(Q_seg)
-                dV = np.diff(V_seg)
-                valid = np.abs(dQ) > 1e-12
-                if np.sum(valid) > 0:
-                    dvdq = dV[valid] / dQ[valid]
-                    Q_mid = (Q_seg[:-1][valid] + Q_seg[1:][valid]) / 2
-                    ax.plot(Q_mid, dvdq, color=color, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-            graph_base_parameter(ax, "Capacity [Ah]", "dV/dQ [V/Ah]")
-            ax.set_title(title, fontsize=THEME['TITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        fig4.tight_layout()
-        tab4, layout4, canvas4, toolbar4 = self._create_plot_tab(fig4, 4)
-        layout4.addWidget(toolbar4)
-        scroll4 = QtWidgets.QScrollArea()
-        scroll4.setWidgetResizable(True)
-        scroll4.setWidget(canvas4)
-        layout4.addWidget(scroll4)
-        inner_tab.addTab(tab4, "dVdQ 분석")
+        # [1.3] Electrode Thermodynamics (전극 전위 + OCP)
+        ax = axes_g[0, 2]
+        _has_13 = False
+        if pos_potential is not None:
+            ax.plot(t_min, pos_potential, color=palette[1], linewidth=LW, alpha=LA, label="Cathode φ_s")
+            _has_13 = True
+        if pos_ocp is not None:
+            ax.plot(t_min, pos_ocp, color=palette[1], linewidth=LW, alpha=0.35, linestyle='--', label="Cathode OCP")
+            _has_13 = True
+        if neg_potential is not None:
+            ax.plot(t_min, neg_potential, color=palette[0], linewidth=LW, alpha=LA, label="Anode φ_s")
+            _has_13 = True
+        if neg_ocp is not None:
+            ax.plot(t_min, neg_ocp, color=palette[0], linewidth=LW, alpha=0.35, linestyle='--', label="Anode OCP")
+            _has_13 = True
+        if not _has_13:
+            _no_data(ax, "Electrode potential\ndata not available")
+        else:
+            ax.legend(fontsize=7, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Potential [V]")
+        ax.set_title("Electrode Thermodynamics", fontsize=TS, fontweight=TW)
+
+        # [1.4] Electrode SOC / Lithiation
+        ax = axes_g[1, 0]
+        _has_14 = False
+        if pos_lith is not None:
+            ax.plot(t_min, pos_lith, color=palette[1], linewidth=LW, alpha=LA, label="Cathode lithiation")
+            _has_14 = True
+        if neg_lith is not None:
+            ax.plot(t_min, neg_lith, color=palette[0], linewidth=LW, alpha=LA, label="Anode lithiation")
+            _has_14 = True
+        if not _has_14:
+            _no_data(ax, "Lithiation data\nnot available")
+        else:
+            ax.legend(fontsize=8, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Extent of Lithiation")
+        ax.set_title("Electrode SOC", fontsize=TS, fontweight=TW)
+
+        # [1.5] Cell Temperature
+        ax = axes_g[1, 1]
+        if T_cell is not None:
+            ax.plot(t_min, T_cell, color=palette[2], linewidth=LW, alpha=LA)
+        else:
+            _no_data(ax, "Temperature data\nnot available")
+        graph_base_parameter(ax, "Time [min]", "Cell Temperature [°C]")
+        ax.set_title("Cell Temperature", fontsize=TS, fontweight=TW)
+
+        # [1.6] Heat Generation Sources
+        ax = axes_g[1, 2]
+        _has_16 = False
+        if heat_ohmic is not None:
+            ax.plot(t_min, heat_ohmic, color=palette[3], linewidth=LW, alpha=LA, label="Ohmic")
+            _has_16 = True
+        if heat_irrev is not None:
+            ax.plot(t_min, heat_irrev, color=palette[1], linewidth=LW, alpha=LA, label="Irreversible")
+            _has_16 = True
+        if heat_rev is not None:
+            ax.plot(t_min, heat_rev, color=palette[4], linewidth=LW, alpha=LA, label="Reversible")
+            _has_16 = True
+        if not _has_16:
+            _no_data(ax, "Heat generation data\nnot available")
+        else:
+            ax.legend(fontsize=8, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Heat [W/m³]")
+        ax.set_title("Heat Generation Sources", fontsize=TS, fontweight=TW)
+
+        fig_g.tight_layout(pad=2.0)
+        tab_g, lay_g, canvas_g, toolbar_g = self._create_plot_tab(fig_g, 1)
+        lay_g.addWidget(toolbar_g)
+        scroll_g = QtWidgets.QScrollArea()
+        scroll_g.setWidgetResizable(True)
+        scroll_g.setWidget(canvas_g)
+        lay_g.addWidget(scroll_g)
+        inner_tab.addTab(tab_g, "📊 일반 Plot")
+
+        # ================================================================
+        # ██  탭 2: 상세 Plot (Detailed Diagnostics)  ─  2×3  ██
+        # ================================================================
+        fig_d, axes_d = plt.subplots(2, 3, figsize=(18, 10))
+        fig_d.set_facecolor(THEME['FIG_FACECOLOR'])
+        for _ax_row in axes_d:
+            for _ax in _ax_row:
+                _ax.set_facecolor(THEME['AX_FACECOLOR'])
+
+        # [2.1] Overpotential Breakdown
+        ax = axes_d[0, 0]
+        _has_21 = False
+        if ovp_reaction is not None:
+            ax.plot(t_min, ovp_reaction, color=palette[0], linewidth=LW, alpha=LA, label="Reaction η")
+            _has_21 = True
+        if ovp_elyte_ohm is not None:
+            ax.plot(t_min, ovp_elyte_ohm, color=palette[1], linewidth=LW, alpha=LA, label="Electrolyte Ohmic")
+            _has_21 = True
+        if ovp_solid_ohm is not None:
+            ax.plot(t_min, ovp_solid_ohm, color=palette[2], linewidth=LW, alpha=LA, label="Solid-phase Ohmic")
+            _has_21 = True
+        if ovp_conc is not None:
+            ax.plot(t_min, ovp_conc, color=palette[3], linewidth=LW, alpha=LA, label="Concentration η")
+            _has_21 = True
+        if not _has_21:
+            _no_data(ax, "Overpotential data\nnot available")
+        else:
+            ax.legend(fontsize=7, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Overpotential [V]")
+        ax.set_title("Overpotential Breakdown", fontsize=TS, fontweight=TW)
+
+        # [2.2] Solid-Phase Diffusion (입자 표면/내부 농도)
+        ax = axes_d[0, 1]
+        _has_22 = False
+        if c_pos_surf is not None:
+            ax.plot(t_min, c_pos_surf, color=palette[1], linewidth=LW, alpha=LA, label="Cathode surface")
+            _has_22 = True
+        if c_pos_bulk is not None:
+            ax.plot(t_min, c_pos_bulk, color=palette[1], linewidth=LW, alpha=0.35, linestyle='--', label="Cathode bulk")
+            _has_22 = True
+        if c_neg_surf is not None:
+            ax.plot(t_min, c_neg_surf, color=palette[0], linewidth=LW, alpha=LA, label="Anode surface")
+            _has_22 = True
+        if c_neg_bulk is not None:
+            ax.plot(t_min, c_neg_bulk, color=palette[0], linewidth=LW, alpha=0.35, linestyle='--', label="Anode bulk")
+            _has_22 = True
+        if not _has_22:
+            _no_data(ax, "Particle concentration\nnot available")
+        else:
+            ax.legend(fontsize=7, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Concentration [mol/m³]")
+        ax.set_title("Solid-Phase Diffusion", fontsize=TS, fontweight=TW)
+
+        # [2.3] Electrolyte Li⁺ Concentration
+        ax = axes_d[0, 2]
+        _has_23 = False
+        if elyte_c_pos is not None:
+            ax.plot(t_min, elyte_c_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode region")
+            _has_23 = True
+        if elyte_c_sep is not None:
+            ax.plot(t_min, elyte_c_sep, color=palette[2], linewidth=LW, alpha=LA, label="Separator")
+            _has_23 = True
+        if elyte_c_neg is not None:
+            ax.plot(t_min, elyte_c_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode region")
+            _has_23 = True
+        if not _has_23:
+            _no_data(ax, "Electrolyte concentration\nnot available\n(SPMe/DFN only)")
+        else:
+            ax.legend(fontsize=8, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Electrolyte Conc. [mol/m³]")
+        ax.set_title("Electrolyte Li⁺ Concentration", fontsize=TS, fontweight=TW)
+
+        # [2.4] Electrolyte Potential Gradient
+        ax = axes_d[1, 0]
+        _has_24 = False
+        if elyte_p_pos is not None:
+            ax.plot(t_min, elyte_p_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode region")
+            _has_24 = True
+        if elyte_p_sep is not None:
+            ax.plot(t_min, elyte_p_sep, color=palette[2], linewidth=LW, alpha=LA, label="Separator")
+            _has_24 = True
+        if elyte_p_neg is not None:
+            ax.plot(t_min, elyte_p_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode region")
+            _has_24 = True
+        if not _has_24:
+            _no_data(ax, "Electrolyte potential\nnot available\n(SPMe/DFN only)")
+        else:
+            ax.legend(fontsize=8, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Electrolyte Potential [V]")
+        ax.set_title("Electrolyte Potential Gradient", fontsize=TS, fontweight=TW)
+
+        # [2.5] Interfacial Current Density
+        ax = axes_d[1, 1]
+        _has_25 = False
+        if j_pos is not None:
+            ax.plot(t_min, j_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode j")
+            _has_25 = True
+        if j_neg is not None:
+            ax.plot(t_min, j_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode j")
+            _has_25 = True
+        if not _has_25:
+            _no_data(ax, "Interfacial current\nnot available")
+        else:
+            ax.legend(fontsize=8, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Current Density [A/m²]")
+        ax.set_title("Interfacial Current Density", fontsize=TS, fontweight=TW)
+
+        # [2.6] Lithium Plating Risk
+        ax = axes_d[1, 2]
+        _has_26 = False
+        if plating_ovp is not None:
+            ax.plot(t_min, plating_ovp, color=palette[8], linewidth=LW, alpha=LA, label="Plating η")
+            ax.axhline(y=0, color='#333333', linewidth=0.8, linestyle=':', alpha=0.6)
+            _has_26 = True
+        if neg_potential is not None:
+            ax.plot(t_min, neg_potential, color=palette[0], linewidth=LW, alpha=0.4,
+                    linestyle='--', label="Anode potential (ref)")
+            _has_26 = True
+        if not _has_26:
+            _no_data(ax, "Plating data not available\n(OKane2022 등 전용 모델 필요)")
+        else:
+            ax.legend(fontsize=8, loc='best')
+        graph_base_parameter(ax, "Time [min]", "Overpotential [V]")
+        ax.set_title("Lithium Plating Risk", fontsize=TS, fontweight=TW)
+
+        fig_d.tight_layout(pad=2.0)
+        tab_d, lay_d, canvas_d, toolbar_d = self._create_plot_tab(fig_d, 2)
+        lay_d.addWidget(toolbar_d)
+        scroll_d = QtWidgets.QScrollArea()
+        scroll_d.setWidgetResizable(True)
+        scroll_d.setWidget(canvas_d)
+        lay_d.addWidget(scroll_d)
+        inner_tab.addTab(tab_d, "🔬 상세 Plot")
 
         # 상위 탭에 Run 추가 (누적)
         self.pybamm_plot_tab.addTab(inner_tab, run_tab_title)
@@ -17202,6 +17454,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """파라미터 테이블 표시/숨김 토글"""
         self.pybamm_param_table.setVisible(checked)
         self.pybamm_edit_btn.setText("편집 닫기" if checked else "파라미터 편집")
+        # ── 핵심 수정: param_group 최소높이를 테이블 포함 여부에 따라 명시 설정 ──
+        # 테이블이 visible이어도 GroupBox의 minimumSize(70)가 layout에 전파되어
+        # 충전/방전/GITT처럼 exp_group이 큰 모드에서 param_group이 압축됨.
+        if checked:
+            # 테이블(460) + 프리셋 행(~30) + GroupBox title/margins(~50)
+            self.pybamm_param_group.setMinimumHeight(
+                self.pybamm_param_table.minimumHeight() + 80)
+        else:
+            self.pybamm_param_group.setMinimumHeight(70)
+        # 스크롤 영역 컨테이너 최소높이도 갱신
+        QtCore.QTimer.singleShot(0, self._pybamm_refresh_scroll)
+
+    def _pybamm_refresh_scroll(self):
+        """스크롤 영역 컨텐츠 크기 재계산 – minimumHeight 강제 갱신"""
+        container = self.pybamm_left_scroll.widget()
+        if container and container.layout():
+            container.layout().invalidate()
+            container.layout().activate()
+            min_h = container.layout().totalMinimumSize().height()
+            container.setMinimumHeight(min_h)
 
     def _pybamm_insert_step(self, list_widget, *items):
         """선택 항목 뒤에 삽입, 선택 없으면 끝에 추가"""
@@ -17215,51 +17487,317 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 삽입된 마지막 항목 선택
         list_widget.setCurrentRow(insert_at + len(items) - 1)
 
+    def _pybamm_update_step_fields(self, step_type, crate_w, vcut_w, cutoff_w, prefix):
+        """유형 변경 시 입력 필드의 활성/비활성 및 placeholder/기본값 동적 전환
+
+        CC   : C-rate ✅, 전압(V) ✅, Cutoff ❌
+        CV   : C-rate ❌, 전압(V) ✅, Cutoff ✅ (C-rate cutoff)
+        CCCV : C-rate ✅, 전압(V) ✅, Cutoff ✅ (C-rate cutoff)
+        Rest : HH ✅, MM ✅, SS ✅ (시간:분:초)
+        """
+        default_v = "4.2" if prefix == "chg" else "2.5"
+        # 헤더 라벨 참조
+        hdr_labels = getattr(self, f'_pybamm_{prefix}_hdr_labels', None)
+
+        if step_type == "CC":
+            crate_w.setEnabled(True)
+            crate_w.setPlaceholderText("C-rate")
+            vcut_w.setEnabled(True)
+            vcut_w.setPlaceholderText("전압(V)")
+            vcut_w.setText(default_v)
+            cutoff_w.setEnabled(False)
+            cutoff_w.setPlaceholderText("")
+            cutoff_w.setText("")
+            if hdr_labels:
+                hdr_labels[1].setText("C-rate")
+                hdr_labels[2].setText("전압(V)")
+                hdr_labels[3].setText("Cutoff")
+        elif step_type == "CV":
+            crate_w.setEnabled(False)
+            crate_w.setPlaceholderText("")
+            crate_w.setText("")
+            vcut_w.setEnabled(True)
+            vcut_w.setPlaceholderText("전압(V)")
+            vcut_w.setText(default_v)
+            cutoff_w.setEnabled(True)
+            cutoff_w.setPlaceholderText("C/s/m/h")
+            cutoff_w.setText("0.05C")
+            if hdr_labels:
+                hdr_labels[1].setText("C-rate")
+                hdr_labels[2].setText("전압(V)")
+                hdr_labels[3].setText("Cutoff")
+        elif step_type == "CCCV":
+            crate_w.setEnabled(True)
+            crate_w.setPlaceholderText("C-rate")
+            vcut_w.setEnabled(True)
+            vcut_w.setPlaceholderText("전압(V)")
+            vcut_w.setText(default_v)
+            cutoff_w.setEnabled(True)
+            cutoff_w.setPlaceholderText("C/s/m/h")
+            cutoff_w.setText("0.05C")
+            if hdr_labels:
+                hdr_labels[1].setText("C-rate")
+                hdr_labels[2].setText("전압(V)")
+                hdr_labels[3].setText("Cutoff")
+        elif step_type == "Rest":
+            crate_w.setEnabled(True)
+            crate_w.setPlaceholderText("시")
+            crate_w.setText("00")
+            vcut_w.setEnabled(True)
+            vcut_w.setPlaceholderText("분")
+            vcut_w.setText("10")
+            cutoff_w.setEnabled(True)
+            cutoff_w.setPlaceholderText("초")
+            cutoff_w.setText("00")
+            if hdr_labels:
+                hdr_labels[1].setText("시")
+                hdr_labels[2].setText("분")
+                hdr_labels[3].setText("초")
+
+    @staticmethod
+    def _pybamm_parse_cutoff(raw):
+        """Cutoff 문자열 파싱 → (값, 단위)
+        지원: 0.05C, C/50, 600s, 10m, 1h  (단위 없으면 C로 간주)"""
+        raw = raw.strip()
+        if not raw:
+            return "0.05", "C"
+        # C/50 형식 → C-rate
+        if raw.upper().startswith("C/"):
+            return raw, "C_fraction"
+        low = raw.lower()
+        if low.endswith("h"):
+            return raw[:-1].strip(), "h"
+        elif low.endswith("m") and not low.endswith("am"):
+            return raw[:-1].strip(), "m"
+        elif low.endswith("s"):
+            return raw[:-1].strip(), "s"
+        elif low.endswith("c"):
+            return raw[:-1].strip(), "C"
+        else:
+            return raw, "C"
+
+    def _pybamm_cutoff_to_cv_str(self, raw, vcut):
+        """Cutoff 입력을 CV Hold용 PyBaMM 문자열로 변환"""
+        val, unit = self._pybamm_parse_cutoff(raw)
+        if unit == "C_fraction":
+            return f"Hold at {vcut}V until {val}"  # C/50 그대로
+        elif unit == "C":
+            return f"Hold at {vcut}V until {val}C"
+        elif unit == "s":
+            return f"Hold at {vcut}V for {val} seconds"
+        elif unit == "m":
+            return f"Hold at {vcut}V for {val} minutes"
+        elif unit == "h":
+            return f"Hold at {vcut}V for {val} hours"
+        return f"Hold at {vcut}V until {val}C"
+
+    def _pybamm_cutoff_to_rest_str(self, raw):
+        """Cutoff 입력을 Rest용 PyBaMM 시간 문자열로 변환 (레거시)"""
+        val, unit = self._pybamm_parse_cutoff(raw)
+        if unit == "s":
+            return f"{val} seconds"
+        elif unit == "m":
+            return f"{val} minutes"
+        elif unit == "h":
+            return f"{val} hours"
+        else:
+            return f"{val} seconds"
+
+    def _pybamm_hhmmss_to_rest_str(self, hh_str, mm_str, ss_str):
+        """HH:MM:SS 3개 필드로부터 Rest용 PyBaMM 시간 문자열 생성"""
+        try:
+            hh = int(hh_str) if hh_str else 0
+        except ValueError:
+            hh = 0
+        try:
+            mm = int(mm_str) if mm_str else 0
+        except ValueError:
+            mm = 0
+        try:
+            ss = int(ss_str) if ss_str else 0
+        except ValueError:
+            ss = 0
+        total = hh * 3600 + mm * 60 + ss
+        if total <= 0:
+            total = 600  # 기본값 10분
+        if total >= 3600 and total % 3600 == 0:
+            return f"{total // 3600} hours"
+        elif total >= 60 and total % 60 == 0:
+            return f"{total // 60} minutes"
+        else:
+            return f"{total} seconds"
+
     def _pybamm_chg_add_step(self):
         """충전 스텝 리스트에 항목 추가 (선택 항목 뒤에 삽입)"""
         step_type = self.pybamm_chg_step_type.currentText()
         crate = self.pybamm_chg_crate.text().strip() or "1.0"
         vcut = self.pybamm_chg_vcut.text().strip() or "4.2"
-        cutoff = self.pybamm_chg_cutoff.text().strip() or "0.05"
+        cutoff = self.pybamm_chg_cutoff.text().strip() or "0.05C"
         if step_type == "CC":
             self._pybamm_insert_step(self.pybamm_chg_list,
                 f"CC  |  Charge at {crate}C until {vcut}V")
         elif step_type == "CV":
+            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
             self._pybamm_insert_step(self.pybamm_chg_list,
-                f"CV  |  Hold at {vcut}V until {cutoff}C")
+                f"CV  |  {cv_str}")
         elif step_type == "CCCV":
+            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
             self._pybamm_insert_step(self.pybamm_chg_list,
                 f"CC  |  Charge at {crate}C until {vcut}V",
-                f"CV  |  Hold at {vcut}V until {cutoff}C")
+                f"CV  |  {cv_str}")
         elif step_type == "Rest":
+            rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
             self._pybamm_insert_step(self.pybamm_chg_list,
-                f"Rest  |  Rest for {vcut} seconds")
+                f"Rest  |  Rest for {rest_str}")
 
     def _pybamm_dchg_add_step(self):
         """방전 스텝 리스트에 항목 추가 (선택 항목 뒤에 삽입)"""
         step_type = self.pybamm_dchg_step_type.currentText()
         crate = self.pybamm_dchg_crate.text().strip() or "1.0"
         vcut = self.pybamm_dchg_vcut.text().strip() or "2.5"
-        cutoff = self.pybamm_dchg_cutoff.text().strip() or "0.05"
+        cutoff = self.pybamm_dchg_cutoff.text().strip() or "0.05C"
         if step_type == "CC":
             self._pybamm_insert_step(self.pybamm_dchg_list,
                 f"CC  |  Discharge at {crate}C until {vcut}V")
         elif step_type == "CV":
+            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
             self._pybamm_insert_step(self.pybamm_dchg_list,
-                f"CV  |  Hold at {vcut}V until {cutoff}C")
+                f"CV  |  {cv_str}")
         elif step_type == "CCCV":
+            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
             self._pybamm_insert_step(self.pybamm_dchg_list,
                 f"CC  |  Discharge at {crate}C until {vcut}V",
-                f"CV  |  Hold at {vcut}V until {cutoff}C")
+                f"CV  |  {cv_str}")
         elif step_type == "Rest":
+            rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
             self._pybamm_insert_step(self.pybamm_dchg_list,
-                f"Rest  |  Rest for {vcut} seconds")
+                f"Rest  |  Rest for {rest_str}")
 
     def _pybamm_del_step(self, list_widget):
-        """선택된 스텝 항목 삭제"""
-        row = list_widget.currentRow()
-        if row >= 0:
+        """선택된 스텝 항목 삭제 (다중 선택 지원)"""
+        rows = sorted([idx.row() for idx in list_widget.selectedIndexes()], reverse=True)
+        for row in rows:
             list_widget.takeItem(row)
+
+    def _pybamm_copy_steps(self, list_widget):
+        """선택된 스텝 항목을 클립보드에 복사 (Ctrl+C)"""
+        rows = sorted(idx.row() for idx in list_widget.selectedIndexes())
+        if not rows:
+            return
+        lines = [list_widget.item(r).text() for r in rows]
+        QtWidgets.QApplication.clipboard().setText("\n".join(lines))
+
+    def _pybamm_paste_steps(self, list_widget):
+        """클립보드 텍스트를 선택 항목 뒤에 붙여넣기 (Ctrl+V)"""
+        text = QtWidgets.QApplication.clipboard().text()
+        if not text:
+            return
+        lines = [l for l in text.splitlines() if l.strip()]
+        if not lines:
+            return
+        rows = sorted(idx.row() for idx in list_widget.selectedIndexes())
+        insert_at = (rows[-1] + 1) if rows else list_widget.count()
+        for i, line in enumerate(lines):
+            list_widget.insertItem(insert_at + i, line)
+        list_widget.setCurrentRow(insert_at + len(lines) - 1)
+
+    def _pybamm_load_step_to_fields(self, item, step_type_w, crate_w, vcut_w, cutoff_w, prefix):
+        """리스트 항목을 더블클릭하면 입력 필드에 값을 로드"""
+        import re
+        text = item.text()
+        if "|" not in text:
+            return
+        tag = text.split("|", 1)[0].strip().upper()
+        body = text.split("|", 1)[1].strip()
+
+        if tag == "CC":
+            step_type_w.setCurrentText("CC")
+            # "Charge at 1C until 4.2V" or "Discharge at 1C until 2.5V"
+            m = re.search(r'at\s+([\d.]+)C\s+until\s+([\d.]+)V', body)
+            if m:
+                crate_w.setText(m.group(1))
+                vcut_w.setText(m.group(2))
+        elif tag == "CV":
+            step_type_w.setCurrentText("CV")
+            # "Hold at 4.2V until 0.05C" / "Hold at 4.2V until C/50" / "Hold at 4.2V for 600 seconds"
+            m_until = re.search(r'Hold at\s+([\d.]+)V\s+until\s+(.+)', body)
+            m_for = re.search(r'Hold at\s+([\d.]+)V\s+for\s+(.+)', body)
+            if m_until:
+                vcut_w.setText(m_until.group(1))
+                cutoff_w.setText(m_until.group(2).strip())
+            elif m_for:
+                vcut_w.setText(m_for.group(1))
+                # "600 seconds" → "600s", "10 minutes" → "10m", "1 hours" → "1h"
+                time_str = m_for.group(2).strip()
+                parts = time_str.split()
+                if len(parts) == 2:
+                    val, unit = parts
+                    unit_map = {"seconds": "s", "minutes": "m", "hours": "h"}
+                    cutoff_w.setText(f"{val}{unit_map.get(unit, 's')}")
+                else:
+                    cutoff_w.setText(time_str)
+        elif tag == "REST":
+            step_type_w.setCurrentText("Rest")
+            # "Rest for 600 seconds" / "Rest for 10 minutes" / "Rest for 1 hours"
+            m = re.search(r'Rest for\s+([\d.]+)\s+(\w+)', body)
+            if m:
+                val = float(m.group(1))
+                unit = m.group(2).lower()
+                if unit.startswith("second"):
+                    total_sec = int(val)
+                elif unit.startswith("minute"):
+                    total_sec = int(val * 60)
+                elif unit.startswith("hour"):
+                    total_sec = int(val * 3600)
+                else:
+                    total_sec = int(val)
+                hh = total_sec // 3600
+                mm = (total_sec % 3600) // 60
+                ss = total_sec % 60
+                crate_w.setText(f"{hh:02d}")
+                vcut_w.setText(f"{mm:02d}")
+                cutoff_w.setText(f"{ss:02d}")
+
+    def _pybamm_edit_step(self, list_widget, step_type_w, crate_w, vcut_w, cutoff_w, prefix):
+        """선택된 스텝 항목을 현재 입력 필드 값으로 교체"""
+        row = list_widget.currentRow()
+        if row < 0:
+            return
+        step_type = step_type_w.currentText()
+        crate = crate_w.text().strip()
+        vcut = vcut_w.text().strip()
+        cutoff = cutoff_w.text().strip()
+        default_v = "4.2" if prefix == "chg" else "2.5"
+        direction = "Charge" if prefix == "chg" else "Discharge"
+
+        if step_type == "CC":
+            crate = crate or "1.0"
+            vcut = vcut or default_v
+            new_text = f"CC  |  {direction} at {crate}C until {vcut}V"
+            list_widget.item(row).setText(new_text)
+        elif step_type == "CV":
+            vcut = vcut or default_v
+            cutoff = cutoff or "0.05C"
+            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
+            list_widget.item(row).setText(f"CV  |  {cv_str}")
+        elif step_type == "CCCV":
+            crate = crate or "1.0"
+            vcut = vcut or default_v
+            cutoff = cutoff or "0.05C"
+            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
+            # CCCV는 2줄(CC+CV)이므로 현재 행만 CC로, 다음 행이 CV면 교체
+            list_widget.item(row).setText(f"CC  |  {direction} at {crate}C until {vcut}V")
+            if row + 1 < list_widget.count():
+                next_tag = list_widget.item(row + 1).text().split("|", 1)[0].strip().upper()
+                if next_tag == "CV":
+                    list_widget.item(row + 1).setText(f"CV  |  {cv_str}")
+                else:
+                    list_widget.insertItem(row + 1, f"CV  |  {cv_str}")
+            else:
+                list_widget.insertItem(row + 1, f"CV  |  {cv_str}")
+        elif step_type == "Rest":
+            rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
+            list_widget.item(row).setText(f"Rest  |  Rest for {rest_str}")
 
     def _pybamm_collect_list_steps(self, list_widget):
         """QListWidget에서 PyBaMM Experiment 문자열 리스트 추출"""
