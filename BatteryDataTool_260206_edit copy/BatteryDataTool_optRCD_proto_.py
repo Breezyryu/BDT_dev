@@ -10260,9 +10260,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if datafilepath:
                 cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
                 if hasattr(cycle_path,"cyclepath"):
-                    all_data_folder = np.array(cycle_path.cyclepath.tolist())
+                    all_data_folder = np.array([p.strip().strip('"').strip("'") for p in cycle_path.cyclepath.tolist()])
                     if hasattr(cycle_path,"cyclename"):
-                        all_data_name = np.array(cycle_path.cyclename.tolist())
+                        all_data_name = np.array([n.strip().strip('"').strip("'") for n in cycle_path.cyclename.tolist()])
                     if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
                         self.mincapacity = name_capacity(datafilepath)
                         self.capacitytext.setText(str(self.mincapacity))
@@ -10271,7 +10271,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             else:
                 all_data_folder = multi_askopendirnames()
         elif self.stepnum_2.toPlainText() != "":
-            datafilepath = list(map(str, self.stepnum_2.toPlainText().split('\n')))
+            datafilepath = [p.strip().strip('"').strip("'") for p in self.stepnum_2.toPlainText().split('\n') if p.strip()]
             all_data_folder = np.array(datafilepath)
         else:
             all_data_folder = multi_askopendirnames()
