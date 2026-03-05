@@ -13,6 +13,10 @@ set "ICON_PATH=%~dp0BatteryDataTool.ico"
     --noconsole ^
     --noconfirm ^
     --hidden-import fsspec ^
+    --hidden-import pybamm ^
+    --hidden-import casadi ^
+    --collect-all pybamm ^
+    --collect-all casadi ^
     --icon="%ICON_PATH%" ^
     "%SCRIPT_PATH%" ^
     --distpath "."
