@@ -22,6 +22,13 @@ from datetime import timezone
 import glob
 import xlwings as xw
 
+# PyInstaller exe: casadi DLL 경로 등록
+if getattr(sys, 'frozen', False):
+    _casadi_dir = os.path.join(sys._MEIPASS, 'casadi')
+    if os.path.isdir(_casadi_dir):
+        os.add_dll_directory(_casadi_dir)
+        os.environ['PATH'] = _casadi_dir + os.pathsep + os.environ.get('PATH', '')
+
 try:
     import pybamm
     HAS_PYBAMM = True
