@@ -15,4 +15,5 @@ dependencies = [
     "pyqt6>=6.10.2",
     "scipy>=1.17.0",
     "xlwings>=0.33.20",
+    "xlsxwriter>=3.2.9",
 ]
