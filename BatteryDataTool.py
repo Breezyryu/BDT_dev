@@ -11728,7 +11728,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
             foldercountmax = len(all_data_folder)
             foldercount += 1
-            # [최적화] check_cycler 캐싱
             is_pne = check_cycler(cyclefolder)
             if self.CycProfile.isChecked():
                 for j, FolderBase in enumerate(subfolder):
