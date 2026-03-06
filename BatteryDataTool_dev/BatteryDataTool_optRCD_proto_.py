@@ -9645,7 +9645,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-                canvas.draw()
+                canvas.draw_idle()
                 return
             for lbl, info in channel_map.items():
                 if lbl in selected:
@@ -9667,7 +9667,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-            canvas.draw()
+            canvas.draw_idle()
         
         def _highlight_channel(selected_label):
             """채널 토글: 전체 하이라이트 ON이면 해제 후 클릭 채널만 dim"""
@@ -9690,11 +9690,39 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         def on_item_clicked(item):
             """개별 채널 하이라이트 토글"""
-            label = _strip_numbering(item.text())
-            _highlight_channel(label)
+            orig_key = item.data(Qt.ItemDataRole.UserRole)
+            _highlight_channel(orig_key)
         
+        def _rebuild_legend():
+            """범례 재생성 + 슬라이더 폰트/드래그 상태 보존"""
+            _cur_fs = font_slider.value()
+            _cur_drag = _drag_legend_chk.isChecked()
+            for ax in axes_list:
+                legend = ax.get_legend()
+                if legend:
+                    _loc = legend._loc
+                    # 보이는 artist + 비어있지 않은 라벨만 수집 (중복 제거)
+                    handles, labels = [], []
+                    _seen = set()
+                    for h, l in zip(*ax.get_legend_handles_labels()):
+                        if h.get_visible() and l and not l.startswith('_') and l not in _seen:
+                            handles.append(h)
+                            labels.append(l)
+                            _seen.add(l)
+                    if handles:
+                        new_leg = ax.legend(handles, labels,
+                            fontsize=_cur_fs,
+                            framealpha=THEME['LEGEND_FRAMEALPHA'],
+                            edgecolor=THEME['LEGEND_EDGECOLOR'],
+                            fancybox=True, loc=_loc)
+                        new_leg.set_draggable(_cur_drag)
+                    else:
+                        legend.remove()
+
         def on_item_changed(item):
             """개별 채널 표시/숨김 + 범례 이름 편집 처리"""
+            if _chk_guard['updating']:
+                return
             orig_key = item.data(Qt.ItemDataRole.UserRole)
             new_display = _strip_numbering(item.text())
             
@@ -9707,17 +9735,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if orig_key in channel_map:
                     for art in channel_map[orig_key]['artists']:
                         art.set_label(new_display)
-                # 범례 재생성
-                for ax in axes_list:
-                    legend = ax.get_legend()
-                    if legend:
-                        ax.legend(
-                            fontsize=THEME['LEGEND_SIZE'],
-                            framealpha=THEME['LEGEND_FRAMEALPHA'],
-                            edgecolor=THEME['LEGEND_EDGECOLOR'],
-                            fancybox=True,
-                            loc=legend._loc
-                        )
+                _rebuild_legend()
                 canvas.draw_idle()
                 return
             
@@ -9727,7 +9745,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for art in channel_map[orig_key]['artists']:
                     art.set_visible(visible)
             _update_ch_count()
-            canvas.draw()
+            _rebuild_legend()
+            canvas.draw_idle()
         
         ch_list.itemClicked.connect(on_item_clicked)
         ch_list.itemChanged.connect(on_item_changed)
@@ -9753,8 +9772,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if _chk_guard['updating']: return
             _chk_guard['updating'] = True
             checked = state == Qt.CheckState.Checked.value
+            new_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            ch_list.blockSignals(True)
             for i in range(ch_list.count()):
-                ch_list.item(i).setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+                it = ch_list.item(i)
+                it.setCheckState(new_state)
+                orig_key = it.data(Qt.ItemDataRole.UserRole)
+                if orig_key in channel_map:
+                    for art in channel_map[orig_key]['artists']:
+                        art.set_visible(checked)
+            ch_list.blockSignals(False)
+            _update_ch_count()
+            _rebuild_legend()
+            canvas.draw_idle()
             _chk_guard['updating'] = False
         
         def _on_hl_all(state):
@@ -9763,7 +9793,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if checked:
                 # 체크 ON: 모든 채널 원래 색상 복원
                 _restore_all()
-                canvas.draw()
+                canvas.draw_idle()
             else:
                 # 체크 OFF: 모든 채널 회색(dim), 클릭으로 개별 선택
                 highlight_state['active'] = set()
@@ -9779,7 +9809,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-                canvas.draw()
+                canvas.draw_idle()
         
         chk_show_all.stateChanged.connect(_on_show_all)
         chk_hl_all.stateChanged.connect(_on_hl_all)
@@ -9905,11 +9935,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ctrl_col.addWidget(legend_checkbox)
         
         # --- 범례 폰트 크기 슬라이더 (#10) ---
-        _font_lbl = QLabel(f"범례 {THEME['LEGEND_SIZE']}pt")
+        _mpl_font_map = {'xx-small': 6, 'x-small': 7, 'small': 8, 'medium': 10,
+                         'large': 12, 'x-large': 14, 'xx-large': 16}
+        _raw = THEME['LEGEND_SIZE']
+        _legend_font_size = _mpl_font_map[_raw] if _raw in _mpl_font_map else int(_raw)
+        _font_lbl = QLabel(f"범례 {_legend_font_size}pt")
         _font_lbl.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
         font_slider = QSlider(Qt.Orientation.Horizontal)
         font_slider.setRange(6, 18)
-        font_slider.setValue(THEME['LEGEND_SIZE'])
+        font_slider.setValue(_legend_font_size)
         font_slider.setFixedWidth(80)
         font_slider.setStyleSheet("QSlider { max-height: 16px; }")
         def _on_font_size(val):
@@ -10068,6 +10102,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             def on_item_changed_linked(item):
                 """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경 + 범례 편집"""
+                if _chk_guard['updating']:
+                    return
                 orig_key = item.data(Qt.ItemDataRole.UserRole)
                 new_display = _strip_numbering(item.text())
                 
@@ -10078,16 +10114,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if orig_key in channel_map:
                         for art in channel_map[orig_key]['artists']:
                             art.set_label(new_display)
-                    for ax in axes_list:
-                        legend = ax.get_legend()
-                        if legend:
-                            ax.legend(
-                                fontsize=THEME['LEGEND_SIZE'],
-                                framealpha=THEME['LEGEND_FRAMEALPHA'],
-                                edgecolor=THEME['LEGEND_EDGECOLOR'],
-                                fancybox=True,
-                                loc=legend._loc
-                            )
+                    _rebuild_legend()
                     canvas.draw_idle()
                     return
                 
@@ -10102,7 +10129,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         sub_item.setCheckState(
                             Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                     _sub_chk_guard['updating'] = False
-                canvas.draw()
+                _rebuild_legend()
+                canvas.draw_idle()
             
             ch_list.itemChanged.connect(on_item_changed_linked)
             
@@ -10111,8 +10139,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             def on_item_clicked_linked(item):
                 """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경"""
-                label = _strip_numbering(item.text())
-                _highlight_channel(label)
+                orig_key = item.data(Qt.ItemDataRole.UserRole)
+                _highlight_channel(orig_key)
             
             ch_list.itemClicked.connect(on_item_clicked_linked)
             
@@ -10159,7 +10187,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             art.set_facecolors(orig['fc'].copy())
                             art.set_edgecolors(orig['ec'].copy())
                         art.set_zorder(10)
-                canvas.draw()
+                canvas.draw_idle()
             
             def on_sub_item_changed(item):
                 """서브 채널 개별 표시/숨김"""
@@ -10170,7 +10198,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if label in sub_channel_map:
                     for art in sub_channel_map[label]['artists']:
                         art.set_visible(visible)
-                canvas.draw()
+                canvas.draw_idle()
             
             sub_list.itemClicked.connect(on_sub_item_clicked)
             sub_list.itemChanged.connect(on_sub_item_changed)
