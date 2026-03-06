@@ -8719,7 +8719,7 @@ class Ui_sitool(object):
 
     def retranslateUi(self, sitool):
         _translate = QtCore.QCoreApplication.translate
-        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v260224"))
+        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v260306"))
         self.tb_room.setItemText(0, _translate("sitool", "R5 15F"))
         self.tb_room.setItemText(1, _translate("sitool", "R5 3F B-1"))
         self.tb_room.setItemText(2, _translate("sitool", "R5 3F B-2"))
@@ -9459,8 +9459,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                                       QListWidget, QListWidgetItem, QLabel,
-                                      QCheckBox, QPushButton, QFrame, QLineEdit)
-        from PyQt6.QtCore import Qt, QObject, QEvent, QPoint
+                                      QCheckBox, QPushButton, QFrame, QLineEdit,
+                                      QSlider, QSizeGrip, QMenu)
+        from PyQt6.QtCore import Qt, QObject, QEvent, QPoint, QSize
         from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
         from math import ceil
         
@@ -9530,6 +9531,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ch_list.setMinimumWidth(120)
         ch_list.setMaximumWidth(200)
         ch_list.setStyleSheet(_list_style)
+        # 드래그로 채널 순서 변경 (#8)
+        ch_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        ch_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         
         # 색상 아이콘 생성 헬퍼
         def _make_color_icon(hex_color, size=12):
@@ -9555,6 +9559,43 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             item.setToolTip(label)
             item.setData(Qt.ItemDataRole.UserRole, label)  # 원본 키 보존
             ch_list.addItem(item)
+        
+        # 우클릭 컨텍스트 메뉴: 라인 스타일/두께 변경 (#11, #12)
+        _line_styles = [('-', '실선'), ('--', '파선'), ('-.', '점선'), (':', '점')]
+        _line_widths = [0.5, 1.0, 1.5, 2.0, 3.0]
+        ch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        def _on_ch_context_menu(pos):
+            item = ch_list.itemAt(pos)
+            if not item:
+                return
+            orig_key = item.data(Qt.ItemDataRole.UserRole)
+            if orig_key not in channel_map:
+                return
+            menu = QMenu(ch_list)
+            # 라인 스타일 서브메뉴
+            style_menu = menu.addMenu("라인 스타일")
+            for ls, ls_name in _line_styles:
+                act = style_menu.addAction(ls_name)
+                act.setData(('style', ls))
+            # 라인 두께 서브메뉴
+            width_menu = menu.addMenu("라인 두께")
+            for lw in _line_widths:
+                act = width_menu.addAction(f"{lw}")
+                act.setData(('width', lw))
+            action = menu.exec(ch_list.mapToGlobal(pos))
+            if action and action.data():
+                kind, val = action.data()
+                for art in channel_map[orig_key]['artists']:
+                    if kind == 'style':
+                        if hasattr(art, 'set_linestyle'):
+                            art.set_linestyle(val)
+                    elif kind == 'width':
+                        if hasattr(art, 'set_linewidth'):
+                            art.set_linewidth(val)
+                        elif hasattr(art, 'set_linewidths'):
+                            art.set_linewidths([val])
+                canvas.draw_idle()
+        ch_list.customContextMenuRequested.connect(_on_ch_context_menu)
         
         # 범례 별칭 매핑: {원본라벨: 사용자지정이름}
         _legend_aliases = {}
@@ -9685,10 +9726,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if orig_key in channel_map:
                 for art in channel_map[orig_key]['artists']:
                     art.set_visible(visible)
+            _update_ch_count()
             canvas.draw()
         
         ch_list.itemClicked.connect(on_item_clicked)
         ch_list.itemChanged.connect(on_item_changed)
+        
+        # --- 선택 채널 수 실시간 표시 (#6) ---
+        def _update_ch_count():
+            checked = sum(1 for i in range(ch_list.count())
+                         if ch_list.item(i).checkState() == Qt.CheckState.Checked)
+            list_lbl.setText(f"채널 그룹 ({checked}/{_ch_total})")
         
         # --- 전체 표시 / 전체 하이라이트 체크박스 ---
         _chk_guard = {'updating': False}
@@ -9823,6 +9871,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         lbl_row.setSpacing(4)
         lbl_row.addWidget(list_lbl)
         lbl_row.addWidget(sort_btn)
+        # --- 채널 리스트 접기/펼치기 (#7) ---
+        _ch_collapsed = {'state': False}
+        collapse_btn = QPushButton("▲")
+        collapse_btn.setFixedSize(22, 18)
+        collapse_btn.setToolTip("채널 리스트 접기/펼치기")
+        collapse_btn.setStyleSheet(
+            f"QPushButton {{ font-size: 10px; padding: 0; "
+            f"border: 1px solid {_btn_border}; border-radius: 3px; "
+            f"background: {_btn_bg}; }}"
+            f"QPushButton:hover {{ background: {_btn_hover}; }}"
+        )
+        def _toggle_ch_collapse():
+            _ch_collapsed['state'] = not _ch_collapsed['state']
+            collapsed = _ch_collapsed['state']
+            collapse_btn.setText("▼" if collapsed else "▲")
+            ch_list.setVisible(not collapsed)
+            search_box.setVisible(not collapsed)
+            chk_show_all.setVisible(not collapsed)
+            chk_hl_all.setVisible(not collapsed)
+        collapse_btn.clicked.connect(_toggle_ch_collapse)
+        lbl_row.addWidget(collapse_btn)
         lbl_row.addStretch()
         list_col.addLayout(lbl_row)
         list_col.addWidget(chk_show_all)
@@ -9830,14 +9899,138 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         list_col.addWidget(search_box)
         list_col.addWidget(ch_list)
         
-        # legend 체크박스
+        # legend 체크박스 + 폰트 크기 슬라이더
         ctrl_col = QVBoxLayout()
         ctrl_col.setSpacing(1)
         ctrl_col.addWidget(legend_checkbox)
+        
+        # --- 범례 폰트 크기 슬라이더 (#10) ---
+        _font_lbl = QLabel(f"범례 {THEME['LEGEND_SIZE']}pt")
+        _font_lbl.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
+        font_slider = QSlider(Qt.Orientation.Horizontal)
+        font_slider.setRange(6, 18)
+        font_slider.setValue(THEME['LEGEND_SIZE'])
+        font_slider.setFixedWidth(80)
+        font_slider.setStyleSheet("QSlider { max-height: 16px; }")
+        def _on_font_size(val):
+            _font_lbl.setText(f"범례 {val}pt")
+            for ax in axes_list:
+                legend = ax.get_legend()
+                if legend:
+                    for txt in legend.get_texts():
+                        txt.set_fontsize(val)
+            canvas.draw_idle()
+        font_slider.valueChanged.connect(_on_font_size)
+        ctrl_col.addWidget(_font_lbl)
+        ctrl_col.addWidget(font_slider)
+        
+        # --- 범례 드래그 이동 (#9) ---
+        _drag_legend_chk = QCheckBox("범례 이동")
+        _drag_legend_chk.setChecked(False)
+        _drag_legend_chk.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
+        _drag_legend_chk.setToolTip("체크 시 마우스로 범례 위치 드래그 가능")
+        def _toggle_legend_drag(state):
+            draggable = state == Qt.CheckState.Checked.value
+            for ax in axes_list:
+                legend = ax.get_legend()
+                if legend:
+                    legend.set_draggable(draggable)
+        _drag_legend_chk.stateChanged.connect(_toggle_legend_drag)
+        ctrl_col.addWidget(_drag_legend_chk)
+        
+        # --- 설정 저장/불러오기 (#15) ---
+        import json as _json
+        from pathlib import Path as _Path
+        _settings_dir = _Path(__file__).resolve().parent / '.ch_settings'
+        
+        def _save_settings():
+            _settings_dir.mkdir(exist_ok=True)
+            data = {
+                'aliases': _legend_aliases,
+                'font_size': font_slider.value(),
+                'legend_drag': _drag_legend_chk.isChecked(),
+                'checked': {},
+            }
+            for i in range(ch_list.count()):
+                it = ch_list.item(i)
+                key = it.data(Qt.ItemDataRole.UserRole)
+                data['checked'][key] = it.checkState() == Qt.CheckState.Checked
+            fp = _settings_dir / 'last.json'
+            fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        
+        def _load_settings():
+            fp = _settings_dir / 'last.json'
+            if not fp.exists():
+                return
+            data = _json.loads(fp.read_text(encoding='utf-8'))
+            # 폰트 크기
+            if 'font_size' in data:
+                font_slider.setValue(data['font_size'])
+            # 범례 드래그
+            if 'legend_drag' in data:
+                _drag_legend_chk.setChecked(data['legend_drag'])
+            # 별칭 복원
+            if 'aliases' in data:
+                _legend_aliases.update(data['aliases'])
+                for orig_key, alias in data['aliases'].items():
+                    if orig_key in channel_map:
+                        for art in channel_map[orig_key]['artists']:
+                            art.set_label(alias)
+                # 리스트 텍스트 업데이트
+                ch_list.blockSignals(True)
+                for i in range(ch_list.count()):
+                    it = ch_list.item(i)
+                    key = it.data(Qt.ItemDataRole.UserRole)
+                    if key in data['aliases']:
+                        # 넘버링 유지하면서 이름 부분만 교체
+                        m = _re.match(r'^(\d+\.\s*)', it.text())
+                        prefix = m.group(1) if m else ''
+                        it.setText(prefix + data['aliases'][key])
+                ch_list.blockSignals(False)
+            # 체크 상태 복원
+            if 'checked' in data:
+                ch_list.blockSignals(True)
+                for i in range(ch_list.count()):
+                    it = ch_list.item(i)
+                    key = it.data(Qt.ItemDataRole.UserRole)
+                    if key in data['checked']:
+                        it.setCheckState(
+                            Qt.CheckState.Checked if data['checked'][key]
+                            else Qt.CheckState.Unchecked)
+                        if key in channel_map:
+                            for art in channel_map[key]['artists']:
+                                art.set_visible(data['checked'][key])
+                ch_list.blockSignals(False)
+                _update_ch_count()
+            canvas.draw_idle()
+        
+        _save_btn = QPushButton("💾 저장")
+        _save_btn.setFixedHeight(20)
+        _save_btn.setStyleSheet(
+            f"QPushButton {{ font-size: 10px; padding: 0 4px; "
+            f"border: 1px solid {_btn_border}; border-radius: 3px; "
+            f"background: {_btn_bg}; }}"
+            f"QPushButton:hover {{ background: {_btn_hover}; }}"
+        )
+        _load_btn = QPushButton("📂 불러오기")
+        _load_btn.setFixedHeight(20)
+        _load_btn.setStyleSheet(_save_btn.styleSheet())
+        _save_btn.clicked.connect(_save_settings)
+        _load_btn.clicked.connect(_load_settings)
+        ctrl_col.addWidget(_save_btn)
+        ctrl_col.addWidget(_load_btn)
         ctrl_col.addStretch()
         
         overlay_layout.addLayout(ctrl_col)
         overlay_layout.addLayout(list_col)
+        
+        # --- 오버레이 패널 크기 조절 그립 (#13) ---
+        _grip = QSizeGrip(overlay)
+        _grip.setFixedSize(12, 12)
+        _grip.setStyleSheet(
+            f"QSizeGrip {{ background: transparent; "
+            f"border: none; }}"
+        )
         
         # --- 2) 서브 채널 리스트 (sub_channel_map 있을 때만) ---
         if sub_channel_map and len(sub_channel_map) > 1:
@@ -9993,22 +10186,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             overlay_layout.addLayout(sub_list_col)
         
         # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
+        _overlay_user_size = {'w': None, 'h': None}  # 사용자 리사이즈 크기 기억
+        
         def _reposition_overlay():
             """우측 상단에서 아래로 펼쳐지는 오버레이"""
             if overlay.isVisible():
                 overlay.adjustSize()
-                ow = min(overlay.sizeHint().width() + 8, parent_tab.width() - 8)
-                oh = overlay.sizeHint().height()
+                if _overlay_user_size['w']:
+                    ow = _overlay_user_size['w']
+                    oh = _overlay_user_size['h']
+                else:
+                    ow = min(overlay.sizeHint().width() + 8, parent_tab.width() - 8)
+                    oh = overlay.sizeHint().height()
                 btn_top = toggle_btn.mapTo(parent_tab, QPoint(0, 0))
                 max_h = btn_top.y() - 4  # 토글 버튼 위까지 최대 높이
                 if oh > max_h and max_h > 60:
                     oh = max_h
-                overlay.setFixedSize(ow, oh)
+                overlay.setMinimumSize(200, 100)
+                overlay.setMaximumSize(parent_tab.width() - 8, max_h if max_h > 60 else 600)
+                overlay.resize(ow, oh)
                 overlay_y = btn_top.y() - oh - 2
                 if overlay_y < 0:
                     overlay_y = 0
                 overlay_x = parent_tab.width() - ow - 4
                 overlay.move(overlay_x, overlay_y)
+                # 리사이즈 그립 우하단 배치
+                _grip.move(overlay.width() - _grip.width(), overlay.height() - _grip.height())
                 overlay.raise_()
         
         def _toggle_panel():
@@ -10024,11 +10227,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # ── 리사이즈 추적 + 오버레이 외부 클릭 시 접기 ──
         class _OverlayEventFilter(QObject):
             def eventFilter(self, obj, event):
-                if event.type() == QEvent.Type.Resize:
+                if obj is parent_tab and event.type() == QEvent.Type.Resize:
+                    _overlay_user_size['w'] = None  # 탭 리사이즈 시 자동 크기로 복원
+                    _overlay_user_size['h'] = None
                     _reposition_overlay()
+                elif obj is overlay and event.type() == QEvent.Type.Resize:
+                    # 사용자가 그립으로 크기 변경 시 기억
+                    sz = overlay.size()
+                    if sz.width() > 100 and sz.height() > 60:
+                        _overlay_user_size['w'] = sz.width()
+                        _overlay_user_size['h'] = sz.height()
+                        _grip.move(sz.width() - _grip.width(), sz.height() - _grip.height())
                 elif event.type() == QEvent.Type.MouseButtonPress:
                     if overlay.isVisible():
-                        # 클릭 위치가 오버레이/토글버튼 영역 밖이면 접기
                         click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
                         overlay_rect = overlay.geometry()
                         btn_rect = toggle_btn.geometry()
@@ -10038,6 +10249,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         _rf = _OverlayEventFilter(parent_tab)
         parent_tab.installEventFilter(_rf)
+        overlay.installEventFilter(_rf)
         # GC 방지: 토글 버튼에 참조 보관
         toggle_btn._overlay_ref = overlay
         toggle_btn._resize_filter_ref = _rf
