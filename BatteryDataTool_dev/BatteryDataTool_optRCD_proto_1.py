@@ -9461,7 +9461,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                       QListWidget, QListWidgetItem, QLabel,
                                       QCheckBox, QPushButton, QFrame)
         from PyQt6.QtCore import Qt, QObject, QEvent, QPoint
-        from PyQt6.QtGui import QColor
+        from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
         from math import ceil
         
         parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
@@ -9531,6 +9531,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ch_list.setMaximumWidth(200)
         ch_list.setStyleSheet(_list_style)
         
+        # 색상 아이콘 생성 헬퍼
+        def _make_color_icon(hex_color, size=12):
+            pm = QPixmap(size, size)
+            pm.fill(QColor('transparent'))
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(QBrush(QColor(hex_color)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(0, 0, size, size)
+            p.end()
+            return QIcon(pm)
+        
         # 모든 채널 개별 리스트 (넘버링 추가, 0-padded)
         _ch_total = len(channel_map)
         _nw = len(str(_ch_total))  # 자릿수
@@ -9538,6 +9550,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             item = QListWidgetItem(f"{idx:0{_nw}d}. {label}")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
+            item.setIcon(_make_color_icon(channel_map[label]['color']))
             item.setForeground(QColor(channel_map[label]['color']))
             item.setToolTip(label)
             ch_list.addItem(item)

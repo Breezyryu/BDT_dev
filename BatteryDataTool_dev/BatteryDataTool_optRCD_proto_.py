@@ -9461,7 +9461,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                       QListWidget, QListWidgetItem, QLabel,
                                       QCheckBox, QPushButton, QFrame, QLineEdit)
         from PyQt6.QtCore import Qt, QObject, QEvent, QPoint
-        from PyQt6.QtGui import QColor
+        from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
         from math import ceil
         
         parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
@@ -9531,16 +9531,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ch_list.setMaximumWidth(200)
         ch_list.setStyleSheet(_list_style)
         
+        # 색상 아이콘 생성 헬퍼
+        def _make_color_icon(hex_color, size=12):
+            pm = QPixmap(size, size)
+            pm.fill(QColor('transparent'))
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(QBrush(QColor(hex_color)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(0, 0, size, size)
+            p.end()
+            return QIcon(pm)
+        
         # 모든 채널 개별 리스트 (넘버링 추가, 0-padded)
         _ch_total = len(channel_map)
         _nw = len(str(_ch_total))  # 자릿수
         for idx, label in enumerate(channel_map, 1):
             item = QListWidgetItem(f"{idx:0{_nw}d}. {label}")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
             item.setCheckState(Qt.CheckState.Checked)
+            item.setIcon(_make_color_icon(channel_map[label]['color']))
             item.setForeground(QColor(channel_map[label]['color']))
             item.setToolTip(label)
+            item.setData(Qt.ItemDataRole.UserRole, label)  # 원본 키 보존
             ch_list.addItem(item)
+        
+        # 범례 별칭 매핑: {원본라벨: 사용자지정이름}
+        _legend_aliases = {}
         
         # 하이라이트 상태 추적 (다중 선택)
         highlight_state = {'active': set(), 'enabled': False}
@@ -9636,11 +9653,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _highlight_channel(label)
         
         def on_item_changed(item):
-            """개별 채널 표시/숨김"""
-            label = _strip_numbering(item.text())
+            """개별 채널 표시/숨김 + 범례 이름 편집 처리"""
+            orig_key = item.data(Qt.ItemDataRole.UserRole)
+            new_display = _strip_numbering(item.text())
+            
+            # 텍스트 편집 감지: 현재 표시명 ≠ 원본키 AND 별칭과도 다를 때
+            current_alias = _legend_aliases.get(orig_key, orig_key)
+            if new_display and new_display != current_alias:
+                # 범례 별칭 갱신
+                _legend_aliases[orig_key] = new_display
+                # matplotlib artist의 label 갱신
+                if orig_key in channel_map:
+                    for art in channel_map[orig_key]['artists']:
+                        art.set_label(new_display)
+                # 범례 재생성
+                for ax in axes_list:
+                    legend = ax.get_legend()
+                    if legend:
+                        ax.legend(
+                            fontsize=THEME['LEGEND_SIZE'],
+                            framealpha=THEME['LEGEND_FRAMEALPHA'],
+                            edgecolor=THEME['LEGEND_EDGECOLOR'],
+                            fancybox=True,
+                            loc=legend._loc
+                        )
+                canvas.draw_idle()
+                return
+            
+            # 체크 상태 변경 → 표시/숨김
             visible = item.checkState() == Qt.CheckState.Checked
-            if label in channel_map:
-                for art in channel_map[label]['artists']:
+            if orig_key in channel_map:
+                for art in channel_map[orig_key]['artists']:
                     art.set_visible(visible)
             canvas.draw()
         
@@ -9754,6 +9797,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     'checked': it.checkState(),
                     'color': it.foreground().color(),
                     'tooltip': it.toolTip(),
+                    'orig_key': it.data(Qt.ItemDataRole.UserRole),
                 })
             # 정렬
             if _sort_state['by_name']:
@@ -9765,10 +9809,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.clear()
             for d in items_data:
                 item = QListWidgetItem(d['text'])
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
                 item.setCheckState(d['checked'])
+                item.setIcon(_make_color_icon(d['color'].name()))
                 item.setForeground(d['color'])
                 item.setToolTip(d['tooltip'])
+                item.setData(Qt.ItemDataRole.UserRole, d['orig_key'])
                 ch_list.addItem(item)
             ch_list.blockSignals(False)
         sort_btn.clicked.connect(_sort_channels)
@@ -9828,16 +9874,38 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.itemChanged.disconnect(on_item_changed)
             
             def on_item_changed_linked(item):
-                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경"""
-                label = _strip_numbering(item.text())
+                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경 + 범례 편집"""
+                orig_key = item.data(Qt.ItemDataRole.UserRole)
+                new_display = _strip_numbering(item.text())
+                
+                # 텍스트 편집 감지
+                current_alias = _legend_aliases.get(orig_key, orig_key)
+                if new_display and new_display != current_alias:
+                    _legend_aliases[orig_key] = new_display
+                    if orig_key in channel_map:
+                        for art in channel_map[orig_key]['artists']:
+                            art.set_label(new_display)
+                    for ax in axes_list:
+                        legend = ax.get_legend()
+                        if legend:
+                            ax.legend(
+                                fontsize=THEME['LEGEND_SIZE'],
+                                framealpha=THEME['LEGEND_FRAMEALPHA'],
+                                edgecolor=THEME['LEGEND_EDGECOLOR'],
+                                fancybox=True,
+                                loc=legend._loc
+                            )
+                    canvas.draw_idle()
+                    return
+                
                 visible = item.checkState() == Qt.CheckState.Checked
-                if label in channel_map:
-                    for art in channel_map[label]['artists']:
+                if orig_key in channel_map:
+                    for art in channel_map[orig_key]['artists']:
                         art.set_visible(visible)
                 # 하위 서브 채널 항목 체크 상태도 동기화
                 if not _sub_chk_guard['updating']:
                     _sub_chk_guard['updating'] = True
-                    for sub_item, sub_label in _get_sub_items_for_group(label):
+                    for sub_item, sub_label in _get_sub_items_for_group(orig_key):
                         sub_item.setCheckState(
                             Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                     _sub_chk_guard['updating'] = False
