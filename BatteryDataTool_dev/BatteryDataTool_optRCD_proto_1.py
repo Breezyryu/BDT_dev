@@ -9692,24 +9692,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         legend_checkbox.stateChanged.connect(toggle_legend)
         
-        # --- 채널 검색 필터 ---
-        search_box = QLineEdit()
-        search_box.setPlaceholderText("🔍 채널 검색...")
-        search_box.setClearButtonEnabled(True)
-        search_box.setFixedHeight(22)
-        search_box.setStyleSheet(
-            f"QLineEdit {{ font-size: 11px; padding: 1px 4px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-        )
-        def _filter_channels(text):
-            keyword = text.strip().lower()
-            for i in range(ch_list.count()):
-                item = ch_list.item(i)
-                label = _strip_numbering(item.text()).lower()
-                item.setHidden(keyword != '' and keyword not in label)
-        search_box.textChanged.connect(_filter_channels)
-        
         # --- 전체 레이아웃: legend + 채널 그룹 ---
         list_col = QVBoxLayout()
         list_col.setSpacing(1)
@@ -9718,7 +9700,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         list_col.addWidget(list_lbl)
         list_col.addWidget(chk_show_all)
         list_col.addWidget(chk_hl_all)
-        list_col.addWidget(search_box)
         list_col.addWidget(ch_list)
         
         # legend 체크박스

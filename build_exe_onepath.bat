@@ -5,7 +5,7 @@ echo Building BatteryDataTool (onedir)...
 cd /d "%~dp0"
 
 set "VENV_EXE=%~dp0.venv\Scripts\pyinstaller.exe"
-set "SCRIPT_PATH=%~dp0BatteryDataTool.py"
+set "SCRIPT_PATH=%~dp0BatteryDataTool_260306.py"
 set "ICON_PATH=%~dp0BatteryDataTool.ico"
 "%VENV_EXE%" ^
     --onedir ^
