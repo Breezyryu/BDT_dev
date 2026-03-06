@@ -25,10 +25,25 @@ import xlwings as xw
 # PyInstaller exe 실행 시 필요: Pybamm casadi DLL 경로 등록
 # 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
 if getattr(sys, 'frozen', False):
-    _casadi_dir = os.path.join(sys._MEIPASS, 'casadi')
+    _base = sys._MEIPASS
+    _casadi_dir = os.path.join(_base, 'casadi')
     if os.path.isdir(_casadi_dir):
         os.add_dll_directory(_casadi_dir)
-        os.environ['PATH'] = _casadi_dir + os.pathsep + os.environ.get('PATH', '')
+        os.add_dll_directory(_base)
+        os.environ['PATH'] = _casadi_dir + os.pathsep + _base + os.pathsep + os.environ.get('PATH', '')
+        # 핵심 MinGW 런타임 DLL 강제 선로드 (다른 PC에서 DLL 검색 실패 방지)
+        import ctypes
+        for _dll_name in [
+            'libwinpthread-1.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll',
+            'libgfortran-5.dll', 'libquadmath-0.dll', 'libgomp-1.dll',
+            'libcasadi.dll', 'libcasadi-tp-openblas.dll',
+        ]:
+            _dll_path = os.path.join(_casadi_dir, _dll_name)
+            if os.path.isfile(_dll_path):
+                try:
+                    ctypes.CDLL(_dll_path)
+                except OSError:
+                    pass
 
 try:
     import pybamm

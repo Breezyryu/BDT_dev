@@ -25,10 +25,25 @@ import xlwings as xw
 # PyInstaller exe 실행 시 필요: Pybamm casadi DLL 경로 등록
 # 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
 if getattr(sys, 'frozen', False):
-    _casadi_dir = os.path.join(sys._MEIPASS, 'casadi')
+    _base = sys._MEIPASS
+    _casadi_dir = os.path.join(_base, 'casadi')
     if os.path.isdir(_casadi_dir):
         os.add_dll_directory(_casadi_dir)
-        os.environ['PATH'] = _casadi_dir + os.pathsep + os.environ.get('PATH', '')
+        os.add_dll_directory(_base)
+        os.environ['PATH'] = _casadi_dir + os.pathsep + _base + os.pathsep + os.environ.get('PATH', '')
+        # 핵심 MinGW 런타임 DLL 강제 선로드 (다른 PC에서 DLL 검색 실패 방지)
+        import ctypes
+        for _dll_name in [
+            'libwinpthread-1.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll',
+            'libgfortran-5.dll', 'libquadmath-0.dll', 'libgomp-1.dll',
+            'libcasadi.dll', 'libcasadi-tp-openblas.dll',
+        ]:
+            _dll_path = os.path.join(_casadi_dir, _dll_name)
+            if os.path.isfile(_dll_path):
+                try:
+                    ctypes.CDLL(_dll_path)
+                except OSError:
+                    pass
 
 try:
     import pybamm
@@ -9444,7 +9459,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                                       QListWidget, QListWidgetItem, QLabel,
-                                      QCheckBox, QPushButton, QFrame)
+                                      QCheckBox, QPushButton, QFrame, QLineEdit)
         from PyQt6.QtCore import Qt, QObject, QEvent, QPoint
         from PyQt6.QtGui import QColor
         from math import ceil
@@ -9715,7 +9730,55 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         list_col.setSpacing(1)
         list_lbl = QLabel(f"채널 그룹 ({_ch_total})")
         list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
-        list_col.addWidget(list_lbl)
+        
+        # --- 채널 정렬 토글 ---
+        _sort_state = {'by_name': False}
+        sort_btn = QPushButton("가나다순")
+        sort_btn.setFixedSize(56, 18)
+        sort_btn.setStyleSheet(
+            f"QPushButton {{ font-size: 10px; padding: 0 2px; "
+            f"border: 1px solid {_btn_border}; border-radius: 3px; "
+            f"background: {_btn_bg}; }}"
+            f"QPushButton:hover {{ background: {_btn_hover}; }}"
+        )
+        def _sort_channels():
+            _sort_state['by_name'] = not _sort_state['by_name']
+            sort_btn.setText("번호순" if _sort_state['by_name'] else "가나다순")
+            # 현재 아이템 정보 수집
+            items_data = []
+            for i in range(ch_list.count()):
+                it = ch_list.item(i)
+                items_data.append({
+                    'text': it.text(),
+                    'label': _strip_numbering(it.text()),
+                    'checked': it.checkState(),
+                    'color': it.foreground().color(),
+                    'tooltip': it.toolTip(),
+                })
+            # 정렬
+            if _sort_state['by_name']:
+                items_data.sort(key=lambda d: d['label'].lower())
+            else:
+                items_data.sort(key=lambda d: d['text'])  # 번호 순
+            # 재배치
+            ch_list.blockSignals(True)
+            ch_list.clear()
+            for d in items_data:
+                item = QListWidgetItem(d['text'])
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(d['checked'])
+                item.setForeground(d['color'])
+                item.setToolTip(d['tooltip'])
+                ch_list.addItem(item)
+            ch_list.blockSignals(False)
+        sort_btn.clicked.connect(_sort_channels)
+        
+        lbl_row = QHBoxLayout()
+        lbl_row.setSpacing(4)
+        lbl_row.addWidget(list_lbl)
+        lbl_row.addWidget(sort_btn)
+        lbl_row.addStretch()
+        list_col.addLayout(lbl_row)
         list_col.addWidget(chk_show_all)
         list_col.addWidget(chk_hl_all)
         list_col.addWidget(search_box)

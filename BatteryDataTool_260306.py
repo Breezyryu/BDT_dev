@@ -48,15 +48,8 @@ if getattr(sys, 'frozen', False):
 try:
     import pybamm
     HAS_PYBAMM = True
-except Exception as _pybamm_err:
+except ImportError:
     HAS_PYBAMM = False
-    import traceback as _tb
-    _pybamm_detail = _tb.format_exc()
-    # 빌드 exe 디버그용: pybamm import 실패 원인 기록
-    if getattr(sys, 'frozen', False):
-        _log_path = os.path.join(os.path.dirname(sys.executable), 'pybamm_import_error.log')
-        with open(_log_path, 'w', encoding='utf-8') as _f:
-            _f.write(f"pybamm import failed:\n{_pybamm_err}\n\n{_pybamm_detail}\n")
 
 
 # pip 추가 항목: xlsxwriter
