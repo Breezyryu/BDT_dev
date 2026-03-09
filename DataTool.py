@@ -22,28 +22,12 @@ from datetime import timezone
 import glob
 import xlwings as xw
 
-# PyInstaller exe 실행 시 필요: Pybamm casadi DLL 경로 등록
-# 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
+# PyInstaller exe: casadi DLL 경로 등록
 if getattr(sys, 'frozen', False):
-    _base = sys._MEIPASS
-    _casadi_dir = os.path.join(_base, 'casadi')
+    _casadi_dir = os.path.join(sys._MEIPASS, 'casadi')
     if os.path.isdir(_casadi_dir):
         os.add_dll_directory(_casadi_dir)
-        os.add_dll_directory(_base)
-        os.environ['PATH'] = _casadi_dir + os.pathsep + _base + os.pathsep + os.environ.get('PATH', '')
-        # 핵심 MinGW 런타임 DLL 강제 선로드 (다른 PC에서 DLL 검색 실패 방지)
-        import ctypes
-        for _dll_name in [
-            'libwinpthread-1.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll',
-            'libgfortran-5.dll', 'libquadmath-0.dll', 'libgomp-1.dll',
-            'libcasadi.dll', 'libcasadi-tp-openblas.dll',
-        ]:
-            _dll_path = os.path.join(_casadi_dir, _dll_name)
-            if os.path.isfile(_dll_path):
-                try:
-                    ctypes.CDLL(_dll_path)
-                except OSError:
-                    pass
+        os.environ['PATH'] = _casadi_dir + os.pathsep + os.environ.get('PATH', '')
 
 try:
     import pybamm
@@ -339,14 +323,14 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
     artists.append(graph_cycle(df.NewData.index, df.NewData.Temp, ax3, 0, 50, 5,
                 "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
     artists.append(graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
-                "Cycle", "Rest End Voltage (V)", "", xscale, color))
+                "Cycle", "Rest End Voltage (V)", "_nolegend_", xscale, color))
     artists.append(graph_cycle(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
                       "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
     artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
                       "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
         artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "", xscale, color))
+                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "_nolegend_", xscale, color))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, color))
     else:
@@ -8719,7 +8703,7 @@ class Ui_sitool(object):
 
     def retranslateUi(self, sitool):
         _translate = QtCore.QCoreApplication.translate
-        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v260306"))
+        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v260224"))
         self.tb_room.setItemText(0, _translate("sitool", "R5 15F"))
         self.tb_room.setItemText(1, _translate("sitool", "R5 3F B-1"))
         self.tb_room.setItemText(2, _translate("sitool", "R5 3F B-2"))
@@ -9459,10 +9443,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                                       QListWidget, QListWidgetItem, QLabel,
-                                      QCheckBox, QPushButton, QFrame, QLineEdit,
-                                      QSlider, QSizeGrip, QMenu)
-        from PyQt6.QtCore import Qt, QObject, QEvent, QPoint, QSize
-        from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
+                                      QCheckBox, QPushButton, QFrame)
+        from PyQt6.QtCore import Qt, QObject, QEvent, QPoint
+        from PyQt6.QtGui import QColor
         from math import ceil
         
         parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
@@ -9531,74 +9514,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ch_list.setMinimumWidth(120)
         ch_list.setMaximumWidth(200)
         ch_list.setStyleSheet(_list_style)
-        # 드래그로 채널 순서 변경 (#8)
-        ch_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        ch_list.setDefaultDropAction(Qt.DropAction.MoveAction)
-        
-        # 색상 아이콘 생성 헬퍼
-        def _make_color_icon(hex_color, size=12):
-            pm = QPixmap(size, size)
-            pm.fill(QColor('transparent'))
-            p = QPainter(pm)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setBrush(QBrush(QColor(hex_color)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(0, 0, size, size)
-            p.end()
-            return QIcon(pm)
         
         # 모든 채널 개별 리스트 (넘버링 추가, 0-padded)
         _ch_total = len(channel_map)
         _nw = len(str(_ch_total))  # 자릿수
         for idx, label in enumerate(channel_map, 1):
             item = QListWidgetItem(f"{idx:0{_nw}d}. {label}")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
-            item.setIcon(_make_color_icon(channel_map[label]['color']))
             item.setForeground(QColor(channel_map[label]['color']))
             item.setToolTip(label)
-            item.setData(Qt.ItemDataRole.UserRole, label)  # 원본 키 보존
             ch_list.addItem(item)
-        
-        # 우클릭 컨텍스트 메뉴: 라인 스타일/두께 변경 (#11, #12)
-        _line_styles = [('-', '실선'), ('--', '파선'), ('-.', '점선'), (':', '점')]
-        _line_widths = [0.5, 1.0, 1.5, 2.0, 3.0]
-        ch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        def _on_ch_context_menu(pos):
-            item = ch_list.itemAt(pos)
-            if not item:
-                return
-            orig_key = item.data(Qt.ItemDataRole.UserRole)
-            if orig_key not in channel_map:
-                return
-            menu = QMenu(ch_list)
-            # 라인 스타일 서브메뉴
-            style_menu = menu.addMenu("라인 스타일")
-            for ls, ls_name in _line_styles:
-                act = style_menu.addAction(ls_name)
-                act.setData(('style', ls))
-            # 라인 두께 서브메뉴
-            width_menu = menu.addMenu("라인 두께")
-            for lw in _line_widths:
-                act = width_menu.addAction(f"{lw}")
-                act.setData(('width', lw))
-            action = menu.exec(ch_list.mapToGlobal(pos))
-            if action and action.data():
-                kind, val = action.data()
-                for art in channel_map[orig_key]['artists']:
-                    if kind == 'style':
-                        if hasattr(art, 'set_linestyle'):
-                            art.set_linestyle(val)
-                    elif kind == 'width':
-                        if hasattr(art, 'set_linewidth'):
-                            art.set_linewidth(val)
-                        elif hasattr(art, 'set_linewidths'):
-                            art.set_linewidths([val])
-                canvas.draw_idle()
-        ch_list.customContextMenuRequested.connect(_on_ch_context_menu)
-        
-        # 범례 별칭 매핑: {원본라벨: 사용자지정이름}
-        _legend_aliases = {}
         
         # 하이라이트 상태 추적 (다중 선택)
         highlight_state = {'active': set(), 'enabled': False}
@@ -9645,7 +9571,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-                canvas.draw_idle()
+                canvas.draw()
                 return
             for lbl, info in channel_map.items():
                 if lbl in selected:
@@ -9667,7 +9593,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-            canvas.draw_idle()
+            canvas.draw()
         
         def _highlight_channel(selected_label):
             """채널 토글: 전체 하이라이트 ON이면 해제 후 클릭 채널만 dim"""
@@ -9690,72 +9616,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         def on_item_clicked(item):
             """개별 채널 하이라이트 토글"""
-            orig_key = item.data(Qt.ItemDataRole.UserRole)
-            _highlight_channel(orig_key)
+            label = _strip_numbering(item.text())
+            _highlight_channel(label)
         
-        def _rebuild_legend():
-            """범례 재생성 + 슬라이더 폰트/드래그 상태 보존"""
-            _cur_fs = font_slider.value()
-            _cur_drag = _drag_legend_chk.isChecked()
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    _loc = legend._loc
-                    # 보이는 artist + 비어있지 않은 라벨만 수집 (중복 제거)
-                    handles, labels = [], []
-                    _seen = set()
-                    for h, l in zip(*ax.get_legend_handles_labels()):
-                        if h.get_visible() and l and not l.startswith('_') and l not in _seen:
-                            handles.append(h)
-                            labels.append(l)
-                            _seen.add(l)
-                    if handles:
-                        new_leg = ax.legend(handles, labels,
-                            fontsize=_cur_fs,
-                            framealpha=THEME['LEGEND_FRAMEALPHA'],
-                            edgecolor=THEME['LEGEND_EDGECOLOR'],
-                            fancybox=True, loc=_loc)
-                        new_leg.set_draggable(_cur_drag)
-                    else:
-                        legend.remove()
-
         def on_item_changed(item):
-            """개별 채널 표시/숨김 + 범례 이름 편집 처리"""
-            if _chk_guard['updating']:
-                return
-            orig_key = item.data(Qt.ItemDataRole.UserRole)
-            new_display = _strip_numbering(item.text())
-            
-            # 텍스트 편집 감지: 현재 표시명 ≠ 원본키 AND 별칭과도 다를 때
-            current_alias = _legend_aliases.get(orig_key, orig_key)
-            if new_display and new_display != current_alias:
-                # 범례 별칭 갱신
-                _legend_aliases[orig_key] = new_display
-                # matplotlib artist의 label 갱신
-                if orig_key in channel_map:
-                    for art in channel_map[orig_key]['artists']:
-                        art.set_label(new_display)
-                _rebuild_legend()
-                canvas.draw_idle()
-                return
-            
-            # 체크 상태 변경 → 표시/숨김
+            """개별 채널 표시/숨김"""
+            label = _strip_numbering(item.text())
             visible = item.checkState() == Qt.CheckState.Checked
-            if orig_key in channel_map:
-                for art in channel_map[orig_key]['artists']:
+            if label in channel_map:
+                for art in channel_map[label]['artists']:
                     art.set_visible(visible)
-            _update_ch_count()
-            _rebuild_legend()
-            canvas.draw_idle()
+            canvas.draw()
         
         ch_list.itemClicked.connect(on_item_clicked)
         ch_list.itemChanged.connect(on_item_changed)
-        
-        # --- 선택 채널 수 실시간 표시 (#6) ---
-        def _update_ch_count():
-            checked = sum(1 for i in range(ch_list.count())
-                         if ch_list.item(i).checkState() == Qt.CheckState.Checked)
-            list_lbl.setText(f"채널 그룹 ({checked}/{_ch_total})")
         
         # --- 전체 표시 / 전체 하이라이트 체크박스 ---
         _chk_guard = {'updating': False}
@@ -9772,19 +9646,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if _chk_guard['updating']: return
             _chk_guard['updating'] = True
             checked = state == Qt.CheckState.Checked.value
-            new_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-            ch_list.blockSignals(True)
             for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                it.setCheckState(new_state)
-                orig_key = it.data(Qt.ItemDataRole.UserRole)
-                if orig_key in channel_map:
-                    for art in channel_map[orig_key]['artists']:
-                        art.set_visible(checked)
-            ch_list.blockSignals(False)
-            _update_ch_count()
-            _rebuild_legend()
-            canvas.draw_idle()
+                ch_list.item(i).setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
             _chk_guard['updating'] = False
         
         def _on_hl_all(state):
@@ -9793,7 +9656,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if checked:
                 # 체크 ON: 모든 채널 원래 색상 복원
                 _restore_all()
-                canvas.draw_idle()
+                canvas.draw()
             else:
                 # 체크 OFF: 모든 채널 회색(dim), 클릭으로 개별 선택
                 highlight_state['active'] = set()
@@ -9809,7 +9672,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         art.set_edgecolors(DIM_COLOR)
                         art.set_alpha(DIM_ALPHA)
                         art.set_zorder(1)
-                canvas.draw_idle()
+                canvas.draw()
         
         chk_show_all.stateChanged.connect(_on_show_all)
         chk_hl_all.stateChanged.connect(_on_hl_all)
@@ -9828,243 +9691,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         legend_checkbox.stateChanged.connect(toggle_legend)
         
-        # --- 채널 검색 필터 ---
-        search_box = QLineEdit()
-        search_box.setPlaceholderText("🔍 채널 검색...")
-        search_box.setClearButtonEnabled(True)
-        search_box.setFixedHeight(22)
-        search_box.setStyleSheet(
-            f"QLineEdit {{ font-size: 11px; padding: 1px 4px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-        )
-        def _filter_channels(text):
-            keyword = text.strip().lower()
-            for i in range(ch_list.count()):
-                item = ch_list.item(i)
-                label = _strip_numbering(item.text()).lower()
-                item.setHidden(keyword != '' and keyword not in label)
-        search_box.textChanged.connect(_filter_channels)
-        
         # --- 전체 레이아웃: legend + 채널 그룹 ---
         list_col = QVBoxLayout()
         list_col.setSpacing(1)
         list_lbl = QLabel(f"채널 그룹 ({_ch_total})")
         list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
-        
-        # --- 채널 정렬 토글 ---
-        _sort_state = {'by_name': False}
-        sort_btn = QPushButton("가나다순")
-        sort_btn.setFixedSize(56, 18)
-        sort_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 10px; padding: 0 2px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        def _sort_channels():
-            _sort_state['by_name'] = not _sort_state['by_name']
-            sort_btn.setText("번호순" if _sort_state['by_name'] else "가나다순")
-            # 현재 아이템 정보 수집
-            items_data = []
-            for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                items_data.append({
-                    'text': it.text(),
-                    'label': _strip_numbering(it.text()),
-                    'checked': it.checkState(),
-                    'color': it.foreground().color(),
-                    'tooltip': it.toolTip(),
-                    'orig_key': it.data(Qt.ItemDataRole.UserRole),
-                })
-            # 정렬
-            if _sort_state['by_name']:
-                items_data.sort(key=lambda d: d['label'].lower())
-            else:
-                items_data.sort(key=lambda d: d['text'])  # 번호 순
-            # 재배치
-            ch_list.blockSignals(True)
-            ch_list.clear()
-            for d in items_data:
-                item = QListWidgetItem(d['text'])
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
-                item.setCheckState(d['checked'])
-                item.setIcon(_make_color_icon(d['color'].name()))
-                item.setForeground(d['color'])
-                item.setToolTip(d['tooltip'])
-                item.setData(Qt.ItemDataRole.UserRole, d['orig_key'])
-                ch_list.addItem(item)
-            ch_list.blockSignals(False)
-        sort_btn.clicked.connect(_sort_channels)
-        
-        lbl_row = QHBoxLayout()
-        lbl_row.setSpacing(4)
-        lbl_row.addWidget(list_lbl)
-        lbl_row.addWidget(sort_btn)
-        # --- 채널 리스트 접기/펼치기 (#7) ---
-        _ch_collapsed = {'state': False}
-        collapse_btn = QPushButton("▲")
-        collapse_btn.setFixedSize(22, 18)
-        collapse_btn.setToolTip("채널 리스트 접기/펼치기")
-        collapse_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 10px; padding: 0; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        def _toggle_ch_collapse():
-            _ch_collapsed['state'] = not _ch_collapsed['state']
-            collapsed = _ch_collapsed['state']
-            collapse_btn.setText("▼" if collapsed else "▲")
-            ch_list.setVisible(not collapsed)
-            search_box.setVisible(not collapsed)
-            chk_show_all.setVisible(not collapsed)
-            chk_hl_all.setVisible(not collapsed)
-        collapse_btn.clicked.connect(_toggle_ch_collapse)
-        lbl_row.addWidget(collapse_btn)
-        lbl_row.addStretch()
-        list_col.addLayout(lbl_row)
+        list_col.addWidget(list_lbl)
         list_col.addWidget(chk_show_all)
         list_col.addWidget(chk_hl_all)
-        list_col.addWidget(search_box)
         list_col.addWidget(ch_list)
         
-        # legend 체크박스 + 폰트 크기 슬라이더
+        # legend 체크박스
         ctrl_col = QVBoxLayout()
         ctrl_col.setSpacing(1)
         ctrl_col.addWidget(legend_checkbox)
-        
-        # --- 범례 폰트 크기 슬라이더 (#10) ---
-        _mpl_font_map = {'xx-small': 6, 'x-small': 7, 'small': 8, 'medium': 10,
-                         'large': 12, 'x-large': 14, 'xx-large': 16}
-        _raw = THEME['LEGEND_SIZE']
-        _legend_font_size = _mpl_font_map[_raw] if _raw in _mpl_font_map else int(_raw)
-        _font_lbl = QLabel(f"범례 {_legend_font_size}pt")
-        _font_lbl.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
-        font_slider = QSlider(Qt.Orientation.Horizontal)
-        font_slider.setRange(6, 18)
-        font_slider.setValue(_legend_font_size)
-        font_slider.setFixedWidth(80)
-        font_slider.setStyleSheet("QSlider { max-height: 16px; }")
-        def _on_font_size(val):
-            _font_lbl.setText(f"범례 {val}pt")
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    for txt in legend.get_texts():
-                        txt.set_fontsize(val)
-            canvas.draw_idle()
-        font_slider.valueChanged.connect(_on_font_size)
-        ctrl_col.addWidget(_font_lbl)
-        ctrl_col.addWidget(font_slider)
-        
-        # --- 범례 드래그 이동 (#9) ---
-        _drag_legend_chk = QCheckBox("범례 이동")
-        _drag_legend_chk.setChecked(False)
-        _drag_legend_chk.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
-        _drag_legend_chk.setToolTip("체크 시 마우스로 범례 위치 드래그 가능")
-        def _toggle_legend_drag(state):
-            draggable = state == Qt.CheckState.Checked.value
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    legend.set_draggable(draggable)
-        _drag_legend_chk.stateChanged.connect(_toggle_legend_drag)
-        ctrl_col.addWidget(_drag_legend_chk)
-        
-        # --- 설정 저장/불러오기 (#15) ---
-        import json as _json
-        from pathlib import Path as _Path
-        _settings_dir = _Path(__file__).resolve().parent / '.ch_settings'
-        
-        def _save_settings():
-            _settings_dir.mkdir(exist_ok=True)
-            data = {
-                'aliases': _legend_aliases,
-                'font_size': font_slider.value(),
-                'legend_drag': _drag_legend_chk.isChecked(),
-                'checked': {},
-            }
-            for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                key = it.data(Qt.ItemDataRole.UserRole)
-                data['checked'][key] = it.checkState() == Qt.CheckState.Checked
-            fp = _settings_dir / 'last.json'
-            fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        
-        def _load_settings():
-            fp = _settings_dir / 'last.json'
-            if not fp.exists():
-                return
-            data = _json.loads(fp.read_text(encoding='utf-8'))
-            # 폰트 크기
-            if 'font_size' in data:
-                font_slider.setValue(data['font_size'])
-            # 범례 드래그
-            if 'legend_drag' in data:
-                _drag_legend_chk.setChecked(data['legend_drag'])
-            # 별칭 복원
-            if 'aliases' in data:
-                _legend_aliases.update(data['aliases'])
-                for orig_key, alias in data['aliases'].items():
-                    if orig_key in channel_map:
-                        for art in channel_map[orig_key]['artists']:
-                            art.set_label(alias)
-                # 리스트 텍스트 업데이트
-                ch_list.blockSignals(True)
-                for i in range(ch_list.count()):
-                    it = ch_list.item(i)
-                    key = it.data(Qt.ItemDataRole.UserRole)
-                    if key in data['aliases']:
-                        # 넘버링 유지하면서 이름 부분만 교체
-                        m = _re.match(r'^(\d+\.\s*)', it.text())
-                        prefix = m.group(1) if m else ''
-                        it.setText(prefix + data['aliases'][key])
-                ch_list.blockSignals(False)
-            # 체크 상태 복원
-            if 'checked' in data:
-                ch_list.blockSignals(True)
-                for i in range(ch_list.count()):
-                    it = ch_list.item(i)
-                    key = it.data(Qt.ItemDataRole.UserRole)
-                    if key in data['checked']:
-                        it.setCheckState(
-                            Qt.CheckState.Checked if data['checked'][key]
-                            else Qt.CheckState.Unchecked)
-                        if key in channel_map:
-                            for art in channel_map[key]['artists']:
-                                art.set_visible(data['checked'][key])
-                ch_list.blockSignals(False)
-                _update_ch_count()
-            canvas.draw_idle()
-        
-        _save_btn = QPushButton("💾 저장")
-        _save_btn.setFixedHeight(20)
-        _save_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 10px; padding: 0 4px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        _load_btn = QPushButton("📂 불러오기")
-        _load_btn.setFixedHeight(20)
-        _load_btn.setStyleSheet(_save_btn.styleSheet())
-        _save_btn.clicked.connect(_save_settings)
-        _load_btn.clicked.connect(_load_settings)
-        ctrl_col.addWidget(_save_btn)
-        ctrl_col.addWidget(_load_btn)
         ctrl_col.addStretch()
         
         overlay_layout.addLayout(ctrl_col)
         overlay_layout.addLayout(list_col)
-        
-        # --- 오버레이 패널 크기 조절 그립 (#13) ---
-        _grip = QSizeGrip(overlay)
-        _grip.setFixedSize(12, 12)
-        _grip.setStyleSheet(
-            f"QSizeGrip {{ background: transparent; "
-            f"border: none; }}"
-        )
         
         # --- 2) 서브 채널 리스트 (sub_channel_map 있을 때만) ---
         if sub_channel_map and len(sub_channel_map) > 1:
@@ -10101,36 +9745,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.itemChanged.disconnect(on_item_changed)
             
             def on_item_changed_linked(item):
-                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경 + 범례 편집"""
-                if _chk_guard['updating']:
-                    return
-                orig_key = item.data(Qt.ItemDataRole.UserRole)
-                new_display = _strip_numbering(item.text())
-                
-                # 텍스트 편집 감지
-                current_alias = _legend_aliases.get(orig_key, orig_key)
-                if new_display and new_display != current_alias:
-                    _legend_aliases[orig_key] = new_display
-                    if orig_key in channel_map:
-                        for art in channel_map[orig_key]['artists']:
-                            art.set_label(new_display)
-                    _rebuild_legend()
-                    canvas.draw_idle()
-                    return
-                
+                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경"""
+                label = _strip_numbering(item.text())
                 visible = item.checkState() == Qt.CheckState.Checked
-                if orig_key in channel_map:
-                    for art in channel_map[orig_key]['artists']:
+                if label in channel_map:
+                    for art in channel_map[label]['artists']:
                         art.set_visible(visible)
                 # 하위 서브 채널 항목 체크 상태도 동기화
                 if not _sub_chk_guard['updating']:
                     _sub_chk_guard['updating'] = True
-                    for sub_item, sub_label in _get_sub_items_for_group(orig_key):
+                    for sub_item, sub_label in _get_sub_items_for_group(label):
                         sub_item.setCheckState(
                             Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                     _sub_chk_guard['updating'] = False
-                _rebuild_legend()
-                canvas.draw_idle()
+                canvas.draw()
             
             ch_list.itemChanged.connect(on_item_changed_linked)
             
@@ -10139,8 +9767,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             def on_item_clicked_linked(item):
                 """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경"""
-                orig_key = item.data(Qt.ItemDataRole.UserRole)
-                _highlight_channel(orig_key)
+                label = _strip_numbering(item.text())
+                _highlight_channel(label)
             
             ch_list.itemClicked.connect(on_item_clicked_linked)
             
@@ -10187,7 +9815,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             art.set_facecolors(orig['fc'].copy())
                             art.set_edgecolors(orig['ec'].copy())
                         art.set_zorder(10)
-                canvas.draw_idle()
+                canvas.draw()
             
             def on_sub_item_changed(item):
                 """서브 채널 개별 표시/숨김"""
@@ -10198,7 +9826,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if label in sub_channel_map:
                     for art in sub_channel_map[label]['artists']:
                         art.set_visible(visible)
-                canvas.draw_idle()
+                canvas.draw()
             
             sub_list.itemClicked.connect(on_sub_item_clicked)
             sub_list.itemChanged.connect(on_sub_item_changed)
@@ -10214,32 +9842,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             overlay_layout.addLayout(sub_list_col)
         
         # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
-        _overlay_user_size = {'w': None, 'h': None}  # 사용자 리사이즈 크기 기억
-        
         def _reposition_overlay():
             """우측 상단에서 아래로 펼쳐지는 오버레이"""
             if overlay.isVisible():
                 overlay.adjustSize()
-                if _overlay_user_size['w']:
-                    ow = _overlay_user_size['w']
-                    oh = _overlay_user_size['h']
-                else:
-                    ow = min(overlay.sizeHint().width() + 8, parent_tab.width() - 8)
-                    oh = overlay.sizeHint().height()
+                ow = min(overlay.sizeHint().width() + 8, parent_tab.width() - 8)
+                oh = overlay.sizeHint().height()
                 btn_top = toggle_btn.mapTo(parent_tab, QPoint(0, 0))
                 max_h = btn_top.y() - 4  # 토글 버튼 위까지 최대 높이
                 if oh > max_h and max_h > 60:
                     oh = max_h
-                overlay.setMinimumSize(200, 100)
-                overlay.setMaximumSize(parent_tab.width() - 8, max_h if max_h > 60 else 600)
-                overlay.resize(ow, oh)
+                overlay.setFixedSize(ow, oh)
                 overlay_y = btn_top.y() - oh - 2
                 if overlay_y < 0:
                     overlay_y = 0
                 overlay_x = parent_tab.width() - ow - 4
                 overlay.move(overlay_x, overlay_y)
-                # 리사이즈 그립 우하단 배치
-                _grip.move(overlay.width() - _grip.width(), overlay.height() - _grip.height())
                 overlay.raise_()
         
         def _toggle_panel():
@@ -10255,19 +9873,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # ── 리사이즈 추적 + 오버레이 외부 클릭 시 접기 ──
         class _OverlayEventFilter(QObject):
             def eventFilter(self, obj, event):
-                if obj is parent_tab and event.type() == QEvent.Type.Resize:
-                    _overlay_user_size['w'] = None  # 탭 리사이즈 시 자동 크기로 복원
-                    _overlay_user_size['h'] = None
+                if event.type() == QEvent.Type.Resize:
                     _reposition_overlay()
-                elif obj is overlay and event.type() == QEvent.Type.Resize:
-                    # 사용자가 그립으로 크기 변경 시 기억
-                    sz = overlay.size()
-                    if sz.width() > 100 and sz.height() > 60:
-                        _overlay_user_size['w'] = sz.width()
-                        _overlay_user_size['h'] = sz.height()
-                        _grip.move(sz.width() - _grip.width(), sz.height() - _grip.height())
                 elif event.type() == QEvent.Type.MouseButtonPress:
                     if overlay.isVisible():
+                        # 클릭 위치가 오버레이/토글버튼 영역 밖이면 접기
                         click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
                         overlay_rect = overlay.geometry()
                         btn_rect = toggle_btn.geometry()
@@ -10277,7 +9887,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         _rf = _OverlayEventFilter(parent_tab)
         parent_tab.installEventFilter(_rf)
-        overlay.installEventFilter(_rf)
         # GC 방지: 토글 버튼에 참조 보관
         toggle_btn._overlay_ref = overlay
         toggle_btn._resize_filter_ref = _rf
@@ -10656,10 +10265,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if self.chk_cyclepath.isChecked():
             datafilepath = filedialog.askopenfilename(initialdir="d://", title="Choose Test files")
             if datafilepath:
-                cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
-                if hasattr(cycle_path,"cyclepath"):
+                # 가변 컬럼 수 지원: cyclepath=마지막 탭 필드, cyclename=나머지 합침
+                rows = []
+                with open(datafilepath, 'r', encoding='UTF-8') as f:
+                    header_line = f.readline()  # 헤더 스킵
+                    for line in f:
+                        parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
+                        if len(parts) >= 2:
+                            rows.append({'cyclename': ' '.join(parts[:-1]), 'cyclepath': parts[-1]})
+                if rows:
+                    cycle_path = pd.DataFrame(rows)
+                else:
+                    cycle_path = pd.DataFrame()
+                if hasattr(cycle_path, "cyclepath") and len(cycle_path) > 0:
                     all_data_folder = np.array([p.strip().strip('"').strip("'") for p in cycle_path.cyclepath.tolist()])
-                    if hasattr(cycle_path,"cyclename"):
+                    if hasattr(cycle_path, "cyclename"):
                         all_data_name = np.array([n.strip().strip('"').strip("'") for n in cycle_path.cyclename.tolist()])
                     if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
                         self.mincapacity = name_capacity(datafilepath)
@@ -11040,11 +10660,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         temp_lgnd = cycnamelist[-2].split('_')[-1]
                         j = j + 1
                     else:
-                        temp_lgnd = ""
+                        temp_lgnd = "_nolegend_"
                     
-                    # 레전드 글자수 제한 (최대 20자)
-                    if len(temp_lgnd) > 20:
-                        temp_lgnd = temp_lgnd[:20] + "..."
+                    # 레전드 글자수 제한 (최대 40자)
+                    if len(temp_lgnd) > 40:
+                        temp_lgnd = temp_lgnd[:40] + "..."
                     
                     if hasattr(cyctemp[1], "NewData"):
                         self.capacitytext.setText(str(cyctemp[0]))
@@ -11062,8 +10682,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ch_label = all_data_name[i]
                         else:
                             ch_label = cycnamelist[-2].split('_')[-1]
-                        if len(ch_label) > 20:
-                            ch_label = ch_label[:20] + "..."
+                        if len(ch_label) > 40:
+                            ch_label = ch_label[:40] + "..."
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                         _base = ch_label
                         _sfx = 2
@@ -11111,18 +10731,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             writecolno = writecolno + 1
                 colorno = colorno % len(THEME['PALETTE']) + 1
         
-        # 범례 설정
+        # 범례 설정 (handles/labels 명시적 전달)
         _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
                     edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
-        if len(all_data_name) != 0:
-            ax1.legend(loc="lower left", bbox_to_anchor=(0, 0), borderaxespad=0.5, **_lkw)
-            ax2.legend(loc="lower right", bbox_to_anchor=(1, 0), borderaxespad=0.5, **_lkw)
-            ax3.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
-            ax4.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
-            ax5.legend(loc="upper right", bbox_to_anchor=(1, 1), borderaxespad=0.5, **_lkw)
-            ax6.legend(loc="lower right", bbox_to_anchor=(1, 0), borderaxespad=0.5, **_lkw)
-        else:
-            ax6.legend(loc="lower right", **_lkw)
+        _legend_locs = [
+            (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
+            (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
+            (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
+        ]
+        for _ax, _loc, _anchor in _legend_locs:
+            _handles, _labels = _ax.get_legend_handles_labels()
+            _hl = [(h, l) for h, l in zip(_handles, _labels)
+                   if l and not l.startswith('_')]
+            # 중복 제거 (첫 번째만 유지)
+            _seen = set()
+            _hl_unique = []
+            for h, l in _hl:
+                if l not in _seen:
+                    _seen.add(l)
+                    _hl_unique.append((h, l))
+            if _hl_unique:
+                _ax.legend([h for h, l in _hl_unique], [l for h, l in _hl_unique],
+                           loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
         
         # 파일 저장
         if overall_filename:
@@ -11621,9 +11251,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             temp_lgnd = ""
                         
-                        # 레전드 글자수 제한 (최대 20자)
-                        if len(temp_lgnd) > 20:
-                            temp_lgnd = temp_lgnd[:20] + "..."
+                        # 레전드 글자수 제한 (최대 40자)
+                        if len(temp_lgnd) > 40:
+                            temp_lgnd = temp_lgnd[:40] + "..."
                         
                         if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                             writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
@@ -11641,8 +11271,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 ch_label = all_data_name[i]
                             else:
                                 ch_label = cycnamelist[-2].split('_')[-1]
-                            if len(ch_label) > 20:
-                                ch_label = ch_label[:20] + "..."
+                            if len(ch_label) > 40:
+                                ch_label = ch_label[:40] + "..."
                             _base = ch_label
                             _sfx = 2
                             while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
@@ -17588,9 +17218,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inner_tab.setFont(self.pybamm_plot_tab.font())
 
         # ================================================================
-        # ██  탭 1: 일반 Plot (General Performance)  ─  2×3  ██
-        # ================================================================
-        fig_g, axes_g = plt.subplots(2, 3, figsize=(18, 10))
+        # 일반 Plot (General Performance)  ─  2×3 
+          fig_g, axes_g = plt.subplots(2, 3, figsize=(18, 10))
         fig_g.set_facecolor(THEME['FIG_FACECOLOR'])
         for _ax_row in axes_g:
             for _ax in _ax_row:
@@ -17692,8 +17321,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inner_tab.addTab(tab_g, "📊 일반 Plot")
 
         # ================================================================
-        # ██  탭 2: 상세 Plot (Detailed Diagnostics)  ─  2×3  ██
-        # ================================================================
+        # 탭 2: 상세 Plot (Detailed Diagnostics)  ─  2×3
+
         fig_d, axes_d = plt.subplots(2, 3, figsize=(18, 10))
         fig_d.set_facecolor(THEME['FIG_FACECOLOR'])
         for _ax_row in axes_d:

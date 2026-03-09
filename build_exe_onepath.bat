@@ -1,12 +1,12 @@
 @echo off
 setlocal
-echo Building BatteryDataTool (onedir)...
+echo Building DataTool (onedir)...
 
 cd /d "%~dp0"
 
 set "VENV_EXE=%~dp0.venv\Scripts\pyinstaller.exe"
-set "SCRIPT_PATH=%~dp0BatteryDataTool_260306.py"
-set "ICON_PATH=%~dp0BatteryDataTool.ico"
+set "SCRIPT_PATH=%~dp0DataTool_260306.py"
+set "ICON_PATH=%~dp0DataTool.ico"
 set "RUNTIME_HOOK=%~dp0hook-runtime-casadi.py"
 "%VENV_EXE%" ^
     --onedir ^
