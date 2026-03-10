@@ -10529,11 +10529,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                        dcirchk, dcirchk_2, mkdcir, max_workers=4):
         """
         모든 폴더의 사이클 데이터를 병렬로 로딩
+        Returns: (results, subfolder_map)
+          - results: {(folder_idx, subfolder_idx): (folder_path, cyctemp)}
+          - subfolder_map: {folder_idx: [subfolder_path, ...]}
         """
         tasks = []
+        subfolder_map = {}  # 폴더별 subfolder 캐시 (os.scandir 1회만)
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.exists(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                subfolder_map[i] = subfolder
                 is_pne = check_cycler(cyclefolder)
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
@@ -10556,7 +10561,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 진행률 업데이트 (50%까지만 - 나머지 50%는 그래프 생성)
                 self.progressBar.setValue(int(completed / total_tasks * 50))
         
-        return results
+        return results, subfolder_map
     
     def cyc_ini_set(self):
         set_coincell_mode(self.chk_coincell_cyc.isChecked())
@@ -10773,7 +10778,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
-        loaded_data = self._load_all_cycle_data_parallel(
+        loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
             all_data_folder, mincapacity, firstCrate,
             self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
             max_workers=4
@@ -10795,8 +10800,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             channel_map = {}  # 채널 제어용 artist 수집
             sub_channel_map = {}  # 서브 채널별 artist 수집
             
-            if os.path.exists(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+            if i in subfolder_map:
+                subfolder = subfolder_map[i]
                 
                 for sub_idx, FolderBase in enumerate(subfolder):
                     # 병렬 로딩된 데이터 검색
@@ -10909,7 +10914,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         if self.saveok.isChecked() and save_file_name:
             writer.close()
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
@@ -10941,7 +10945,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
-        loaded_data = self._load_all_cycle_data_parallel(
+        loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
             all_data_folder, mincapacity, firstCrate,
             self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
             max_workers=4
@@ -10963,8 +10967,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+            if i in subfolder_map:
+                subfolder = subfolder_map[i]
                 
                 for sub_idx, FolderBase in enumerate(subfolder):
                     # 병렬 로딩된 데이터 검색
@@ -11113,7 +11117,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         if self.saveok.isChecked() and save_file_name:
             writer.close()
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
@@ -11143,7 +11146,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 데이터 로딩 (병렬 처리)
         self.progressBar.setValue(0)
-        loaded_data = self._load_all_cycle_data_parallel(
+        loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
             all_data_folder, mincapacity, firstCrate,
             self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
             max_workers=4
@@ -11166,8 +11169,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.exists(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+            if i in subfolder_map:
+                subfolder = subfolder_map[i]
                 colorno, writecolno, Chnl_num = 0, 0, 0
                 
                 for sub_idx, FolderBase in enumerate(subfolder):
@@ -11291,7 +11294,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         if self.saveok.isChecked() and save_file_name:
             writer.close()
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
@@ -11339,7 +11341,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.capacitytext.setText(str(self.mincapacity))
             
             # 병렬 데이터 로딩 (현재 파일의 모든 폴더)
-            loaded_data = self._load_all_cycle_data_parallel(
+            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
                 all_data_folder, mincapacity, firstCrate,
                 self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
                 max_workers=4
@@ -11357,8 +11359,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             total_folders = len(all_data_folder)
             
             for i, cyclefolder in enumerate(all_data_folder):
-                if os.path.exists(cyclefolder):
-                    subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                if i in subfolder_map:
+                    subfolder = subfolder_map[i]
                     folder_cnt = folder_cnt + 1
                     colorno, writecolno, Chnl_num = 0, 0, 0
                     
@@ -11483,7 +11485,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         if self.saveok.isChecked() and save_file_name:
             writer.close()
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
@@ -11543,7 +11544,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.capacitytext.setText(str(self.mincapacity))
             
             # 병렬 데이터 로딩 (현재 파일의 모든 폴더)
-            loaded_data = self._load_all_cycle_data_parallel(
+            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
                 all_data_folder, mincapacity, firstCrate,
                 self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
                 max_workers=4
@@ -11552,8 +11553,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             total_folders = len(all_data_folder)
             
             for i, cyclefolder in enumerate(all_data_folder):
-                if os.path.exists(cyclefolder):
-                    subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                if i in subfolder_map:
+                    subfolder = subfolder_map[i]
                     folder_cnt = folder_cnt + 1
                     colorno, writecolno, Chnl_num = maxcolor, 0, 0
                     
@@ -11688,7 +11689,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         if self.saveok.isChecked() and save_file_name:
             writer.close()
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
