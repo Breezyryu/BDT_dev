@@ -349,16 +349,21 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
                         "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
-        # 마지막 데이터 포인트 옆에 텍스트 표시
-        last_idx = df.NewData.index[-1]
-        last_dcir = df.NewData.soc70_dcir.iloc[-1]
-        last_rss = df.NewData.soc70_rss_dcir.iloc[-1]
-        ax4.annotate("DCIR1s@SOC70%", xy=(last_idx, last_dcir),
-                     xytext=(5, 5), textcoords="offset points",
-                     fontsize=7, color=color, fontweight='bold')
-        ax4.annotate("Rss@SOC70%", xy=(last_idx, last_rss),
-                     xytext=(5, -10), textcoords="offset points",
-                     fontsize=7, color=color, fontweight='bold')
+        # 마지막 유효 데이터 포인트 옆에 텍스트 표시
+        valid_dcir = df.NewData.soc70_dcir.dropna()
+        valid_rss = df.NewData.soc70_rss_dcir.dropna()
+        if len(valid_dcir) > 0:
+            ax4.annotate("DCIR1s@SOC70%",
+                         xy=(valid_dcir.index[-1], valid_dcir.iloc[-1]),
+                         xytext=(5, 5), textcoords="offset points",
+                         fontsize=7, color=color, fontweight='bold',
+                         clip_on=False, annotation_clip=False)
+        if len(valid_rss) > 0:
+            ax4.annotate("Rss@SOC70%",
+                         xy=(valid_rss.index[-1], valid_rss.iloc[-1]),
+                         xytext=(5, -10), textcoords="offset points",
+                         fontsize=7, color=color, fontweight='bold',
+                         clip_on=False, annotation_clip=False)
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
