@@ -2997,6 +2997,17 @@ class Ui_sitool(object):
         self.FindText.setInputMask("")
         self.FindText.setObjectName("FindText")
         self.horizontalLayout_10.addWidget(self.FindText)
+        self.tb_modified_time = QtWidgets.QLabel(parent=self.tab)
+        self.tb_modified_time.setMinimumSize(QtCore.QSize(250, 40))
+        self.tb_modified_time.setMaximumSize(QtCore.QSize(250, 40))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        self.tb_modified_time.setFont(font)
+        self.tb_modified_time.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self.tb_modified_time.setObjectName("tb_modified_time")
+        self.tb_modified_time.setText("")
+        self.horizontalLayout_10.addWidget(self.tb_modified_time)
         self.horizontalLayout_11.addLayout(self.horizontalLayout_10)
         self.verticalLayout_5.addLayout(self.horizontalLayout_11)
         self.horizontalLayout_8 = QtWidgets.QHBoxLayout()
@@ -13202,6 +13213,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def toyo_table_make(self, num_i, num_j, toyo_num, blkname):
         toyo_data = self.toyo_base_data_make(toyo_num, blkname)
         self.df = toyo_data[0]
+        # 데이터 파일 최종 수정 시간 표시
+        toyoworkpath = "z:\\Working\\" + self.toyo_blk_list[toyo_num] + "\\Chpatrn.cfg"
+        if os.path.isfile(toyoworkpath):
+            mtime = os.path.getmtime(toyoworkpath)
+            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            self.tb_modified_time.setText(f"최종 수정: {mtime_str}")
+        else:
+            self.tb_modified_time.setText("")
         self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - toyo_data[1])))
         self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(toyo_data[1])))
         for i in range(1, num_i + 1):
@@ -13291,6 +13310,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if os.path.isdir(self.pne_work_path_list[pne_num]):
             pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
             pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
+            # 데이터 파일 최종 수정 시간 표시
+            mtime_path = pneworkpath2 if os.path.isfile(pneworkpath2) else pneworkpath
+            if os.path.isfile(mtime_path):
+                mtime = os.path.getmtime(mtime_path)
+                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                self.tb_modified_time.setText(f"최종 수정: {mtime_str}")
             if os.path.isfile(pneworkpath2):
                 with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
                     js1 = json.loads(f1.read())
@@ -13375,6 +13400,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def table_reset(self):
         self.tb_channel.clear()
+        self.tb_modified_time.setText("")
 
     def change_drive(self, df, changed):
         # 상세 데이터부터 범용 데이터 순으로 바꾸기 진행
