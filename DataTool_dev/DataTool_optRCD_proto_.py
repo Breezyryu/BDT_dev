@@ -9476,53 +9476,80 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None):
         """
-        Cycle 그래프 채널 제어 위젯 생성 (오버레이 토글)
+        Cycle 그래프 채널 제어 위젯 생성 (Lazy Init: 첫 클릭 시 초기화)
         """
-        from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                                      QListWidget, QListWidgetItem, QLabel,
-                                      QCheckBox, QPushButton, QDialog, QLineEdit,
-                                      QSlider, QMenu)
+        from PyQt6.QtWidgets import QPushButton
         from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
         
-        parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
+        # ── 다크/라이트 테마 자동 감지 (버튼 스타일용, 가벼움) ──
+        from PyQt6.QtWidgets import QApplication
+        _palette = QApplication.instance().palette()
+        _bg = _palette.color(_palette.ColorRole.Window)
+        _is_dark = _bg.lightness() < 128
+        _btn_bg = "#3c3c3c" if _is_dark else "#f5f5f5"
+        _btn_hover = "#505050" if _is_dark else "#e0e0e0"
+        _btn_border = "#666" if _is_dark else "#ccc"
         
         # ── 토글 버튼 (컴팩트, toolbar 옆에 배치) ──
         toggle_btn = QPushButton("▶ CH")
         toggle_btn.setFixedSize(50, 22)
         toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.setStyleSheet(
-            "QPushButton { font-size: 10px; font-weight: bold; text-align: left; "
-            "padding-left: 8px; border: 1px solid #ccc; background: #f5f5f5; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
-        
-        # ── 다크/라이트 테마 자동 감지 ──
-        from PyQt6.QtWidgets import QApplication
-        _palette = QApplication.instance().palette()
-        _bg = _palette.color(_palette.ColorRole.Window)
-        _is_dark = _bg.lightness() < 128
-        if _is_dark:
-            _overlay_bg = "rgba(45, 45, 48, 0.95)"
-            _overlay_border = "#555"
-            _btn_bg = "#3c3c3c"
-            _btn_hover = "#505050"
-            _btn_border = "#666"
-            _list_style = "QListWidget { font-size: 12px; color: #ddd; background: #2d2d30; }"
-        else:
-            _overlay_bg = "rgba(255, 255, 255, 0.95)"
-            _overlay_border = "#999"
-            _btn_bg = "#f5f5f5"
-            _btn_hover = "#e0e0e0"
-            _btn_border = "#ccc"
-            _list_style = "QListWidget { font-size: 12px; }"
-        
-        toggle_btn.setStyleSheet(
             f"QPushButton {{ font-size: 10px; font-weight: bold; "
             f"border: 1px solid {_btn_border}; border-radius: 3px; "
             f"background: {_btn_bg}; padding: 2px 4px; }}"
             f"QPushButton:hover {{ background: {_btn_hover}; }}"
         )
+        
+        # ── Lazy Init 상태 ──
+        _lazy = {'dialog': None}
+        
+        def _ensure_dialog():
+            """첫 호출 시에만 QDialog + 채널 리스트 + 스냅샷 등 초기화"""
+            if _lazy['dialog'] is not None:
+                return _lazy['dialog']
+            _lazy['dialog'] = self._build_channel_dialog(
+                channel_map, canvas, fig, axes_list,
+                toggle_btn, _is_dark, sub_channel_map)
+            return _lazy['dialog']
+        
+        def _toggle_panel():
+            dlg = _ensure_dialog()
+            if dlg.isVisible():
+                dlg.hide()
+                toggle_btn.setText("▶ CH")
+            else:
+                dlg.show()
+                toggle_btn.setText("▼ CH")
+        
+        toggle_btn.clicked.connect(_toggle_panel)
+        # GC 방지
+        toggle_btn._lazy_state = _lazy
+        
+        return toggle_btn
+    
+    def _build_channel_dialog(self, channel_map, canvas, fig, axes_list,
+                              toggle_btn, _is_dark, sub_channel_map=None):
+        """
+        CH 채널 제어 QDialog 실제 생성 (Lazy Init에서 호출)
+        """
+        from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout,
+                                      QListWidget, QListWidgetItem, QLabel,
+                                      QCheckBox, QPushButton, QDialog, QLineEdit,
+                                      QSlider, QMenu)
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
+        
+        if _is_dark:
+            _btn_bg = "#3c3c3c"
+            _btn_hover = "#505050"
+            _btn_border = "#666"
+            _list_style = "QListWidget { font-size: 12px; color: #ddd; background: #2d2d30; }"
+        else:
+            _btn_bg = "#f5f5f5"
+            _btn_hover = "#e0e0e0"
+            _btn_border = "#ccc"
+            _list_style = "QListWidget { font-size: 12px; }"
         
         # ── 팝업 다이얼로그 (독립 창으로 실시간 제어) ──
         overlay = QDialog(self)
@@ -9534,6 +9561,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         overlay_layout.setContentsMargins(6, 4, 6, 4)
         overlay_layout.setSpacing(4)
         overlay.resize(400, 350)
+        
+        # 다이얼로그 X 버튼으로 닫을 때 토글 버튼 텍스트 동기화
+        def _on_dialog_close(event):
+            toggle_btn.setText("▶ CH")
+            event.accept()
+        overlay.closeEvent = _on_dialog_close
         
         # --- 1) 채널 리스트: 모든 채널 개별 표시 ---
         import re as _re
@@ -10204,25 +10237,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             overlay_layout.addLayout(sub_list_col)
         
-        def _toggle_panel():
-            if overlay.isVisible():
-                overlay.hide()
-                toggle_btn.setText("▶ CH")
-            else:
-                overlay.show()
-                toggle_btn.setText("▼ CH")
-        
-        # 다이얼로그 X 버튼으로 닫을 때 토글 버튼 텍스트 동기화
-        def _on_dialog_close(event):
-            toggle_btn.setText("▶ CH")
-            event.accept()
-        overlay.closeEvent = _on_dialog_close
-        
-        toggle_btn.clicked.connect(_toggle_panel)
-        # GC 방지: 토글 버튼에 참조 보관
-        toggle_btn._overlay_ref = overlay
-        
-        return toggle_btn
+        return overlay
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list, sub_channel_map=None):

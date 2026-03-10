@@ -108,3 +108,11 @@
   - 오버레이 위치 계산(`_reposition_overlay`), 이벤트 필터(`_OverlayEventFilter`), QSizeGrip 제거
   - 닫기 버튼(`close_btn`) 제거 (QDialog 자체 타이틀바 X 버튼 사용)
   - 다이얼로그 X 버튼 클릭 시 토글 버튼 텍스트 동기화(`closeEvent`)
+
+### CH 제어 Lazy Init (지연 초기화)
+
+- **`_create_cycle_channel_control()`**: 탭 생성 시 토글 버튼만 생성, QDialog는 **첫 CH 클릭 시 초기화**
+  - 기존: 탭 생성마다 QDialog + 채널 리스트 + `_orig_colors` 스냅샷 즉시 생성 → 불필요한 오버헤드
+  - 변경: `_lazy = {'dialog': None}` → `_ensure_dialog()`로 첫 클릭 시에만 `_build_channel_dialog()` 호출
+- **`_build_channel_dialog()`**: 신규 메서드로 분리 — QDialog 생성/채널 리스트/하이라이트/설정 등 전체 로직 포함
+  - CH 안 쓰는 탭에서 비용 0, 여러 탭 빠르게 생성할 때 체감 속도 향상
