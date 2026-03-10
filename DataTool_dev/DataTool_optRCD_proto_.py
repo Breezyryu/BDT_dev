@@ -10846,7 +10846,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         )
 
         tab_no = 0
-        j = 0
         total_folders = len(all_data_folder)
             
         for i, cyclefolder in enumerate(all_data_folder):
@@ -10894,14 +10893,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cycnamelist = FolderBase.split("\\")
                     headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                     
-                    # legend 설정
-                    if len(all_data_name) != 0 and j == i:
-                        lgnd = all_data_name[i]
-                        j = j + 1
-                    elif len(all_data_name) != 0 and j != i:
-                        lgnd = ""
-                    else:
-                        lgnd = extract_text_in_brackets(cycnamelist[-1])
+                    # legend 설정 - 입력 방식에 관계없이 채널명 통일
+                    lgnd = extract_text_in_brackets(cycnamelist[-1])
                     
                     if hasattr(cyctemp[1], "NewData"):
                         self.capacitytext.setText(str(cyctemp[0]))

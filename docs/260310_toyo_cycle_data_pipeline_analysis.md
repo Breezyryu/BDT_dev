@@ -249,7 +249,7 @@ df.NewData = pd.DataFrame({
 | **충방전 구분** | `Condition` (1=충전, 2=방전) | `Condition` (1=충전, 2=방전, 3=휴지, 8=루프) |
 | **단위** | mAh, V, mWh (원 단위 그대로) | μV, μA, μAh (÷1,000,000 변환 필요) |
 | **집계 방식** | `groupby` 병합 + 필터링 | `pivot_table` (TotlCycle × Condition) |
-| **RndV 출처** | 충전 행의 `Ocv` (첫 번째 값) | `pivot_data["Ocv"][3]` (Rest Condition의 min OCV) |
+| **RndV 출처** | 충전 행의 `Ocv` (충전 시작 전 OCV = 방전 후 rest 끝 전압) | `pivot_data["Ocv"][3]` (Rest Condition의 min OCV → 방전 후 rest 전압 선택) |
 | **AvgV** | `capacity.log`의 `AveVolt[V]` 컬럼 직접 사용 | `DchgEng / Dchg / mincapacity × 1000` 계산 |
 | **DCIR 계산** | Profile 파일 직접 읽기 → (Vmax-Vmin)/Imax | `imp` 컬럼 사용 또는 3-point 계산 (RSS/1s pulse) |
 | **DCIR 모드** | 단일 (`chkir`) | 3가지 (`chkir`, `mkdcir`, 기본 10s pulse) |
