@@ -349,32 +349,105 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
                         "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
-        # 각 데이터 중앙 부근에 텍스트 1회만 표시 (axes 좌표 변환으로 영역 내 클램핑)
-        existing_texts = [t.get_text() for t in ax4.texts]
-        if "DCIR1s@SOC70%" not in existing_texts:
-            valid_dcir = df.NewData.soc70_dcir.dropna()
-            valid_rss = df.NewData.soc70_rss_dcir.dropna()
-            ylim = ax4.get_ylim()
-            xlim = ax4.get_xlim()
-            y_range = ylim[1] - ylim[0]
-            x_range = xlim[1] - xlim[0]
-            if len(valid_dcir) > 0:
-                mid = len(valid_dcir) // 2
-                tx = min(valid_dcir.index[mid], xlim[1] - x_range * 0.2)
-                ty = min(max(valid_dcir.iloc[mid] + y_range * 0.03, ylim[0] + y_range * 0.05), ylim[1] - y_range * 0.05)
-                ax4.text(tx, ty, "DCIR1s@SOC70%", fontsize=7, color='gray',
-                         fontweight='bold', va='bottom', ha='left', zorder=10)
-            if len(valid_rss) > 0:
-                mid = len(valid_rss) // 2
-                tx = min(valid_rss.index[mid], xlim[1] - x_range * 0.2)
-                ty = max(min(valid_rss.iloc[mid] - y_range * 0.03, ylim[1] - y_range * 0.05), ylim[0] + y_range * 0.05)
-                ax4.text(tx, ty, "Rss@SOC70%", fontsize=7, color='gray',
-                         fontweight='bold', va='top', ha='left', zorder=10)
+        # DCIR scatter 점을 잇는 라인
+        _dcir_valid = df.NewData.soc70_dcir.dropna()
+        if len(_dcir_valid) > 1:
+            ax4.plot(_dcir_valid.index, _dcir_valid.values, linewidth=0.8, alpha=0.5, color=color, linestyle='--', zorder=2, label='_nolegend_')
+        _rss_valid = df.NewData.soc70_rss_dcir.dropna()
+        if len(_rss_valid) > 1:
+            ax4.plot(_rss_valid.index, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
+        _dcir_only = df.NewData.dcir.dropna()
+        if len(_dcir_only) > 1:
+            ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
     colorno = colorno % len(THEME['PALETTE']) + 1
     return artists, color
+
+def place_dcir_labels(ax4):
+    '''ax4에 그려진 DCIR scatter의 중앙값 y위치에 Rss/DCIR1s 레이블 배치'''
+    # 기존 텍스트 제거
+    for t in [t for t in ax4.texts if t.get_text() in ("DCIR1s@SOC70%", "Rss@SOC70%")]:
+        t.remove()
+    # scatter collections에서 filled(Rss)와 empty(DCIR1s)의 중앙값 수집
+    rss_ys, dcir_ys = [], []
+    x_max = -np.inf
+    for coll in ax4.collections:
+        offsets = coll.get_offsets()
+        if len(offsets) == 0:
+            continue
+        valid_mask = ~np.isnan(np.array(offsets, dtype=float)).any(axis=1)
+        valid = offsets[valid_mask]
+        if len(valid) == 0:
+            continue
+        fc = coll.get_facecolor()
+        if fc.shape[0] == 0:
+            dcir_ys.extend(valid[:, 1])
+        else:
+            rss_ys.extend(valid[:, 1])
+        x_max = max(x_max, valid[:, 0].max())
+    if not rss_ys and not dcir_ys:
+        return
+    xlim = ax4.get_xlim()
+    ylim = ax4.get_ylim()
+    xr = xlim[1] - xlim[0]
+    yr = ylim[1] - ylim[0]
+    # x: 데이터 끝 오른쪽에 배치하되, 그래프 밖으로 넘어가면 안쪽으로
+    tx = x_max + xr * 0.03
+    ha = 'left'
+    if tx > xlim[1] - xr * 0.15:
+        tx = xlim[1] - xr * 0.02
+        ha = 'right'
+    _kw = dict(fontsize=7, color='gray', fontweight='bold',
+               va='center', ha=ha, zorder=10)
+    rss_median = float(np.median(rss_ys)) if rss_ys else None
+    dcir_median = float(np.median(dcir_ys)) if dcir_ys else None
+    # 겹침 방지
+    if rss_median is not None and dcir_median is not None:
+        min_gap = yr * 0.06
+        if abs(rss_median - dcir_median) < min_gap:
+            center = (rss_median + dcir_median) / 2
+            rss_median = center + min_gap / 2
+            dcir_median = center - min_gap / 2
+    # y를 그래프 범위 안으로 클램핑
+    y_margin = yr * 0.03
+    if rss_median is not None:
+        rss_median = max(ylim[0] + y_margin, min(ylim[1] - y_margin, rss_median))
+    if dcir_median is not None:
+        dcir_median = max(ylim[0] + y_margin, min(ylim[1] - y_margin, dcir_median))
+    # 클램핑 후 데이터와 겹치면 빈 영역으로 이동
+    all_data_ys = np.array(rss_ys + dcir_ys)
+    text_half_h = yr * 0.03  # 텍스트 높이 절반 추정
+    def _avoid_data(ty):
+        '''ty 위치가 데이터 포인트와 겹치면 위/아래로 밀어냄'''
+        if ty is None:
+            return None
+        overlapping = np.abs(all_data_ys - ty) < text_half_h
+        if not np.any(overlapping):
+            return ty
+        # 위쪽/아래쪽으로 이동 시도
+        for direction in [1, -1]:
+            candidate = ty
+            for _ in range(20):
+                candidate += direction * text_half_h * 0.5
+                if candidate < ylim[0] + y_margin or candidate > ylim[1] - y_margin:
+                    break
+                if not np.any(np.abs(all_data_ys - candidate) < text_half_h):
+                    return candidate
+        return ty  # 이동 불가 시 원래 위치
+    rss_median = _avoid_data(rss_median)
+    dcir_median = _avoid_data(dcir_median)
+    # 이동 후 두 레이블 간 겹침 재확인
+    if rss_median is not None and dcir_median is not None:
+        if abs(rss_median - dcir_median) < yr * 0.06:
+            center = (rss_median + dcir_median) / 2
+            rss_median = min(ylim[1] - y_margin, center + yr * 0.03)
+            dcir_median = max(ylim[0] + y_margin, center - yr * 0.03)
+    if rss_median is not None:
+        ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw).draggable()
+    if dcir_median is not None:
+        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw).draggable()
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
@@ -1946,7 +2019,7 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                                 soc70_dcir = df.NewData.dcir2.dropna(axis=0)
                                 soc70_rss_dcir = df.NewData.dcir.dropna(axis=0)
                                 # SOC70의 데이터만 그래프 표기
-                                if (len(soc70_dcir) // 6)  > (len(df.NewData.index) // 100):
+                                if (len(soc70_dcir) // 6)  >= (len(df.NewData.index) // 100):
                                     # 6개 중에 4번째 것만 추출
                                     soc70_dcir = soc70_dcir[3:][::6]
                                     soc70_rss_dcir = soc70_rss_dcir[3:][::6]
@@ -8526,7 +8599,7 @@ class Ui_sitool(object):
         font_bold = QtGui.QFont()
         font_bold.setFamily("맑은 고딕")
         font_bold.setPointSize(10)
-        font_bold.set-Bold(True)
+        font_bold.setBold(True)
         self.pybamm_run_btn.setFont(font_bold)
         self.pybamm_run_btn.setText("시뮬레이션 실행")
         self.pybamm_run_btn.setObjectName("pybamm_run_btn")
@@ -10923,6 +10996,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax2.legend(loc="lower right")
                     ax3.legend(loc="upper right")
                     ax4.legend(loc="upper right")
+                    place_dcir_labels(ax4)
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
                 
@@ -11140,6 +11214,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if _hl_unique:
                 _ax.legend([h for h, l in _hl_unique], [l for h, l in _hl_unique],
                            loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
+        place_dcir_labels(ax4)
         
         # 파일 저장
         if overall_filename:
@@ -11332,11 +11407,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax2.legend(loc="lower right")
                 ax3.legend(loc="upper right")
                 ax4.legend(loc="upper right")
+                place_dcir_labels(ax4)
                 ax5.legend(loc="upper right")
                 ax6.legend(loc="lower right")
             else:
                 plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                 plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                place_dcir_labels(ax4)
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
@@ -11537,11 +11614,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax2.legend(loc="lower right")
                     ax3.legend(loc="upper right")
                     ax4.legend(loc="upper right")
+                    place_dcir_labels(ax4)
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
                 else:
                     plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                     plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                    place_dcir_labels(ax4)
             
             # 탭 추가 (유효 데이터가 있는 경우에만)
             if has_valid_data and tab_layout is not None:
@@ -11755,11 +11834,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax2.legend(loc="lower right")
                     ax3.legend(loc="upper right")
                     ax4.legend(loc="upper right")
+                    place_dcir_labels(ax4)
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
                 else:
                     plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                     plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                    place_dcir_labels(ax4)
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
