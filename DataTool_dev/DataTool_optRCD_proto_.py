@@ -9480,11 +9480,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
                                       QListWidget, QListWidgetItem, QLabel,
-                                      QCheckBox, QPushButton, QFrame, QLineEdit,
-                                      QSlider, QSizeGrip, QMenu)
-        from PyQt6.QtCore import Qt, QObject, QEvent, QPoint, QSize
+                                      QCheckBox, QPushButton, QDialog, QLineEdit,
+                                      QSlider, QMenu)
+        from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
-        from math import ceil
         
         parent_tab = args_parent_tab  # _finalize_cycle_tab에서 전달
         
@@ -9525,26 +9524,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             f"QPushButton:hover {{ background: {_btn_hover}; }}"
         )
         
-        # ── 오버레이 패널 (parent_tab의 자식, 레이아웃 밖 → figure 크기 불변) ──
-        overlay = QFrame(parent_tab)
+        # ── 팝업 다이얼로그 (독립 창으로 실시간 제어) ──
+        overlay = QDialog(self)
+        overlay.setWindowTitle("CH 채널 제어")
+        overlay.setWindowFlags(
+            Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
+        )
         overlay_layout = QHBoxLayout(overlay)
-        overlay_layout.setContentsMargins(4, 2, 4, 2)
+        overlay_layout.setContentsMargins(6, 4, 6, 4)
         overlay_layout.setSpacing(4)
-        overlay.setStyleSheet(
-            f"QFrame {{ background: {_overlay_bg}; "
-            f"border: 1px solid {_overlay_border}; border-radius: 4px; }}"
-        )
-        overlay.setVisible(False)
-        
-        # ── 닫기(접기) 버튼 (오버레이 내부) ──
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(18, 18)
-        close_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 12px; font-weight: bold; border: none; "
-            f"background: transparent; color: {'#ccc' if _is_dark else '#666'}; padding: 0; }}"
-            f"QPushButton:hover {{ color: {'#fff' if _is_dark else '#000'}; }}"
-        )
-        overlay_layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
+        overlay.resize(400, 350)
         
         # --- 1) 채널 리스트: 모든 채널 개별 표시 ---
         import re as _re
@@ -10066,13 +10055,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         overlay_layout.addLayout(ctrl_col)
         overlay_layout.addLayout(list_col)
         
-        # --- 오버레이 패널 크기 조절 그립 (#13) ---
-        _grip = QSizeGrip(overlay)
-        _grip.setFixedSize(12, 12)
-        _grip.setStyleSheet(
-            f"QSizeGrip {{ background: transparent; "
-            f"border: none; }}"
-        )
+
         
         # --- 2) 서브 채널 리스트 (sub_channel_map 있을 때만) ---
         if sub_channel_map and len(sub_channel_map) > 1:
@@ -10221,74 +10204,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             overlay_layout.addLayout(sub_list_col)
         
-        # ── 오버레이 위치 조정 (위쪽으로 펼침) ──
-        _overlay_user_size = {'w': None, 'h': None}  # 사용자 리사이즈 크기 기억
-        
-        def _reposition_overlay():
-            """우측 상단에서 아래로 펼쳐지는 오버레이"""
-            if overlay.isVisible():
-                overlay.adjustSize()
-                if _overlay_user_size['w']:
-                    ow = _overlay_user_size['w']
-                    oh = _overlay_user_size['h']
-                else:
-                    ow = min(overlay.sizeHint().width() + 8, parent_tab.width() - 8)
-                    oh = overlay.sizeHint().height()
-                btn_top = toggle_btn.mapTo(parent_tab, QPoint(0, 0))
-                max_h = btn_top.y() - 4  # 토글 버튼 위까지 최대 높이
-                if oh > max_h and max_h > 60:
-                    oh = max_h
-                overlay.setMinimumSize(200, 100)
-                overlay.setMaximumSize(parent_tab.width() - 8, max_h if max_h > 60 else 600)
-                overlay.resize(ow, oh)
-                overlay_y = btn_top.y() - oh - 2
-                if overlay_y < 0:
-                    overlay_y = 0
-                overlay_x = parent_tab.width() - ow - 4
-                overlay.move(overlay_x, overlay_y)
-                # 리사이즈 그립 우하단 배치
-                _grip.move(overlay.width() - _grip.width(), overlay.height() - _grip.height())
-                overlay.raise_()
-        
         def _toggle_panel():
-            vis = not overlay.isVisible()
-            overlay.setVisible(vis)
-            toggle_btn.setText("▼ CH" if vis else "▶ CH")
-            if vis:
-                _reposition_overlay()
+            if overlay.isVisible():
+                overlay.hide()
+                toggle_btn.setText("▶ CH")
+            else:
+                overlay.show()
+                toggle_btn.setText("▼ CH")
+        
+        # 다이얼로그 X 버튼으로 닫을 때 토글 버튼 텍스트 동기화
+        def _on_dialog_close(event):
+            toggle_btn.setText("▶ CH")
+            event.accept()
+        overlay.closeEvent = _on_dialog_close
         
         toggle_btn.clicked.connect(_toggle_panel)
-        close_btn.clicked.connect(_toggle_panel)
-        
-        # ── 리사이즈 추적 + 오버레이 외부 클릭 시 접기 ──
-        class _OverlayEventFilter(QObject):
-            def eventFilter(self, obj, event):
-                if obj is parent_tab and event.type() == QEvent.Type.Resize:
-                    _overlay_user_size['w'] = None  # 탭 리사이즈 시 자동 크기로 복원
-                    _overlay_user_size['h'] = None
-                    _reposition_overlay()
-                elif obj is overlay and event.type() == QEvent.Type.Resize:
-                    # 사용자가 그립으로 크기 변경 시 기억
-                    sz = overlay.size()
-                    if sz.width() > 100 and sz.height() > 60:
-                        _overlay_user_size['w'] = sz.width()
-                        _overlay_user_size['h'] = sz.height()
-                        _grip.move(sz.width() - _grip.width(), sz.height() - _grip.height())
-                elif event.type() == QEvent.Type.MouseButtonPress:
-                    if overlay.isVisible():
-                        click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
-                        overlay_rect = overlay.geometry()
-                        btn_rect = toggle_btn.geometry()
-                        if not overlay_rect.contains(click_pos) and not btn_rect.contains(click_pos):
-                            _toggle_panel()
-                return False
-        
-        _rf = _OverlayEventFilter(parent_tab)
-        parent_tab.installEventFilter(_rf)
-        overlay.installEventFilter(_rf)
         # GC 방지: 토글 버튼에 참조 보관
         toggle_btn._overlay_ref = overlay
-        toggle_btn._resize_filter_ref = _rf
         
         return toggle_btn
     

@@ -93,3 +93,18 @@
   - 범례 분기를 `j == i` 단일 조건으로 통일 (기존 3분기 → 2분기)
   - `all_data_name[i]`가 빈 문자열/numpy 타입일 때 범례 누락 문제 수정 (`str().strip()` + fallback)
   - `ch_label` (팝업 그룹)도 `lot_name`으로 통일
+
+### 범례 드래그 기본값 변경
+
+- **`_finalize_cycle_tab()`**: 범례 이동 체크박스(`_drag_legend_chk`) 제거, `set_draggable(True)` 기본 적용
+- **`_rebuild_legend()`**: 항상 `new_leg.set_draggable(True)`로 고정
+- 설정 저장/불러오기에서 `legend_drag` 항목 제거
+
+### CH 채널 제어 팝업 창 전환
+
+- **`_create_cycle_channel_control()`**: 오버레이 QFrame → 독립 QDialog 팝업으로 변환
+  - `QFrame(parent_tab)` → `QDialog(self)` + `WindowStaysOnTopHint` (항상 위에 표시)
+  - 플롯과 채널 제어를 동시에 볼 수 있는 UX 개선
+  - 오버레이 위치 계산(`_reposition_overlay`), 이벤트 필터(`_OverlayEventFilter`), QSizeGrip 제거
+  - 닫기 버튼(`close_btn`) 제거 (QDialog 자체 타이틀바 X 버튼 사용)
+  - 다이얼로그 X 버튼 클릭 시 토글 버튼 텍스트 동기화(`closeEvent`)
