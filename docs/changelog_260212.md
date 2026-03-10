@@ -116,3 +116,25 @@
   - 변경: `_lazy = {'dialog': None}` → `_ensure_dialog()`로 첫 클릭 시에만 `_build_channel_dialog()` 호출
 - **`_build_channel_dialog()`**: 신규 메서드로 분리 — QDialog 생성/채널 리스트/하이라이트/설정 등 전체 로직 포함
   - CH 안 쓰는 탭에서 비용 0, 여러 탭 빠르게 생성할 때 체감 속도 향상
+
+### Cycle 데이터 로딩 I/O 최적화
+
+- **`_load_all_cycle_data_parallel()`**: `subfolder_map` 캐시 반환 추가
+  - `os.scandir()` 결과를 `{folder_idx: [subfolder_paths]}` 딕셔너리로 캐싱
+  - 반환값: `results` → `(results, subfolder_map)` 튜플로 변경
+- **5개 Cycle 함수에서 `os.scandir()` 중복 호출 제거**:
+  - `indiv_cyc_confirm_button()`, `overall_cyc_confirm_button()`
+  - `link_cyc_confirm_button()`, `link_cyc_indiv_confirm_button()`, `link_cyc_overall_confirm_button()`
+  - 기존: 병렬 로더에서 1회 + 플롯 루프에서 1회 = 폴더당 2회 scandir
+  - 변경: 병렬 로더 1회만 수행, 플롯 루프에서 `subfolder_map[i]` 참조
+- **5개 Cycle 함수에서 `plt.tight_layout()` 중복 제거**:
+  - `plt.close()` 직전에 호출되던 불필요한 `plt.tight_layout()` 삭제 (화면 미표시 상태에서 레이아웃 재계산 낭비)
+
+### UI 폰트 통일 (가독성 개선)
+
+- **전체 위젯 폰트**: `맑은 고딕 9pt` → `Pretendard 10pt`로 변경 (392개소)
+- **폰트 패밀리 통일**: `맑은 고딕` → `Pretendard` (397개소)
+  - 메인 윈도우(`sitool`)가 이미 `Pretendard 10pt` → 내부 위젯과 일관성 확보
+- **인라인 QFont 생성자**: `QFont("맑은 고딕", 9)` → `QFont("Pretendard", 10)` (탭2 공통/버튼)
+- **테이블 헤더 폰트**: `맑은 고딕 8pt` → `Pretendard 9pt` (1pt 상향)
+- 20px 고정 높이 위젯과 호환 유지 (10pt 텍스트 높이 ~13px + 패딩 = ~20px)
