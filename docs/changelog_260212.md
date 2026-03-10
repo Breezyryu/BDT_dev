@@ -138,3 +138,16 @@
 - **인라인 QFont 생성자**: `QFont("맑은 고딕", 9)` → `QFont("맑은 고딕", 10)` (탭2 공통/버튼)
 - **테이블 헤더 폰트**: `8pt` → `9pt` (1pt 상향)
 - 20px 고정 높이 위젯과 호환 유지 (10pt 텍스트 높이 ~13px + 패딩 = ~20px)
+
+### Excel 저장 시 각 시트에 사이클 번호 열 추가
+
+- **5개 Cycle 함수**: 모든 Excel 시트에 채널별 `Cycle` 열을 데이터 열 앞에 추가
+  - `indiv_cyc_confirm_button()`, `overall_cyc_confirm_button()`
+  - `link_cyc_confirm_button()`, `link_cyc_indiv_confirm_button()`, `link_cyc_overall_confirm_button()`
+  - 기존: 방전용량/Rest End/평균전압 등 시트에 데이터 값만 저장, 사이클 번호는 "충방전기CY" 시트에만 별도 저장
+  - 변경: 각 시트마다 `[Cycle | 데이터값]` 2열 쌍으로 출력 (채널당 2열)
+  - `writecolno` 증분: `+1` → `+2` (채널당 2열 점유)
+- **DCIR 관련 시트** (SOC70_DCIR, SOC70_RSS, RSS, DCIR, RSS_OCV, RSS_CCV):
+  - DCIR 데이터 준비를 `Series.dropna()` → `DataFrame[["OriCyc", col]].dropna(subset=[col])`로 변경
+  - NaN 제거 시에도 OriCyc 열이 보존되어 사이클 번호 출력 가능
+- **"충방전기CY" 시트 제거**: 각 시트에 사이클 열이 포함되므로 중복 제거

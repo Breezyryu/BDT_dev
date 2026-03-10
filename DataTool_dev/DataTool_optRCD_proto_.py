@@ -8515,7 +8515,7 @@ class Ui_sitool(object):
         font_bold = QtGui.QFont()
         font_bold.setFamily("맑은 고딕")
         font_bold.setPointSize(10)
-        font_bold.setBold(True)
+        font_bold.set-Bold(True)
         self.pybamm_run_btn.setFont(font_bold)
         self.pybamm_run_btn.setText("시뮬레이션 실행")
         self.pybamm_run_btn.setObjectName("pybamm_run_btn")
@@ -10866,31 +10866,46 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
-                            output_data(cyctemp[1].NewData, "방전용량", writecolno, 0, "Dchg", headername)
-                            output_data(cyctemp[1].NewData, "Rest End", writecolno, 0, "RndV", headername)
-                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, 0, "AvgV", headername)
-                            output_data(cyctemp[1].NewData, "충방효율", writecolno, 0, "Eff", headername)
-                            output_data(cyctemp[1].NewData, "충전용량", writecolno, 0, "Chg", headername)
-                            output_data(cyctemp[1].NewData, "방충효율", writecolno, 0, "Eff2", headername)
-                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, 0, "DchgEng", headername)
-                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
-                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
-                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
-                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
-                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
-                                cyctempsoc70dcir = cyctemp[1].NewData.soc70_dcir.dropna(axis=0)
-                                cyctempsoc70rssdcir = cyctemp[1].NewData.soc70_rss_dcir.dropna(axis=0)
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "soc70_dcir", headername)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "soc70_rss_dcir", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                            cyc_head = ["Cycle"]
+                            _nd = cyctemp[1].NewData
+                            _dc = writecolno + 1  # 데이터 열 오프셋
+                            output_data(_nd, "방전용량", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "방전용량", _dc, 0, "Dchg", headername)
+                            output_data(_nd, "Rest End", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "Rest End", _dc, 0, "RndV", headername)
+                            output_data(_nd, "평균 전압", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "평균 전압", _dc, 0, "AvgV", headername)
+                            output_data(_nd, "충방효율", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "충방효율", _dc, 0, "Eff", headername)
+                            output_data(_nd, "충전용량", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "충전용량", _dc, 0, "Chg", headername)
+                            output_data(_nd, "방충효율", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "방충효율", _dc, 0, "Eff2", headername)
+                            output_data(_nd, "방전Energy", writecolno, 0, "OriCyc", cyc_head)
+                            output_data(_nd, "방전Energy", _dc, 0, "DchgEng", headername)
+                            cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
+                            if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
+                                cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
+                                cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
+                                cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
+                                cyctempsoc70dcir = _nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
+                                cyctempsoc70rssdcir = _nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
+                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
+                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
+                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
+                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
+                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
                             else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
-                            output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
-                            writecolno = writecolno + 1
+                                output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                            writecolno = writecolno + 2
                     
                     plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                     ax1.legend(loc="lower left")
@@ -11050,30 +11065,46 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
-                            output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
-                            output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
-                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
-                            output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
-                            output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
-                            output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
-                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
-                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
-                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
-                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
-                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
-                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
-                                cyctempsoc70dcir = cyctemp[1].NewData.soc70_dcir.dropna(axis=0)
-                                cyctempsoc70rssdcir = cyctemp[1].NewData.soc70_rss_dcir.dropna(axis=0)
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "soc70_dcir", headername)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "soc70_rss_dcir", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                            cyc_head = ["Cycle"]
+                            _nd = cyctemp[1].NewData
+                            _dc = writecolno + 1
+                            output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
+                            output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
+                            output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
+                            output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
+                            output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
+                            output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
+                            output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
+                            cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
+                            if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
+                                cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
+                                cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
+                                cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
+                                cyctempsoc70dcir = _nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
+                                cyctempsoc70rssdcir = _nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
+                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
+                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
+                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
+                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
+                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
                             else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
-                            writecolno = writecolno + 1
+                                output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                            writecolno = writecolno + 2
                 colorno = colorno % len(THEME['PALETTE']) + 1
         
         # 범례 설정 (handles/labels 명시적 전달)
@@ -11243,26 +11274,41 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
-                            output_data(cyctemp[1].NewData, "방전용럅", writecolno, writerowno, "Dchg", headername)
-                            output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
-                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
-                            output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
-                            output_data(cyctemp[1].NewData, "충전용럅", writecolno, writerowno, "Chg", headername)
-                            output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
-                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
-                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
-                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
-                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
-                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
-                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                            cyc_head = ["Cycle"]
+                            _nd = cyctemp[1].NewData
+                            _dc = writecolno + 1
+                            output_data(_nd, "방전용럅", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방전용럅", _dc, writerowno, "Dchg", headername)
+                            output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
+                            output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
+                            output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
+                            output_data(_nd, "충전용럅", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "충전용럅", _dc, writerowno, "Chg", headername)
+                            output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
+                            output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
+                            cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
+                            if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
+                                cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
+                                cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
+                                cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
+                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
+                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
+                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
                             else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                                output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
                         colorno = colorno + 1
-                        writecolno = writecolno + 1
+                        writecolno = writecolno + 2
                         CycleMax[Chnl_num] = len(cyctemp[1].NewData)
                         link_writerownum[Chnl_num] = writerowno
                         Chnl_num = Chnl_num + 1
@@ -11432,26 +11478,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
-                                output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
-                                output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
-                                output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
-                                output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
-                                output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
-                                output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
-                                output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
-                                cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
-                                if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
-                                    cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
-                                    cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
-                                    cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
-                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
-                                    output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
-                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                                cyc_head = ["Cycle"]
+                                _nd = cyctemp[1].NewData
+                                _dc = writecolno + 1
+                                output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
+                                output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
+                                output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
+                                output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
+                                output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
+                                output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
+                                output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
+                                cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
+                                if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
+                                    cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
+                                    cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
+                                    cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
+                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
+                                    output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
+                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
+                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
                                 else:
-                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
-                                output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
-                                writecolno = writecolno + 1
+                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                                writecolno = writecolno + 2
                             colorno = colorno + 1
                             CycleMax[Chnl_num] = len(cyctemp[1].NewData)
                             link_writerownum[Chnl_num] = writerowno
@@ -11635,26 +11695,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
-                                output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
-                                output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
-                                output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
-                                output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
-                                output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
-                                output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
-                                output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
-                                cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
-                                if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
-                                    cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
-                                    cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
-                                    cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
-                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
-                                    output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
-                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
-                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                                cyc_head = ["Cycle"]
+                                _nd = cyctemp[1].NewData
+                                _dc = writecolno + 1
+                                output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
+                                output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
+                                output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
+                                output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
+                                output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
+                                output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
+                                output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
+                                output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
+                                cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
+                                if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
+                                    cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
+                                    cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
+                                    cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
+                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
+                                    output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
+                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
+                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
                                 else:
-                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
-                                output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
-                                writecolno = writecolno + 1
+                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+                                    output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                                writecolno = writecolno + 2
                             CycleMax[Chnl_num] = len(cyctemp[1].NewData)
                             link_writerownum[Chnl_num] = writerowno
                             Chnl_num = Chnl_num + 1
