@@ -9717,7 +9717,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         def _rebuild_legend():
             """범례 재생성 + 슬라이더 폰트/드래그 상태 보존"""
             _cur_fs = font_slider.value()
-            _cur_drag = _drag_legend_chk.isChecked()
             for ax in axes_list:
                 legend = ax.get_legend()
                 if legend:
@@ -9736,7 +9735,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             framealpha=THEME['LEGEND_FRAMEALPHA'],
                             edgecolor=THEME['LEGEND_EDGECOLOR'],
                             fancybox=True, loc=_loc)
-                        new_leg.set_draggable(_cur_drag)
+                        new_leg.set_draggable(True)
                     else:
                         legend.remove()
 
@@ -9979,19 +9978,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ctrl_col.addWidget(_font_lbl)
         ctrl_col.addWidget(font_slider)
         
-        # --- 범례 드래그 이동 (#9) ---
-        _drag_legend_chk = QCheckBox("범례 이동")
-        _drag_legend_chk.setChecked(False)
-        _drag_legend_chk.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
-        _drag_legend_chk.setToolTip("체크 시 마우스로 범례 위치 드래그 가능")
-        def _toggle_legend_drag(state):
-            draggable = state == Qt.CheckState.Checked.value
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    legend.set_draggable(draggable)
-        _drag_legend_chk.stateChanged.connect(_toggle_legend_drag)
-        ctrl_col.addWidget(_drag_legend_chk)
+        # --- 범례 드래그 이동 (디폴트 활성화) ---
+        for ax in axes_list:
+            legend = ax.get_legend()
+            if legend:
+                legend.set_draggable(True)
         
         # --- 설정 저장/불러오기 (#15) ---
         import json as _json
@@ -10003,7 +9994,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             data = {
                 'aliases': _legend_aliases,
                 'font_size': font_slider.value(),
-                'legend_drag': _drag_legend_chk.isChecked(),
                 'checked': {},
             }
             for i in range(ch_list.count()):
@@ -10021,9 +10011,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # 폰트 크기
             if 'font_size' in data:
                 font_slider.setValue(data['font_size'])
-            # 범례 드래그
-            if 'legend_drag' in data:
-                _drag_legend_chk.setChecked(data['legend_drag'])
             # 별칭 복원
             if 'aliases' in data:
                 _legend_aliases.update(data['aliases'])
