@@ -31,7 +31,7 @@ if getattr(sys, 'frozen', False):
         os.add_dll_directory(_casadi_dir)
         os.add_dll_directory(_base)
         os.environ['PATH'] = _casadi_dir + os.pathsep + _base + os.pathsep + os.environ.get('PATH', '')
-        # 핵심 MinGW 런타임 DLL 강제 선로드 (다른 PC에서 DLL 검색 실패 방지)
+        # 핵심 MinGW 런타임 DLL 강제 선로드
         import ctypes
         for _dll_name in [
             'libwinpthread-1.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll',
@@ -346,9 +346,19 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
                       "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
         artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "_nolegend_", xscale, color))
+                        "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, color))
+                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
+        # 마지막 데이터 포인트 옆에 텍스트 표시
+        last_idx = df.NewData.index[-1]
+        last_dcir = df.NewData.soc70_dcir.iloc[-1]
+        last_rss = df.NewData.soc70_rss_dcir.iloc[-1]
+        ax4.annotate("DCIR1s@SOC70%", xy=(last_idx, last_dcir),
+                     xytext=(5, 5), textcoords="offset points",
+                     fontsize=7, color=color, fontweight='bold')
+        ax4.annotate("Rss@SOC70%", xy=(last_idx, last_rss),
+                     xytext=(5, -10), textcoords="offset points",
+                     fontsize=7, color=color, fontweight='bold')
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
