@@ -353,17 +353,13 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
         valid_dcir = df.NewData.soc70_dcir.dropna()
         valid_rss = df.NewData.soc70_rss_dcir.dropna()
         if len(valid_dcir) > 0:
-            ax4.annotate("DCIR1s@SOC70%",
-                         xy=(valid_dcir.index[-1], valid_dcir.iloc[-1]),
-                         xytext=(5, 5), textcoords="offset points",
-                         fontsize=7, color=color, fontweight='bold',
-                         clip_on=False, annotation_clip=False)
+            ax4.text(valid_dcir.index[-1], valid_dcir.iloc[-1],
+                     "  DCIR1s@SOC70%", fontsize=7, color=color,
+                     fontweight='bold', va='bottom', ha='left', zorder=10)
         if len(valid_rss) > 0:
-            ax4.annotate("Rss@SOC70%",
-                         xy=(valid_rss.index[-1], valid_rss.iloc[-1]),
-                         xytext=(5, -10), textcoords="offset points",
-                         fontsize=7, color=color, fontweight='bold',
-                         clip_on=False, annotation_clip=False)
+            ax4.text(valid_rss.index[-1], valid_rss.iloc[-1],
+                     "  Rss@SOC70%", fontsize=7, color=color,
+                     fontweight='bold', va='top', ha='left', zorder=10)
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
