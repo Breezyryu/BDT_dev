@@ -349,17 +349,27 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
                         "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
-        # 마지막 유효 데이터 포인트 옆에 텍스트 표시
-        valid_dcir = df.NewData.soc70_dcir.dropna()
-        valid_rss = df.NewData.soc70_rss_dcir.dropna()
-        if len(valid_dcir) > 0:
-            ax4.text(valid_dcir.index[-1], valid_dcir.iloc[-1],
-                     "  DCIR1s@SOC70%", fontsize=7, color=color,
-                     fontweight='bold', va='bottom', ha='left', zorder=10)
-        if len(valid_rss) > 0:
-            ax4.text(valid_rss.index[-1], valid_rss.iloc[-1],
-                     "  Rss@SOC70%", fontsize=7, color=color,
-                     fontweight='bold', va='top', ha='left', zorder=10)
+        # 각 데이터 중앙 부근에 텍스트 1회만 표시 (axes 좌표 변환으로 영역 내 클램핑)
+        existing_texts = [t.get_text() for t in ax4.texts]
+        if "DCIR1s@SOC70%" not in existing_texts:
+            valid_dcir = df.NewData.soc70_dcir.dropna()
+            valid_rss = df.NewData.soc70_rss_dcir.dropna()
+            ylim = ax4.get_ylim()
+            xlim = ax4.get_xlim()
+            y_range = ylim[1] - ylim[0]
+            x_range = xlim[1] - xlim[0]
+            if len(valid_dcir) > 0:
+                mid = len(valid_dcir) // 2
+                tx = min(valid_dcir.index[mid], xlim[1] - x_range * 0.2)
+                ty = min(max(valid_dcir.iloc[mid] + y_range * 0.03, ylim[0] + y_range * 0.05), ylim[1] - y_range * 0.05)
+                ax4.text(tx, ty, "DCIR1s@SOC70%", fontsize=7, color='gray',
+                         fontweight='bold', va='bottom', ha='left', zorder=10)
+            if len(valid_rss) > 0:
+                mid = len(valid_rss) // 2
+                tx = min(valid_rss.index[mid], xlim[1] - x_range * 0.2)
+                ty = max(min(valid_rss.iloc[mid] - y_range * 0.03, ylim[1] - y_range * 0.05), ylim[0] + y_range * 0.05)
+                ax4.text(tx, ty, "Rss@SOC70%", fontsize=7, color='gray',
+                         fontweight='bold', va='top', ha='left', zorder=10)
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
