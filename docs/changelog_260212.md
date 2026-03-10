@@ -77,3 +77,19 @@
 ## 5. 의존성 정리
 
 - `scikit-learn` 제거 (pyproject.toml) — 코드에서 미사용 확인
+
+## 260310
+
+### Cycle 플롯 범례/채널팝업 통일 (지정Path vs 직접입력)
+
+- **`indiv_cyc_confirm_button()`** (개별 Cycle)
+  - 범례 텍스트를 입력 방식에 관계없이 `extract_text_in_brackets(cycnamelist[-1])`로 통일
+  - 기존: 지정Path → 첫 채널만 TSV 이름, 나머지 빈 문자열 / 직접입력 → 채널별 bracket 텍스트
+  - 변경: 항상 모든 채널이 개별 범례와 Ch 팝업 항목을 가짐
+  - 불필요한 `j` 카운터 변수 제거
+
+- **`overall_cyc_confirm_button()`** (통합 Cycle)
+  - LOT 이름 결정 로직을 `lot_name` 변수로 통합 (입력 방식에 따라 소스만 다름)
+  - 범례 분기를 `j == i` 단일 조건으로 통일 (기존 3분기 → 2분기)
+  - `all_data_name[i]`가 빈 문자열/numpy 타입일 때 범례 누락 문제 수정 (`str().strip()` + fallback)
+  - `ch_label` (팝업 그룹)도 `lot_name`으로 통일

@@ -11057,12 +11057,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cycnamelist = FolderBase.split("\\")
                     headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                     
+                    # LOT 이름 결정 (입력 방식에 따라 소스만 다름)
+                    if len(all_data_name) != 0:
+                        lot_name = str(all_data_name[i]).strip()
+                    else:
+                        lot_name = cycnamelist[-2].split('_')[-1]
+                    if not lot_name:
+                        lot_name = cycnamelist[-2]
+                    
                     # 중복없이 같은 LOT끼리에서만 legend 추가
-                    if len(all_data_name) != 0 and j == i:
-                        temp_lgnd = all_data_name[i]
-                        j = j + 1
-                    elif len(all_data_name) == 0 and j == i:
-                        temp_lgnd = cycnamelist[-2].split('_')[-1]
+                    if j == i:
+                        temp_lgnd = lot_name
                         j = j + 1
                     else:
                         temp_lgnd = "_nolegend_"
@@ -11082,11 +11087,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # dcir2, mkdcir 중복 제거
                         _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd,
                                            colorno, graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        # ch_label: 폴더(LOT) 단위 이름으로 통일 (동일 폴더 채널을 1개 항목으로 묶음)
-                        if len(all_data_name) != 0:
-                            ch_label = all_data_name[i]
-                        else:
-                            ch_label = cycnamelist[-2].split('_')[-1]
+                        # ch_label: 폴더(LOT) 단위 이름으로 통일
+                        ch_label = lot_name
                         if len(ch_label) > 40:
                             ch_label = ch_label[:40] + "..."
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
