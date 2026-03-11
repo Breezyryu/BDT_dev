@@ -13402,15 +13402,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                 else:
                     if str(self.FindText.text()).strip():
-                        # 검색 활성 시 비매칭 셀 투명도 적용 / 0~255 (투명도)
-                        bg = self.tb_channel.item(j - 1, i - 1).background().color()
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 180))
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 180))
+                        # 검색 활성 시 비매칭 셀 흰색 배경 + 회색 글자
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255, 255, 255))
+                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189))
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                     self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
-        if str(self.FindText.text()).strip():
-            self.FindCount.setText(f"{_find_match_count}건")
+        _search_text = str(self.FindText.text()).strip()
+        if _search_text:
+            if not hasattr(self, '_find_counts'):
+                self._find_counts = {}
+                self._find_last_search = ""
+            if _search_text != self._find_last_search:
+                self._find_counts = {}
+                self._find_last_search = _search_text
+            self._find_counts[f"toyo_{toyo_num}"] = _find_match_count
+            _total = sum(self._find_counts.values())
+            self.FindCount.setText(f"{_total}건 ({_find_match_count}건)")
         else:
             self.FindCount.setText("")
         if self.saveok.isChecked():
@@ -13564,15 +13572,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                     else:
                         if str(self.FindText.text()).strip():
-                            # 검색 활성 시 비매칭 셀 투명도 적용 (투명도 40)
-                            bg = self.tb_channel.item(j - 1, i - 1).background().color()
-                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 60))
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 60))
+                            # 검색 활성 시 비매칭 셀 흰색 배경 + 회색 글자
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255, 255, 255))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189))
                         else:
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                         self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
-            if str(self.FindText.text()).strip():
-                self.FindCount.setText(f"{_find_match_count}건")
+            _search_text = str(self.FindText.text()).strip()
+            if _search_text:
+                if not hasattr(self, '_find_counts'):
+                    self._find_counts = {}
+                    self._find_last_search = ""
+                if _search_text != self._find_last_search:
+                    self._find_counts = {}
+                    self._find_last_search = _search_text
+                self._find_counts[f"pne_{pne_num}"] = _find_match_count
+                _total = sum(self._find_counts.values())
+                self.FindCount.setText(f"{_total}건 ({_find_match_count}건)")
             else:
                 self.FindCount.setText("")
             if self.saveok.isChecked():
