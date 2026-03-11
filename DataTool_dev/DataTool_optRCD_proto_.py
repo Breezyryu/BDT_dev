@@ -11441,11 +11441,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         link_writerownum[Chnl_num] = writerowno
                         Chnl_num = Chnl_num + 1
         
-        # 범례 설정 — channel_map 기반 (지정Path/직접입력 모두 동일)
+        # 범례 설정 — channel_map 기반 proxy handle (지정Path/직접입력 모두 동일)
         if cycnamelist:
             plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            # channel_map 라벨을 artist에 반영 (axis별 첫 artist만 라벨, 나머지 숨김)
+            # channel_map에서 proxy 핸들 생성 (scatter artist label 의존 제거)
+            from matplotlib.lines import Line2D
+            _proxy_handles = []
+            _proxy_labels = []
+            _seen_labels = set()
             for ch_label, info in channel_map.items():
+                if ch_label not in _seen_labels:
+                    _seen_labels.add(ch_label)
+                    _proxy_handles.append(
+                        Line2D([0], [0], marker='o', color='w',
+                               markerfacecolor=info['color'], markersize=6,
+                               markeredgecolor=THEME['EDGE_COLOR'],
+                               markeredgewidth=THEME['EDGE_WIDTH']))
+                    _proxy_labels.append(ch_label)
+                # artist label도 동기화 (CH팝업 _rebuild_legend 호환)
                 _ax_seen = set()
                 for art in info['artists']:
                     ax_id = id(art.axes)
@@ -11461,18 +11474,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
                 (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
             ]
-            for _ax, _loc, _anchor in _legend_locs:
-                _handles, _labels = _ax.get_legend_handles_labels()
-                _hl = [(h, l) for h, l in zip(_handles, _labels)
-                       if l and not l.startswith('_')]
-                _seen = set()
-                _hl_unique = []
-                for h, l in _hl:
-                    if l not in _seen:
-                        _seen.add(l)
-                        _hl_unique.append((h, l))
-                if _hl_unique:
-                    _ax.legend([h for h, l in _hl_unique], [l for h, l in _hl_unique],
+            if _proxy_handles:
+                for _ax, _loc, _anchor in _legend_locs:
+                    _ax.legend(_proxy_handles, _proxy_labels,
                                loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
             place_dcir_labels(ax4)
         
