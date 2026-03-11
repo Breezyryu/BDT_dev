@@ -2977,6 +2977,21 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
     return solution
 
 
+class BorderDelegate(QtWidgets.QStyledItemDelegate):
+    """셀 테두리를 그리는 커스텀 delegate. UserRole+100에 QColor가 설정되면 테두리 표시."""
+    BORDER_ROLE = QtCore.Qt.ItemDataRole.UserRole + 100
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        border_color = index.data(self.BORDER_ROLE)
+        if border_color and isinstance(border_color, QtGui.QColor):
+            painter.save()
+            pen = QtGui.QPen(border_color, 2)
+            painter.setPen(pen)
+            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
+            painter.restore()
+
+
 class Ui_sitool(object):
     def setupUi(self, sitool):
         sitool.setObjectName("sitool")
@@ -3252,6 +3267,7 @@ class Ui_sitool(object):
         self.tb_channel.verticalHeader().setVisible(False)
         self.tb_channel.verticalHeader().setDefaultSectionSize(43)
         self.tb_channel.verticalHeader().setMinimumSectionSize(43)
+        self.tb_channel.setItemDelegate(BorderDelegate(self.tb_channel))
         self.verticalLayout_5.addWidget(self.tb_channel)
         self.horizontalLayout_123.addLayout(self.verticalLayout_5)
         self.tabWidget.addTab(self.tab, "")
@@ -13375,8 +13391,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
                         else:
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal))
+                        self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(255, 179, 0))
                 else:
                     self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
+                    self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
@@ -13519,8 +13537,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45)) # 45도
                             else:
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal)) # 기본 23도
+                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(255, 179, 0))
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
+                        self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
