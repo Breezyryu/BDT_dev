@@ -11437,21 +11437,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         link_writerownum[Chnl_num] = writerowno
                         Chnl_num = Chnl_num + 1
         
-        # 범례 설정
+        # 범례 설정 — channel_map 기반 (지정Path/직접입력 모두 동일)
         if cycnamelist:
-            if len(all_data_name) != 0:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                ax1.legend(loc="lower left")
-                ax2.legend(loc="lower right")
-                ax3.legend(loc="upper right")
-                ax4.legend(loc="upper right")
-                place_dcir_labels(ax4)
-                ax5.legend(loc="upper right")
-                ax6.legend(loc="lower right")
-            else:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-                place_dcir_labels(ax4)
+            plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            # channel_map 라벨을 artist에 반영 (axis별 첫 artist만 라벨, 나머지 숨김)
+            for ch_label, info in channel_map.items():
+                _ax_seen = set()
+                for art in info['artists']:
+                    ax_id = id(art.axes)
+                    if ax_id not in _ax_seen:
+                        art.set_label(ch_label)
+                        _ax_seen.add(ax_id)
+                    else:
+                        art.set_label('_nolegend_')
+            _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
+                        edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
+            _legend_locs = [
+                (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
+                (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
+                (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
+            ]
+            for _ax, _loc, _anchor in _legend_locs:
+                _handles, _labels = _ax.get_legend_handles_labels()
+                _hl = [(h, l) for h, l in zip(_handles, _labels)
+                       if l and not l.startswith('_')]
+                _seen = set()
+                _hl_unique = []
+                for h, l in _hl:
+                    if l not in _seen:
+                        _seen.add(l)
+                        _hl_unique.append((h, l))
+                if _hl_unique:
+                    _ax.legend([h for h, l in _hl_unique], [l for h, l in _hl_unique],
+                               loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
+            place_dcir_labels(ax4)
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
