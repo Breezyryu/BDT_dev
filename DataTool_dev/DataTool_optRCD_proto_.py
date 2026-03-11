@@ -13396,7 +13396,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                 else:
-                    self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
+                    if str(self.FindText.text()).strip():
+                        # 검색 활성 시 비매칭 셀 투명도 적용
+                        bg = self.tb_channel.item(j - 1, i - 1).background().color()
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 60))
+                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 60))
+                    else:
+                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                     self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
@@ -13545,7 +13551,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                     else:
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
+                        if str(self.FindText.text()).strip():
+                            # 검색 활성 시 비매칭 셀 투명도 적용
+                            bg = self.tb_channel.item(j - 1, i - 1).background().color()
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 60))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 60))
+                        else:
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                         self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
