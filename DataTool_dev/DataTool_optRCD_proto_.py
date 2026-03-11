@@ -3110,6 +3110,17 @@ class Ui_sitool(object):
         self.FindText.setPlaceholderText("스페이스=OR, 쉼표=AND (예: 4879mAh,Rss)")
         self.FindText.setObjectName("FindText")
         self.horizontalLayout_10.addWidget(self.FindText)
+        self.FindCount = QtWidgets.QLabel(parent=self.tab)
+        self.FindCount.setMinimumSize(QtCore.QSize(80, 40))
+        self.FindCount.setMaximumSize(QtCore.QSize(80, 40))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        font.setBold(True)
+        self.FindCount.setFont(font)
+        self.FindCount.setText("")
+        self.FindCount.setObjectName("FindCount")
+        self.horizontalLayout_10.addWidget(self.FindCount)
         self.tb_modified_time = QtWidgets.QLabel(parent=self.tab)
         self.tb_modified_time.setMinimumSize(QtCore.QSize(250, 40))
         self.tb_modified_time.setMaximumSize(QtCore.QSize(250, 40))
@@ -13342,6 +13353,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.tb_modified_time.setText("")
         self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - toyo_data[1])))
         self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(toyo_data[1])))
+        _find_match_count = 0
         for i in range(1, num_i + 1):
             for j in range(1, num_j + 1):
                 # 첫번째 선택은 채널 번호
@@ -13369,6 +13381,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
                 # 강조 문자 필터
                 if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
+                        if str(self.FindText.text()).strip():
+                            _find_match_count += 1
                         # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
                         # 45도 계열: Toyo1,3 ch>64
                         fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
@@ -13395,6 +13409,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                     self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+        if str(self.FindText.text()).strip():
+            self.FindCount.setText(f"{_find_match_count}건")
+        else:
+            self.FindCount.setText("")
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
@@ -13499,6 +13517,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             usedchnlno = len(self.df[(self.df.use =="완료") | (self.df.use == "대기") | (self.df.use == "준비")])
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(usedchnlno)))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - usedchnlno)))
+            _find_match_count = 0
             for i in range(1, num_i + 1):
                 for j in range(1, num_j + 1):
                     chnl_name = i + (j - 1) * num_i
@@ -13524,6 +13543,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         bg_level = 3
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
+                            if str(self.FindText.text()).strip():
+                                _find_match_count += 1
                             fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
                             fg_35 = [(195,47,39), (154,32,24), (154,32,24), (154,32,24)][bg_level]
                             fg_15 = [(0,73,245), (1,53,96), (1,53,96), (1,53,96)][bg_level]
@@ -13550,6 +13571,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                         self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+            if str(self.FindText.text()).strip():
+                self.FindCount.setText(f"{_find_match_count}건")
+            else:
+                self.FindCount.setText("")
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
