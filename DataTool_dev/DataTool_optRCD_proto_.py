@@ -13391,7 +13391,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
                         else:
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal))
-                        self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(255, 179, 0))
+                        if str(self.FindText.text()).strip():
+                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(0, 0, 0))
+                        else:
+                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                 else:
                     self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                     self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
@@ -13537,7 +13540,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45)) # 45도
                             else:
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal)) # 기본 23도
-                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(255, 179, 0))
+                            if str(self.FindText.text()).strip():
+                                self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(0, 0, 0))
+                            else:
+                                self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                         self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
