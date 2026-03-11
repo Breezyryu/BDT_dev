@@ -160,6 +160,23 @@ def extract_text_in_brackets(input_string):
     match = re.search(r'\[(.*?)\]', input_string)
     return match.group(1) if match else str(input_string).zfill(3)
 
+def _make_channel_labels(cycnamelist, all_data_name, folder_idx):
+    """ch_label(main)과 sub_label을 통일 규칙으로 생성
+    - 직접입력: ch_label = cycnamelist[-2] (부모 폴더명)
+    - 지정Path: ch_label = all_data_name[folder_idx]
+    - sub_label: 항상 extract_text_in_brackets(cycnamelist[-1])
+    """
+    sub_label = extract_text_in_brackets(cycnamelist[-1])
+    if len(all_data_name) != 0:
+        ch_label = str(all_data_name[folder_idx]).strip()
+    else:
+        ch_label = cycnamelist[-2]
+    if not ch_label:
+        ch_label = cycnamelist[-2]
+    if len(ch_label) > 40:
+        ch_label = ch_label[:40] + "..."
+    return ch_label, sub_label
+
 # 시리즈를 정해진 갯수의 column으로 분리하는 함수
 def separate_series(df_series, num):
     """
@@ -328,7 +345,7 @@ def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
     return sc    
 
-def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
+def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, colorno, graphcolor,
                        dcir, ax1, ax2, ax3, ax4, ax5, ax6):
     artists = []  # 이 채널의 모든 scatter artist 수집
     color = graphcolor[colorno % len(THEME['PALETTE'])]
@@ -10954,8 +10971,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cycnamelist = FolderBase.split("\\")
                     headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                     
-                    # legend 설정 - 입력 방식에 관계없이 채널명 통일
-                    lgnd = extract_text_in_brackets(cycnamelist[-1])
+                    # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
+                    ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
+                    lgnd = sub_label  # 개별: sub 단위 범례, 매번 표시
                     
                     if hasattr(cyctemp[1], "NewData"):
                         self.capacitytext.setText(str(cyctemp[0]))
@@ -10963,9 +10981,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if irscale == 0 and cyctemp[0] != 0:
                             irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
                         
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
+                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = lgnd if lgnd else cycnamelist[-1]
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                         _base = ch_label
                         _sfx = 2
@@ -10977,7 +10994,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             channel_map[ch_label] = {'artists': _artists, 'color': _color}
                         # 서브 채널 개별 추적
-                        sub_label = cycnamelist[-1]
                         _sub_base = sub_label
                         _sub_sfx = 2
                         while sub_label in sub_channel_map:
@@ -11133,24 +11149,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cycnamelist = FolderBase.split("\\")
                     headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                     
-                    # LOT 이름 결정 (입력 방식에 따라 소스만 다름)
-                    if len(all_data_name) != 0:
-                        lot_name = str(all_data_name[i]).strip()
-                    else:
-                        lot_name = cycnamelist[-2].split('_')[-1]
-                    if not lot_name:
-                        lot_name = cycnamelist[-2]
+                    # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
+                    ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
                     
-                    # 중복없이 같은 LOT끼리에서만 legend 추가
+                    # 통합: main 단위 범례, 같은 LOT 첫 번째만 표시
                     if j == i:
-                        temp_lgnd = lot_name
+                        temp_lgnd = ch_label
                         j = j + 1
                     else:
                         temp_lgnd = "_nolegend_"
-                    
-                    # 레전드 글자수 제한 (최대 40자)
-                    if len(temp_lgnd) > 40:
-                        temp_lgnd = temp_lgnd[:40] + "..."
                     
                     if hasattr(cyctemp[1], "NewData"):
                         self.capacitytext.setText(str(cyctemp[0]))
@@ -11160,13 +11167,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if len(cyctemp[1].NewData.index) > overall_xlimit:
                             overall_xlimit = len(cyctemp[1].NewData.index)
                         
-                        # dcir2, mkdcir 중복 제거
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd,
+                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd,
                                            colorno, graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        # ch_label: 폴더(LOT) 단위 이름으로 통일
-                        ch_label = lot_name
-                        if len(ch_label) > 40:
-                            ch_label = ch_label[:40] + "..."
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                         _base = ch_label
                         _sfx = 2
@@ -11178,7 +11180,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             channel_map[ch_label] = {'artists': _artists, 'color': _color}
                         # 서브 채널 개별 추적
-                        sub_label = cycnamelist[-1]
                         _sub_base = sub_label
                         _sub_sfx = 2
                         while sub_label in sub_channel_map:
@@ -11321,6 +11322,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         has_valid_data = False
         channel_map = {}  # 채널 제어용 artist 수집
         sub_channel_map = {}  # 서브 채널별 artist 수집
+        _first_ch_label = None  # 연결: 첫 번째 폴더의 main 라벨 추적
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -11353,13 +11355,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cycnamelist = FolderBase.split("\\")
                     headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                     
-                    if len(all_data_name) != 0 and j == i:
-                        lgnd = all_data_name[i]
+                    # 라벨 설정: main = 첫 폴더 기준 고정, sub = 채널 추출값
+                    ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
+                    if _first_ch_label is None:
+                        _first_ch_label = ch_label
+                    ch_label = _first_ch_label  # 연결: 모든 폴더를 첫 번째 main으로 통합
+                    
+                    # 연결: sub 단위 범례, 첫 번째만 표시
+                    if j == i:
+                        temp_lgnd = sub_label
                         j = j + 1
-                    elif len(all_data_name) != 0 and j != i:
-                        lgnd = ""
                     else:
-                        lgnd = cycnamelist[-1]
+                        temp_lgnd = ""
                     
                     if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                         writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
@@ -11369,14 +11376,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self.capacitytext.setText(str(cyctemp[0]))
                         if irscale == 0:
                             irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                        if len(all_data_name) == 0:
-                            temp_lgnd = ""
-                        else:
-                            temp_lgnd = lgnd
                         
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                         _base = ch_label
                         _sfx = 2
@@ -11387,14 +11389,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             channel_map[ch_label]['artists'].extend(_artists)
                         else:
                             channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                        # 서브 채널 개별 추적
-                        sub_label = cycnamelist[-1]
-                        _sub_base = sub_label
-                        _sub_sfx = 2
-                        while sub_label in sub_channel_map:
-                            sub_label = f"{_sub_base} ({_sub_sfx})"
-                            _sub_sfx += 1
-                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                        # 서브 채널: 연결 모드에서는 동일 sub를 병합
+                        if sub_label in sub_channel_map:
+                            sub_channel_map[sub_label]['artists'].extend(_artists)
+                        else:
+                            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
@@ -11528,6 +11527,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             has_valid_data = False
             channel_map = {}  # 채널 제어용 artist 수집
             sub_channel_map = {}  # 서브 채널별 artist 수집
+            _first_ch_label = None  # 연결여러개개별: 첫 번째 폴더의 main 라벨 추적
             total_folders = len(all_data_folder)
             
             for i, cyclefolder in enumerate(all_data_folder):
@@ -11561,12 +11561,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cycnamelist = FolderBase.split("\\")
                         headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                         
-                        if len(all_data_name) != 0 and i == 0 and sub_idx == 0:
-                            lgnd = all_data_name[i]
-                        elif len(all_data_name) != 0:
-                            lgnd = ""
+                        # 라벨 설정: main = 첫 폴더 기준 고정, sub = 채널 추출값
+                        ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
+                        if _first_ch_label is None:
+                            _first_ch_label = ch_label
+                        ch_label = _first_ch_label  # 연결여러개개별: 모든 폴더를 첫 번째 main으로 통합
+                        
+                        # 연결여러개개별: sub 단위 범례, 첫 번째만 표시
+                        if i == 0 and sub_idx == 0:
+                            temp_lgnd = sub_label
                         else:
-                            lgnd = cycnamelist[-1]
+                            temp_lgnd = ""
                         
                         if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                             writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
@@ -11576,14 +11581,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.capacitytext.setText(str(cyctemp[0]))
                             if irscale == 0:
                                 irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                            if len(all_data_name) == 0:
-                                temp_lgnd = ""
-                            else:
-                                temp_lgnd = lgnd
                             
-                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                            ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
+                            # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                             _base = ch_label
                             _sfx = 2
                             while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
@@ -11593,14 +11594,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
                                 channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                            # 서브 채널 개별 추적
-                            sub_label = cycnamelist[-1]
-                            _sub_base = sub_label
-                            _sub_sfx = 2
-                            while sub_label in sub_channel_map:
-                                sub_label = f"{_sub_base} ({_sub_sfx})"
-                                _sub_sfx += 1
-                            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                            # 서브 채널: 연결 모드에서는 동일 sub를 병합
+                            if sub_label in sub_channel_map:
+                                sub_channel_map[sub_label]['artists'].extend(_artists)
+                            else:
+                                sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
@@ -11771,19 +11769,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cycnamelist = FolderBase.split("\\")
                         headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                         
-                        # 중복없이 같은 LOT끼리에서만 legend 추가
-                        if len(all_data_name) != 0 and j == i:
-                            temp_lgnd = all_data_name[i]
-                            j = j + 1
-                        elif len(all_data_name) == 0 and j == i:
-                            temp_lgnd = cycnamelist[-2].split('_')[-1]
+                        # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
+                        ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
+                        
+                        # 연결여러개통합: main 단위 범례, 같은 LOT 첫 번째만 표시
+                        if j == i:
+                            temp_lgnd = ch_label
                             j = j + 1
                         else:
                             temp_lgnd = ""
-                        
-                        # 레전드 글자수 제한 (최대 40자)
-                        if len(temp_lgnd) > 40:
-                            temp_lgnd = temp_lgnd[:40] + "..."
                         
                         if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                             writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
@@ -11794,15 +11788,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if irscale == 0:
                                 irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
                             
-                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd, colorno,
+                            _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, colorno,
                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                            # ch_label: 폴더(LOT) 단위 이름으로 통일 (동일 폴더 채널을 1개 항목으로 묶음)
-                            if len(all_data_name) != 0:
-                                ch_label = all_data_name[i]
-                            else:
-                                ch_label = cycnamelist[-2].split('_')[-1]
-                            if len(ch_label) > 40:
-                                ch_label = ch_label[:40] + "..."
+                            # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                             _base = ch_label
                             _sfx = 2
                             while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
@@ -11812,14 +11800,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
                                 channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                            # 서브 채널 개별 추적
-                            sub_label = cycnamelist[-1]
-                            _sub_base = sub_label
-                            _sub_sfx = 2
-                            while sub_label in sub_channel_map:
-                                sub_label = f"{_sub_base} ({_sub_sfx})"
-                                _sub_sfx += 1
-                            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                            # 서브 채널: 연결 모드에서는 동일 sub를 병합
+                            if sub_label in sub_channel_map:
+                                sub_channel_map[sub_label]['artists'].extend(_artists)
+                            else:
+                                sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                             
                             # Data output option
                             if self.saveok.isChecked() and save_file_name:
