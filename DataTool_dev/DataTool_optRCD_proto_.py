@@ -344,6 +344,30 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lg
                       "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
     artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
                       "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
+    # ── ax6: AvgV / RndV 영역 구분 점선 + 텍스트 ──
+    _avgv = df.NewData.AvgV.dropna()
+    _rndv = df.NewData.RndV.dropna()
+    if len(_avgv) > 0 and len(_rndv) > 0:
+        _midline = (_avgv.min() + _rndv.max()) / 2
+        # 기존 구분선 제거 (다채널 중복 방지)
+        for line in ax6.get_lines():
+            if getattr(line, '_avgrest_sep', False):
+                line.remove()
+        for t in list(ax6.texts):
+            if getattr(t, '_avgrest_label', False):
+                t.remove()
+        sep = ax6.axhline(y=_midline, color='gray', linestyle='--',
+                          linewidth=0.8, alpha=0.5, zorder=2)
+        sep._avgrest_sep = True
+        _xlim = ax6.get_xlim()
+        _tx = _xlim[1] - (_xlim[1] - _xlim[0]) * 0.02
+        _offset = 0.015
+        t1 = ax6.text(_tx, _midline + _offset, 'Avg V', fontsize=7,
+                      color='gray', alpha=0.7, ha='right', va='bottom', zorder=4)
+        t2 = ax6.text(_tx, _midline - _offset, 'Rest V', fontsize=7,
+                      color='gray', alpha=0.7, ha='right', va='top', zorder=4)
+        t1._avgrest_label = True
+        t2._avgrest_label = True
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
         artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                         "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color))
@@ -445,9 +469,9 @@ def place_dcir_labels(ax4):
             rss_median = min(ylim[1] - y_margin, center + yr * 0.03)
             dcir_median = max(ylim[0] + y_margin, center - yr * 0.03)
     if rss_median is not None:
-        ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw).draggable()
+        ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw)
     if dcir_median is not None:
-        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw).draggable()
+        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
@@ -3052,8 +3076,8 @@ class Ui_sitool(object):
         spacerItem = QtWidgets.QSpacerItem(342, 40, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
         self.horizontalLayout_10.addItem(spacerItem)
         self.label_9 = QtWidgets.QLabel(parent=self.tab)
-        self.label_9.setMinimumSize(QtCore.QSize(58, 40))
-        self.label_9.setMaximumSize(QtCore.QSize(58, 40))
+        self.label_9.setMinimumSize(QtCore.QSize(80, 40))
+        self.label_9.setMaximumSize(QtCore.QSize(80, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3068,6 +3092,7 @@ class Ui_sitool(object):
         font.setPointSize(10)
         self.FindText.setFont(font)
         self.FindText.setInputMask("")
+        self.FindText.setPlaceholderText("스페이스=OR, 쉼표=AND (예: SOC70,Cycle DCIR)")
         self.FindText.setObjectName("FindText")
         self.horizontalLayout_10.addWidget(self.FindText)
         self.tb_modified_time = QtWidgets.QLabel(parent=self.tab)
@@ -9312,6 +9337,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_info.currentIndexChanged.connect(self.tb_info_combobox)
         self.tb_cycler.currentIndexChanged.connect(self.tb_cycler_combobox)
         self.tb_room.currentIndexChanged.connect(self.tb_room_combobox)
+        self.FindText.returnPressed.connect(self.tb_cycler_combobox)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -10089,6 +10115,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             legend = ax.get_legend()
             if legend:
                 legend.set_draggable(True)
+        # DCIR 텍스트 레이블 드래그 활성화
+        from matplotlib.text import Annotation
+        for child in axes_list[3].get_children():
+            if isinstance(child, Annotation) and child.get_text() in ("Rss@SOC70%", "DCIR1s@SOC70%"):
+                child.draggable()
         
         # --- 설정 저장/불러오기 (#15) ---
         import json as _json
@@ -13322,7 +13353,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                                       ((i + (j - 1) * num_i) > 64) and ((i + (j - 1) * num_i) < 81)):
                     self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
                 # text가 있는 부분에 대해서 별도 표시 기능 추가
-                if (str(self.FindText.text()) == "") or (str(self.FindText.text()) in self.df.loc[i + (j - 1) * num_i,"testname"]):
+                if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
                         # 온도별 구분
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0))
@@ -13458,7 +13489,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤": # 정지 채널 구분 _ 붉은색
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,200,229))
                     # text가 있는 부분에 대해서 별도 표시 기능 추가
-                    if (str(self.FindText.text()) == "") or (str(self.FindText.text()) in self.df.loc[i + (j - 1) * num_i,"testname"]):
+                    if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,255)) # 15도 파란색
@@ -13482,6 +13513,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def table_reset(self):
         self.tb_channel.clear()
         self.tb_modified_time.setText("")
+
+    def match_highlight_text(self, search_text, testname):
+        """멀티 단어 검색: 스페이스=OR, 쉼표=AND, 대소문자 무시"""
+        if search_text.strip() == "":
+            return True
+        testname_lower = testname.lower()
+        for group in search_text.split(" "):
+            group = group.strip()
+            if not group:
+                continue
+            keywords = [kw.strip().lower() for kw in group.split(",") if kw.strip()]
+            if keywords and all(kw in testname_lower for kw in keywords):
+                return True
+        return False
 
     def change_drive(self, df, changed):
         # 상세 데이터부터 범용 데이터 순으로 바꾸기 진행
