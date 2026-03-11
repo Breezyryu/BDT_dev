@@ -13343,28 +13343,31 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
                     self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                 self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                # text가 있는 부분에 대해서 별도 표시 기능 추가
-                if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지" or self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,127,0))
+                self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(248,249,250))
+                # 상태별 배경색
+                if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지":
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(152,71,62))
+                elif self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(228,197,175))
                 if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(200,255,255))
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(158,206,154))
                 # 코인셀 구분
                 if (toyo_num == 0 and (i + (j - 1) * num_i) < 17) or ((toyo_num == 0 or toyo_num == 1) and
                                                                       ((i + (j - 1) * num_i) > 64) and ((i + (j - 1) * num_i) < 81)):
                     self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
-                # text가 있는 부분에 대해서 별도 표시 기능 추가
+                # 강조 문자 필터
                 if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                        # 온도별 구분
+                        # 충방전기별 구분
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(145,23,31))
                         if (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,255))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,79,87))
                         if (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(145,23,31))
                         else:
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,0))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,113,135))
                 else:
-                    self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(175, 175, 175))
+                    self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
@@ -13480,27 +13483,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
                             self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                         self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                    # 채널 구분 
-                    # # 사용 가능 채널 구분 _ 하늘색
+                    # 상태별 배경색
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(248,249,250))
                     if (self.df.loc[i + (j - 1) * num_i,"use"] == "대기") or (self.df.loc[i + (j - 1) * num_i,"use"] == "준비"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(200,255,255))
-                    elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"): # 사용 가능 채널 구분 _ 주황색
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,127,0))
-                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤": # 정지 채널 구분 _ 붉은색
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,200,229))
-                    # text가 있는 부분에 대해서 별도 표시 기능 추가
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(158,206,154))
+                    elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"):
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(228,197,175))
+                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤":
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(152,71,62))
+                    # 강조 문자 필터
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,255)) # 15도 파란색
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,79,87)) # 15도
                             elif self.df.loc[i + (j - 1) * num_i, "temp"] > 30 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 40:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,255,0)) # 35도 녹색
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(116,165,127)) # 35도
                             elif self.df.loc[i + (j - 1) * num_i, "temp"] > 40 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 50:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0)) # 45도 빨간색
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(145,23,31)) # 45도
                             else:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,0)) # 기본 검은색
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,113,135)) # 기본 25도
                     else:
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(175, 175, 175))
+                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
