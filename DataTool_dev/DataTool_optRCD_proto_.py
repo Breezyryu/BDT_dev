@@ -10028,55 +10028,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         list_lbl = QLabel(f"채널 그룹 ({_ch_total})")
         list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
         
-        # --- 채널 정렬 토글 ---
-        _sort_state = {'by_name': False}
-        sort_btn = QPushButton("가나다순")
-        sort_btn.setFixedSize(56, 18)
-        sort_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 10px; padding: 0 2px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        def _sort_channels():
-            _sort_state['by_name'] = not _sort_state['by_name']
-            sort_btn.setText("번호순" if _sort_state['by_name'] else "가나다순")
-            # 현재 아이템 정보 수집
-            items_data = []
-            for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                items_data.append({
-                    'text': it.text(),
-                    'label': _strip_numbering(it.text()),
-                    'checked': it.checkState(),
-                    'color': it.foreground().color(),
-                    'tooltip': it.toolTip(),
-                    'orig_key': it.data(Qt.ItemDataRole.UserRole),
-                })
-            # 정렬
-            if _sort_state['by_name']:
-                items_data.sort(key=lambda d: d['label'].lower())
-            else:
-                items_data.sort(key=lambda d: d['text'])  # 번호 순
-            # 재배치
-            ch_list.blockSignals(True)
-            ch_list.clear()
-            for d in items_data:
-                item = QListWidgetItem(d['text'])
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
-                item.setCheckState(d['checked'])
-                item.setIcon(_make_color_icon(d['color'].name()))
-                item.setForeground(d['color'])
-                item.setToolTip(d['tooltip'])
-                item.setData(Qt.ItemDataRole.UserRole, d['orig_key'])
-                ch_list.addItem(item)
-            ch_list.blockSignals(False)
-        sort_btn.clicked.connect(_sort_channels)
-        
         lbl_row = QHBoxLayout()
         lbl_row.setSpacing(4)
         lbl_row.addWidget(list_lbl)
-        lbl_row.addWidget(sort_btn)
         # --- 채널 리스트 접기/펼치기 (#7) ---
         _ch_collapsed = {'state': False}
         collapse_btn = QPushButton("▲")
@@ -10301,20 +10255,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.itemClicked.disconnect(on_item_clicked)
             
             def on_item_clicked_linked(item):
-                """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경 + 필터링"""
+                """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경"""
                 orig_key = item.data(Qt.ItemDataRole.UserRole)
                 _highlight_channel(orig_key)
-                # 서브 채널 리스트: 선택된 그룹의 하위 항목만 표시
-                for i in range(sub_list.count()):
-                    sub_item = sub_list.item(i)
-                    sub_label = _strip_numbering(sub_item.text())
-                    if sub_label in sub_channel_map:
-                        sub_item.setHidden(sub_channel_map[sub_label].get('parent') != orig_key)
-                    else:
-                        sub_item.setHidden(True)
-                # 서브 채널 라벨 업데이트
-                visible_count = sum(1 for i in range(sub_list.count()) if not sub_list.item(i).isHidden())
-                sub_list_lbl.setText(f"서브 채널 ({visible_count}/{_sub_total})")
             
             ch_list.itemClicked.connect(on_item_clicked_linked)
             
