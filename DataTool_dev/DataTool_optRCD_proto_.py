@@ -13343,29 +13343,38 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
                     self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                 self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(248,249,250))
-                # 상태별 배경색
-                if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(152,71,62))
-                elif self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(228,197,175))
-                if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(158,206,154))
+                # 상태별 배경색 결정
+                bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음
+                self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
+                if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지" or self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
+                    if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(88,129,87))
+                        bg_level = 1
+                    else:
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(197,206,182))
+                        bg_level = 2
+                elif toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(88,129,87))
+                    bg_level = 1
                 # 코인셀 구분
                 if (toyo_num == 0 and (i + (j - 1) * num_i) < 17) or ((toyo_num == 0 or toyo_num == 1) and
                                                                       ((i + (j - 1) * num_i) > 64) and ((i + (j - 1) * num_i) < 81)):
                     self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
                 # 강조 문자 필터
                 if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                        # 충방전기별 구분
+                        # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
+                        # 45도 계열: Toyo1,3 ch>64
+                        fg_45 = [(208,0,0), (255,107,107), (165,0,0)][bg_level]
+                        fg_15 = [(1,73,124), (126,200,227), (1,53,96)][bg_level]
+                        fg_normal = [(18,21,23), (246,246,243), (10,12,14)][bg_level]
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(145,23,31))
-                        if (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,79,87))
-                        if (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(145,23,31))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
+                        elif (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15))
+                        elif (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
                         else:
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,113,135))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal))
                 else:
                     self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
         if self.saveok.isChecked():
@@ -13483,25 +13492,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
                             self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                         self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                    # 상태별 배경색
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(248,249,250))
+                    # 상태별 배경색 결정
+                    bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음, 3=작업멈춤
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
                     if (self.df.loc[i + (j - 1) * num_i,"use"] == "대기") or (self.df.loc[i + (j - 1) * num_i,"use"] == "준비"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(158,206,154))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(88,129,87))
+                        bg_level = 1
                     elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(228,197,175))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(197,206,182))
+                        bg_level = 2
                     elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(152,71,62))
-                    # 강조 문자 필터
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(147,31,29))
+                        bg_level = 3
+                    # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
+                            fg_45 = [(208,0,0), (255,107,107), (165,0,0), (255,158,158)][bg_level]
+                            fg_35 = [(195,47,39), (240,137,125), (154,32,24), (255,180,169)][bg_level]
+                            fg_15 = [(1,73,124), (126,200,227), (1,53,96), (125,184,218)][bg_level]
+                            fg_normal = [(18,21,23), (246,246,243), (10,12,14), (246,246,243)][bg_level]
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,79,87)) # 15도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15)) # 15도
                             elif self.df.loc[i + (j - 1) * num_i, "temp"] > 30 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 40:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(116,165,127)) # 35도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_35)) # 35도
                             elif self.df.loc[i + (j - 1) * num_i, "temp"] > 40 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 50:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(145,23,31)) # 45도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45)) # 45도
                             else:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(7,113,135)) # 기본 25도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal)) # 기본 23도
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
             if self.saveok.isChecked():
