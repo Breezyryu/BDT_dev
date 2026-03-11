@@ -3196,15 +3196,12 @@ class Ui_sitool(object):
         item = QtWidgets.QTableWidgetItem()
         self.tableWidget.setItem(1, 0, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(88, 129, 87))
+        brush = QtGui.QBrush(QtGui.QColor(176, 203, 176))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
-        brush = QtGui.QBrush(QtGui.QColor(246, 246, 243))
-        brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
-        item.setForeground(brush)
         self.tableWidget.setItem(1, 1, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(197, 206, 182))
+        brush = QtGui.QBrush(QtGui.QColor(234, 239, 230))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(1, 2, item)
@@ -3217,25 +3214,19 @@ class Ui_sitool(object):
         item = QtWidgets.QTableWidgetItem()
         self.tableWidget.setItem(2, 0, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(88, 129, 87))
+        brush = QtGui.QBrush(QtGui.QColor(176, 203, 176))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
-        brush = QtGui.QBrush(QtGui.QColor(246, 246, 243))
-        brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
-        item.setForeground(brush)
         self.tableWidget.setItem(2, 1, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(197, 206, 182))
+        brush = QtGui.QBrush(QtGui.QColor(234, 239, 230))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(2, 2, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(147, 31, 29))
+        brush = QtGui.QBrush(QtGui.QColor(214, 155, 154))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
-        brush = QtGui.QBrush(QtGui.QColor(246, 246, 243))
-        brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
-        item.setForeground(brush)
         self.tableWidget.setItem(2, 3, item)
         item = QtWidgets.QTableWidgetItem()
         brush = QtGui.QBrush(QtGui.QColor(173, 181, 189))
@@ -13364,13 +13355,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
                 if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지" or self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
                     if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(88,129,87))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                         bg_level = 1
                     else:
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(197,206,182))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
                         bg_level = 2
                 elif toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(88,129,87))
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                     bg_level = 1
                 # 코인셀 구분
                 if (toyo_num == 0 and (i + (j - 1) * num_i) < 17) or ((toyo_num == 0 or toyo_num == 1) and
@@ -13380,9 +13371,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
                         # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
                         # 45도 계열: Toyo1,3 ch>64
-                        fg_45 = [(208,0,0), (255,107,107), (165,0,0)][bg_level]
-                        fg_15 = [(0,73,245), (126,200,227), (1,53,96)][bg_level]
-                        fg_normal = [(18,21,23), (246,246,243), (10,12,14)][bg_level]
+                        fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
+                        fg_15 = [(0,73,245), (1,53,96), (1,53,96)][bg_level]
+                        fg_normal = [(18,21,23), (10,12,14), (10,12,14)][bg_level]
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
                         elif (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
@@ -13523,20 +13514,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음, 3=작업멈춤
                     self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
                     if (self.df.loc[i + (j - 1) * num_i,"use"] == "대기") or (self.df.loc[i + (j - 1) * num_i,"use"] == "준비"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(88,129,87))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                         bg_level = 1
                     elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(197,206,182))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
                         bg_level = 2
                     elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(147,31,29))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,155,154))
                         bg_level = 3
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                            fg_45 = [(208,0,0), (255,107,107), (165,0,0), (255,158,158)][bg_level]
-                            fg_35 = [(195,47,39), (240,137,125), (154,32,24), (255,180,169)][bg_level]
-                            fg_15 = [(0,73,245), (126,200,227), (1,53,96), (125,184,218)][bg_level]
-                            fg_normal = [(18,21,23), (246,246,243), (10,12,14), (246,246,243)][bg_level]
+                            fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
+                            fg_35 = [(195,47,39), (154,32,24), (154,32,24), (154,32,24)][bg_level]
+                            fg_15 = [(0,73,245), (1,53,96), (1,53,96), (1,53,96)][bg_level]
+                            fg_normal = [(18,21,23), (10,12,14), (10,12,14), (10,12,14)][bg_level]
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15)) # 15도
