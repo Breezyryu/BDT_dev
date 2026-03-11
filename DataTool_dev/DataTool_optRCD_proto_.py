@@ -11376,7 +11376,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
+                        # ch_label: 지정Path면 all_data_name[i], 아니면 서브폴더명
+                        if len(all_data_name) != 0:
+                            ch_label = all_data_name[i]
+                        else:
+                            ch_label = lgnd if lgnd else cycnamelist[-1]
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                         _base = ch_label
                         _sfx = 2
