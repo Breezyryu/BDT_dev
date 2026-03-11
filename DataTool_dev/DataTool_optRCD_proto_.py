@@ -11237,7 +11237,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.close()
 
     def link_cyc_confirm_button(self):
-        # 데이터 로딩 병렬 처리 적용
+        # 전처리 방식: 1단계 수집+엑셀, 2단계 병합 plot
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
         global writer
         writecolno, writerowno = 0, 0
@@ -11268,22 +11268,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             max_workers=4
         )
         
-        # Cycle 관련 (그래프 연결) - 모든 데이터를 연결하여 하나의 figure에 그림
-        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-        colorno, j = 0, 0
-        tab_no = 0
-        
-        # 탭 초기화
-        tab = None
-        tab_layout = None
-        canvas = None
-        toolbar = None
+        # ═══ 1단계: 데이터 수집 + index 오프셋 + 엑셀 출력 + 채널별 병합 ═══
+        merged = {}  # {sub_label: {'frames': [...], 'colorno': int, 'ch_label': str}}
+        _first_ch_label = None
         cycnamelist = None
         has_valid_data = False
-        channel_map = {}  # 채널 제어용 artist 수집
-        sub_channel_map = {}  # 서브 채널별 artist 수집
-        _first_ch_label = None  # 연결: 첫 번째 폴더의 main 라벨 추적
-        _seen_sub_labels = set()  # 범례 중복 방지
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -11292,7 +11281,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 colorno, writecolno, Chnl_num = 0, 0, 0
                 
                 for sub_idx, FolderBase in enumerate(subfolder):
-                    # 병렬 로딩된 데이터 검색
                     if (i, sub_idx) not in loaded_data:
                         continue
                     
@@ -11300,78 +11288,55 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if cyctemp is None or cyctemp[1] is None:
                         continue
                     
-                    # 첫 유효 데이터에서 탭 생성
-                    if tab is None:
-                        tab = QtWidgets.QWidget()
-                        tab_layout = QtWidgets.QVBoxLayout(tab)
-                        canvas = FigureCanvas(fig)
-                        toolbar = NavigationToolbar(canvas, None)
-                    
                     has_valid_data = True
                     
-                    # 진행률 업데이트 (50% ~ 100%)
-                    progress_val = 50 + int((i + 1) / total_folders * 50)
+                    # 진행률 업데이트 (50% ~ 80%)
+                    progress_val = 50 + int((i + 1) / total_folders * 30)
                     self.progressBar.setValue(progress_val)
                     
                     cycnamelist = FolderBase.split("\\")
                     headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
                     
-                    # 라벨 설정: main = 첫 폴더 기준 고정, sub = 채널 추출값
                     ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
                     if _first_ch_label is None:
                         _first_ch_label = ch_label
-                    ch_label = _first_ch_label  # 연결: 모든 폴더를 첫 번째 main으로 통합
-                    
-                    # 연결: 서브 채널 단위 범례, 고유 sub_label만 표시
-                    if sub_label not in _seen_sub_labels:
-                        temp_lgnd = sub_label
-                        _seen_sub_labels.add(sub_label)
-                        j = j + 1
-                    else:
-                        temp_lgnd = ""
+                    ch_label = _first_ch_label
                     
                     if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
+                        # index 오프셋 적용 (기존과 동일)
                         writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
                         cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
-                        if xscale == 0:
-                            xscale = len(cyctemp[1].NewData) * (total_folders + 1)
+                        
                         self.capacitytext.setText(str(cyctemp[0]))
                         if irscale == 0:
                             irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                        if xscale == 0:
+                            xscale = len(cyctemp[1].NewData) * (total_folders + 1)
                         
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, colorno,
-                                           graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
-                        _base = ch_label
-                        _sfx = 2
-                        while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                            ch_label = f"{_base} ({_sfx})"
-                            _sfx += 1
-                        if ch_label in channel_map:
-                            channel_map[ch_label]['artists'].extend(_artists)
-                        else:
-                            channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                        # 서브 채널: 연결 모드에서는 동일 sub를 병합
-                        if sub_label in sub_channel_map:
-                            sub_channel_map[sub_label]['artists'].extend(_artists)
-                        else:
-                            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                        # 채널별 DataFrame 병합 누적
+                        if sub_label not in merged:
+                            merged[sub_label] = {
+                                'frames': [],
+                                'colorno': colorno,
+                                'ch_label': ch_label,
+                            }
+                        merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
                         
-                        # Data output option
+                        # 엑셀 출력 (기존과 동일 — 데이터셋 단위)
                         if self.saveok.isChecked() and save_file_name:
                             cyc_head = ["Cycle"]
                             _nd = cyctemp[1].NewData
                             _dc = writecolno + 1
-                            output_data(_nd, "방전용럅", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방전용럅", _dc, writerowno, "Dchg", headername)
+                            output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
                             output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
                             output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
                             output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
                             output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
                             output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
                             output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
-                            output_data(_nd, "충전용럅", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "충전용럅", _dc, writerowno, "Chg", headername)
+                            output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
+                            output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
                             output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
                             output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
                             output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
@@ -11392,11 +11357,57 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
                                 output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                        
                         colorno = colorno + 1
                         writecolno = writecolno + 2
                         CycleMax[Chnl_num] = len(cyctemp[1].NewData)
                         link_writerownum[Chnl_num] = writerowno
                         Chnl_num = Chnl_num + 1
+        
+        # ═══ 2단계: 병합 데이터로 plot (개별 모드와 동일한 구조) ═══
+        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+        tab_no = 0
+        tab = None
+        tab_layout = None
+        canvas = None
+        toolbar = None
+        channel_map = {}
+        sub_channel_map = {}
+        
+        for idx, (sub_label, info) in enumerate(merged.items()):
+            # 병합된 단일 DataFrame (개별 모드의 cyctemp[1].NewData와 동일한 구조)
+            merged_df = pd.concat(info['frames']).sort_index()
+            _wrapper = type('CycData', (), {'NewData': merged_df})()
+            
+            if tab is None:
+                tab = QtWidgets.QWidget()
+                tab_layout = QtWidgets.QVBoxLayout(tab)
+                canvas = FigureCanvas(fig)
+                toolbar = NavigationToolbar(canvas, None)
+            
+            # 진행률 업데이트 (80% ~ 100%)
+            progress_val = 80 + int((idx + 1) / len(merged) * 20)
+            self.progressBar.setValue(progress_val)
+            
+            lgnd = sub_label  # 개별 모드와 동일: 채널당 1번 범례
+            
+            _artists, _color = graph_output_cycle(
+                _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
+                info['colorno'], graphcolor, self.mkdcir,
+                ax1, ax2, ax3, ax4, ax5, ax6
+            )
+            
+            ch_label = info['ch_label']
+            _base = ch_label
+            _sfx = 2
+            while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                ch_label = f"{_base} ({_sfx})"
+                _sfx += 1
+            if ch_label in channel_map:
+                channel_map[ch_label]['artists'].extend(_artists)
+            else:
+                channel_map[ch_label] = {'artists': _artists, 'color': _color}
+            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
         
         # 범례 설정
         if cycnamelist:
@@ -11409,7 +11420,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ax5.legend(loc="upper right")
             ax6.legend(loc="lower right")
         
-        # 탭 추가 (유효 데이터가 있는 경우에만)
+        # 탭 추가
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
             self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
