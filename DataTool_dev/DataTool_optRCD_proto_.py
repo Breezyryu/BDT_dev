@@ -319,27 +319,29 @@ def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xsc
     graph_base_parameter(ax, xlabel, ylabel)
 
 # Cycle 그래프 그리기 - 지정색 기준 사용
-def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
+def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0, _size=None):
     # 지정색이 없으면 기본색 사용
+    _s = _size if _size is not None else THEME['SCATTER_SIZE']
     if cyc_color != 0:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'], color=cyc_color,
+        sc = ax.scatter(x, y, label=tlabel, s=_s, color=cyc_color,
                    alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
                    linewidths=THEME['EDGE_WIDTH'], zorder=3)
     else:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SIZE'],
+        sc = ax.scatter(x, y, label=tlabel, s=_s,
                    alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
                    linewidths=THEME['EDGE_WIDTH'], zorder=3)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
     return sc    
 
 # Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
-def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
+def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0, _size=None):
+    _s = _size if _size is not None else THEME['SCATTER_EMPTY_SIZE']
     if cyc_color != 0:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'], edgecolors=cyc_color,
+        sc = ax.scatter(x, y, label=tlabel, s=_s, edgecolors=cyc_color,
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
                    linewidths=0.6, zorder=3)
     else:
-        sc = ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_EMPTY_SIZE'],
+        sc = ax.scatter(x, y, label=tlabel, s=_s,
                    facecolors='none', alpha=THEME['SCATTER_ALPHA'],
                    linewidths=0.6, zorder=3)
     graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
@@ -385,11 +387,13 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                       color='gray', alpha=0.7, ha='right', va='top', zorder=4)
         t1._avgrest_label = True
         t2._avgrest_label = True
+    _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
+    _dcir_es = THEME['SCATTER_EMPTY_SIZE'] * 3
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
         artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color))
+                        "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color, _size=_dcir_es))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
+                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
         # DCIR scatter 점을 잇는 라인
         _dcir_valid = df.NewData.soc70_dcir.dropna()
         if len(_dcir_valid) > 1:
@@ -399,7 +403,7 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
             ax4.plot(_rss_valid.index, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color))
+                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
         _dcir_only = df.NewData.dcir.dropna()
         if len(_dcir_only) > 1:
             ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
@@ -11110,7 +11114,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     
                     # 통합: 채널 그룹 단위 범례, 고유 ch_label만 표시
                     if ch_label not in _seen_ch_labels:
-                        temp_lgnd = ch_label
+                        temp_lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
                         _seen_ch_labels.add(ch_label)
                     else:
                         temp_lgnd = "_nolegend_"
@@ -11729,7 +11733,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         # 연결여러개통합: 채널 그룹 단위 범례, 고유 ch_label만 표시
                         if ch_label not in _seen_ch_labels:
-                            temp_lgnd = ch_label
+                            temp_lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
                             _seen_ch_labels.add(ch_label)
                         else:
                             temp_lgnd = ""
