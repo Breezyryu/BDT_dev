@@ -10301,9 +10301,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.itemClicked.disconnect(on_item_clicked)
             
             def on_item_clicked_linked(item):
-                """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경"""
+                """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경 + 필터링"""
                 orig_key = item.data(Qt.ItemDataRole.UserRole)
                 _highlight_channel(orig_key)
+                # 서브 채널 리스트: 선택된 그룹의 하위 항목만 표시
+                for i in range(sub_list.count()):
+                    sub_item = sub_list.item(i)
+                    sub_label = _strip_numbering(sub_item.text())
+                    if sub_label in sub_channel_map:
+                        sub_item.setHidden(sub_channel_map[sub_label].get('parent') != orig_key)
+                    else:
+                        sub_item.setHidden(True)
+                # 서브 채널 라벨 업데이트
+                visible_count = sum(1 for i in range(sub_list.count()) if not sub_list.item(i).isHidden())
+                sub_list_lbl.setText(f"서브 채널 ({visible_count}/{_sub_total})")
             
             ch_list.itemClicked.connect(on_item_clicked_linked)
             
@@ -11058,7 +11069,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if has_valid_data and tab_layout is not None:
                     axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list)
+                                             channel_map, fig, axes_list, sub_channel_map)
                     tab_no = tab_no + 1
                     if cycnamelist:
                         output_fig(self.figsaveok, cycnamelist[-2])
@@ -11456,7 +11467,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
             self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list)
+                                     channel_map, fig, axes_list, sub_channel_map)
             tab_no = tab_no + 1
             if cycnamelist:
                 output_fig(self.figsaveok, cycnamelist[-2])
@@ -11662,7 +11673,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if has_valid_data and tab_layout is not None:
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
                 self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                         channel_map, fig, axes_list)
+                                         channel_map, fig, axes_list, sub_channel_map)
                 tab_no = tab_no + 1
                 if cycnamelist:
                     output_fig(self.figsaveok, cycnamelist[-2])
