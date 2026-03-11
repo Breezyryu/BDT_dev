@@ -11191,6 +11191,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             writecolno = writecolno + 2
                 colorno = colorno % len(THEME['PALETTE']) + 1
         
+        # 제목 설정 (다른 모드와 통일)
+        _suptitle = None
+        if overall_filename:
+            _suptitle = overall_filename
+        elif has_valid_data and cycnamelist:
+            _suptitle = cycnamelist[-2]
+        if _suptitle:
+            plt.suptitle(_suptitle, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+        
         # 범례 설정 (handles/labels 명시적 전달)
         _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
                     edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
