@@ -11072,6 +11072,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         has_valid_data = False
         channel_map = {}  # 채널 제어용 artist 수집
         sub_channel_map = {}  # 서브 채널별 artist 수집
+        _seen_ch_labels = set()  # 범례 중복 방지
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -11106,10 +11107,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
                     ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
                     
-                    # 통합: main 단위 범례, 같은 LOT 첫 번째만 표시
-                    if j == i:
+                    # 통합: 채널 그룹 단위 범례, 고유 ch_label만 표시
+                    if ch_label not in _seen_ch_labels:
                         temp_lgnd = ch_label
-                        j = j + 1
+                        _seen_ch_labels.add(ch_label)
                     else:
                         temp_lgnd = "_nolegend_"
                     
@@ -11277,6 +11278,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         channel_map = {}  # 채널 제어용 artist 수집
         sub_channel_map = {}  # 서브 채널별 artist 수집
         _first_ch_label = None  # 연결: 첫 번째 폴더의 main 라벨 추적
+        _seen_sub_labels = set()  # 범례 중복 방지
         total_folders = len(all_data_folder)
         
         for i, cyclefolder in enumerate(all_data_folder):
@@ -11315,9 +11317,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _first_ch_label = ch_label
                     ch_label = _first_ch_label  # 연결: 모든 폴더를 첫 번째 main으로 통합
                     
-                    # 연결: sub 단위 범례, 첫 번째만 표시
-                    if j == i:
+                    # 연결: 서브 채널 단위 범례, 고유 sub_label만 표시
+                    if sub_label not in _seen_sub_labels:
                         temp_lgnd = sub_label
+                        _seen_sub_labels.add(sub_label)
                         j = j + 1
                     else:
                         temp_lgnd = ""
@@ -11482,6 +11485,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             channel_map = {}  # 채널 제어용 artist 수집
             sub_channel_map = {}  # 서브 채널별 artist 수집
             _first_ch_label = None  # 연결여러개개별: 첫 번째 폴더의 main 라벨 추적
+            _seen_sub_labels = set()  # 범례 중복 방지
             total_folders = len(all_data_folder)
             
             for i, cyclefolder in enumerate(all_data_folder):
@@ -11521,9 +11525,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _first_ch_label = ch_label
                         ch_label = _first_ch_label  # 연결여러개개별: 모든 폴더를 첫 번째 main으로 통합
                         
-                        # 연결여러개개별: sub 단위 범례, 첫 번째만 표시
-                        if i == 0 and sub_idx == 0:
+                        # 연결여러개개별: 서브 채널 단위 범례, 고유 sub_label만 표시
+                        if sub_label not in _seen_sub_labels:
                             temp_lgnd = sub_label
+                            _seen_sub_labels.add(sub_label)
                         else:
                             temp_lgnd = ""
                         
@@ -11664,10 +11669,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         has_valid_data = False
         channel_map = {}  # 채널 제어용 artist 수집
         sub_channel_map = {}  # 서브 채널별 artist 수집
+        _seen_ch_labels = set()  # 범례 중복 방지
         
         for k, datafilepath in enumerate(alldatafilepath):
             folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
-            j = 0  # 같은 LOT끼리 legend 중복 방지용 카운터
             writecolno = writecolnomax
             CycleMax = [0, 0, 0, 0, 0]
             link_writerownum = [0, 0, 0, 0, 0]
@@ -11726,10 +11731,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
                         ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
                         
-                        # 연결여러개통합: main 단위 범례, 같은 LOT 첫 번째만 표시
-                        if j == i:
+                        # 연결여러개통합: 채널 그룹 단위 범례, 고유 ch_label만 표시
+                        if ch_label not in _seen_ch_labels:
                             temp_lgnd = ch_label
-                            j = j + 1
+                            _seen_ch_labels.add(ch_label)
                         else:
                             temp_lgnd = ""
                         
