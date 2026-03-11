@@ -13567,8 +13567,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """멀티 단어 검색: 스페이스=OR, 쉼표=AND, 대소문자 무시"""
         if search_text.strip() == "":
             return True
+        import re
+        # 쉼표 주변 스페이스 제거 → "A, B" → "A,B" (AND 보존)
+        normalized = re.sub(r'\s*,\s*', ',', search_text)
         testname_lower = testname.lower()
-        for group in search_text.split(" "):
+        for group in normalized.split(" "):
             group = group.strip()
             if not group:
                 continue
