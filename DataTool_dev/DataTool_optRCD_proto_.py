@@ -11376,11 +11376,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
                                            graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        # ch_label: 지정Path면 all_data_name[i], 아니면 서브폴더명
-                        if len(all_data_name) != 0:
-                            ch_label = all_data_name[i]
-                        else:
-                            ch_label = lgnd if lgnd else cycnamelist[-1]
+                        ch_label = temp_lgnd if temp_lgnd else lgnd if lgnd else cycnamelist[-1]
                         # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
                         _base = ch_label
                         _sfx = 2
@@ -11441,44 +11437,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         link_writerownum[Chnl_num] = writerowno
                         Chnl_num = Chnl_num + 1
         
-        # 범례 설정 — channel_map 기반 proxy handle (지정Path/직접입력 모두 동일)
+        # 범례 설정
         if cycnamelist:
-            plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            # channel_map에서 proxy 핸들 생성 (scatter artist label 의존 제거)
-            from matplotlib.lines import Line2D
-            _proxy_handles = []
-            _proxy_labels = []
-            _seen_labels = set()
-            for ch_label, info in channel_map.items():
-                if ch_label not in _seen_labels:
-                    _seen_labels.add(ch_label)
-                    _proxy_handles.append(
-                        Line2D([0], [0], marker='o', color='w',
-                               markerfacecolor=info['color'], markersize=6,
-                               markeredgecolor=THEME['EDGE_COLOR'],
-                               markeredgewidth=THEME['EDGE_WIDTH']))
-                    _proxy_labels.append(ch_label)
-                # artist label도 동기화 (CH팝업 _rebuild_legend 호환)
-                _ax_seen = set()
-                for art in info['artists']:
-                    ax_id = id(art.axes)
-                    if ax_id not in _ax_seen:
-                        art.set_label(ch_label)
-                        _ax_seen.add(ax_id)
-                    else:
-                        art.set_label('_nolegend_')
-            _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
-                        edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
-            _legend_locs = [
-                (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
-                (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
-                (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
-            ]
-            if _proxy_handles:
-                for _ax, _loc, _anchor in _legend_locs:
-                    _ax.legend(_proxy_handles, _proxy_labels,
-                               loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
-            place_dcir_labels(ax4)
+            if len(all_data_name) != 0:
+                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                ax1.legend(loc="lower left")
+                ax2.legend(loc="lower right")
+                ax3.legend(loc="upper right")
+                ax4.legend(loc="upper right")
+                place_dcir_labels(ax4)
+                ax5.legend(loc="upper right")
+                ax6.legend(loc="lower right")
+            else:
+                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                place_dcir_labels(ax4)
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
