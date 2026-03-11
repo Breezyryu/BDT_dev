@@ -9728,7 +9728,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _ch_total = len(channel_map)
         _nw = len(str(_ch_total))  # 자릿수
         for idx, label in enumerate(channel_map, 1):
-            item = QListWidgetItem(f"{idx:0{_nw}d}. {label}")
+            _display = label.split("_")[-1] if "_" in label else label
+            item = QListWidgetItem(f"{idx:0{_nw}d}. {_display}")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
             item.setCheckState(Qt.CheckState.Checked)
             item.setIcon(_make_color_icon(channel_map[label]['color']))
@@ -11395,19 +11396,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         # 범례 설정
         if cycnamelist:
-            if len(all_data_name) != 0:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                ax1.legend(loc="lower left")
-                ax2.legend(loc="lower right")
-                ax3.legend(loc="upper right")
-                ax4.legend(loc="upper right")
-                place_dcir_labels(ax4)
-                ax5.legend(loc="upper right")
-                ax6.legend(loc="lower right")
-            else:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-                place_dcir_labels(ax4)
+            plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            ax1.legend(loc="lower left")
+            ax2.legend(loc="lower right")
+            ax3.legend(loc="upper right")
+            ax4.legend(loc="upper right")
+            place_dcir_labels(ax4)
+            ax5.legend(loc="upper right")
+            ax6.legend(loc="lower right")
         
         # 탭 추가 (유효 데이터가 있는 경우에만)
         if has_valid_data and tab_layout is not None:
