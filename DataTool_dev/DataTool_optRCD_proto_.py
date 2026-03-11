@@ -2986,7 +2986,7 @@ class BorderDelegate(QtWidgets.QStyledItemDelegate):
         border_color = index.data(self.BORDER_ROLE)
         if border_color and isinstance(border_color, QtGui.QColor):
             painter.save()
-            pen = QtGui.QPen(border_color, 2)
+            pen = QtGui.QPen(border_color, 0.5) # 0.5pt 두께 테두리
             painter.setPen(pen)
             painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
             painter.restore()
@@ -13388,10 +13388,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                 else:
                     if str(self.FindText.text()).strip():
-                        # 검색 활성 시 비매칭 셀 투명도 적용
+                        # 검색 활성 시 비매칭 셀 투명도 적용 / 0~255 (투명도)
                         bg = self.tb_channel.item(j - 1, i - 1).background().color()
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 60))
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 60))
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 180))
+                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 180))
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                     self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
@@ -13543,7 +13543,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                     else:
                         if str(self.FindText.text()).strip():
-                            # 검색 활성 시 비매칭 셀 투명도 적용
+                            # 검색 활성 시 비매칭 셀 투명도 적용 (투명도 40)
                             bg = self.tb_channel.item(j - 1, i - 1).background().color()
                             self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(bg.red(), bg.green(), bg.blue(), 60))
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189, 60))
