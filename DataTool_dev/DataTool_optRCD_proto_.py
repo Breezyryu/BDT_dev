@@ -3110,17 +3110,6 @@ class Ui_sitool(object):
         self.FindText.setPlaceholderText("스페이스=OR, 쉼표=AND (예: 4879mAh,Rss)")
         self.FindText.setObjectName("FindText")
         self.horizontalLayout_10.addWidget(self.FindText)
-        self.FindCount = QtWidgets.QLabel(parent=self.tab)
-        self.FindCount.setMinimumSize(QtCore.QSize(80, 40))
-        self.FindCount.setMaximumSize(QtCore.QSize(80, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        self.FindCount.setFont(font)
-        self.FindCount.setText("")
-        self.FindCount.setObjectName("FindCount")
-        self.horizontalLayout_10.addWidget(self.FindCount)
         self.tb_modified_time = QtWidgets.QLabel(parent=self.tab)
         self.tb_modified_time.setMinimumSize(QtCore.QSize(250, 40))
         self.tb_modified_time.setMaximumSize(QtCore.QSize(250, 40))
@@ -9355,7 +9344,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_info.currentIndexChanged.connect(self.tb_info_combobox)
         self.tb_cycler.currentIndexChanged.connect(self.tb_cycler_combobox)
         self.tb_room.currentIndexChanged.connect(self.tb_room_combobox)
-        self.FindText.returnPressed.connect(self._on_search_enter)
+        self.FindText.returnPressed.connect(self.tb_cycler_combobox)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -13353,7 +13342,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.tb_modified_time.setText("")
         self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - toyo_data[1])))
         self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(toyo_data[1])))
-        _find_match_count = 0
         for i in range(1, num_i + 1):
             for j in range(1, num_j + 1):
                 # 첫번째 선택은 채널 번호
@@ -13381,8 +13369,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
                 # 강조 문자 필터
                 if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                        if str(self.FindText.text()).strip():
-                            _find_match_count += 1
                         # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
                         # 45도 계열: Toyo1,3 ch>64
                         fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
@@ -13408,19 +13394,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     else:
                         self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                     self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
-        _search_text = str(self.FindText.text()).strip()
-        if _search_text:
-            if not hasattr(self, '_find_counts'):
-                self._find_counts = {}
-                self._find_last_search = ""
-            if _search_text != self._find_last_search:
-                self._find_counts = {}
-                self._find_last_search = _search_text
-            self._find_counts[f"toyo_{toyo_num}"] = _find_match_count
-            _total = sum(self._find_counts.values())
-            self.FindCount.setText(f"{_total}건 ({_find_match_count}건)")
-        else:
-            self.FindCount.setText("")
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
@@ -13525,7 +13498,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             usedchnlno = len(self.df[(self.df.use =="완료") | (self.df.use == "대기") | (self.df.use == "준비")])
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(usedchnlno)))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - usedchnlno)))
-            _find_match_count = 0
             for i in range(1, num_i + 1):
                 for j in range(1, num_j + 1):
                     chnl_name = i + (j - 1) * num_i
@@ -13551,8 +13523,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         bg_level = 3
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                            if str(self.FindText.text()).strip():
-                                _find_match_count += 1
                             fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
                             fg_35 = [(195,47,39), (154,32,24), (154,32,24), (154,32,24)][bg_level]
                             fg_15 = [(0,73,245), (1,53,96), (1,53,96), (1,53,96)][bg_level]
@@ -13578,19 +13548,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                         self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
-            _search_text = str(self.FindText.text()).strip()
-            if _search_text:
-                if not hasattr(self, '_find_counts'):
-                    self._find_counts = {}
-                    self._find_last_search = ""
-                if _search_text != self._find_last_search:
-                    self._find_counts = {}
-                    self._find_last_search = _search_text
-                self._find_counts[f"pne_{pne_num}"] = _find_match_count
-                _total = sum(self._find_counts.values())
-                self.FindCount.setText(f"{_total}건 ({_find_match_count}건)")
-            else:
-                self.FindCount.setText("")
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
@@ -13603,83 +13560,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def table_reset(self):
         self.tb_channel.clear()
         self.tb_modified_time.setText("")
-
-    def _on_search_enter(self):
-        """검색 엔터 입력 시: 전체 룸 카운트 선계산 후 현재 페이지 렌더링"""
-        self._count_all_room_matches()
-        self.tb_cycler_combobox()
-
-    def _load_pne_testnames(self, pne_num):
-        """PNE 충방전기의 testname 리스트만 로드 (카운트용)"""
-        if not os.path.isdir(self.pne_work_path_list[pne_num]):
-            return []
-        pneworkpath = self.pne_work_path_list[pne_num] + "\\Module_1_channel_info.json"
-        pneworkpath2 = self.pne_work_path_list[pne_num] + "\\Module_2_channel_info.json"
-        try:
-            if os.path.isfile(pneworkpath2):
-                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
-                    js1 = json.loads(f1.read())
-                with open(pneworkpath2, encoding='cp949', errors='ignore') as f2:
-                    js2 = json.loads(f2.read())
-                df = pd.concat([pd.DataFrame(js1['Channel']), pd.DataFrame(js2['Channel'])])
-            elif os.path.isfile(pneworkpath):
-                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
-                    js1 = json.loads(f1.read())
-                df = pd.DataFrame(js1['Channel'])
-            else:
-                return []
-            return df["Test_Name"].dropna().tolist()
-        except Exception:
-            return []
-
-    def _count_all_room_matches(self):
-        """현재 룸의 모든 충방전기에서 검색 매칭 전체 카운트"""
-        search_text = str(self.FindText.text()).strip()
-        if not search_text:
-            self._find_counts = {}
-            self._find_last_search = ""
-            self.FindCount.setText("")
-            return
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        toyo_makers = {
-            "Toyo1": (0, self.toyo_cycler_name[0]),
-            "Toyo2": (1, self.toyo_cycler_name[1]),
-            "Toyo3": (2, self.toyo_cycler_name[2]),
-            "Toyo4": (3, self.toyo_cycler_name[3]),
-            "Toyo5": (4, self.toyo_cycler_name[4])
-        }
-        pne_makers = {
-            "PNE1": 0, "PNE2": 1, "PNE3": 2, "PNE4": 3, "PNE5": 4,
-            "PNE01": 5, "PNE02": 6, "PNE03": 7, "PNE04": 8, "PNE05": 9,
-            "PNE06": 10, "PNE07": 11, "PNE08": 12, "PNE09": 13, "PNE10": 14,
-            "PNE11": 15, "PNE12": 16, "PNE13": 17, "PNE14": 18, "PNE15": 19,
-            "PNE16": 20, "PNE17": 21, "PNE18": 22, "PNE19": 23, "PNE20": 24,
-            "PNE21": 25, "PNE22": 26, "PNE23": 27, "PNE24": 28, "PNE25": 29
-        }
-        self._find_counts = {}
-        self._find_last_search = search_text
-        for idx in range(self.tb_cycler.count()):
-            cycler_name = self.tb_cycler.itemText(idx)
-            try:
-                if cycler_name in toyo_makers:
-                    toyo_num, blkname = toyo_makers[cycler_name]
-                    data = self.toyo_base_data_make(toyo_num, blkname)
-                    df = data[0]
-                    if not df.empty:
-                        count = sum(1 for i in df.index
-                                    if self.match_highlight_text(search_text, str(df.loc[i, "testname"])))
-                        self._find_counts[f"toyo_{toyo_num}"] = count
-                elif cycler_name in pne_makers:
-                    pne_num = pne_makers[cycler_name]
-                    testnames = self._load_pne_testnames(pne_num)
-                    count = sum(1 for tn in testnames
-                                if self.match_highlight_text(search_text, str(tn)))
-                    self._find_counts[f"pne_{pne_num}"] = count
-            except Exception:
-                pass
-        QtWidgets.QApplication.restoreOverrideCursor()
-        _total = sum(self._find_counts.values())
-        self.FindCount.setText(f"{_total}건")
 
     def match_highlight_text(self, search_text, testname):
         """멀티 단어 검색: 스페이스=OR, 쉼표=AND, 대소문자 무시"""
