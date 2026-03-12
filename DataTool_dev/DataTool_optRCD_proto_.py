@@ -10762,7 +10762,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
         graphcolor = THEME['PALETTE']
         filecount,colorno , columncount = 0, 0, 0
-        dfoutput = pd.DataFrame()
+        dfs_output = []
         col_name_output = []
         root = Tk()
         root.withdraw()
@@ -10829,11 +10829,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 progressdata = filecount/filecountmax * 100
                 filecount = filecount + 1
                 self.progressBar.setValue(int(progressdata))
-                dfoutput = pd.concat([dfoutput, df], axis=1)
+                dfs_output.append(df)
                 col_name_output = col_name_output + col_name
             except Exception as e:
                 print(f"오류 발생: {e}")
                 raise
+        dfoutput = pd.concat(dfs_output, axis=1) if dfs_output else pd.DataFrame()
         if self.saveok.isChecked() and save_file_name:
             dfoutput.to_excel(writer, sheet_name="Approval_cycle", header = col_name_output)
             writer.close()
@@ -13182,18 +13183,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(90)
         self.chk_network_drive()
         self.progressBar.setValue(100)
-        self.AllchnlData = pd.DataFrame()
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
                 self.progressBar.setValue(0)
+                all_dfs = []
                 for i in range(0, 5):
-                    self.toyo_data_make(i, self.toyo_cycler_name[i])
+                    result = self.toyo_data_make(i, self.toyo_cycler_name[i])
+                    if result is not None and not result.empty:
+                        all_dfs.append(result)
                     self.progressBar.setValue(int(((i + 1) / 5) * 20))
                 for j in range(0, 26):
-                    self.pne_data_make(j, self.pne_cycler_name[j])
+                    result = self.pne_data_make(j, self.pne_cycler_name[j])
+                    if result is not None and not result.empty:
+                        all_dfs.append(result)
                     self.progressBar.setValue(int(20 + ((j + 1) / 26) * 80))
                 self.progressBar.setValue(100)
+                self.AllchnlData = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
                 self.AllchnlData.to_excel(writer, index=False)
                 writer.close()
@@ -13299,7 +13305,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def toyo_data_make(self, toyo_num, blkname):
         toyo_data = self.toyo_base_data_make(toyo_num, blkname)
         self.df = toyo_data[0]
-        self.AllchnlData = pd.concat([self.AllchnlData, self.df])
+        return self.df
 
     def toyo_table_make(self, num_i, num_j, toyo_num, blkname):
         toyo_data = self.toyo_base_data_make(toyo_num, blkname)
@@ -13416,7 +13422,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.df["chno"] = self.df.index
             # 데이터 경로 변경
             self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
-            self.AllchnlData = pd.concat([self.AllchnlData, self.df])
+            return self.df
     
     def pne_table_make(self, num_i, num_j, pne_num, blkname):
         # 경로 확인
