@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import re
 import bisect
@@ -21,6 +21,12 @@ import xlwings as xw
 
 # pip 추가 항목: xlsxwriter
 # Malgun gothic을 기본 글꼴로 설정: %s/Malgun gothic/Malgun gothic/g
+
+# 네트워크 드라이브 인증 정보 (환경변수로 설정: BDT_TOYO_USER, BDT_TOYO_PASS, BDT_PNE_USER, BDT_PNE_PASS)
+_TOYO_USER = os.environ.get("BDT_TOYO_USER", "sec")
+_TOYO_PASS = os.environ.get("BDT_TOYO_PASS", "")
+_PNE_USER = os.environ.get("BDT_PNE_USER", "SAMSUNG")
+_PNE_PASS = os.environ.get("BDT_PNE_PASS", "")
 
 # 경고 무시
 warnings.simplefilter("ignore")
@@ -10274,13 +10280,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.chk_network_drive()
 
     def mount_toyo_button(self):
-        self.network_drive("z:",'"\\\\10.253.44.115\\TOYO-DATA Back Up Folder"', "sec", "qoxjfl1!")
+        self.network_drive("z:",'"\\\\10.253.44.115\\TOYO-DATA Back Up Folder"', _TOYO_USER, _TOYO_PASS)
 
     def mount_pne1_button(self):
-        self.network_drive("y:",'"\\\\10.253.44.111\\PNE-Data"', "SAMSUNG", "qoxjfl1!")
+        self.network_drive("y:",'"\\\\10.253.44.111\\PNE-Data"', _PNE_USER, _PNE_PASS)
 
     def mount_pne2_button(self):
-        self.network_drive("x:",'"\\\\10.253.44.111\\PNE-Data2"', "SAMSUNG", "qoxjfl1!")
+        self.network_drive("x:",'"\\\\10.253.44.111\\PNE-Data2"', _PNE_USER, _PNE_PASS)
 
     def mount_pne3_button(self):
         self.network_drive("w:",'"\\\\10.252.130.113\\PNE-Data"', "", "")
@@ -10294,13 +10300,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def mount_all_button(self):
         self.progressBar.setValue(0)
         if not os.path.isdir("z:"):
-            self.network_drive("z:",'"\\\\10.253.44.115\\TOYO-DATA Back Up Folder"', "sec", "qoxjfl1!")
+            self.network_drive("z:",'"\\\\10.253.44.115\\TOYO-DATA Back Up Folder"', _TOYO_USER, _TOYO_PASS)
         self.progressBar.setValue(15)
         if not os.path.isdir("y:"):
-            self.network_drive("y:",'"\\\\10.253.44.111\\PNE-Data"', "SAMSUNG", "qoxjfl1!")
+            self.network_drive("y:",'"\\\\10.253.44.111\\PNE-Data"', _PNE_USER, _PNE_PASS)
         self.progressBar.setValue(30)
         if not os.path.isdir("x:"):
-            self.network_drive("x:",'"\\\\10.253.44.111\\PNE-Data2"', "SAMSUNG", "qoxjfl1!")
+            self.network_drive("x:",'"\\\\10.253.44.111\\PNE-Data2"', _PNE_USER, _PNE_PASS)
         self.progressBar.setValue(45)
         if not os.path.isdir("w:"):
             self.network_drive("w:",'"\\\\10.252.130.113\\PNE-Data"', "", "")

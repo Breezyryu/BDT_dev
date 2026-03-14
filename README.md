@@ -18,6 +18,32 @@
 - Windows (ODBC 데이터베이스 연결 및 PyInstaller 빌드 환경)
 - 충방전기 DB 접근을 위한 ODBC 드라이버
 
+## 환경 변수 설정 (네트워크 드라이브 인증)
+
+네트워크 드라이브 마운트에 사용되는 인증 정보는 환경 변수로 설정합니다. 소스 코드에 자격증명을 포함하지 마세요.
+
+| 환경 변수 | 설명 | 기본값 |
+|---|---|---|
+| `BDT_TOYO_USER` | TOYO 드라이브 사용자 이름 | `sec` |
+| `BDT_TOYO_PASS` | TOYO 드라이브 비밀번호 | *(없음)* |
+| `BDT_PNE_USER` | PNE 드라이브 사용자 이름 | `SAMSUNG` |
+| `BDT_PNE_PASS` | PNE 드라이브 비밀번호 | *(없음)* |
+
+Windows 환경 변수 설정 예시:
+
+```bat
+set BDT_TOYO_PASS=your_toyo_password
+set BDT_PNE_PASS=your_pne_password
+python DataTool.py
+```
+
+또는 시스템 환경 변수로 영구 설정:
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("BDT_TOYO_PASS", "your_toyo_password", "User")
+[System.Environment]::SetEnvironmentVariable("BDT_PNE_PASS", "your_pne_password", "User")
+```
+
 ## 의존성 설치
 
 [uv](https://github.com/astral-sh/uv) 패키지 매니저를 사용합니다.
