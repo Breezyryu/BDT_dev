@@ -16,4 +16,5 @@ dependencies = [
     "scipy>=1.17.0",
     "xlwings>=0.33.20",
     "xlsxwriter>=3.2.9",
+    "polars>=1.39.0",
 ]

@@ -1,0 +1,37 @@
+filters:
+  and:
+    - 'type == "meeting"'
+    - not:
+        - file.inFolder("origin")
+
+formulas:
+  days_ago: '(now() - file.ctime).days.round(0)'
+  has_action: 'if(file.size > 500, "✅", "📝")'
+
+properties:
+  formula.days_ago:
+    displayName: "작성 경과일"
+  formula.has_action:
+    displayName: "내용"
+
+views:
+  - type: table
+    name: "전체 회의록"
+    order:
+      - file.name
+      - created
+      - tags
+      - formula.days_ago
+    groupBy:
+      property: tags
+      direction: DESC
+
+  - type: table
+    name: "SRIB RUL 회의"
+    filters:
+      and:
+        - file.hasTag("SRIB")
+    order:
+      - file.name
+      - created
+      - formula.days_ago

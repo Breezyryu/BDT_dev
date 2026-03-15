@@ -1,0 +1,39 @@
+filters:
+  and:
+    - file.hasTag("Modeling_AI")
+    - not:
+        - file.inFolder("origin")
+
+formulas:
+  model_type: 'if(file.hasTag("PINN"), "PINN", if(file.hasTag("PyBaMM"), "PyBaMM", if(file.hasTag("경험적모델"), "경험적", if(file.hasTag("딥러닝"), "DL", if(file.hasTag("수명예측"), "RUL", "기타")))))'
+  link_count: 'file.links.length'
+
+properties:
+  formula.model_type:
+    displayName: "모델 유형"
+  formula.link_count:
+    displayName: "연결 수"
+
+views:
+  - type: table
+    name: "모델링 & AI 전체"
+    order:
+      - file.name
+      - formula.model_type
+      - type
+      - formula.link_count
+      - status
+    groupBy:
+      property: formula.model_type
+      direction: ASC
+
+  - type: table
+    name: "문헌 / 참고자료"
+    filters:
+      or:
+        - 'type == "reference"'
+        - file.hasTag("문헌정리")
+    order:
+      - file.name
+      - formula.model_type
+      - created

@@ -1,0 +1,220 @@
+{
+  "main": {
+    "id": "a6d4173bb2272a97",
+    "type": "split",
+    "children": [
+      {
+        "id": "b0deac027ff9e9cc",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "db7f76d57fc04a30",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "03_Battery_Knowledge/SDI_코팅_음극_접착력.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "SDI_코팅_음극_접착력"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "f44b61c1c896a8da",
+    "type": "split",
+    "children": [
+      {
+        "id": "d730c5200b995c9c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "f20db9d85c3769d1",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "파일 탐색기"
+            }
+          },
+          {
+            "id": "726a68f81fc7812e",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "검색"
+            }
+          },
+          {
+            "id": "d67327deaee1be99",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "북마크"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "0749e6c61a3515b6",
+    "type": "split",
+    "children": [
+      {
+        "id": "39bfbd1511a8040b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a5eab0dd3df95126",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "03_Battery_Knowledge/SDI_코팅_음극_접착력.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "SDI_코팅_음극_접착력 의 백링크"
+            }
+          },
+          {
+            "id": "68b51b7b8d500bf1",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "03_Battery_Knowledge/SDI_코팅_음극_접착력.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "SDI_코팅_음극_접착력 의 나가는 링크"
+            }
+          },
+          {
+            "id": "180b084fda074a1b",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "태그"
+            }
+          },
+          {
+            "id": "9d04a88bce6a17e8",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "모든 속성"
+            }
+          },
+          {
+            "id": "9d107557213a78cf",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "03_Battery_Knowledge/SDI_코팅_음극_접착력.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "SDI_코팅_음극_접착력 의 개요"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:빠른 전환기 열기": false,
+      "graph:그래프 뷰 열기": false,
+      "canvas:새 캔버스 만들기": false,
+      "daily-notes:오늘의 일일 노트 열기": false,
+      "templates:템플릿 삽입": false,
+      "command-palette:명령어 팔레트 열기": false,
+      "bases:새 베이스 생성하기": false
+    }
+  },
+  "active": "db7f76d57fc04a30",
+  "lastOpenFiles": [
+    "03_Battery_Knowledge/SME_분리막.md",
+    "03_Battery_Knowledge/TSC.md",
+    "03_Battery_Knowledge/SiC.md",
+    "03_Battery_Knowledge/PCS.md",
+    "03_Battery_Knowledge/Battery_Electrochemical_properties.md",
+    "03_Battery_Knowledge/양극별_특성.md",
+    "03_Battery_Knowledge/배터리_구성.md",
+    "03_Battery_Knowledge/!용어.md",
+    "02_Experiments/SOP_Pouch_3Electrode_Cell.md",
+    "02_Experiments/Review_Battery_Dataset.md",
+    "02_Experiments/MOC_Experiments.md",
+    "02_Experiments/GC_MS_chromatogram.md",
+    "02_Experiments/FTR_Raman.md",
+    "02_Experiments/DCIR_측정_업체별.md",
+    "02_Experiments/코인셀_SOP.md",
+    "02_Experiments/글로브박스_관리.md",
+    "02_Experiments/2025-04-15_PNE_data_preprocess.md",
+    "03_Battery_Knowledge/합제밀도와_전류밀도.md",
+    "03_Battery_Knowledge/업체별_분리막_설계.md",
+    "03_Battery_Knowledge/안전배터리.md",
+    "03_Battery_Knowledge/배터리_정보_실험데이터_DB화.md",
+    "03_Battery_Knowledge/배터리_데이터_시각화_참고.md",
+    "origin/EPF (Electrode Porosity Forming).md",
+    "03_Battery_Knowledge/물성.md",
+    "01_Modeling_AI/PINN_기초.md",
+    "05_Work_Log/Altair_Conference.md",
+    "00_Index/Modeling_AI_Base.base",
+    "00_Index/Battery_Knowledge_Base.base",
+    "00_Index/Meeting_Tracker.base",
+    "00_Index/All_Notes.base",
+    "01_Modeling_AI/PINN_문헌정리.md.tmp.28416.1773572550168"
+  ]
+}
