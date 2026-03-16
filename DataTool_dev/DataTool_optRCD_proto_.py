@@ -492,7 +492,12 @@ def place_dcir_labels(ax4):
     if rss_median is not None:
         ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw)
     if dcir_median is not None:
-        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
+        # 데이터 아래에 텍스트 배치: 최솟값 기준으로 아래 오프셋 + va='top'
+        dcir_bottom = float(np.min(dcir_ys)) - yr * 0.02
+        dcir_bottom = max(ylim[0] + y_margin, dcir_bottom)
+        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_bottom),
+                     fontsize=7, color='gray', fontweight='bold',
+                     va='top', ha=ha, zorder=10)
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
