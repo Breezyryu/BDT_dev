@@ -464,25 +464,24 @@ def place_dcir_labels(ax4):
     # 클램핑 후 데이터와 겹치면 빈 영역으로 이동
     all_data_ys = np.array(rss_ys + dcir_ys)
     text_half_h = yr * 0.03  # 텍스트 높이 절반 추정
-    def _avoid_data(ty):
-        '''ty 위치가 데이터 포인트와 겹치면 위/아래로 밀어냄'''
+    def _avoid_data(ty, direction):
+        '''ty 위치가 데이터 포인트와 겹치면 지정 방향으로 밀어냄
+        direction: 1=위쪽, -1=아래쪽'''
         if ty is None:
             return None
         overlapping = np.abs(all_data_ys - ty) < text_half_h
         if not np.any(overlapping):
             return ty
-        # 위쪽/아래쪽으로 이동 시도
-        for direction in [1, -1]:
-            candidate = ty
-            for _ in range(20):
-                candidate += direction * text_half_h * 0.5
-                if candidate < ylim[0] + y_margin or candidate > ylim[1] - y_margin:
-                    break
-                if not np.any(np.abs(all_data_ys - candidate) < text_half_h):
-                    return candidate
+        candidate = ty
+        for _ in range(40):
+            candidate += direction * text_half_h * 0.5
+            if candidate < ylim[0] + y_margin or candidate > ylim[1] - y_margin:
+                break
+            if not np.any(np.abs(all_data_ys - candidate) < text_half_h):
+                return candidate
         return ty  # 이동 불가 시 원래 위치
-    rss_median = _avoid_data(rss_median)
-    dcir_median = _avoid_data(dcir_median)
+    rss_median = _avoid_data(rss_median, 1)    # Rss: 위쪽으로 avoid
+    dcir_median = _avoid_data(dcir_median, -1)  # DCIR: 아래쪽으로 avoid
     # 이동 후 두 레이블 간 겹침 재확인
     if rss_median is not None and dcir_median is not None:
         if abs(rss_median - dcir_median) < yr * 0.06:
@@ -492,12 +491,7 @@ def place_dcir_labels(ax4):
     if rss_median is not None:
         ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw)
     if dcir_median is not None:
-        # 데이터 아래에 텍스트 배치: 최솟값 기준으로 아래 오프셋 + va='top'
-        dcir_bottom = float(np.min(dcir_ys)) - yr * 0.02
-        dcir_bottom = max(ylim[0] + y_margin, dcir_bottom)
-        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_bottom),
-                     fontsize=7, color='gray', fontweight='bold',
-                     va='top', ha=ha, zorder=10)
+        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
