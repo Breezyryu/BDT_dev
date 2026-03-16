@@ -2063,8 +2063,9 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                                     df.NewData.loc[0, "rssccv"] = 0
                                 soc70_dcir = df.NewData.dcir2.dropna(axis=0)
                                 soc70_rss_dcir = df.NewData.dcir.dropna(axis=0)
-                                # SOC70의 데이터만 그래프 표기
-                                if (len(soc70_dcir) // 6)  >= (len(df.NewData.index) // 100):
+                                # 사이클당 실제 SOC 포인트 수로 판별
+                                soc_count = dcirtemp2.groupby("TotlCycle").size().mode().iloc[0]
+                                if soc_count >= 6:
                                     # 6개 중에 4번째 것만 추출
                                     soc70_dcir = soc70_dcir[3:][::6]
                                     soc70_rss_dcir = soc70_rss_dcir[3:][::6]
