@@ -173,8 +173,11 @@ def _make_channel_labels(cycnamelist, all_data_name, folder_idx):
         ch_label = cycnamelist[-2]
     if not ch_label:
         ch_label = cycnamelist[-2]
-    if len(ch_label) > 40:
-        ch_label = ch_label[:40] + "..."
+    # "mAh_" 이후 부분만 추출 (예: "20000mAh_ATL B8 Sub 상온 RSS" → "ATL B8 Sub 상온 RSS")
+    if "mAh_" in ch_label:
+        ch_label = ch_label.split("mAh_", 1)[1]
+    if len(ch_label) > 30:
+        ch_label = ch_label[:30] + "..."
     return ch_label, sub_label
 
 # 시리즈를 정해진 갯수의 column으로 분리하는 함수
