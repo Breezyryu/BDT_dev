@@ -366,30 +366,6 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                       "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
     artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
                       "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
-    # ── ax6: AvgV / RndV 영역 구분 점선 + 텍스트 ──
-    _avgv = df.NewData.AvgV.dropna()
-    _rndv = df.NewData.RndV.dropna()
-    if len(_avgv) > 0 and len(_rndv) > 0:
-        _midline = (_avgv.min() + _rndv.max()) / 2
-        # 기존 구분선 제거 (다채널 중복 방지)
-        for line in ax6.get_lines():
-            if getattr(line, '_avgrest_sep', False):
-                line.remove()
-        for t in list(ax6.texts):
-            if getattr(t, '_avgrest_label', False):
-                t.remove()
-        sep = ax6.axhline(y=_midline, color='gray', linestyle='--',
-                          linewidth=0.8, alpha=0.5, zorder=2)
-        sep._avgrest_sep = True
-        _xlim = ax6.get_xlim()
-        _tx = _xlim[1] - (_xlim[1] - _xlim[0]) * 0.02
-        _offset = 0.015
-        t1 = ax6.text(_tx, _midline + _offset, 'Avg V', fontsize=7,
-                      color='gray', alpha=0.7, ha='right', va='bottom', zorder=4)
-        t2 = ax6.text(_tx, _midline - _offset, 'Rest V', fontsize=7,
-                      color='gray', alpha=0.7, ha='right', va='top', zorder=4)
-        t1._avgrest_label = True
-        t2._avgrest_label = True
     _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
     _dcir_es = THEME['SCATTER_EMPTY_SIZE'] * 3
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
@@ -412,6 +388,47 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
             ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
     colorno = colorno % len(THEME['PALETTE']) + 1
     return artists, color
+
+def place_avgrest_labels(ax6):
+    '''ax6에 그려진 모든 AvgV/RndV 데이터를 기준으로 구분선 + 텍스트 배치'''
+    # 기존 구분선/텍스트 제거
+    for line in ax6.get_lines():
+        if getattr(line, '_avgrest_sep', False):
+            line.remove()
+    for t in list(ax6.texts):
+        if getattr(t, '_avgrest_label', False):
+            t.remove()
+    # scatter collections에서 filled(RndV)와 empty(AvgV)의 y값 수집
+    avgv_ys, rndv_ys = [], []
+    for coll in ax6.collections:
+        offsets = coll.get_offsets()
+        if len(offsets) == 0:
+            continue
+        valid_mask = ~np.isnan(np.array(offsets, dtype=float)).any(axis=1)
+        valid = offsets[valid_mask]
+        if len(valid) == 0:
+            continue
+        fc = coll.get_facecolor()
+        if fc.shape[0] == 0:
+            avgv_ys.extend(valid[:, 1])  # empty = AvgV
+        else:
+            rndv_ys.extend(valid[:, 1])  # filled = RndV
+    if not avgv_ys or not rndv_ys:
+        return
+    # 중앙값의 1/2 지점 (두 중앙값의 중간)
+    _midline = (float(np.median(avgv_ys)) + float(np.median(rndv_ys))) / 2
+    sep = ax6.axhline(y=_midline, color='gray', linestyle='--',
+                      linewidth=0.8, alpha=0.5, zorder=2)
+    sep._avgrest_sep = True
+    _xlim = ax6.get_xlim()
+    _tx = _xlim[1] - (_xlim[1] - _xlim[0]) * 0.02
+    _offset = 0.015
+    t1 = ax6.text(_tx, _midline + _offset, 'Avg V', fontsize=7,
+                  color='gray', alpha=0.7, ha='right', va='bottom', zorder=4)
+    t2 = ax6.text(_tx, _midline - _offset, 'Rest V', fontsize=7,
+                  color='gray', alpha=0.7, ha='right', va='top', zorder=4)
+    t1._avgrest_label = True
+    t2._avgrest_label = True
 
 def place_dcir_labels(ax4):
     '''ax4에 그려진 DCIR scatter의 중앙값 y위치에 Rss/DCIR1s 레이블 배치'''
@@ -11016,6 +11033,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     place_dcir_labels(ax4)
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
+                    place_avgrest_labels(ax6)
                 
                 # [수정] 유효한 데이터가 있는 경우에만 탭 추가
                 if has_valid_data and tab_layout is not None:
@@ -11227,6 +11245,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _ax.legend([h for h, l in _hl_unique], [l for h, l in _hl_unique],
                            loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
         place_dcir_labels(ax4)
+        place_avgrest_labels(ax6)
         
         # 파일 저장
         if overall_filename:
@@ -11441,6 +11460,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             place_dcir_labels(ax4)
             ax5.legend(loc="upper right")
             ax6.legend(loc="lower right")
+            place_avgrest_labels(ax6)
         
         # 탭 추가
         if has_valid_data and tab_layout is not None:
@@ -11650,6 +11670,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 place_dcir_labels(ax4)
                 ax5.legend(loc="upper right")
                 ax6.legend(loc="lower right")
+                place_avgrest_labels(ax6)
             
             if has_valid_data and tab_layout is not None:
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
@@ -11865,6 +11886,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             place_dcir_labels(ax4)
             ax5.legend(loc="upper right")
             ax6.legend(loc="lower right")
+            place_avgrest_labels(ax6)
         
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
