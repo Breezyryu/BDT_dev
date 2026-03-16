@@ -392,6 +392,15 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
     colorno = colorno % len(THEME['PALETTE']) + 1
     return artists, color
 
+def _opaque_legend_markers(*axes):
+    '''범례 마커 alpha를 1.0으로 설정 (scatter alpha와 독립)'''
+    for ax in axes:
+        leg = ax.get_legend()
+        if leg is None:
+            continue
+        for handle in leg.legend_handles:
+            handle.set_alpha(1.0)
+
 def place_avgrest_labels(ax6):
     '''ax6에 그려진 모든 AvgV/RndV 데이터를 기준으로 구분선 + 텍스트 배치'''
     # 기존 구분선/텍스트 제거
@@ -9936,6 +9945,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             edgecolor=THEME['LEGEND_EDGECOLOR'],
                             fancybox=True, loc=_loc)
                         new_leg.set_draggable(True)
+                        for h in new_leg.legend_handles:
+                            h.set_alpha(1.0)
                     else:
                         legend.remove()
 
@@ -11033,6 +11044,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax5.legend(loc="upper right")
                     ax6.legend(loc="lower right")
                     place_avgrest_labels(ax6)
+                    _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
                 
                 # [수정] 유효한 데이터가 있는 경우에만 탭 추가
                 if has_valid_data and tab_layout is not None:
@@ -11245,6 +11257,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                            loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
         place_dcir_labels(ax4)
         place_avgrest_labels(ax6)
+        _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
         
         # 파일 저장
         if overall_filename:
@@ -11460,6 +11473,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ax5.legend(loc="upper right")
             ax6.legend(loc="lower right")
             place_avgrest_labels(ax6)
+            _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
         
         # 탭 추가
         if has_valid_data and tab_layout is not None:
@@ -11670,6 +11684,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax5.legend(loc="upper right")
                 ax6.legend(loc="lower right")
                 place_avgrest_labels(ax6)
+                _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
             
             if has_valid_data and tab_layout is not None:
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
@@ -11886,6 +11901,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ax5.legend(loc="upper right")
             ax6.legend(loc="lower right")
             place_avgrest_labels(ax6)
+            _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
         
         if has_valid_data and tab_layout is not None:
             axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
