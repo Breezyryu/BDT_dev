@@ -376,16 +376,19 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
         # DCIR scatter 점을 잇는 라인
         _dcir_valid = df.NewData.soc70_dcir.dropna()
         if len(_dcir_valid) > 1:
-            ax4.plot(_dcir_valid.index, _dcir_valid.values, linewidth=0.8, alpha=0.5, color=color, linestyle='--', zorder=2, label='_nolegend_')
+            _ln, = ax4.plot(_dcir_valid.index, _dcir_valid.values, linewidth=0.8, alpha=0.5, color=color, linestyle='--', zorder=2, label='_nolegend_')
+            artists.append(_ln)
         _rss_valid = df.NewData.soc70_rss_dcir.dropna()
         if len(_rss_valid) > 1:
-            ax4.plot(_rss_valid.index, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
+            _ln, = ax4.plot(_rss_valid.index, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
+            artists.append(_ln)
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                     "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
         _dcir_only = df.NewData.dcir.dropna()
         if len(_dcir_only) > 1:
-            ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
+            _ln, = ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
+            artists.append(_ln)
     colorno = colorno % len(THEME['PALETTE']) + 1
     return artists, color
 
@@ -9810,27 +9813,64 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         NORMAL_ALPHA = THEME['SCATTER_ALPHA']
         
         # ── artist별 원래 색상 스냅샷 저장 (복원용) ──
-        _orig_colors = {}  # id(art) → {'fc': array, 'ec': array}
+        _orig_colors = {}  # id(art) → {'fc': array, 'ec': array} or {'color': str, 'alpha': float}
+        from matplotlib.lines import Line2D as _Line2D
         for lbl, info in channel_map.items():
             for art in info['artists']:
-                _orig_colors[id(art)] = {
-                    'fc': art.get_facecolors().copy(),
-                    'ec': art.get_edgecolors().copy(),
-                }
+                if isinstance(art, _Line2D):
+                    _orig_colors[id(art)] = {
+                        'color': art.get_color(),
+                        'alpha': art.get_alpha(),
+                        '_line': True,
+                    }
+                else:
+                    _orig_colors[id(art)] = {
+                        'fc': art.get_facecolors().copy(),
+                        'ec': art.get_edgecolors().copy(),
+                    }
         
         def _restore_all():
             """모든 채널을 원래 색상/알파로 복원 (artist별)"""
             for lbl, info in channel_map.items():
                 for art in info['artists']:
                     orig = _orig_colors.get(id(art))
-                    # alpha를 먼저 설정 → set_facecolors가 올바른 alpha로 처리
-                    art.set_alpha(NORMAL_ALPHA)
-                    if orig is not None:
-                        art.set_facecolors(orig['fc'].copy())
-                        art.set_edgecolors(orig['ec'].copy())
+                    if orig is not None and orig.get('_line'):
+                        art.set_color(orig['color'])
+                        art.set_alpha(orig['alpha'])
+                    else:
+                        art.set_alpha(NORMAL_ALPHA)
+                        if orig is not None:
+                            art.set_facecolors(orig['fc'].copy())
+                            art.set_edgecolors(orig['ec'].copy())
                     art.set_zorder(3)
             highlight_state['active'] = set()
         
+        def _dim_artist(art):
+            """artist를 dim 처리 (scatter/line 모두 지원)"""
+            orig = _orig_colors.get(id(art))
+            if orig is not None and orig.get('_line'):
+                art.set_color(DIM_COLOR)
+            else:
+                is_filled = True
+                if orig is not None:
+                    is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
+                if is_filled:
+                    art.set_facecolors(DIM_COLOR)
+                art.set_edgecolors(DIM_COLOR)
+            art.set_alpha(DIM_ALPHA)
+            art.set_zorder(1)
+
+        def _highlight_artist(art):
+            """artist를 하이라이트 복원 (scatter/line 모두 지원)"""
+            orig = _orig_colors.get(id(art))
+            if orig is not None and orig.get('_line'):
+                art.set_color(orig['color'])
+            elif orig is not None:
+                art.set_facecolors(orig['fc'].copy())
+                art.set_edgecolors(orig['ec'].copy())
+            art.set_alpha(1.0)
+            art.set_zorder(10)
+
         def _apply_highlight():
             """현재 active set 기준으로 하이라이트/딤 적용"""
             selected = highlight_state['active']
@@ -9838,37 +9878,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 선택 없음 → 모두 dim 유지
                 for lbl, info in channel_map.items():
                     for art in info['artists']:
-                        orig = _orig_colors.get(id(art))
-                        is_filled = True
-                        if orig is not None:
-                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                        if is_filled:
-                            art.set_facecolors(DIM_COLOR)
-                        art.set_edgecolors(DIM_COLOR)
-                        art.set_alpha(DIM_ALPHA)
-                        art.set_zorder(1)
+                        _dim_artist(art)
                 canvas.draw_idle()
                 return
             for lbl, info in channel_map.items():
                 if lbl in selected:
                     for art in info['artists']:
-                        orig = _orig_colors.get(id(art))
-                        art.set_alpha(1.0)
-                        if orig is not None:
-                            art.set_facecolors(orig['fc'].copy())
-                            art.set_edgecolors(orig['ec'].copy())
-                        art.set_zorder(10)
+                        _highlight_artist(art)
                 else:
                     for art in info['artists']:
-                        orig = _orig_colors.get(id(art))
-                        is_filled = True
-                        if orig is not None:
-                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                        if is_filled:
-                            art.set_facecolors(DIM_COLOR)
-                        art.set_edgecolors(DIM_COLOR)
-                        art.set_alpha(DIM_ALPHA)
-                        art.set_zorder(1)
+                        _dim_artist(art)
             canvas.draw_idle()
         
         def _highlight_channel(selected_label):
@@ -10001,14 +10020,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 모두 dim 처리
                 for lbl, info in channel_map.items():
                     for art in info['artists']:
-                        orig = _orig_colors.get(id(art))
-                        is_filled = True
-                        if orig is not None:
-                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                        if is_filled:
-                            art.set_facecolors(DIM_COLOR)
-                        art.set_edgecolors(DIM_COLOR)
-                        art.set_alpha(DIM_ALPHA)
+                        _dim_artist(art)
                         art.set_zorder(1)
                 canvas.draw_idle()
         
@@ -10311,24 +10323,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if is_highlighted:
                     # dim 처리
                     for art in artists:
-                        orig = _orig_colors.get(id(art))
-                        is_filled = True
-                        if orig is not None:
-                            is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                        if is_filled:
-                            art.set_facecolors(DIM_COLOR)
-                        art.set_edgecolors(DIM_COLOR)
-                        art.set_alpha(DIM_ALPHA)
-                        art.set_zorder(1)
+                        _dim_artist(art)
                 else:
                     # 하이라이트 처리
                     for art in artists:
-                        orig = _orig_colors.get(id(art))
-                        art.set_alpha(1.0)
-                        if orig is not None:
-                            art.set_facecolors(orig['fc'].copy())
-                            art.set_edgecolors(orig['ec'].copy())
-                        art.set_zorder(10)
+                        _highlight_artist(art)
                 canvas.draw_idle()
             
             def on_sub_item_changed(item):
