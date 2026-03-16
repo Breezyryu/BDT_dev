@@ -18604,15 +18604,12 @@ if __name__ == "__main__":
     app.setFont(QtGui.QFont("Malgun gothic"))
     # app.setStyleSheet("background-color: #FFFFFF;")
     myWindow = WindowClass()
-    # 화면 영역 내에 창 배치 (화면 밖 시작 방지)
+    # 화면 영역 내에 창 배치 (좌상단 기준)
     screen = app.primaryScreen().availableGeometry()
     win_w = min(myWindow.width(), screen.width())
     win_h = min(myWindow.height(), screen.height())
     myWindow.resize(win_w, win_h)
-    myWindow.move(
-        screen.x() + (screen.width() - win_w) // 2,
-        screen.y() + (screen.height() - win_h) // 2,
-    )
+    myWindow.move(screen.x(), screen.y())
     myWindow.show()
     # app.exec_()
     sys.exit(app.exec())
