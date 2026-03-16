@@ -10,9 +10,10 @@ wheels/
 # Virtual environments
 .venv
 .agent
-!bak/
 .vscode/
 .github/
 Rawdata/
 Parameter_Generator_v9.4_for_MX_2026/
 DataTool/
+BAK/
+.gitignore

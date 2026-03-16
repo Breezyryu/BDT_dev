@@ -13350,7 +13350,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
                         # 45도 계열: Toyo1,3 ch>64
                         fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
-                        fg_15 = [(0,73,245), (1,53,96), (1,53,96)][bg_level]
+                        fg_15 = [(140,0,200), (100,0,160), (100,0,160)][bg_level]
                         fg_normal = [(18,21,23), (10,12,14), (10,12,14)][bg_level]
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
@@ -13503,7 +13503,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
                             fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
                             fg_35 = [(195,47,39), (154,32,24), (154,32,24), (154,32,24)][bg_level]
-                            fg_15 = [(0,73,245), (1,53,96), (1,53,96), (1,53,96)][bg_level]
+                            fg_15 = [(140,0,200), (100,0,160), (100,0,160), (100,0,160)][bg_level]
                             fg_normal = [(18,21,23), (10,12,14), (10,12,14), (10,12,14)][bg_level]
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
