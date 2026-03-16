@@ -9718,7 +9718,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         overlay_layout = QHBoxLayout(overlay)
         overlay_layout.setContentsMargins(6, 4, 6, 4)
         overlay_layout.setSpacing(4)
-        overlay.resize(400, 350)
+        overlay.resize(560, 350)
         
         # 다이얼로그 X 버튼으로 닫을 때 토글 버튼 텍스트 동기화
         def _on_dialog_close(event):
@@ -9729,8 +9729,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 1) 채널 리스트: 모든 채널 개별 표시 ---
         import re as _re
         ch_list = QListWidget()
-        ch_list.setMinimumWidth(120)
-        ch_list.setMaximumWidth(200)
+        ch_list.setMinimumWidth(200)
+        ch_list.setMaximumWidth(360)
         ch_list.setStyleSheet(_list_style)
         # 드래그로 채널 순서 변경 (#8)
         ch_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
@@ -10211,8 +10211,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 2) 서브 채널 리스트 (sub_channel_map 있을 때만) ---
         if sub_channel_map and len(sub_channel_map) > 1:
             sub_list = QListWidget()
-            sub_list.setMinimumWidth(120)
-            sub_list.setMaximumWidth(200)
+            sub_list.setMinimumWidth(200)
+            sub_list.setMaximumWidth(360)
             sub_list.setStyleSheet(_list_style)
             
             _sub_total = len(sub_channel_map)
