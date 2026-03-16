@@ -11318,6 +11318,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _first_ch_label = ch_label
                     ch_label = _first_ch_label
                     
+                    # 다중 폴더일 때 merge_label 고유화 (동일 sub_label 충돌 방지)
+                    if len(all_data_folder) > 1:
+                        if len(all_data_name) > 0 and i < len(all_data_name):
+                            merge_label = f"{all_data_name[i]}, {sub_label}"
+                        else:
+                            merge_label = f"{cycnamelist[-2]}, {sub_label}"
+                    else:
+                        merge_label = sub_label
+                    
                     if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                         # index 오프셋 적용 (기존과 동일)
                         writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
@@ -11330,13 +11339,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             xscale = len(cyctemp[1].NewData) * (total_folders + 1)
                         
                         # 채널별 DataFrame 병합 누적
-                        if sub_label not in merged:
-                            merged[sub_label] = {
+                        if merge_label not in merged:
+                            merged[merge_label] = {
                                 'frames': [],
                                 'colorno': colorno,
                                 'ch_label': ch_label,
                             }
-                        merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
+                        merged[merge_label]['frames'].append(cyctemp[1].NewData.copy())
                         
                         # 엑셀 출력 (기존과 동일 — 데이터셋 단위)
                         if self.saveok.isChecked() and save_file_name:
@@ -11390,7 +11399,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         channel_map = {}
         sub_channel_map = {}
         
-        for idx, (sub_label, info) in enumerate(merged.items()):
+        for idx, (merge_label, info) in enumerate(merged.items()):
             # 병합된 단일 DataFrame (개별 모드의 cyctemp[1].NewData와 동일한 구조)
             merged_df = pd.concat(info['frames']).sort_index()
             _wrapper = type('CycData', (), {'NewData': merged_df})()
@@ -11405,7 +11414,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             progress_val = 80 + int((idx + 1) / len(merged) * 20)
             self.progressBar.setValue(progress_val)
             
-            lgnd = sub_label  # 개별 모드와 동일: 채널당 1번 범례
+            lgnd = merge_label  # 개별 모드와 동일: 채널당 1번 범례
             
             _artists, _color = graph_output_cycle(
                 _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
@@ -11423,7 +11432,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 channel_map[ch_label]['artists'].extend(_artists)
             else:
                 channel_map[ch_label] = {'artists': _artists, 'color': _color}
-            sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+            sub_channel_map[merge_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
         
         # 범례 설정
         if cycnamelist:
