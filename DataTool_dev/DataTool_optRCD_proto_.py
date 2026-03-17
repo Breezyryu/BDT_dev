@@ -13105,6 +13105,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
                                 nrows=2, ncols=3, figsize=(14, 10))
                             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
+                            channel_map = {}
                         cyccountmax = len(CycleNo)
                         cyccount += 1
                         progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
