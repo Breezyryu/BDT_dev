@@ -74,13 +74,18 @@ if not _perf_logger.handlers:
 
 def log_perf(func):
     """함수 시작/종료 + 소요 시간을 콘솔에 기록하는 데코레이터"""
+    import inspect
+    _n_params = len(inspect.signature(func).parameters)
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        # PyQt 시그널이 보내는 여분의 인자(bool 등) 제거
+        trimmed = args[:_n_params]
         name = func.__qualname__
         _perf_logger.info(f'▶ {name} 시작')
         t0 = time.perf_counter()
         try:
-            result = func(*args, **kwargs)
+            result = func(*trimmed, **kwargs)
             elapsed = time.perf_counter() - t0
             _perf_logger.info(f'◀ {name} 완료  [{elapsed:.3f}s]')
             return result
