@@ -142,7 +142,6 @@ THEME = {
     'SUPTITLE_WEIGHT': 'bold',
     'LEGEND_SIZE': 'small',
     'LEGEND_FRAMEALPHA': 0.85,
-    'LEGEND_HANDLE_ALPHA': 1.0,
     'LEGEND_EDGECOLOR': '#CCCCCC',
     'DPI': 150,
 }
@@ -449,13 +448,13 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
     return artists, color
 
 def _opaque_legend_markers(*axes):
-    '''범례 마커 alpha를 THEME 설정값으로 설정 (scatter alpha와 독립)'''
+    '''범례 마커 alpha를 1.0으로 설정 (scatter alpha와 독립)'''
     for ax in axes:
         leg = ax.get_legend()
         if leg is None:
             continue
         for handle in leg.legend_handles:
-            handle.set_alpha(THEME['LEGEND_HANDLE_ALPHA'])
+            handle.set_alpha(1.0)
 
 def place_avgrest_labels(ax6):
     '''ax6에 그려진 모든 AvgV/RndV 데이터를 기준으로 구분선 + 텍스트 배치'''
@@ -10002,7 +10001,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             fancybox=True, loc=_loc)
                         new_leg.set_draggable(True)
                         for h in new_leg.legend_handles:
-                            h.set_alpha(THEME['LEGEND_HANDLE_ALPHA'])
+                            h.set_alpha(1.0)
                     else:
                         legend.remove()
 
