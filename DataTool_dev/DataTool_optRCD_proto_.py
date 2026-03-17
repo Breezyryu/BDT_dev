@@ -587,21 +587,23 @@ def place_dcir_labels(ax4):
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
-    ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+    line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
     graph_base_parameter(ax, xlabel, ylabel)
+    return line
 
 # 연속 그래프 그리기
 def graph_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
+        line, = ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
                 linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
     graph_base_parameter(ax, xlabel, ylabel)
+    return line
 
 # 연속 그래프 그리기
 def graph_soc_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, type = "-"):
@@ -10684,18 +10686,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         self.capacitytext.setText(str(capacity))
         # 의도적 3중 플롯: 추후 축별 확대/범위 조정 용도
-        graph_step(stepchg.TimeMin, stepchg.Vol, step_ax1, self.vol_y_hlimit, self.vol_y_llimit,
-                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-        graph_step(stepchg.TimeMin, stepchg.Vol, step_ax3, self.vol_y_hlimit, self.vol_y_llimit,
-                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-        graph_step(stepchg.TimeMin, stepchg.Vol, step_ax2, self.vol_y_hlimit, self.vol_y_llimit,
-                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-        graph_step(stepchg.TimeMin, stepchg.Crate, step_ax5, 0, 3.4, 0.2,
-                   "Time(min)", "C-rate", temp_lgnd)
-        graph_step(stepchg.TimeMin, stepchg.SOC, step_ax4, 0, 1.2, 0.1,
-                   "Time(min)", "SOC", temp_lgnd)
-        graph_step(stepchg.TimeMin, stepchg.Temp, step_ax6, -15, 60, 5,
-                   "Time(min)", "Temperature (℃)", lgnd)
+        _artists = []
+        _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax1, self.vol_y_hlimit, self.vol_y_llimit,
+                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
+        _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax3, self.vol_y_hlimit, self.vol_y_llimit,
+                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
+        _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax2, self.vol_y_hlimit, self.vol_y_llimit,
+                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
+        _artists.append(graph_step(stepchg.TimeMin, stepchg.Crate, step_ax5, 0, 3.4, 0.2,
+                   "Time(min)", "C-rate", temp_lgnd))
+        _artists.append(graph_step(stepchg.TimeMin, stepchg.SOC, step_ax4, 0, 1.2, 0.1,
+                   "Time(min)", "SOC", temp_lgnd))
+        _artists.append(graph_step(stepchg.TimeMin, stepchg.Temp, step_ax6, -15, 60, 5,
+                   "Time(min)", "Temperature (℃)", lgnd))
         # Excel 저장
         if self.saveok.isChecked() and save_file_name:
             stepchg.to_excel(writer, startcol=write_column_num, index=False,
@@ -10715,9 +10718,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
             continue_df.to_csv(save_file_name + "_" + "%04d" % Step_CycNo + ".csv", index=False, sep=',',
                                 header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-        return write_column_num
-    
-    def _load_cycle_data_task(self, task_info):
+        return write_column_num, _artists
         """
         단일 폴더의 사이클 데이터 로딩(ThreadPoolExecutor용)
         """
@@ -12036,6 +12037,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 nrows=2, ncols=3, figsize=(14, 10))
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_step_namelist = None
+            all_profile_channel_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
@@ -12053,6 +12055,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         chnlcountmax = len(subfolder)
                         if "Pattern" not in FolderBase:
                             step_namelist = None
+                            channel_map = {}
                             for Step_CycNo in CycleNo:
                                 cyccountmax = len(CycleNo)
                                 cyccount += 1
@@ -12073,9 +12076,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     if len(temp[1].stepchg) > 2:
                                         #플롯+저장
                                         axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num = self._plot_and_save_step_data(
+                                        write_column_num, _artists = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
+                                        ch_label = temp_lgnd or lgnd
+                                        _color = mcolors.to_hex(_artists[0].get_color())
+                                        if ch_label in channel_map:
+                                            channel_map[ch_label]['artists'].extend(_artists)
+                                        else:
+                                            channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                             if step_namelist:
                                 title = step_namelist[-2] + "=" + step_namelist[-1]
                                 plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
@@ -12083,7 +12092,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
                                 self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                             # 함수 사용으로 변경
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                                    channel_map=channel_map, fig=fig,
+                                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6])
                             tab_no += 1
                 elif all_profile:
                     # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
@@ -12109,9 +12120,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if hasattr(temp[1], "stepchg"):
                                     if len(temp[1].stepchg) > 2:
                                         axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num = self._plot_and_save_step_data(
+                                        write_column_num, _artists = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
+                                        ch_label = temp_lgnd or lgnd
+                                        _color = mcolors.to_hex(_artists[0].get_color())
+                                        if ch_label in all_profile_channel_map:
+                                            all_profile_channel_map[ch_label]['artists'].extend(_artists)
+                                        else:
+                                            all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                 else:
                     for Step_CycNo in CycleNo:
                         fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
@@ -12121,6 +12138,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         chnlcount += 1
                         chnlcountmax = len(subfolder)
                         step_namelist = None
+                        channel_map = {}
                         for j, FolderBase in enumerate(subfolder):
                             if "Pattern" not in FolderBase:
                                 cyccountmax = len(CycleNo)
@@ -12142,9 +12160,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     if len(temp[1].stepchg) > 2:
                                         #플롯+저장
                                         axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num = self._plot_and_save_step_data(
+                                        write_column_num, _artists = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo)
+                                        ch_label = temp_lgnd or lgnd
+                                        _color = mcolors.to_hex(_artists[0].get_color())
+                                        if ch_label in channel_map:
+                                            channel_map[ch_label]['artists'].extend(_artists)
+                                        else:
+                                            channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                         #title/legend 모든 채널 플롯 완료 후 1회 실행
                         if step_namelist:
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
@@ -12153,7 +12177,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                         # 함수 사용으로 변경
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                                channel_map=channel_map, fig=fig,
+                                                axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6])
                         tab_no += 1
         # AllProfile: 루프 종료 후 한번에 finalize
         if all_profile and last_step_namelist:
@@ -12162,7 +12188,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
             positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                    channel_map=all_profile_channel_map, fig=fig,
+                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6])
             tab_no += 1
         if self.saveok.isChecked() and save_file_name:
             writer.close()
@@ -12196,6 +12224,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 nrows=2, ncols=3, figsize=(14, 10))
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_Ratenamelist = None
+            all_profile_channel_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -12213,6 +12242,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
                         Ratenamelist = None
+                        channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
@@ -12232,18 +12262,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
                                     self.capacitytext.setText(str(Ratetemp[0]))
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd)
+                                    _artists = []
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                               "Time(min)", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                               "Time(min)", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
+                                               "Time(min)", "SOC", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
+                                               "Time(min)", "Temp.", lgnd))
+                                    ch_label = temp_lgnd or lgnd
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12265,7 +12302,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                             positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                                channel_map=channel_map, fig=fig,
+                                                axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6])
                         tab_no += 1
                         output_fig(self.figsaveok, title)
             elif all_profile:
@@ -12293,18 +12332,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
                                     self.capacitytext.setText(str(Ratetemp[0]))
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd)
+                                    _artists = []
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                               "Time(min)", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                               "Time(min)", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
+                                               "Time(min)", "SOC", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
+                                               "Time(min)", "Temp.", lgnd))
+                                    ch_label = temp_lgnd or lgnd
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    if ch_label in all_profile_channel_map:
+                                        all_profile_channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12320,6 +12366,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chnlcountmax = len(subfolder)
                     # [최적화] namelist 미초기화 방어
                     Ratenamelist = None
+                    channel_map = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
@@ -12340,18 +12387,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
                                     self.capacitytext.setText(str(Ratetemp[0]))
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit,
-                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit,
-                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd)
-                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd)
+                                    _artists = []
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit,
+                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit,
+                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
+                                               "Time(min)", "SOC", temp_lgnd))
+                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
+                                               "Time(min)", "Temp.", lgnd))
+                                    ch_label = temp_lgnd or lgnd
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12365,7 +12419,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
                         positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                            channel_map=channel_map, fig=fig,
+                                            axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6])
                     tab_no += 1
                     output_fig(self.figsaveok, title)
         # AllProfile: 루프 종료 후 한번에 finalize
@@ -12375,7 +12431,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
             positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                    channel_map=all_profile_channel_map, fig=fig,
+                                    axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6])
             tab_no += 1
             output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
@@ -13023,6 +13081,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     nrows=2, ncols=3, figsize=(14, 10))
                 tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                 last_namelist = None
+                all_profile_channel_map = {}
             for i, cyclefolder in enumerate(all_data_folder):
                 if not os.path.isdir(cyclefolder):
                     continue
