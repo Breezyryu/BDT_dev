@@ -1,1 +1,0 @@
-http://mdvh.sec.samsung.net/cims/portal/nxMain.do?m=AWaFcYC6AMFaP0OM
