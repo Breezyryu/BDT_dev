@@ -4,6 +4,11 @@ __pycache__/
 build/
 dist/
 wheels/
+Rawdata/
+Parameter_Generator_v9.4_for_MX_2026/
+DataTool/
+BAK/
+vault/
 *.egg-info
 *.exe
 *.spec
@@ -12,8 +17,5 @@ wheels/
 .agent
 .vscode/
 .github/
-Rawdata/
-Parameter_Generator_v9.4_for_MX_2026/
-DataTool/
-BAK/
+
 .gitignore
