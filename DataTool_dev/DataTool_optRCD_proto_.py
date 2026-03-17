@@ -636,12 +636,13 @@ def graph_soc_dcir(x, y, ax, xlabel, ylabel, tlabel, type = "-"):
 
 # 충방전 Profile 그래프 그리기
 def graph_profile(x, y, ax, xlowlimit, xhighlimit, xlimitgap, ylowlimit, yhighlimit, ylimitgap, xlabel, ylabel, tlabel):
-    ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+    line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
     ax.set_xticks(np.arange(xlowlimit, xhighlimit, xlimitgap))
     ax.set_xlim(xlowlimit, xhighlimit - xlimitgap)
     ax.set_yticks(np.arange(ylowlimit, yhighlimit, ylimitgap))
     ax.set_ylim(ylowlimit, yhighlimit - ylimitgap)
     graph_base_parameter(ax, xlabel, ylabel)
+    return line
 
 # set profile 그래프 그리기
 def graph_soc_set(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, xlimit):
@@ -10452,8 +10453,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_tab.setCurrentWidget(tab)
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
 
-    def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no):
-        tab_layout.addWidget(toolbar)
+    def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
+                           channel_map=None, fig=None, axes_list=None):
+        if channel_map:
+            from PyQt6.QtWidgets import QHBoxLayout
+            toggle_btn = self._create_cycle_channel_control(
+                channel_map, canvas, fig, axes_list, args_parent_tab=tab)
+            toolbar_row = QHBoxLayout()
+            toolbar_row.setContentsMargins(0, 0, 0, 0)
+            toolbar_row.setSpacing(4)
+            toolbar_row.addWidget(toolbar)
+            toolbar_row.addWidget(toggle_btn)
+            tab_layout.addLayout(toolbar_row)
+        else:
+            tab_layout.addWidget(toolbar)
         tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
@@ -12397,6 +12410,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 nrows=2, ncols=3, figsize=(14, 10))
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_Chgnamelist = None
+            all_profile_channel_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -12413,6 +12427,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             nrows=2, ncols=3, figsize=(14, 10))
                         tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                         Chgnamelist = None
+                        channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
@@ -12432,24 +12447,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Chgtemp[1], "Profile"):
                                 if len(Chgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Chgtemp[0]))
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                    _artists = []
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
                                     if self.chk_dqdv.isChecked():
-                                        graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
+                                        _artists.append(graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
                                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd)
+                                                    "Voltage(V)", "dQdV", temp_lgnd))
                                     else:
-                                        graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
+                                        _artists.append(graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
                                                     0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                                    "dQdV", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label = temp_lgnd if temp_lgnd else lgnd
+                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12473,7 +12492,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
                         tab_no += 1
                         output_fig(self.figsaveok, title)
             elif all_profile:
@@ -12501,24 +12521,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Chgtemp[1], "Profile"):
                                 if len(Chgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Chgtemp[0]))
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                    _artists = []
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
                                     if self.chk_dqdv.isChecked():
-                                        graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
+                                        _artists.append(graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
                                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd)
+                                                    "Voltage(V)", "dQdV", temp_lgnd))
                                     else:
-                                        graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
+                                        _artists.append(graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
                                                     0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                                    "dQdV", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label = temp_lgnd if temp_lgnd else lgnd
+                                    all_profile_channel_map[ch_label] = {'artists': _artists, 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12535,6 +12559,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                     
                     Chgnamelist = None
+                    channel_map = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
@@ -12555,25 +12580,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Chgtemp[1], "Profile"):
                                 if len(Chgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Chgtemp[0]))
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                    _artists = []
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
                                     if self.chk_dqdv.isChecked():
-                                        graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
+                                        _artists.append(graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
                                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd)
+                                                    "Voltage(V)", "dQdV", temp_lgnd))
                                     else:
-                                        graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
+                                        _artists.append(graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
                                                     0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd)
-                                    
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
-                                    graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                                    "dQdV", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
+                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label = temp_lgnd if temp_lgnd else lgnd
+                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12587,7 +12615,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                         positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
                     tab_no += 1
                     output_fig(self.figsaveok, title)
         # AllProfile: 루프 종료 후 한번에 finalize
@@ -12597,7 +12626,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list)
             tab_no += 1
             output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
@@ -12632,6 +12662,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 nrows=2, ncols=3, figsize=(14, 10))
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_Dchgnamelist = None
+            all_profile_channel_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -12649,6 +12680,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             nrows=2, ncols=3, figsize=(14, 10))
                         tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                         Dchgnamelist = None
+                        channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
@@ -12668,20 +12700,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Dchgtemp[1], "Profile"):
                                 if len(Dchgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Dchgtemp[0]))
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
+                                    _artists = []
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
                                                   -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                  "dQdV", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
                                                   -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                                                  "DOD", "dVdQ", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label = temp_lgnd if temp_lgnd else lgnd
+                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12704,7 +12740,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
                         tab_no += 1
                         output_fig(self.figsaveok, title)
             elif all_profile:
@@ -12732,20 +12769,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Dchgtemp[1], "Profile"):
                                 if len(Dchgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Dchgtemp[0]))
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
+                                    _artists = []
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
                                                   -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                  "dQdV", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
                                                   -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                                                  "DOD", "dVdQ", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label = temp_lgnd if temp_lgnd else lgnd
+                                    all_profile_channel_map[ch_label] = {'artists': _artists, 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12761,6 +12802,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         nrows=2, ncols=3, figsize=(14, 10))
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                     Dchgnamelist = None
+                    channel_map = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
@@ -12781,21 +12823,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(Dchgtemp[1], "Profile"):
                                 if len(Dchgtemp[1].Profile) > 2:
                                     self.capacitytext.setText(str(Dchgtemp[0]))
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
+                                    _artists = []
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
+                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
                                                   -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                                  "dQdV", "Voltage(V)", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
+                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
                                     # [버그수정] self.dvscale → dvscale (로컬 변수 사용)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
                                                   -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd)
-                                    graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                                                  "DOD", "dVdQ", temp_lgnd))
+                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
+                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label = temp_lgnd if temp_lgnd else lgnd
+                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12818,7 +12864,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
                         positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
                     tab_no += 1
                     output_fig(self.figsaveok, title)
         # AllProfile: 루프 종료 후 한번에 finalize
@@ -12828,7 +12875,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list)
             tab_no += 1
             output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
