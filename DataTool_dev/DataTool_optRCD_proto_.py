@@ -10719,6 +10719,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             continue_df.to_csv(save_file_name + "_" + "%04d" % Step_CycNo + ".csv", index=False, sep=',',
                                 header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
         return write_column_num, _artists
+    
+    def _load_cycle_data_task(self, task_info):
         """
         단일 폴더의 사이클 데이터 로딩(ThreadPoolExecutor용)
         """
