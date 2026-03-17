@@ -13006,12 +13006,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(temp[1], "stepchg"):
                                 if len(temp[1].stepchg) > 2:
                                     self.capacitytext.setText(str(temp[0]))
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2, 0, 3.2, 0.2, "Time(min)", "C-rate",temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax5, -3.0, 0.2, 0.2, "Time(min)", "C-rate",temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3, 0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5, "Time(min)", "Temp.", lgnd)
+                                    _artists = []
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd))
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd))
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2, 0, 3.2, 0.2, "Time(min)", "C-rate",temp_lgnd))
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax5, -3.0, 0.2, 0.2, "Time(min)", "C-rate",temp_lgnd))
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3, 0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5, "Time(min)", "Temp.", lgnd))
+                                    ch_label = temp_lgnd or lgnd
+                                    _color = mcolors.to_hex(_artists[0].get_color())
+                                    channel_map = {}
+                                    channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                     # Data output option
                                     continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
                                     # 각 열을 소수점 자리수에 맞게 반올림
@@ -13029,12 +13034,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                             positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                            tab_layout.addWidget(toolbar)
-                            tab_layout.addWidget(canvas)
-                            self.cycle_tab.addTab(tab, str(tab_no))
-                            self.cycle_tab.setCurrentWidget(tab)
+                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                                    channel_map=channel_map, fig=fig,
+                                                    axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
                             tab_no = tab_no + 1
-                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                             output_fig(self.figsaveok, ect_save[i])
         self.progressBar.setValue(100)
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
@@ -13144,26 +13147,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if len(temp[1].stepchg) > 2:
                                 self.capacitytext.setText(str(temp[0]))
                                 has_ocv = "OCV" in temp[1].stepchg.columns
-                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
-                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
-                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
-                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                _artists = []
+                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
+                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
+                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
+                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
                                 if has_ocv:
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o")
-                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o")
-                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
-                                               -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd)
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
+                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
+                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
+                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
+                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
+                                               -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd))
                                 if len(temp) > 2 and hasattr(temp[2], 'AccCap') and not temp[2].empty:
-                                    graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                   "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o")
-                                    graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                   "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o")
-                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
-                                               0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
-                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
-                                               -15, 60, 5, "Time(min)", "Temp.", lgnd)
+                                    _artists.append(graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                   "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
+                                    _artists.append(graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                   "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
+                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
+                                               0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
+                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
+                                               -15, 60, 5, "Time(min)", "Temp.", lgnd))
+                                ch_label = temp_lgnd or lgnd
+                                _color = mcolors.to_hex(_artists[0].get_color())
+                                _target_map = all_profile_channel_map if all_profile else channel_map
+                                if ch_label in _target_map:
+                                    _target_map[ch_label]['artists'].extend(_artists)
+                                else:
+                                    _target_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                                                     
                                 if self.saveok.isChecked() and save_file_name:
                                     if has_ocv:
@@ -13209,7 +13220,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                             
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                                    channel_map=channel_map, fig=fig,
+                                                    axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
                             if self.CycProfile.isChecked():
                                 tab_no += 1
                             output_fig(self.figsaveok, title)
@@ -13220,7 +13233,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                 positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
                 self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no)
+                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                        channel_map=all_profile_channel_map, fig=fig,
+                                        axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
                 tab_no += 1
                 output_fig(self.figsaveok, title)
             if self.saveok.isChecked() and save_file_name:
