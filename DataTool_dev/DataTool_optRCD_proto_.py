@@ -2,6 +2,9 @@
 import sys
 import re
 import bisect
+import time
+import logging
+import functools
 import warnings
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -58,6 +61,58 @@ except ImportError:
 # 경고 무시
 warnings.simplefilter("ignore")
 
+# ── 성능 로깅 설정 ──────────────────────────────────────────────
+_perf_logger = logging.getLogger('BDT.perf')
+_perf_logger.setLevel(logging.DEBUG)
+if not _perf_logger.handlers:
+    _ch = logging.StreamHandler(sys.stdout)
+    _ch.setFormatter(logging.Formatter(
+        '[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
+    _perf_logger.addHandler(_ch)
+    _perf_logger.propagate = False
+
+
+def log_perf(func):
+    """함수 시작/종료 + 소요 시간을 콘솔에 기록하는 데코레이터"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        name = func.__qualname__
+        _perf_logger.info(f'▶ {name} 시작')
+        t0 = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            elapsed = time.perf_counter() - t0
+            _perf_logger.info(f'◀ {name} 완료  [{elapsed:.3f}s]')
+            return result
+        except Exception as e:
+            elapsed = time.perf_counter() - t0
+            _perf_logger.error(f'✖ {name} 실패  [{elapsed:.3f}s] {type(e).__name__}: {e}')
+            raise
+    return wrapper
+
+
+class PerfSection:
+    """구간별 소요 시간을 측정하는 컨텍스트 매니저
+    Usage:
+        with PerfSection('데이터 로딩', files=3):
+            ...
+    """
+    def __init__(self, label, **ctx):
+        self.label = label
+        self.ctx = ctx
+
+    def __enter__(self):
+        parts = [f'{k}={v}' for k, v in self.ctx.items()]
+        ctx_str = f'  ({", ".join(parts)})' if parts else ''
+        _perf_logger.info(f'  ┌ {self.label}{ctx_str}')
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        elapsed = time.perf_counter() - self._t0
+        _perf_logger.info(f'  └ {self.label}  [{elapsed:.3f}s]')
+        return False
+
 # plot 스타일 설정
 THEME = {
     'PALETTE': ['#3C5488', '#E64B35', '#00A087', '#F39B7F', '#4DBBD5',
@@ -87,6 +142,7 @@ THEME = {
     'SUPTITLE_WEIGHT': 'bold',
     'LEGEND_SIZE': 'small',
     'LEGEND_FRAMEALPHA': 0.85,
+    'LEGEND_HANDLE_ALPHA': 1.0,
     'LEGEND_EDGECOLOR': '#CCCCCC',
     'DPI': 150,
 }
@@ -393,13 +449,13 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
     return artists, color
 
 def _opaque_legend_markers(*axes):
-    '''범례 마커 alpha를 1.0으로 설정 (scatter alpha와 독립)'''
+    '''범례 마커 alpha를 THEME 설정값으로 설정 (scatter alpha와 독립)'''
     for ax in axes:
         leg = ax.get_legend()
         if leg is None:
             continue
         for handle in leg.legend_handles:
-            handle.set_alpha(1.0)
+            handle.set_alpha(THEME['LEGEND_HANDLE_ALPHA'])
 
 def place_avgrest_labels(ax6):
     '''ax6에 그려진 모든 AvgV/RndV 데이터를 기준으로 구분선 + 텍스트 배치'''
@@ -9946,7 +10002,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             fancybox=True, loc=_loc)
                         new_leg.set_draggable(True)
                         for h in new_leg.legend_handles:
-                            h.set_alpha(1.0)
+                            h.set_alpha(THEME['LEGEND_HANDLE_ALPHA'])
                     else:
                         legend.remove()
 
@@ -10487,6 +10543,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             print(f"[배치 로딩 오류] {folder_path}: {e}")
             return (folder_idx, subfolder_idx, None)
     
+    @log_perf
     def _load_all_step_data_parallel(self, all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=4):
         """
         모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩 (채널 단위 배치)
@@ -10501,6 +10558,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         task_info = (folder_path, CycleNo, mincapacity, mincrate, firstCrate, is_pne, i, j)
                         tasks.append(task_info)
         
+        _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
+                          f'cycles={CycleNo}, workers={max_workers}')
         results = {}
         total_tasks = len(tasks)
         completed = 0
@@ -10561,6 +10620,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             print(f"[배치 로딩 오류] {profile_type} {folder_path}: {e}")
             return (folder_idx, subfolder_idx, None)
 
+    @log_perf
     def _load_all_profile_data_parallel(self, all_data_folder, profile_type, params, max_workers=4):
         """
         모든 폴더의 프로파일 데이터를 병렬로 로딩 (범용).
@@ -10576,6 +10636,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         task = (folder_path, profile_type, params, is_pne, i, j)
                         tasks.append(task)
 
+        _perf_logger.info(f'  조건: type={profile_type}, folders={len(all_data_folder)}, '
+                          f'tasks={len(tasks)}, workers={max_workers}')
         results = {}
         total_tasks = len(tasks)
         completed = 0
@@ -10653,6 +10715,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             print(f"[병렬 로딩 오류] {folder_path}: {e}")
             return (folder_idx, subfolder_idx, folder_path, None)
     
+    @log_perf
     def _load_all_cycle_data_parallel(self, all_data_folder, mincapacity, firstCrate, 
                                        dcirchk, dcirchk_2, mkdcir, max_workers=4):
         """
@@ -10673,6 +10736,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         task_info = (folder_path, mincapacity, firstCrate, 
                                      dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
                         tasks.append(task_info)
+        
+        _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
+                          f'mincap={mincapacity}, firstCrate={firstCrate}, '
+                          f'dcir={dcirchk}, dcir2={dcirchk_2}, workers={max_workers}')
         
         results = {}
         total_tasks = len(tasks)
@@ -10784,6 +10851,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
     
+    @log_perf
     def app_cyc_confirm_button(self):
         # 버튼 비활성화
         global writer
@@ -10882,6 +10950,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         plt.close()
 
+    @log_perf
     def indiv_cyc_confirm_button(self):
    
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
@@ -11063,6 +11132,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def overall_cyc_confirm_button(self):
         # 데이터 로딩 병렬 처리 적용
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
@@ -11280,6 +11350,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def link_cyc_confirm_button(self):
         # 전처리 방식: 1단계 수집+엑셀, 2단계 병합 plot
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
@@ -11491,6 +11562,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def link_cyc_indiv_confirm_button(self):
         # 전처리 방식: CSV별 fig, 채널 데이터 병합
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
@@ -11701,6 +11773,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def link_cyc_overall_confirm_button(self):
         # 전처리 방식: 모든 CSV 통합, 채널 데이터 병합
         firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
@@ -11918,6 +11991,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def step_confirm_button(self):
         # 함수 사용으로 변경
         init_data = self._init_confirm_button(self.StepConfirm)
@@ -12078,6 +12152,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def rate_confirm_button(self):
         # 함수 사용으로 변경
         init_data = self._init_confirm_button(self.RateConfirm)
@@ -12291,6 +12366,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def chg_confirm_button(self):
         # 함수 사용으로 변경
         init_data = self._init_confirm_button(self.ChgConfirm)
@@ -12525,6 +12601,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def dchg_confirm_button(self):
         # 함수 사용으로 변경
         init_data = self._init_confirm_button(self.DchgConfirm)
@@ -12761,6 +12838,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             self.pro_continue_confirm_button()
 
+    @log_perf
     def ect_confirm_button(self):
         self.ContinueConfirm.setDisabled(True)
         firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
@@ -12852,6 +12930,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         plt.close()
 
+    @log_perf
     def pro_continue_confirm_button(self):
         # 함수 사용으로 변경
         self.ContinueConfirm.setDisabled(True)
@@ -13040,6 +13119,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             err_msg('Step 에러','Step에 사이클 번호를 넣어주세요! 예) 2 3-5 8')
             self.ContinueConfirm.setEnabled(True)
 
+    @log_perf
     def dcir_confirm_button(self):
         firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
         # 용량 선정 관련
@@ -14035,6 +14115,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_delete(self.set_tab)
         self.tab_no = 0
         
+    @log_perf
     def set_log_confirm_button(self):
         # battery_dump profile
         # 0:Time, 1:VOLTAGE NOW, 2:CURRENT NOW, 3:CURRENT MAX, 4:CHARGING CURRENT, 5:CAPACITY, 6:TBAT, 7:TUSB, 8:TCHG, 9:TWPC, 10:TBLK,
@@ -14277,6 +14358,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     #         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
     #         plt.show()
 
+    @log_perf
     def set_confirm_button(self):
         'Battery Status data log'
         '''0:Time 1:Level 2:Charging 3:Temperature(BA) 4:PlugType 5:Speed
@@ -14542,6 +14624,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             Profile["SOCrefAvg"] = 0
         return Profile
     
+    @log_perf
     def ect_short_button(self):
         global writer
         root = Tk()
@@ -14622,6 +14705,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             plt.close()
         self.progressBar.setValue(100)
 
+    @log_perf
     def ect_soc_button(self):
         global writer
         root = Tk()
@@ -14740,6 +14824,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 filecount = filecount + 1
             self.progressBar.setValue(100)
 
+    @log_perf
     def ect_set_profile_button(self):
         global writer
         root = Tk()
@@ -14864,6 +14949,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 plt.close()
             self.progressBar.setValue(100)
 
+    @log_perf
     def ect_set_cycle_button(self):
         self.ECTSetCycle.setDisabled(True)
         global writer
@@ -14961,6 +15047,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             output_fig(self.figsaveok, tab_name_list)
             plt.close()
 
+    @log_perf
     def ect_set_log_button(self):
         '''
         ECT result
@@ -15086,6 +15173,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 plt.close()
             self.progressBar.setValue(100)
 
+    @log_perf
     def ect_set_log2_button(self):
         '''
         ECT result
@@ -15292,6 +15380,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         plt.close()
 
+    @log_perf
     def dvdq_fitting_button(self):
         global writer
         ca_mat_filepath = str(self.ca_mat_dvdq_path.text())
@@ -15416,6 +15505,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.dvdq_fitting2_button()
         self.progressBar.setValue(100)
 
+    @log_perf
     def dvdq_fitting2_button(self):
         self.fittingdegree = 1
         self.min_rms = np.inf
@@ -15508,6 +15598,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_delete(self.cycle_simul_tab)
         self.tab_no = 0
 
+    @log_perf
     def path_approval_cycle_estimation_button(self):
         def cyccapparameter(x, f_d):
             return 1 - np.exp(a_par1 * x[1] + b_par1) * (x[0] * f_d) ** b1_par1 - np.exp(c_par1 * x[1] + d_par1) * (
@@ -15667,6 +15758,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.close()
         self.progressBar.setValue(100)
     
+    @log_perf
     def folder_approval_cycle_estimation_button(self):
         def cyccapparameter(x, f_d):
             return 1 - np.exp(a_par1 * x[1] + b_par1) * (x[0] * f_d) ** b1_par1 - np.exp(c_par1 * x[1] + d_par1) \
@@ -15874,6 +15966,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         err_msg("저장", "저장되었습니다.") 
         output_para_fig(self.figsaveok, "fig_" + namelist[0])
 
+    @log_perf
     def eu_fitting_confirm_button(self):
         global writer
         # exp complex degradation (cycle 기준, day 기준)
@@ -16076,6 +16169,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
     
+    @log_perf
     def eu_constant_fitting_confirm_button(self):
         global writer
         # exp 열화 모드 - parameter 고정 후 가속 계수 확인
@@ -16287,6 +16381,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
+    @log_perf
     def eu_indiv_constant_fitting_confirm_button(self):
         global writer
         # exp 열화 모드 - parameter 고정 후 가속 계수 확인
