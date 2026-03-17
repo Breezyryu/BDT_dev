@@ -9707,7 +9707,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return tab, tab_layout, canvas, toolbar
 
-    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None):
+    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None, sub2_channel_map=None):
         """
         Cycle 그래프 채널 제어 위젯 생성 (Lazy Init: 첫 클릭 시 초기화)
         """
@@ -9743,7 +9743,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return _lazy['dialog']
             _lazy['dialog'] = self._build_channel_dialog(
                 channel_map, canvas, fig, axes_list,
-                toggle_btn, _is_dark, sub_channel_map)
+                toggle_btn, _is_dark, sub_channel_map, sub2_channel_map)
             return _lazy['dialog']
         
         def _toggle_panel():
@@ -9762,7 +9762,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return toggle_btn
     
     def _build_channel_dialog(self, channel_map, canvas, fig, axes_list,
-                              toggle_btn, _is_dark, sub_channel_map=None):
+                              toggle_btn, _is_dark, sub_channel_map=None,
+                              sub2_channel_map=None):
         """
         CH 채널 제어 QDialog 실제 생성 (Lazy Init에서 호출)
         """
@@ -10428,6 +10429,196 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             overlay_layout.addLayout(sub_list_col)
         
+        # --- 3) 서브2 채널 리스트 (sub2_channel_map 있을 때만 — 사이클 레벨) ---
+        if sub2_channel_map and len(sub2_channel_map) > 1:
+            sub2_list = QListWidget()
+            sub2_list.setMinimumWidth(60)
+            sub2_list.setMaximumWidth(100)
+            sub2_list.setStyleSheet(_list_style)
+            
+            _sub2_total = len(sub2_channel_map)
+            _s2nw = len(str(_sub2_total))
+            for idx, label in enumerate(sub2_channel_map, 1):
+                item = QListWidgetItem(f"{idx:0{_s2nw}d}. {label}")
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked)
+                item.setForeground(QColor(sub2_channel_map[label]['color']))
+                item.setToolTip(label)
+                sub2_list.addItem(item)
+            
+            _sub2_chk_guard = {'updating': False}
+            
+            def _get_sub2_items_for_parent(parent_label):
+                """특정 부모(서브 또는 채널)에 속한 서브2 항목 반환"""
+                result = []
+                for i in range(sub2_list.count()):
+                    s2_item = sub2_list.item(i)
+                    s2_label = _strip_numbering(s2_item.text())
+                    if s2_label in sub2_channel_map:
+                        if sub2_channel_map[s2_label].get('parent') == parent_label:
+                            result.append((s2_item, s2_label))
+                return result
+            
+            def _get_sub2_items_for_group(group_label):
+                """채널 그룹에 속한 모든 서브2 항목 반환 (서브 경유 또는 직접)"""
+                if sub_channel_map and len(sub_channel_map) > 1:
+                    sub_labels = {sl for sl, info in sub_channel_map.items()
+                                  if info.get('parent') == group_label}
+                    result = []
+                    for i in range(sub2_list.count()):
+                        s2_item = sub2_list.item(i)
+                        s2_label = _strip_numbering(s2_item.text())
+                        if s2_label in sub2_channel_map:
+                            if sub2_channel_map[s2_label].get('parent') in sub_labels:
+                                result.append((s2_item, s2_label))
+                    return result
+                else:
+                    return _get_sub2_items_for_parent(group_label)
+            
+            # ── 기존 핸들러에 sub2 연동 추가 ──
+            _has_sub = sub_channel_map and len(sub_channel_map) > 1
+            
+            if _has_sub:
+                # sub + sub2 모두 존재: 채널→서브→서브2 3단 연동
+                # on_item_changed_linked 재정의: sub2도 동기화
+                ch_list.itemChanged.disconnect(on_item_changed_linked)
+                
+                def on_item_changed_3level(item):
+                    """채널 그룹 표시/숨김 → 서브 + 서브2 체크 상태 동기화"""
+                    if _chk_guard['updating']:
+                        return
+                    orig_key = item.data(Qt.ItemDataRole.UserRole)
+                    new_display = _strip_numbering(item.text())
+                    current_alias = _legend_aliases.get(orig_key, orig_key)
+                    if new_display and new_display != current_alias:
+                        _legend_aliases[orig_key] = new_display
+                        if orig_key in channel_map:
+                            for art in channel_map[orig_key]['artists']:
+                                art.set_label(new_display)
+                        _rebuild_legend()
+                        canvas.draw_idle()
+                        return
+                    visible = item.checkState() == Qt.CheckState.Checked
+                    if orig_key in channel_map:
+                        for art in channel_map[orig_key]['artists']:
+                            art.set_visible(visible)
+                    if not _sub_chk_guard['updating']:
+                        _sub_chk_guard['updating'] = True
+                        for sub_item, sub_label in _get_sub_items_for_group(orig_key):
+                            sub_item.setCheckState(
+                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
+                        _sub_chk_guard['updating'] = False
+                    if not _sub2_chk_guard['updating']:
+                        _sub2_chk_guard['updating'] = True
+                        for s2_item, _ in _get_sub2_items_for_group(orig_key):
+                            s2_item.setCheckState(
+                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
+                        _sub2_chk_guard['updating'] = False
+                    _rebuild_legend()
+                    canvas.draw_idle()
+                
+                ch_list.itemChanged.connect(on_item_changed_3level)
+                
+                # on_sub_item_changed 재정의: sub2도 연동
+                sub_list.itemChanged.disconnect(on_sub_item_changed)
+                
+                def on_sub_item_changed_linked(item):
+                    """서브 채널 표시/숨김 → 하위 서브2도 동기화"""
+                    if _sub_chk_guard['updating']:
+                        return
+                    label = _strip_numbering(item.text())
+                    visible = item.checkState() == Qt.CheckState.Checked
+                    if label in sub_channel_map:
+                        for art in sub_channel_map[label]['artists']:
+                            art.set_visible(visible)
+                    if not _sub2_chk_guard['updating']:
+                        _sub2_chk_guard['updating'] = True
+                        for s2_item, _ in _get_sub2_items_for_parent(label):
+                            s2_item.setCheckState(
+                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
+                        _sub2_chk_guard['updating'] = False
+                    canvas.draw_idle()
+                
+                sub_list.itemChanged.connect(on_sub_item_changed_linked)
+            else:
+                # sub2만 존재 (sub 없음): 채널→서브2 2단 연동
+                ch_list.itemChanged.disconnect(on_item_changed)
+                
+                def on_item_changed_with_sub2(item):
+                    """채널 그룹 표시/숨김 → 서브2 체크 상태 동기화"""
+                    if _chk_guard['updating']:
+                        return
+                    orig_key = item.data(Qt.ItemDataRole.UserRole)
+                    new_display = _strip_numbering(item.text())
+                    current_alias = _legend_aliases.get(orig_key, orig_key)
+                    if new_display and new_display != current_alias:
+                        _legend_aliases[orig_key] = new_display
+                        if orig_key in channel_map:
+                            for art in channel_map[orig_key]['artists']:
+                                art.set_label(new_display)
+                        _rebuild_legend()
+                        canvas.draw_idle()
+                        return
+                    visible = item.checkState() == Qt.CheckState.Checked
+                    if orig_key in channel_map:
+                        for art in channel_map[orig_key]['artists']:
+                            art.set_visible(visible)
+                    if not _sub2_chk_guard['updating']:
+                        _sub2_chk_guard['updating'] = True
+                        for s2_item, _ in _get_sub2_items_for_parent(orig_key):
+                            s2_item.setCheckState(
+                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
+                        _sub2_chk_guard['updating'] = False
+                    _rebuild_legend()
+                    canvas.draw_idle()
+                
+                ch_list.itemChanged.connect(on_item_changed_with_sub2)
+            
+            # 서브2 채널 클릭/체크 핸들러 (개별 제어)
+            def on_sub2_item_clicked(item):
+                """서브2 채널 개별 하이라이트 토글"""
+                if not highlight_state['enabled']:
+                    chk_hl_all.setChecked(False)
+                    highlight_state['active'] = set(channel_map.keys())
+                    _apply_highlight()
+                label = _strip_numbering(item.text())
+                if label not in sub2_channel_map:
+                    return
+                info = sub2_channel_map[label]
+                artists = info['artists']
+                is_highlighted = any(art.get_alpha() == 1.0 for art in artists)
+                if is_highlighted:
+                    for art in artists:
+                        _dim_artist(art)
+                else:
+                    for art in artists:
+                        _highlight_artist(art)
+                canvas.draw_idle()
+            
+            def on_sub2_item_changed(item):
+                """서브2 채널 개별 표시/숨김"""
+                if _sub2_chk_guard['updating']:
+                    return
+                label = _strip_numbering(item.text())
+                visible = item.checkState() == Qt.CheckState.Checked
+                if label in sub2_channel_map:
+                    for art in sub2_channel_map[label]['artists']:
+                        art.set_visible(visible)
+                canvas.draw_idle()
+            
+            sub2_list.itemClicked.connect(on_sub2_item_clicked)
+            sub2_list.itemChanged.connect(on_sub2_item_changed)
+            
+            # 서브2 채널 열 레이아웃
+            sub2_list_col = QVBoxLayout()
+            sub2_list_col.setSpacing(1)
+            sub2_list_lbl = QLabel(f"사이클 ({_sub2_total})")
+            sub2_list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
+            sub2_list_col.addWidget(sub2_list_lbl)
+            sub2_list_col.addWidget(sub2_list)
+            
+            overlay_layout.addLayout(sub2_list_col)
+        
         return overlay
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
@@ -10456,11 +10647,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
-                           channel_map=None, fig=None, axes_list=None):
+                           channel_map=None, fig=None, axes_list=None,
+                           sub_channel_map=None, sub2_channel_map=None):
         if channel_map:
             from PyQt6.QtWidgets import QHBoxLayout
             toggle_btn = self._create_cycle_channel_control(
-                channel_map, canvas, fig, axes_list, args_parent_tab=tab)
+                channel_map, canvas, fig, axes_list, args_parent_tab=tab,
+                sub_channel_map=sub_channel_map, sub2_channel_map=sub2_channel_map)
             toolbar_row = QHBoxLayout()
             toolbar_row.setContentsMargins(0, 0, 0, 0)
             toolbar_row.setSpacing(4)
@@ -10778,6 +10971,51 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return results, subfolder_map
     
+    def _save_cycle_excel_data(self, nd, writecolno, start_row, headername):
+        """사이클 데이터 엑셀 저장 공통 로직 (toyo/pne, 개별/통합/연결 모두 동일 결과)"""
+        cyc_head = ["Cycle"]
+        _dc = writecolno + 1
+        # 기본 데이터 시트
+        output_data(nd, "방전용량", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "방전용량", _dc, start_row, "Dchg", headername)
+        output_data(nd, "Rest End", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "Rest End", _dc, start_row, "RndV", headername)
+        output_data(nd, "평균 전압", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "평균 전압", _dc, start_row, "AvgV", headername)
+        output_data(nd, "충방효율", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "충방효율", _dc, start_row, "Eff", headername)
+        output_data(nd, "충전용량", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "충전용량", _dc, start_row, "Chg", headername)
+        output_data(nd, "방충효율", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "방충효율", _dc, start_row, "Eff2", headername)
+        output_data(nd, "방전Energy", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "방전Energy", _dc, start_row, "DchgEng", headername)
+        # DCIR 데이터 시트
+        cyctempdcir = nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
+        if self.mkdcir.isChecked() and "dcir2" in nd.columns:
+            cyctempdcir2 = nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
+            cyctemprssocv = nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
+            cyctemprssccv = nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
+            # SOC70 DCIR (존재 시)
+            if "soc70_dcir" in nd.columns:
+                cyctempsoc70dcir = nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
+                cyctempsoc70rssdcir = nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
+                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
+                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
+                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
+                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
+            output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
+            output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
+            output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
+            output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
+        else:
+            output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+
     def cyc_ini_set(self):
         set_coincell_mode(self.chk_coincell_cyc.isChecked())
         # UI 기준 초기 설정 데이터
@@ -11083,45 +11321,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
-                            cyc_head = ["Cycle"]
-                            _nd = cyctemp[1].NewData
-                            _dc = writecolno + 1  # 데이터 열 오프셋
-                            output_data(_nd, "방전용량", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "방전용량", _dc, 0, "Dchg", headername)
-                            output_data(_nd, "Rest End", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "Rest End", _dc, 0, "RndV", headername)
-                            output_data(_nd, "평균 전압", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "평균 전압", _dc, 0, "AvgV", headername)
-                            output_data(_nd, "충방효율", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "충방효율", _dc, 0, "Eff", headername)
-                            output_data(_nd, "충전용량", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "충전용량", _dc, 0, "Chg", headername)
-                            output_data(_nd, "방충효율", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "방충효율", _dc, 0, "Eff2", headername)
-                            output_data(_nd, "방전Energy", writecolno, 0, "OriCyc", cyc_head)
-                            output_data(_nd, "방전Energy", _dc, 0, "DchgEng", headername)
-                            cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
-                            if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
-                                cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
-                                cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
-                                cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
-                                cyctempsoc70dcir = _nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
-                                cyctempsoc70rssdcir = _nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
-                            else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                            self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, 0, headername)
                             writecolno = writecolno + 2
                     
                     plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
@@ -11272,45 +11472,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         
                         # Data output option
                         if self.saveok.isChecked() and save_file_name:
-                            cyc_head = ["Cycle"]
-                            _nd = cyctemp[1].NewData
-                            _dc = writecolno + 1
-                            output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
-                            output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
-                            output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
-                            output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
-                            output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
-                            output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
-                            output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
-                            cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
-                            if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
-                                cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
-                                cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
-                                cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
-                                cyctempsoc70dcir = _nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
-                                cyctempsoc70rssdcir = _nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
-                            else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                            self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
                             writecolno = writecolno + 2
                 colorno = colorno % len(THEME['PALETTE']) + 1
         
@@ -11437,14 +11599,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _first_ch_label = ch_label
                     ch_label = _first_ch_label
                     
-                    # 다중 폴더일 때 merge_label 고유화 (동일 sub_label 충돌 방지)
-                    if len(all_data_folder) > 1:
-                        if len(all_data_name) > 0 and i < len(all_data_name):
-                            merge_label = f"{all_data_name[i]}, {sub_label}"
-                        else:
-                            merge_label = f"{cycnamelist[-2]}, {sub_label}"
-                    else:
-                        merge_label = sub_label
+                    # 연결사이클: 동일 채널(sub_label)은 폴더 무관하게 병합
+                    merge_label = sub_label
                     
                     if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
                         # index 오프셋 적용 (기존과 동일)
@@ -11466,41 +11622,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             }
                         merged[merge_label]['frames'].append(cyctemp[1].NewData.copy())
                         
-                        # 엑셀 출력 (기존과 동일 — 데이터셋 단위)
+                        # 엑셀 출력
                         if self.saveok.isChecked() and save_file_name:
-                            cyc_head = ["Cycle"]
-                            _nd = cyctemp[1].NewData
-                            _dc = writecolno + 1
-                            output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
-                            output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
-                            output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
-                            output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
-                            output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
-                            output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
-                            output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
-                            output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
-                            cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
-                            if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
-                                cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
-                                cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
-                                cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
-                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-                                output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
-                            else:
-                                output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                            self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
                         
                         colorno = colorno + 1
                         writecolno = writecolno + 2
@@ -11684,39 +11808,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
                             
                             if self.saveok.isChecked() and save_file_name:
-                                cyc_head = ["Cycle"]
-                                _nd = cyctemp[1].NewData
-                                _dc = writecolno + 1
-                                output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
-                                output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
-                                output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
-                                output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
-                                output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
-                                output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
-                                output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
-                                cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
-                                if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
-                                    cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
-                                    cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
-                                    cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
-                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-                                    output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
-                                else:
-                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                                self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
                                 writecolno = writecolno + 2
                             colorno = colorno + 1
                             CycleMax[Chnl_num] = len(cyctemp[1].NewData)
@@ -11893,39 +11985,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             merged[merge_key]['frames'].append(cyctemp[1].NewData.copy())
                             
                             if self.saveok.isChecked() and save_file_name:
-                                cyc_head = ["Cycle"]
-                                _nd = cyctemp[1].NewData
-                                _dc = writecolno + 1
-                                output_data(_nd, "방전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "방전용량", _dc, writerowno, "Dchg", headername)
-                                output_data(_nd, "Rest End", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "Rest End", _dc, writerowno, "RndV", headername)
-                                output_data(_nd, "평균 전압", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "평균 전압", _dc, writerowno, "AvgV", headername)
-                                output_data(_nd, "충방효율", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "충방효율", _dc, writerowno, "Eff", headername)
-                                output_data(_nd, "충전용량", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "충전용량", _dc, writerowno, "Chg", headername)
-                                output_data(_nd, "방충효율", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "방충효율", _dc, writerowno, "Eff2", headername)
-                                output_data(_nd, "방전Energy", writecolno, writerowno, "OriCyc", cyc_head)
-                                output_data(_nd, "방전Energy", _dc, writerowno, "DchgEng", headername)
-                                cyctempdcir = _nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
-                                if self.mkdcir.isChecked() and hasattr(_nd, "dcir2"):
-                                    cyctempdcir2 = _nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
-                                    cyctemprssocv = _nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
-                                    cyctemprssccv = _nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
-                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-                                    output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
-                                else:
-                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-                                    output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+                                self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
                                 writecolno = writecolno + 2
                             CycleMax[Chnl_num] = len(cyctemp[1].NewData)
                             link_writerownum[Chnl_num] = writerowno
@@ -12040,6 +12100,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_step_namelist = None
             all_profile_channel_map = {}
+            all_profile_sub_map = {}
+            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
@@ -12058,6 +12120,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if "Pattern" not in FolderBase:
                             step_namelist = None
                             channel_map = {}
+                            sub2_channel_map = {}
                             for Step_CycNo in CycleNo:
                                 cyccountmax = len(CycleNo)
                                 cyccount += 1
@@ -12081,12 +12144,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         write_column_num, _artists = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
-                                        ch_label = temp_lgnd or lgnd
                                         _color = mcolors.to_hex(_artists[0].get_color())
+                                        ch_label, _sub_label = _make_channel_labels(step_namelist, all_data_name, i)
+                                        cyc_label = "%04d" % Step_CycNo
                                         if ch_label in channel_map:
                                             channel_map[ch_label]['artists'].extend(_artists)
                                         else:
                                             channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                        sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                             if step_namelist:
                                 title = step_namelist[-2] + "=" + step_namelist[-1]
                                 plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
@@ -12096,7 +12161,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             # 함수 사용으로 변경
                             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                                     channel_map=channel_map, fig=fig,
-                                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6])
+                                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6],
+                                                    sub2_channel_map=sub2_channel_map)
                             tab_no += 1
                 elif all_profile:
                     # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
@@ -12125,12 +12191,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         write_column_num, _artists = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
-                                        ch_label = temp_lgnd or lgnd
                                         _color = mcolors.to_hex(_artists[0].get_color())
+                                        ch_label, sub_label = _make_channel_labels(last_step_namelist, all_data_name, i)
+                                        sub_key = ch_label + " " + sub_label
+                                        cyc_label = "%04d" % Step_CycNo
                                         if ch_label in all_profile_channel_map:
                                             all_profile_channel_map[ch_label]['artists'].extend(_artists)
                                         else:
                                             all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                        if sub_key in all_profile_sub_map:
+                                            all_profile_sub_map[sub_key]['artists'].extend(_artists)
+                                        else:
+                                            all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                        sub2_key = sub_key + " " + cyc_label
+                                        all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
                 else:
                     for Step_CycNo in CycleNo:
                         fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
@@ -12141,6 +12215,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         chnlcountmax = len(subfolder)
                         step_namelist = None
                         channel_map = {}
+                        sub_channel_map = {}
                         for j, FolderBase in enumerate(subfolder):
                             if "Pattern" not in FolderBase:
                                 cyccountmax = len(CycleNo)
@@ -12165,12 +12240,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         write_column_num, _artists = self._plot_and_save_step_data(
                                             axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
                                             writer, write_column_num, save_file_name, Step_CycNo)
-                                        ch_label = temp_lgnd or lgnd
                                         _color = mcolors.to_hex(_artists[0].get_color())
+                                        ch_label, sub_label = _make_channel_labels(step_namelist, all_data_name, i)
                                         if ch_label in channel_map:
                                             channel_map[ch_label]['artists'].extend(_artists)
                                         else:
                                             channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                         #title/legend 모든 채널 플롯 완료 후 1회 실행
                         if step_namelist:
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
@@ -12181,7 +12257,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # 함수 사용으로 변경
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                                 channel_map=channel_map, fig=fig,
-                                                axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6])
+                                                axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6],
+                                                sub_channel_map=sub_channel_map)
                         tab_no += 1
         # AllProfile: 루프 종료 후 한번에 finalize
         if all_profile and last_step_namelist:
@@ -12192,7 +12269,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                     channel_map=all_profile_channel_map, fig=fig,
-                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6])
+                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6],
+                                    sub_channel_map=all_profile_sub_map,
+                                    sub2_channel_map=all_profile_sub2_map)
             tab_no += 1
         if self.saveok.isChecked() and save_file_name:
             writer.close()
@@ -12227,6 +12306,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_Ratenamelist = None
             all_profile_channel_map = {}
+            all_profile_sub_map = {}
+            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -12245,6 +12326,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if "Pattern" not in FolderBase:
                         Ratenamelist = None
                         channel_map = {}
+                        sub2_channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
@@ -12277,12 +12359,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                "Time(min)", "SOC", temp_lgnd))
                                     _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
                                                "Time(min)", "Temp.", lgnd))
-                                    ch_label = temp_lgnd or lgnd
                                     _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label, _sub_label = _make_channel_labels(Ratenamelist, all_data_name, i)
+                                    cyc_label = "%04d" % CycNo
                                     if ch_label in channel_map:
                                         channel_map[ch_label]['artists'].extend(_artists)
                                     else:
                                         channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12306,7 +12390,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                                 channel_map=channel_map, fig=fig,
-                                                axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6])
+                                                axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6],
+                                                sub2_channel_map=sub2_channel_map)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
             elif all_profile:
@@ -12347,12 +12432,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                "Time(min)", "SOC", temp_lgnd))
                                     _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
                                                "Time(min)", "Temp.", lgnd))
-                                    ch_label = temp_lgnd or lgnd
                                     _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label, sub_label = _make_channel_labels(last_Ratenamelist, all_data_name, i)
+                                    sub_key = ch_label + " " + sub_label
+                                    cyc_label = "%04d" % CycNo
                                     if ch_label in all_profile_channel_map:
                                         all_profile_channel_map[ch_label]['artists'].extend(_artists)
                                     else:
                                         all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    if sub_key in all_profile_sub_map:
+                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                    sub2_key = sub_key + " " + cyc_label
+                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12369,6 +12462,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # [최적화] namelist 미초기화 방어
                     Ratenamelist = None
                     channel_map = {}
+                    sub_channel_map = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
@@ -12402,12 +12496,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                "Time(min)", "SOC", temp_lgnd))
                                     _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
                                                "Time(min)", "Temp.", lgnd))
-                                    ch_label = temp_lgnd or lgnd
                                     _color = mcolors.to_hex(_artists[0].get_color())
+                                    ch_label, sub_label = _make_channel_labels(Ratenamelist, all_data_name, i)
                                     if ch_label in channel_map:
                                         channel_map[ch_label]['artists'].extend(_artists)
                                     else:
                                         channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12423,7 +12518,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                             channel_map=channel_map, fig=fig,
-                                            axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6])
+                                            axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6],
+                                            sub_channel_map=sub_channel_map)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
         # AllProfile: 루프 종료 후 한번에 finalize
@@ -12435,7 +12531,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                     channel_map=all_profile_channel_map, fig=fig,
-                                    axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6])
+                                    axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6],
+                                    sub_channel_map=all_profile_sub_map,
+                                    sub2_channel_map=all_profile_sub2_map)
             tab_no += 1
             output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
@@ -12471,6 +12569,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_Chgnamelist = None
             all_profile_channel_map = {}
+            all_profile_sub_map = {}
+            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -12488,6 +12588,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                         Chgnamelist = None
                         channel_map = {}
+                        sub2_channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
@@ -12527,8 +12628,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
                                                   -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label = temp_lgnd if temp_lgnd else lgnd
-                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                    ch_label, _sub_label = _make_channel_labels(Chgnamelist, all_data_name, i)
+                                    cyc_label = "%04d" % CycNo
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12553,7 +12659,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
+                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
+                                               sub2_channel_map=sub2_channel_map)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
             elif all_profile:
@@ -12601,8 +12708,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
                                                   -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label = temp_lgnd if temp_lgnd else lgnd
-                                    all_profile_channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                    ch_label, sub_label = _make_channel_labels(last_Chgnamelist, all_data_name, i)
+                                    sub_key = ch_label + " " + sub_label
+                                    cyc_label = "%04d" % CycNo
+                                    if ch_label in all_profile_channel_map:
+                                        all_profile_channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    if sub_key in all_profile_sub_map:
+                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                    sub2_key = sub_key + " " + cyc_label
+                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12620,6 +12738,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     
                     Chgnamelist = None
                     channel_map = {}
+                    sub_channel_map = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
@@ -12660,8 +12779,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
                                                   -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label = temp_lgnd if temp_lgnd else lgnd
-                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                    ch_label, sub_label = _make_channel_labels(Chgnamelist, all_data_name, i)
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                                     if self.saveok.isChecked() and save_file_name:
                                         Chgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12676,7 +12799,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
+                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
+                                           sub_channel_map=sub_channel_map)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
         # AllProfile: 루프 종료 후 한번에 finalize
@@ -12687,7 +12811,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list)
+                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list,
+                                   sub_channel_map=all_profile_sub_map,
+                                   sub2_channel_map=all_profile_sub2_map)
             tab_no += 1
             output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
@@ -12723,6 +12849,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_Dchgnamelist = None
             all_profile_channel_map = {}
+            all_profile_sub_map = {}
+            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
             if not os.path.isdir(cyclefolder):
                 continue
@@ -12741,6 +12869,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                         Dchgnamelist = None
                         channel_map = {}
+                        sub2_channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
                             cyccount += 1
@@ -12776,8 +12905,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
                                                   -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label = temp_lgnd if temp_lgnd else lgnd
-                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                    ch_label, _sub_label = _make_channel_labels(Dchgnamelist, all_data_name, i)
+                                    cyc_label = "%04d" % CycNo
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12801,7 +12935,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                         self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
+                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
+                                               sub2_channel_map=sub2_channel_map)
                         tab_no += 1
                         output_fig(self.figsaveok, title)
             elif all_profile:
@@ -12845,8 +12980,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
                                                   -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label = temp_lgnd if temp_lgnd else lgnd
-                                    all_profile_channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                    ch_label, sub_label = _make_channel_labels(last_Dchgnamelist, all_data_name, i)
+                                    sub_key = ch_label + " " + sub_label
+                                    cyc_label = "%04d" % CycNo
+                                    if ch_label in all_profile_channel_map:
+                                        all_profile_channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    if sub_key in all_profile_sub_map:
+                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                    sub2_key = sub_key + " " + cyc_label
+                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12863,6 +13009,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                     Dchgnamelist = None
                     channel_map = {}
+                    sub_channel_map = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
@@ -12900,8 +13047,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
                                                   -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label = temp_lgnd if temp_lgnd else lgnd
-                                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                    ch_label, sub_label = _make_channel_labels(Dchgnamelist, all_data_name, i)
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
                                     if self.saveok.isChecked() and save_file_name:
                                         Dchgtemp[1].Profile.to_excel(
                                             writer, startcol=writecolno, index=False,
@@ -12925,7 +13076,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
                         self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                     self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6])
+                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
+                                           sub_channel_map=sub_channel_map)
                     tab_no += 1
                     output_fig(self.figsaveok, title)
         # AllProfile: 루프 종료 후 한번에 finalize
@@ -12936,7 +13088,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list)
+                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list,
+                                   sub_channel_map=all_profile_sub_map,
+                                   sub2_channel_map=all_profile_sub2_map)
             tab_no += 1
             output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
@@ -13087,6 +13241,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                 last_namelist = None
                 all_profile_channel_map = {}
+                all_profile_sub_map = {}
+                all_profile_sub2_map = {}
             for i, cyclefolder in enumerate(all_data_folder):
                 if not os.path.isdir(cyclefolder):
                     continue
@@ -13170,13 +13326,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
                                 _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
                                                -15, 60, 5, "Time(min)", "Temp.", lgnd))
-                                ch_label = temp_lgnd or lgnd
+                                ch_label, sub_label = _make_channel_labels(step_namelist, all_data_name, i)
                                 _color = mcolors.to_hex(_artists[0].get_color())
                                 _target_map = all_profile_channel_map if all_profile else channel_map
                                 if ch_label in _target_map:
                                     _target_map[ch_label]['artists'].extend(_artists)
                                 else:
                                     _target_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                if all_profile:
+                                    sub_key = ch_label + " " + sub_label
+                                    cyc_label = "%04d" % Step_CycNo
+                                    if sub_key in all_profile_sub_map:
+                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
+                                    else:
+                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                    sub2_key = sub_key + " " + cyc_label
+                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
                                                                     
                                 if self.saveok.isChecked() and save_file_name:
                                     if has_ocv:
@@ -13237,7 +13402,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self._setup_legend(axes_list, all_data_name, positions, fig=fig)
                 self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                         channel_map=all_profile_channel_map, fig=fig,
-                                        axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
+                                        axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6],
+                                        sub_channel_map=all_profile_sub_map,
+                                        sub2_channel_map=all_profile_sub2_map)
                 tab_no += 1
                 output_fig(self.figsaveok, title)
             if self.saveok.isChecked() and save_file_name:
