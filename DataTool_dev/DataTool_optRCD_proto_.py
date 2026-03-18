@@ -7,6 +7,8 @@ import logging
 import functools
 import warnings
 import json
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pyodbc
 import pandas as pd
@@ -194,6 +196,17 @@ def to_timestamp(date_str):
 def progress(count1, max1, count2, max2, count3, max3):
     progressdata = ((count1 + ((count2 + (count3 / max3) - 1) / max2) - 1) / max1 * 100)
     return progressdata
+
+@dataclass
+class CycleGroup:
+    """사이클 분석의 단일 그룹 (개별 또는 연결)"""
+    name: str                          # 범례/탭 표시명
+    paths: list = field(default_factory=list)  # 데이터 경로 목록
+    path_names: list = field(default_factory=list)  # per-path cyclename (path 파일 출처)
+    is_link: bool = False              # 연결 여부 (paths 2개 이상)
+    data_type: str = 'folder'          # 'folder' | 'excel'
+    file_idx: int = 0                  # 출처 path 파일 번호
+    source_file: str = ''              # 원본 path 파일 경로 (mAh 추출용)
 
 # 여러 directory 선택하는 코드
 def multi_askopendirnames():
@@ -3677,84 +3690,49 @@ class Ui_sitool(object):
         self.dcirscale.setObjectName("dcirscale")
         self.horizontalLayout_89.addWidget(self.dcirscale)
         self.verticalLayout_17.addLayout(self.horizontalLayout_89)
+        # ── 통합 Cycle 분석 UI (6개 버튼 → 1버튼 + 라디오 + 체크박스) ──
         self.horizontalLayout_90 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_90.setObjectName("horizontalLayout_90")
-        self.indiv_cycle = QtWidgets.QPushButton(parent=self.tab_5)
-        self.indiv_cycle.setMinimumSize(QtCore.QSize(215, 70))
-        self.indiv_cycle.setMaximumSize(QtCore.QSize(215, 70))
+        self.radio_indiv = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.radio_indiv.setMinimumSize(QtCore.QSize(100, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.indiv_cycle.setFont(font)
-        self.indiv_cycle.setObjectName("indiv_cycle")
-        self.horizontalLayout_90.addWidget(self.indiv_cycle)
-        self.overall_cycle = QtWidgets.QPushButton(parent=self.tab_5)
-        self.overall_cycle.setMinimumSize(QtCore.QSize(215, 70))
-        self.overall_cycle.setMaximumSize(QtCore.QSize(215, 70))
+        self.radio_indiv.setFont(font)
+        self.radio_indiv.setChecked(True)
+        self.radio_indiv.setObjectName("radio_indiv")
+        self.horizontalLayout_90.addWidget(self.radio_indiv)
+        self.radio_overall = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.radio_overall.setMinimumSize(QtCore.QSize(100, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.overall_cycle.setFont(font)
-        self.overall_cycle.setObjectName("overall_cycle")
-        self.horizontalLayout_90.addWidget(self.overall_cycle)
+        self.radio_overall.setFont(font)
+        self.radio_overall.setObjectName("radio_overall")
+        self.horizontalLayout_90.addWidget(self.radio_overall)
+        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self.tab_5)
+        self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        self.chk_link_cycle.setFont(font)
+        self.chk_link_cycle.setObjectName("chk_link_cycle")
+        self.horizontalLayout_90.addWidget(self.chk_link_cycle)
         self.verticalLayout_17.addLayout(self.horizontalLayout_90)
         self.horizontalLayout_91 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_91.setObjectName("horizontalLayout_91")
-        self.link_cycle = QtWidgets.QPushButton(parent=self.tab_5)
-        self.link_cycle.setMinimumSize(QtCore.QSize(215, 70))
-        self.link_cycle.setMaximumSize(QtCore.QSize(215, 70))
+        self.cycle_confirm = QtWidgets.QPushButton(parent=self.tab_5)
+        self.cycle_confirm.setMinimumSize(QtCore.QSize(430, 70))
+        self.cycle_confirm.setMaximumSize(QtCore.QSize(430, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(12)
         font.setBold(True)
         font.setWeight(75)
-        font.setKerning(True)
-        self.link_cycle.setFont(font)
-        self.link_cycle.setObjectName("link_cycle")
-        self.horizontalLayout_91.addWidget(self.link_cycle)
-        self.AppCycConfirm = QtWidgets.QPushButton(parent=self.tab_5)
-        self.AppCycConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.AppCycConfirm.setMaximumSize(QtCore.QSize(215, 70))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.AppCycConfirm.setFont(font)
-        self.AppCycConfirm.setObjectName("AppCycConfirm")
-        self.horizontalLayout_91.addWidget(self.AppCycConfirm)
+        self.cycle_confirm.setFont(font)
+        self.cycle_confirm.setObjectName("cycle_confirm")
+        self.horizontalLayout_91.addWidget(self.cycle_confirm)
         self.verticalLayout_17.addLayout(self.horizontalLayout_91)
-        self.horizontalLayout_92 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_92.setObjectName("horizontalLayout_92")
-        self.link_cycle_indiv = QtWidgets.QPushButton(parent=self.tab_5)
-        self.link_cycle_indiv.setMinimumSize(QtCore.QSize(215, 70))
-        self.link_cycle_indiv.setMaximumSize(QtCore.QSize(215, 70))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        font.setKerning(True)
-        self.link_cycle_indiv.setFont(font)
-        self.link_cycle_indiv.setObjectName("link_cycle_indiv")
-        self.horizontalLayout_92.addWidget(self.link_cycle_indiv)
-        self.link_cycle_overall = QtWidgets.QPushButton(parent=self.tab_5)
-        self.link_cycle_overall.setMinimumSize(QtCore.QSize(215, 70))
-        self.link_cycle_overall.setMaximumSize(QtCore.QSize(215, 70))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        font.setKerning(True)
-        self.link_cycle_overall.setFont(font)
-        self.link_cycle_overall.setObjectName("link_cycle_overall")
-        self.horizontalLayout_92.addWidget(self.link_cycle_overall)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_92)
         self.horizontalLayout_107.addLayout(self.verticalLayout_17)
         self.tabWidget_2.addTab(self.tab_5, "")
         self.tab_6 = QtWidgets.QWidget()
@@ -9062,14 +9040,10 @@ class Ui_sitool(object):
         self.tcyclerng.setText(_translate("sitool", "0"))
         self.dcirscalelb.setText(_translate("sitool", "  DCIR scale 늘리기 (x ?배)"))
         self.dcirscale.setText(_translate("sitool", "0"))
-        self.indiv_cycle.setText(_translate("sitool", "개별 Cycle"))
-        self.overall_cycle.setText(_translate("sitool", "통합 Cycle"))
-        self.link_cycle.setText(_translate("sitool", "연결 Cycle"))
-        self.AppCycConfirm.setText(_translate("sitool", "신뢰성 Cycle"))
-        self.link_cycle_indiv.setText(_translate("sitool", "연결 Cycle  \n"
-" 여러개 개별"))
-        self.link_cycle_overall.setText(_translate("sitool", "연결 Cycle \n"
-" 여러개 통합"))
+        self.radio_indiv.setText(_translate("sitool", "개별"))
+        self.radio_overall.setText(_translate("sitool", "통합"))
+        self.chk_link_cycle.setText(_translate("sitool", "연결처리"))
+        self.cycle_confirm.setText(_translate("sitool", "Cycle 분석"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
         self.CycProfile.setText(_translate("sitool", "사이클 통합"))
         self.CellProfile.setText(_translate("sitool", "셀별 통합"))
@@ -9474,12 +9448,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.unmount_all.clicked.connect(self.unmount_all_button)
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
-        self.indiv_cycle.clicked.connect(self.indiv_cyc_confirm_button)
-        self.overall_cycle.clicked.connect(self.overall_cyc_confirm_button)
-        self.link_cycle.clicked.connect(self.link_cyc_confirm_button)
-        self.link_cycle_indiv.clicked.connect(self.link_cyc_indiv_confirm_button)
-        self.link_cycle_overall.clicked.connect(self.link_cyc_overall_confirm_button)
-        self.AppCycConfirm.clicked.connect(self.app_cyc_confirm_button)
+        self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
         self.RateConfirm.clicked.connect(self.rate_confirm_button)
         self.ChgConfirm.clicked.connect(self.chg_confirm_button)
@@ -11016,6 +10985,570 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
             output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
 
+    # ═══════════════════════════════════════════════════════════════
+    # 통합 Cycle 분석 관련 메서드
+    # ═══════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _parse_path_file(filepath):
+        """단일 .txt path 파일을 파싱하여 [(cyclename, cyclepath), ...] 반환"""
+        rows = []
+        with open(filepath, 'r', encoding='UTF-8') as f:
+            f.readline()  # 헤더 스킵
+            for line in f:
+                parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
+                if len(parts) >= 2:
+                    rows.append((' '.join(parts[:-1]), parts[-1]))
+        return rows
+
+    def _build_group_from_lines(self, lines, file_idx):
+        """직접입력 줄들로 CycleGroup 생성. .xlsx=excel, .txt=path파일 재파싱, 나머지=folder"""
+        all_paths = []
+        path_names = []
+        data_type = 'folder'
+        source_file = ''
+
+        for line in lines:
+            ext = os.path.splitext(line)[1].lower()
+            if ext == '.xlsx':
+                data_type = 'excel'
+                all_paths.append(line)
+                path_names.append('')
+            elif ext in ('.txt', '.csv'):
+                source_file = line
+                rows = self._parse_path_file(line)
+                for cname, cpath in rows:
+                    all_paths.append(cpath)
+                    path_names.append(cname)
+            else:
+                all_paths.append(line)
+                path_names.append('')
+
+        name = os.path.basename(all_paths[0]) if all_paths else 'unknown'
+        return CycleGroup(
+            name=name, paths=all_paths, path_names=path_names,
+            is_link=len(all_paths) > 1, data_type=data_type,
+            file_idx=file_idx, source_file=source_file
+        )
+
+    def _parse_cycle_input(self):
+        """입력 모드를 판별하여 list[CycleGroup] 반환"""
+        groups = []
+        root = Tk()
+        root.withdraw()
+
+        if self.chk_cyclepath.isChecked():
+            # 지정Path: 다중 파일 선택
+            filepaths = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
+            if not filepaths:
+                return groups
+
+            for file_idx, fp in enumerate(filepaths):
+                fp = fp.strip()
+                ext = os.path.splitext(fp)[1].lower()
+
+                if ext == '.xlsx':
+                    groups.append(CycleGroup(
+                        name=os.path.splitext(os.path.basename(fp))[0],
+                        paths=[fp], path_names=[''],
+                        data_type='excel', file_idx=file_idx, source_file=fp
+                    ))
+                elif ext in ('.txt', '.csv'):
+                    rows = self._parse_path_file(fp)
+                    if not rows:
+                        continue
+                    # cyclename으로 그룹화 (동일 cyclename = 자동 연결)
+                    name_order = OrderedDict()
+                    for cname, cpath in rows:
+                        name_order.setdefault(cname, []).append((cname, cpath))
+                    for cname, items in name_order.items():
+                        cpaths = [x[1] for x in items]
+                        cnames = [x[0] for x in items]
+                        groups.append(CycleGroup(
+                            name=cname, paths=cpaths, path_names=cnames,
+                            is_link=len(cpaths) > 1, data_type='folder',
+                            file_idx=file_idx, source_file=fp
+                        ))
+                else:
+                    # 폴더 경로로 간주
+                    groups.append(CycleGroup(
+                        name=os.path.basename(fp), paths=[fp], path_names=[''],
+                        data_type='folder', file_idx=file_idx, source_file=fp
+                    ))
+
+        elif self.stepnum_2.toPlainText().strip():
+            # 직접 입력
+            text = self.stepnum_2.toPlainText()
+            link_mode = self.chk_link_cycle.isChecked()
+            lines = text.split('\n')
+
+            if link_mode:
+                # 연결 모드: 빈 줄 = 그룹 구분
+                current_group = []
+                for line in lines:
+                    stripped = line.strip().strip('"').strip("'")
+                    if stripped:
+                        current_group.append(stripped)
+                    else:
+                        if current_group:
+                            groups.append(self._build_group_from_lines(current_group, file_idx=0))
+                            current_group = []
+                if current_group:
+                    groups.append(self._build_group_from_lines(current_group, file_idx=0))
+            else:
+                # 개별 모드: 모든 줄 = 개별
+                for line in lines:
+                    stripped = line.strip().strip('"').strip("'")
+                    if stripped:
+                        groups.append(self._build_group_from_lines([stripped], file_idx=0))
+
+        else:
+            # 폴더 선택: 항상 개별
+            folders = multi_askopendirnames()
+            for fp in folders:
+                groups.append(CycleGroup(
+                    name=os.path.basename(fp), paths=[fp], path_names=[''],
+                    data_type='folder', file_idx=0, source_file=''
+                ))
+
+        return groups
+
+    @log_perf
+    def unified_cyc_confirm_button(self):
+        """통합 사이클 분석 (6개 함수 통합)"""
+        global writer
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        is_individual = self.radio_indiv.isChecked()
+        graphcolor = THEME['PALETTE']
+
+        self.cycle_confirm.setDisabled(True)
+        groups = self._parse_cycle_input()
+        if not groups:
+            self.cycle_confirm.setEnabled(True)
+            return
+
+        # 용량 추출 (path file name에 mAh가 포함된 경우)
+        if self.inicaprate.isChecked():
+            for g in groups:
+                if g.source_file and "mAh" in g.source_file:
+                    cap = name_capacity(g.source_file)
+                    if cap:
+                        mincapacity = cap
+                        self.capacitytext.setText(str(mincapacity))
+                    break
+
+        # 파일 저장 설정
+        save_file_name = None
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(
+                initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.cycle_confirm.setEnabled(True)
+
+        excel_groups = [g for g in groups if g.data_type == 'excel']
+        folder_groups = [g for g in groups if g.data_type == 'folder']
+
+        tab_no = 0
+        writecolno = 0
+        self.progressBar.setValue(0)
+
+        # ═══ Excel 그룹 (신뢰성) ═══
+        if excel_groups:
+            fig, ((ax1,)) = plt.subplots(nrows=1, ncols=1, figsize=(14, 8))
+            colorno = 0
+            dfs_output = []
+            col_name_output = []
+            filename = ""
+            total_excel = sum(len(g.paths) for g in excel_groups)
+            done_excel = 0
+
+            for g in excel_groups:
+                for datafilepath in g.paths:
+                    if self.inicaprate.isChecked() and "mAh" in datafilepath:
+                        mincapacity = name_capacity(datafilepath)
+                        self.capacitytext.setText(str(mincapacity))
+                    else:
+                        mincapacity = float(self.capacitytext.text())
+
+                    filename = os.path.splitext(os.path.basename(datafilepath))[0]
+                    try:
+                        wb = xw.Book(datafilepath)
+                        df = wb.sheets("Plot Base Data").used_range.offset(1, 0).options(
+                            pd.DataFrame, index=False, header=False).value
+                        xw.apps.active.quit()
+                        df = df.drop(0).iloc[:, 1::2]
+                        df.reset_index(drop=True, inplace=True)
+                        df.index = df.index + 1
+                        col_name = [filename] * len(df.columns)
+                        df = df / mincapacity
+
+                        if df.iat[2, 0] < df.iat[0, 0] * 0.5:
+                            count = len(df)
+                            lastcount = int((count + int(count / 199) + 1) / 2 + 1)
+                            index = 0
+                            for ii in range(lastcount - 1):
+                                if index == 0 or index == 197:
+                                    index = index + 1
+                                else:
+                                    if index > 197 and (index - 197) % 199 == 0:
+                                        index = index + 1
+                                    else:
+                                        df.loc[index + 1, :] = df.loc[index + 1, :] + df.loc[index + 2, :]
+                                        df.drop(index + 2, axis=0, inplace=True)
+                                        index = index + 2
+                            df.reset_index(drop=True, inplace=True)
+                            df.index = df.index + 1
+
+                        columncount = 0
+                        for col, column in df.items():
+                            lgnd = filename if columncount == 0 else ""
+                            graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
+                                        "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
+                                        graphcolor[colorno % len(graphcolor)])
+                            columncount += 1
+                            colorno = (colorno + 1) % len(graphcolor)
+                        dfs_output.append(df)
+                        col_name_output += col_name
+                    except Exception as e:
+                        print(f"오류 발생: {e}")
+                        raise
+
+                    done_excel += 1
+                    self.progressBar.setValue(int(done_excel / total_excel * 100))
+
+            dfoutput = pd.concat(dfs_output, axis=1) if dfs_output else pd.DataFrame()
+            if self.saveok.isChecked() and save_file_name:
+                dfoutput.to_excel(writer, sheet_name="Approval_cycle", header=col_name_output)
+
+            if filename:
+                plt.suptitle(filename, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                plt.legend(loc="upper right")
+                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                output_fig(self.figsaveok, filename)
+                tab = QtWidgets.QWidget()
+                tab_layout = QtWidgets.QVBoxLayout(tab)
+                canvas = FigureCanvas(fig)
+                toolbar = NavigationToolbar(canvas, None)
+                tab_layout.addWidget(toolbar)
+                tab_layout.addWidget(canvas)
+                self.cycle_tab.addTab(tab, str(tab_no))
+                self.cycle_tab.setCurrentWidget(tab)
+                tab_no += 1
+            plt.close(fig)
+
+        # ═══ Folder 그룹 ═══
+        if folder_groups:
+            # 전체 paths flatten + 병렬 로딩
+            all_paths = []
+            flat_idx_of = {}  # (gi, pi) → flat_idx
+            for gi, g in enumerate(folder_groups):
+                for pi, p in enumerate(g.paths):
+                    flat_idx_of[(gi, pi)] = len(all_paths)
+                    all_paths.append(p)
+
+            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
+                np.array(all_paths), mincapacity, firstCrate,
+                self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
+                max_workers=4
+            )
+
+            # 탭 할당: 개별=group별, 통합=file_idx별
+            if is_individual:
+                tab_units = [[gi] for gi in range(len(folder_groups))]
+            else:
+                by_file = OrderedDict()
+                for gi, g in enumerate(folder_groups):
+                    by_file.setdefault(g.file_idx, []).append(gi)
+                tab_units = list(by_file.values())
+
+            total_tabs = len(tab_units)
+
+            for tab_idx, group_indices in enumerate(tab_units):
+                fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+                axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
+
+                tab = None
+                tab_layout = None
+                canvas = None
+                toolbar = None
+                channel_map = {}
+                sub_channel_map = {}
+                _seen_ch_labels = set()
+                has_valid_data = False
+                colorno = 0
+                cycnamelist = None
+                suptitle_name = None
+
+                for gi in group_indices:
+                    group = folder_groups[gi]
+                    flat_indices = [flat_idx_of[(gi, pi)] for pi in range(len(group.paths))]
+
+                    if group.is_link:
+                        # ═══ 연결 모드: sub_label별 병합 ═══
+                        merged = {}
+                        channel_state = {}  # {sub_label: {'offset': int, 'last_len': int}}
+                        _first_ch_label = None
+
+                        for path_idx, fi in enumerate(flat_indices):
+                            if fi not in subfolder_map:
+                                continue
+                            subfolder = subfolder_map[fi]
+                            local_colorno = 0
+
+                            for sub_idx, FolderBase in enumerate(subfolder):
+                                if (fi, sub_idx) not in loaded_data:
+                                    continue
+                                folder_path, cyctemp = loaded_data[(fi, sub_idx)]
+                                if cyctemp is None or cyctemp[1] is None:
+                                    continue
+
+                                has_valid_data = True
+                                cycnamelist = FolderBase.split("\\")
+                                headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+
+                                sub_label = extract_text_in_brackets(cycnamelist[-1])
+                                if group.path_names and group.path_names[path_idx]:
+                                    ch_label = str(group.path_names[path_idx]).strip()
+                                else:
+                                    ch_label = cycnamelist[-2]
+                                if not ch_label:
+                                    ch_label = cycnamelist[-2]
+                                if "mAh_" in ch_label:
+                                    ch_label = ch_label.split("mAh_", 1)[1]
+                                if len(ch_label) > 30:
+                                    ch_label = ch_label[:30] + "..."
+
+                                if _first_ch_label is None:
+                                    _first_ch_label = ch_label
+                                ch_label = _first_ch_label
+
+                                if hasattr(cyctemp[1], "NewData"):
+                                    self.capacitytext.setText(str(cyctemp[0]))
+                                    if irscale == 0 and cyctemp[0] != 0:
+                                        irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
+                                    if xscale == 0:
+                                        xscale = len(cyctemp[1].NewData) * (len(flat_indices) + 1)
+
+                                    # index 오프셋 적용
+                                    if sub_label not in channel_state:
+                                        channel_state[sub_label] = {'offset': 0, 'last_len': 0}
+                                    st = channel_state[sub_label]
+                                    writerowno = st['offset'] + st['last_len']
+                                    cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
+                                    st['offset'] = writerowno
+                                    st['last_len'] = len(cyctemp[1].NewData)
+
+                                    if sub_label not in merged:
+                                        merged[sub_label] = {
+                                            'frames': [], 'colorno': local_colorno, 'ch_label': ch_label
+                                        }
+                                    merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
+
+                                    if self.saveok.isChecked() and save_file_name:
+                                        self._save_cycle_excel_data(
+                                            cyctemp[1].NewData, writecolno, writerowno, headername)
+                                        writecolno += 2
+                                    local_colorno += 1
+
+                        # 병합 데이터로 plot
+                        for sub_label, info in merged.items():
+                            merged_df = pd.concat(info['frames']).sort_index()
+                            _wrapper = type('CycData', (), {'NewData': merged_df})()
+
+                            if tab is None:
+                                tab = QtWidgets.QWidget()
+                                tab_layout = QtWidgets.QVBoxLayout(tab)
+                                canvas = FigureCanvas(fig)
+                                toolbar = NavigationToolbar(canvas, None)
+
+                            if not is_individual:
+                                if info['ch_label'] not in _seen_ch_labels:
+                                    lgnd = info['ch_label'].split("_")[-1] if "_" in info['ch_label'] else info['ch_label']
+                                    _seen_ch_labels.add(info['ch_label'])
+                                else:
+                                    lgnd = "_nolegend_"
+                            else:
+                                lgnd = sub_label
+
+                            _artists, _color = graph_output_cycle(
+                                _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
+                                info['colorno'] + colorno, graphcolor, self.mkdcir,
+                                ax1, ax2, ax3, ax4, ax5, ax6
+                            )
+
+                            _ch = info['ch_label']
+                            _base = _ch
+                            _sfx = 2
+                            while _ch in channel_map and channel_map[_ch]['color'] != _color:
+                                _ch = f"{_base} ({_sfx})"
+                                _sfx += 1
+                            if _ch in channel_map:
+                                channel_map[_ch]['artists'].extend(_artists)
+                            else:
+                                channel_map[_ch] = {'artists': _artists, 'color': _color}
+                            sub_channel_map[sub_label] = {
+                                'artists': list(_artists), 'color': _color, 'parent': _ch}
+
+                        colorno += len(merged)
+
+                    else:
+                        # ═══ 비연결 모드: 각 sub 직접 plot ═══
+                        for path_idx, fi in enumerate(flat_indices):
+                            if fi not in subfolder_map:
+                                continue
+                            subfolder = subfolder_map[fi]
+
+                            for sub_idx, FolderBase in enumerate(subfolder):
+                                if (fi, sub_idx) not in loaded_data:
+                                    continue
+                                folder_path, cyctemp = loaded_data[(fi, sub_idx)]
+                                if cyctemp is None or cyctemp[1] is None:
+                                    continue
+
+                                if tab is None:
+                                    tab = QtWidgets.QWidget()
+                                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                                    canvas = FigureCanvas(fig)
+                                    toolbar = NavigationToolbar(canvas, None)
+
+                                has_valid_data = True
+                                cycnamelist = FolderBase.split("\\")
+                                headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+
+                                sub_label = extract_text_in_brackets(cycnamelist[-1])
+                                if group.path_names and group.path_names[path_idx]:
+                                    ch_label = str(group.path_names[path_idx]).strip()
+                                else:
+                                    ch_label = cycnamelist[-2]
+                                if not ch_label:
+                                    ch_label = cycnamelist[-2]
+                                if "mAh_" in ch_label:
+                                    ch_label = ch_label.split("mAh_", 1)[1]
+                                if len(ch_label) > 30:
+                                    ch_label = ch_label[:30] + "..."
+
+                                if not is_individual:
+                                    if ch_label not in _seen_ch_labels:
+                                        lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
+                                        _seen_ch_labels.add(ch_label)
+                                    else:
+                                        lgnd = "_nolegend_"
+                                else:
+                                    lgnd = sub_label
+
+                                if hasattr(cyctemp[1], "NewData"):
+                                    self.capacitytext.setText(str(cyctemp[0]))
+                                    if float(self.dcirscale.text()) == 0 and cyctemp[0] != 0:
+                                        new_irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
+                                        irscale = max(irscale, new_irscale)
+
+                                    _artists, _color = graph_output_cycle(
+                                        cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd,
+                                        colorno, graphcolor, self.mkdcir,
+                                        ax1, ax2, ax3, ax4, ax5, ax6
+                                    )
+
+                                    _base = ch_label
+                                    _sfx = 2
+                                    while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
+                                        ch_label = f"{_base} ({_sfx})"
+                                        _sfx += 1
+                                    if ch_label in channel_map:
+                                        channel_map[ch_label]['artists'].extend(_artists)
+                                    else:
+                                        channel_map[ch_label] = {'artists': _artists, 'color': _color}
+
+                                    _sub_base = sub_label
+                                    _sub_sfx = 2
+                                    while sub_label in sub_channel_map:
+                                        sub_label = f"{_sub_base} ({_sub_sfx})"
+                                        _sub_sfx += 1
+                                    sub_channel_map[sub_label] = {
+                                        'artists': list(_artists), 'color': _color, 'parent': ch_label}
+
+                                    colorno += 1
+
+                                    if self.saveok.isChecked() and save_file_name:
+                                        self._save_cycle_excel_data(
+                                            cyctemp[1].NewData, writecolno, 0, headername)
+                                        writecolno += 2
+
+                        # 개별 모드: 그룹(탭)별 색상 리셋
+                        if is_individual:
+                            colorno = 0
+                        else:
+                            colorno = colorno % len(THEME['PALETTE']) + 1
+
+                # suptitle 결정
+                if cycnamelist:
+                    suptitle_name = cycnamelist[-2]
+                    for gi in group_indices:
+                        g = folder_groups[gi]
+                        if g.source_file:
+                            base = os.path.splitext(os.path.basename(g.source_file))[0]
+                            if base:
+                                suptitle_name = base
+                            break
+                if suptitle_name:
+                    plt.suptitle(suptitle_name, fontsize=THEME['SUPTITLE_SIZE'],
+                                 fontweight=THEME['SUPTITLE_WEIGHT'])
+
+                # 범례 설정
+                if has_valid_data:
+                    if not is_individual:
+                        _lkw = dict(fontsize=THEME['LEGEND_SIZE'],
+                                    framealpha=THEME['LEGEND_FRAMEALPHA'],
+                                    edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
+                        _legend_locs = [
+                            (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
+                            (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
+                            (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
+                        ]
+                        for _ax, _loc, _anchor in _legend_locs:
+                            _handles, _labels = _ax.get_legend_handles_labels()
+                            _hl = [(h, l) for h, l in zip(_handles, _labels)
+                                   if l and not l.startswith('_')]
+                            _seen = set()
+                            _hl_unique = []
+                            for h, l in _hl:
+                                if l not in _seen:
+                                    _seen.add(l)
+                                    _hl_unique.append((h, l))
+                            if _hl_unique:
+                                _ax.legend([h for h, l in _hl_unique],
+                                           [l for h, l in _hl_unique],
+                                           loc=_loc, bbox_to_anchor=_anchor,
+                                           borderaxespad=0.5, **_lkw)
+                    else:
+                        ax1.legend(loc="lower left")
+                        ax2.legend(loc="lower right")
+                        ax3.legend(loc="upper right")
+                        ax4.legend(loc="upper right")
+                        ax5.legend(loc="upper right")
+                        ax6.legend(loc="lower right")
+                    place_dcir_labels(ax4)
+                    place_avgrest_labels(ax6)
+                    _opaque_legend_markers(*axes_list)
+
+                # 탭 추가
+                if has_valid_data and tab_layout is not None:
+                    self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
+                                             channel_map, fig, axes_list, sub_channel_map)
+                    tab_no += 1
+                    if suptitle_name:
+                        output_fig(self.figsaveok, suptitle_name)
+                else:
+                    plt.close(fig)
+
+                # 진행률
+                self.progressBar.setValue(50 + int((tab_idx + 1) / total_tabs * 50))
+
+        if self.saveok.isChecked() and save_file_name:
+            writer.close()
+        self.progressBar.setValue(100)
+        plt.close()
+
     def cyc_ini_set(self):
         set_coincell_mode(self.chk_coincell_cyc.isChecked())
         # UI 기준 초기 설정 데이터
@@ -11100,977 +11633,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             datafilepath = all_data_folder
         return [all_data_folder, all_data_name, datafilepath]
 
-    def app_pne_path_setting(self):
-        all_data_name = []
-        all_data_folder = multi_askopendirnames()
-        return [all_data_folder, all_data_name]
-
     def cycle_tab_reset_confirm_button(self):
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
     
-    @log_perf
-    def app_cyc_confirm_button(self):
-        # 버튼 비활성화
-        global writer
-        self.AppCycState = True
-        self.AppCycConfirm.setDisabled(True)
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        graphcolor = THEME['PALETTE']
-        filecount,colorno , columncount = 0, 0, 0
-        dfs_output = []
-        col_name_output = []
-        root = Tk()
-        root.withdraw()
-        filename = ""
-        all_data_folder = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.AppCycConfirm.setEnabled(True)
-        fig, ((ax1)) = plt.subplots(nrows=1, ncols=1, figsize=(14, 8))
-        tab_no = 0
-        for i, datafilepath in enumerate(all_data_folder):
-            # tab 그래프 추가
-            tab = QtWidgets.QWidget()
-            tab_layout = QtWidgets.QVBoxLayout(tab)
-            canvas = FigureCanvas(fig)
-            toolbar = NavigationToolbar(canvas, None)
-            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
-                mincapacity = name_capacity(datafilepath)
-                self.capacitytext.setText(str(mincapacity))
-            else:
-                mincapacity = float(self.capacitytext.text())
-            filename = datafilepath.split(".x")[-2].split("/")[-1].split("\\")[-1]
-            try:
-                wb = xw.Book(datafilepath)
-                df = wb.sheets("Plot Base Data").used_range.offset(1,0).options(pd.DataFrame, index=False, header=False).value
-                xw.apps.active.quit()
-                df = df.drop(0)
-                df = df.iloc[:,1::2]
-                # df = df.dropna(axis=0)
-                df.reset_index(drop=True, inplace=True)
-                df.index = df.index + 1
-                col_name = [filename for i in range(0, len(df.columns))]
-                df = df/mincapacity
-                # df.index = df.index + 1
-                if df.iat[2, 0] < df.iat[0, 0] * 0.5:
-                    count = len(df)
-                    lastcount = int((count + int(count / 199) + 1) / 2 + 1)
-                    index = 0
-                    for i in range(lastcount - 1):
-                        if (index == 0) or (index == 197):
-                            index = index + 1
-                        else:
-                            if (index > 197) and ((index - 197) % 199 == 0):
-                                index = index + 1
-                            else:
-                                df.loc[index + 1,:] = df.loc[index + 1,:] + df.loc[index + 2,:]
-                                df.drop(index + 2, axis=0, inplace=True)
-                                index = index + 2
-                    df.reset_index(drop=True, inplace=True)
-                    df.index = df.index + 1
-                columncount = 0
-                for col, column in df.items():
-                    if columncount == 0:
-                        graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05, "Cycle", "Discharge Capacity Ratio",
-                                    filename, xscale, graphcolor[colorno])
-                    else:
-                        graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05, "Cycle", "Discharge Capacity Ratio",
-                                    "" , xscale, graphcolor[colorno])
-                    columncount = columncount + 1
-                    colorno = (colorno + 1)%10
-                filecountmax = len(all_data_folder)
-                progressdata = filecount/filecountmax * 100
-                filecount = filecount + 1
-                self.progressBar.setValue(int(progressdata))
-                dfs_output.append(df)
-                col_name_output = col_name_output + col_name
-            except Exception as e:
-                print(f"오류 발생: {e}")
-                raise
-        dfoutput = pd.concat(dfs_output, axis=1) if dfs_output else pd.DataFrame()
-        if self.saveok.isChecked() and save_file_name:
-            dfoutput.to_excel(writer, sheet_name="Approval_cycle", header = col_name_output)
-            writer.close()
-        if filename != "":
-            plt.suptitle(filename, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            plt.legend(loc="upper right")
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-            self.progressBar.setValue(100)
-            output_fig(self.figsaveok, filename)
-            tab_layout.addWidget(toolbar)
-            tab_layout.addWidget(canvas)
-            self.cycle_tab.addTab(tab, str(tab_no))
-            self.cycle_tab.setCurrentWidget(tab)
-            tab_no = tab_no + 1
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-        plt.close()
-
-    @log_perf
-    def indiv_cyc_confirm_button(self):
-   
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        global writer
-        writecolno, colorno = 0, 0
-        
-        self.indiv_cycle.setDisabled(True)
-        pne_path = self.pne_path_setting()
-        all_data_folder = pne_path[0]
-        all_data_name = pne_path[1]
-        if pne_path[2]:
-            mincapacity = name_capacity(pne_path[2])
-        
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.indiv_cycle.setEnabled(True)
-            
-        graphcolor = THEME['PALETTE']
-        
-        # 데이터 로딩 (병렬 처리)
-        self.progressBar.setValue(0)
-        loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-            all_data_folder, mincapacity, firstCrate,
-            self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-            max_workers=4
-        )
-
-        tab_no = 0
-        total_folders = len(all_data_folder)
-            
-        for i, cyclefolder in enumerate(all_data_folder):
-            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-            
-            # [수정] 루프 외부에서 변수 초기화
-            tab = None
-            tab_layout = None
-            canvas = None
-            toolbar = None
-            cycnamelist = None
-            has_valid_data = False
-            channel_map = {}  # 채널 제어용 artist 수집
-            sub_channel_map = {}  # 서브 채널별 artist 수집
-            
-            if i in subfolder_map:
-                subfolder = subfolder_map[i]
-                
-                for sub_idx, FolderBase in enumerate(subfolder):
-                    # 병렬 로딩된 데이터 검색
-                    if (i, sub_idx) not in loaded_data:
-                        continue
-                    
-                    folder_path, cyctemp = loaded_data[(i, sub_idx)]
-                    if cyctemp is None:
-                        continue
-                    
-                    # [수정] cyctemp[1]이 None인 경우 스킵
-                    if cyctemp[1] is None:
-                        continue
-                    
-                    # tab 그래프 추가 (첫 번째 유효 데이터에서만 생성)
-                    if tab is None:
-                        tab = QtWidgets.QWidget()
-                        tab_layout = QtWidgets.QVBoxLayout(tab)
-                        canvas = FigureCanvas(fig)
-                        toolbar = NavigationToolbar(canvas, None)
-                    
-                    has_valid_data = True
-                    
-                    # 진행률 업데이트 (50% ~ 100%)
-                    progress_val = 50 + int((i + 1) / total_folders * 50)
-                    self.progressBar.setValue(progress_val)
-                    
-                    cycnamelist = FolderBase.split("\\")
-                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-                    
-                    # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
-                    ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
-                    lgnd = sub_label  # 개별: sub 단위 범례, 매번 표시
-                    
-                    if hasattr(cyctemp[1], "NewData"):
-                        self.capacitytext.setText(str(cyctemp[0]))
-                        irscale = float(self.dcirscale.text())
-                        if irscale == 0 and cyctemp[0] != 0:
-                            irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                        
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, colorno,
-                                           graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
-                        _base = ch_label
-                        _sfx = 2
-                        while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                            ch_label = f"{_base} ({_sfx})"
-                            _sfx += 1
-                        if ch_label in channel_map:
-                            channel_map[ch_label]['artists'].extend(_artists)
-                        else:
-                            channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                        # 서브 채널 개별 추적
-                        _sub_base = sub_label
-                        _sub_sfx = 2
-                        while sub_label in sub_channel_map:
-                            sub_label = f"{_sub_base} ({_sub_sfx})"
-                            _sub_sfx += 1
-                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                        colorno = colorno + 1
-                        
-                        # Data output option
-                        if self.saveok.isChecked() and save_file_name:
-                            self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, 0, headername)
-                            writecolno = writecolno + 2
-                    
-                    plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                    ax1.legend(loc="lower left")
-                    ax2.legend(loc="lower right")
-                    ax3.legend(loc="upper right")
-                    ax4.legend(loc="upper right")
-                    place_dcir_labels(ax4)
-                    ax5.legend(loc="upper right")
-                    ax6.legend(loc="lower right")
-                    place_avgrest_labels(ax6)
-                    _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
-                
-                # [수정] 유효한 데이터가 있는 경우에만 탭 추가
-                if has_valid_data and tab_layout is not None:
-                    axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-                    self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list, sub_channel_map)
-                    tab_no = tab_no + 1
-                    if cycnamelist:
-                        output_fig(self.figsaveok, cycnamelist[-2])
-                    colorno = 0
-                else:
-                    plt.close(fig)  # 사용하지 않는 figure 닫기
-        
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
-
-    @log_perf
-    def overall_cyc_confirm_button(self):
-        # 데이터 로딩 병렬 처리 적용
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        global writer
-        writecolno, writerowno = 0, 0
-        
-        self.overall_cycle.setDisabled(True)
-        pne_path = self.pne_path_setting()
-        all_data_folder = pne_path[0]
-        all_data_name = pne_path[1]
-        mincapacity = name_capacity(pne_path[2])
-        overall_filename = None
-        if len(pne_path[2]) != 0:
-            if ".t" in pne_path[2][0]:
-                overall_filename = pne_path[2][0].split(".t")[-2].split("/")[-1]
-        
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.overall_cycle.setEnabled(True)
-        
-        graphcolor = THEME['PALETTE']
-        
-        # 데이터 로딩 (병렬 처리)
-        self.progressBar.setValue(0)
-        loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-            all_data_folder, mincapacity, firstCrate,
-            self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-            max_workers=4
-        )
-        
-        # Cycle 관련 (그래프통합) - 모든 데이터를 하나의 figure에 그림
-        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-        colorno, j, overall_xlimit = 0, 0, 0
-        tab_no = 0
-        
-        # 탭 초기화
-        tab = None
-        tab_layout = None
-        canvas = None
-        toolbar = None
-        has_valid_data = False
-        channel_map = {}  # 채널 제어용 artist 수집
-        sub_channel_map = {}  # 서브 채널별 artist 수집
-        _seen_ch_labels = set()  # 범례 중복 방지
-        total_folders = len(all_data_folder)
-        
-        for i, cyclefolder in enumerate(all_data_folder):
-            if i in subfolder_map:
-                subfolder = subfolder_map[i]
-                
-                for sub_idx, FolderBase in enumerate(subfolder):
-                    # 병렬 로딩된 데이터 검색
-                    if (i, sub_idx) not in loaded_data:
-                        continue
-                    
-                    folder_path, cyctemp = loaded_data[(i, sub_idx)]
-                    if cyctemp is None or cyctemp[1] is None:
-                        continue
-                    
-                    # 첫 유효 데이터에서 탭 생성
-                    if tab is None:
-                        tab = QtWidgets.QWidget()
-                        tab_layout = QtWidgets.QVBoxLayout(tab)
-                        canvas = FigureCanvas(fig)
-                        toolbar = NavigationToolbar(canvas, None)
-                    
-                    has_valid_data = True
-                    
-                    # 진행률 업데이트 (50% ~ 100%)
-                    progress_val = 50 + int((i + 1) / total_folders * 50)
-                    self.progressBar.setValue(progress_val)
-                    
-                    cycnamelist = FolderBase.split("\\")
-                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-                    
-                    # 라벨 설정: main = 부모폴더/지정명, sub = 채널 추출값
-                    ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
-                    
-                    # 통합: 채널 그룹 단위 범례, 고유 ch_label만 표시
-                    if ch_label not in _seen_ch_labels:
-                        temp_lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
-                        _seen_ch_labels.add(ch_label)
-                    else:
-                        temp_lgnd = "_nolegend_"
-                    
-                    if hasattr(cyctemp[1], "NewData"):
-                        self.capacitytext.setText(str(cyctemp[0]))
-                        if float(self.dcirscale.text()) == 0:
-                            irscale_new = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                            irscale = max(irscale, irscale_new)
-                        if len(cyctemp[1].NewData.index) > overall_xlimit:
-                            overall_xlimit = len(cyctemp[1].NewData.index)
-                        
-                        _artists, _color = graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd,
-                                           colorno, graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
-                        # 동일 라벨-다른 색상 충돌 시 고유 라벨 생성
-                        _base = ch_label
-                        _sfx = 2
-                        while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                            ch_label = f"{_base} ({_sfx})"
-                            _sfx += 1
-                        if ch_label in channel_map:
-                            channel_map[ch_label]['artists'].extend(_artists)
-                        else:
-                            channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                        # 서브 채널 개별 추적
-                        _sub_base = sub_label
-                        _sub_sfx = 2
-                        while sub_label in sub_channel_map:
-                            sub_label = f"{_sub_base} ({_sub_sfx})"
-                            _sub_sfx += 1
-                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                        
-                        # Data output option
-                        if self.saveok.isChecked() and save_file_name:
-                            self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
-                            writecolno = writecolno + 2
-                colorno = colorno % len(THEME['PALETTE']) + 1
-        
-        # 제목 설정 (다른 모드와 통일)
-        _suptitle = None
-        if overall_filename:
-            _suptitle = overall_filename
-        elif has_valid_data and cycnamelist:
-            _suptitle = cycnamelist[-2]
-        if _suptitle:
-            plt.suptitle(_suptitle, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-        
-        # 범례 설정 (handles/labels 명시적 전달)
-        _lkw = dict(fontsize=THEME['LEGEND_SIZE'], framealpha=THEME['LEGEND_FRAMEALPHA'],
-                    edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
-        _legend_locs = [
-            (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
-            (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
-            (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
-        ]
-        for _ax, _loc, _anchor in _legend_locs:
-            _handles, _labels = _ax.get_legend_handles_labels()
-            _hl = [(h, l) for h, l in zip(_handles, _labels)
-                   if l and not l.startswith('_')]
-            # 중복 제거 (첫 번째만 유지)
-            _seen = set()
-            _hl_unique = []
-            for h, l in _hl:
-                if l not in _seen:
-                    _seen.add(l)
-                    _hl_unique.append((h, l))
-            if _hl_unique:
-                _ax.legend([h for h, l in _hl_unique], [l for h, l in _hl_unique],
-                           loc=_loc, bbox_to_anchor=_anchor, borderaxespad=0.5, **_lkw)
-        place_dcir_labels(ax4)
-        place_avgrest_labels(ax6)
-        _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
-        
-        # 파일 저장
-        if overall_filename:
-            if self.chk_cyclepath.isChecked():
-                output_fig(self.figsaveok, overall_filename)
-            else:
-                output_fig(self.figsaveok, str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        
-        # 탭 추가 (유효 데이터가 있는 경우에만)
-        if has_valid_data and tab_layout is not None:
-            axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-            self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list, sub_channel_map)
-            tab_no = tab_no + 1
-        else:
-            plt.close(fig)
-        
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
-
-    @log_perf
-    def link_cyc_confirm_button(self):
-        # 전처리 방식: 1단계 수집+엑셀, 2단계 병합 plot
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        global writer
-        writecolno, writerowno = 0, 0
-        CycleMax = [0, 0, 0, 0, 0]
-        link_writerownum = [0, 0, 0, 0, 0]
-        
-        self.link_cycle.setDisabled(True)
-        pne_path = self.pne_path_setting()
-        all_data_folder = pne_path[0]
-        all_data_name = pne_path[1]
-        mincapacity = name_capacity(pne_path[2])
-        
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.link_cycle.setEnabled(True)
-        
-        graphcolor = THEME['PALETTE']
-        
-        # 데이터 로딩 (병렬 처리)
-        self.progressBar.setValue(0)
-        loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-            all_data_folder, mincapacity, firstCrate,
-            self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-            max_workers=4
-        )
-        
-        # ═══ 1단계: 데이터 수집 + index 오프셋 + 엑셀 출력 + 채널별 병합 ═══
-        merged = {}  # {sub_label: {'frames': [...], 'colorno': int, 'ch_label': str}}
-        _first_ch_label = None
-        cycnamelist = None
-        has_valid_data = False
-        total_folders = len(all_data_folder)
-        
-        for i, cyclefolder in enumerate(all_data_folder):
-            if i in subfolder_map:
-                subfolder = subfolder_map[i]
-                colorno, writecolno, Chnl_num = 0, 0, 0
-                
-                for sub_idx, FolderBase in enumerate(subfolder):
-                    if (i, sub_idx) not in loaded_data:
-                        continue
-                    
-                    folder_path, cyctemp = loaded_data[(i, sub_idx)]
-                    if cyctemp is None or cyctemp[1] is None:
-                        continue
-                    
-                    has_valid_data = True
-                    
-                    # 진행률 업데이트 (50% ~ 80%)
-                    progress_val = 50 + int((i + 1) / total_folders * 30)
-                    self.progressBar.setValue(progress_val)
-                    
-                    cycnamelist = FolderBase.split("\\")
-                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-                    
-                    ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
-                    if _first_ch_label is None:
-                        _first_ch_label = ch_label
-                    ch_label = _first_ch_label
-                    
-                    # 연결사이클: 동일 채널(sub_label)은 폴더 무관하게 병합
-                    merge_label = sub_label
-                    
-                    if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
-                        # index 오프셋 적용 (기존과 동일)
-                        writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
-                        cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
-                        
-                        self.capacitytext.setText(str(cyctemp[0]))
-                        if irscale == 0:
-                            irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                        if xscale == 0:
-                            xscale = len(cyctemp[1].NewData) * (total_folders + 1)
-                        
-                        # 채널별 DataFrame 병합 누적
-                        if merge_label not in merged:
-                            merged[merge_label] = {
-                                'frames': [],
-                                'colorno': colorno,
-                                'ch_label': ch_label,
-                            }
-                        merged[merge_label]['frames'].append(cyctemp[1].NewData.copy())
-                        
-                        # 엑셀 출력
-                        if self.saveok.isChecked() and save_file_name:
-                            self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
-                        
-                        colorno = colorno + 1
-                        writecolno = writecolno + 2
-                        CycleMax[Chnl_num] = len(cyctemp[1].NewData)
-                        link_writerownum[Chnl_num] = writerowno
-                        Chnl_num = Chnl_num + 1
-        
-        # ═══ 2단계: 병합 데이터로 plot (개별 모드와 동일한 구조) ═══
-        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-        tab_no = 0
-        tab = None
-        tab_layout = None
-        canvas = None
-        toolbar = None
-        channel_map = {}
-        sub_channel_map = {}
-        
-        for idx, (merge_label, info) in enumerate(merged.items()):
-            # 병합된 단일 DataFrame (개별 모드의 cyctemp[1].NewData와 동일한 구조)
-            merged_df = pd.concat(info['frames']).sort_index()
-            _wrapper = type('CycData', (), {'NewData': merged_df})()
-            
-            if tab is None:
-                tab = QtWidgets.QWidget()
-                tab_layout = QtWidgets.QVBoxLayout(tab)
-                canvas = FigureCanvas(fig)
-                toolbar = NavigationToolbar(canvas, None)
-            
-            # 진행률 업데이트 (80% ~ 100%)
-            progress_val = 80 + int((idx + 1) / len(merged) * 20)
-            self.progressBar.setValue(progress_val)
-            
-            lgnd = merge_label  # 개별 모드와 동일: 채널당 1번 범례
-            
-            _artists, _color = graph_output_cycle(
-                _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
-                info['colorno'], graphcolor, self.mkdcir,
-                ax1, ax2, ax3, ax4, ax5, ax6
-            )
-            
-            ch_label = info['ch_label']
-            _base = ch_label
-            _sfx = 2
-            while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                ch_label = f"{_base} ({_sfx})"
-                _sfx += 1
-            if ch_label in channel_map:
-                channel_map[ch_label]['artists'].extend(_artists)
-            else:
-                channel_map[ch_label] = {'artists': _artists, 'color': _color}
-            sub_channel_map[merge_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-        
-        # 범례 설정
-        if cycnamelist:
-            plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            ax1.legend(loc="lower left")
-            ax2.legend(loc="lower right")
-            ax3.legend(loc="upper right")
-            ax4.legend(loc="upper right")
-            place_dcir_labels(ax4)
-            ax5.legend(loc="upper right")
-            ax6.legend(loc="lower right")
-            place_avgrest_labels(ax6)
-            _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
-        
-        # 탭 추가
-        if has_valid_data and tab_layout is not None:
-            axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-            self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list, sub_channel_map)
-            tab_no = tab_no + 1
-            if cycnamelist:
-                output_fig(self.figsaveok, cycnamelist[-2])
-        else:
-            plt.close(fig)
-        
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
-
-    @log_perf
-    def link_cyc_indiv_confirm_button(self):
-        # 전처리 방식: CSV별 fig, 채널 데이터 병합
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        global writer
-        
-        self.link_cycle.setDisabled(True)
-        all_data_name = []
-        all_data_folder = []
-        alldatafilepath = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
-        
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.link_cycle.setEnabled(True)
-        
-        graphcolor = THEME['PALETTE']
-        writecolno, colorno, writecolnomax = 0, 0, 0
-        tab_no = 0
-        total_files = len(alldatafilepath)
-        
-        for k, datafilepath in enumerate(alldatafilepath):
-            folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
-            writecolno = writecolnomax
-            colorno = 0
-            CycleMax = [0, 0, 0, 0, 0]
-            link_writerownum = [0, 0, 0, 0, 0]
-            
-            # CSV 파일에서 경로 읽기
-            cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
-            all_data_folder = np.array(cycle_path.cyclepath.tolist())
-            if hasattr(cycle_path, "cyclename"):
-                all_data_name = np.array(cycle_path.cyclename.tolist())
-            else:
-                all_data_name = []
-            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
-                mincapacity = name_capacity(datafilepath)
-                self.capacitytext.setText(str(self.mincapacity))
-            
-            # 병렬 데이터 로딩
-            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-                all_data_folder, mincapacity, firstCrate,
-                self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-                max_workers=4
-            )
-            
-            cycnamelist = None
-            has_valid_data = False
-            _first_ch_label = None
-            total_folders = len(all_data_folder)
-            
-            # ═══ 1단계: 데이터 수집 + index 오프셋 + 엑셀 출력 ═══
-            merged = {}
-            
-            for i, cyclefolder in enumerate(all_data_folder):
-                if i in subfolder_map:
-                    subfolder = subfolder_map[i]
-                    folder_cnt = folder_cnt + 1
-                    colorno, writecolno, Chnl_num = 0, 0, 0
-                    
-                    for sub_idx, FolderBase in enumerate(subfolder):
-                        if (i, sub_idx) not in loaded_data:
-                            continue
-                        
-                        folder_path, cyctemp = loaded_data[(i, sub_idx)]
-                        if cyctemp is None or cyctemp[1] is None:
-                            continue
-                        
-                        has_valid_data = True
-                        
-                        progress_val = int((k + (i + 1) / total_folders) / total_files * 50)
-                        self.progressBar.setValue(progress_val)
-                        
-                        cycnamelist = FolderBase.split("\\")
-                        headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-                        
-                        ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
-                        if _first_ch_label is None:
-                            _first_ch_label = ch_label
-                        ch_label = _first_ch_label
-                        
-                        if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
-                            writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
-                            cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
-                            if xscale == 0:
-                                xscale = len(cyctemp[1].NewData) * (total_folders + 1)
-                            self.capacitytext.setText(str(cyctemp[0]))
-                            if irscale == 0:
-                                irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                            
-                            if sub_label not in merged:
-                                merged[sub_label] = {
-                                    'frames': [],
-                                    'colorno': colorno,
-                                    'ch_label': ch_label,
-                                }
-                            merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
-                            
-                            if self.saveok.isChecked() and save_file_name:
-                                self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
-                                writecolno = writecolno + 2
-                            colorno = colorno + 1
-                            CycleMax[Chnl_num] = len(cyctemp[1].NewData)
-                            link_writerownum[Chnl_num] = writerowno
-                            Chnl_num = Chnl_num + 1
-                            writecolnomax = max(writecolno, writecolnomax)
-            
-            # ═══ 2단계: 병합 데이터로 plot ═══
-            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-            tab = None
-            tab_layout = None
-            canvas = None
-            toolbar = None
-            channel_map = {}
-            sub_channel_map = {}
-            
-            for idx, (sub_label, info) in enumerate(merged.items()):
-                merged_df = pd.concat(info['frames']).sort_index()
-                _wrapper = type('CycData', (), {'NewData': merged_df})()
-                
-                if tab is None:
-                    tab = QtWidgets.QWidget()
-                    tab_layout = QtWidgets.QVBoxLayout(tab)
-                    canvas = FigureCanvas(fig)
-                    toolbar = NavigationToolbar(canvas, None)
-                
-                progress_val = int((k + 0.5 + (idx + 1) / len(merged) * 0.5) / total_files * 100)
-                self.progressBar.setValue(progress_val)
-                
-                lgnd = sub_label
-                
-                _artists, _color = graph_output_cycle(
-                    _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
-                    info['colorno'], graphcolor, self.mkdcir,
-                    ax1, ax2, ax3, ax4, ax5, ax6
-                )
-                
-                ch_label = info['ch_label']
-                _base = ch_label
-                _sfx = 2
-                while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                    ch_label = f"{_base} ({_sfx})"
-                    _sfx += 1
-                if ch_label in channel_map:
-                    channel_map[ch_label]['artists'].extend(_artists)
-                else:
-                    channel_map[ch_label] = {'artists': _artists, 'color': _color}
-                sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-            
-            if cycnamelist:
-                plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                ax1.legend(loc="lower left")
-                ax2.legend(loc="lower right")
-                ax3.legend(loc="upper right")
-                ax4.legend(loc="upper right")
-                place_dcir_labels(ax4)
-                ax5.legend(loc="upper right")
-                ax6.legend(loc="lower right")
-                place_avgrest_labels(ax6)
-                _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
-            
-            if has_valid_data and tab_layout is not None:
-                axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-                self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                         channel_map, fig, axes_list, sub_channel_map)
-                tab_no = tab_no + 1
-                if cycnamelist:
-                    output_fig(self.figsaveok, cycnamelist[-2])
-            else:
-                plt.close(fig)
-        
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
-
-    @log_perf
-    def link_cyc_overall_confirm_button(self):
-        # 전처리 방식: 모든 CSV 통합, 채널 데이터 병합
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        global writer
-        
-        self.link_cycle.setDisabled(True)
-        all_data_name = []
-        all_data_folder = []
-        alldatafilepath = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
-        
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.link_cycle.setEnabled(True)
-        
-        graphcolor = THEME['PALETTE']
-        writecolno, writecolnomax = 0, 0
-        tab_no = 0
-        total_files = len(alldatafilepath)
-        
-        # ═══ 1단계: 모든 CSV에서 데이터 수집 + 엑셀 출력 ═══
-        merged = {}  # {(k, sub_label): {'frames': [...], 'colorno': int, 'ch_label': str}}
-        cycnamelist = None
-        has_valid_data = False
-        colorno_base = 0
-        
-        for k, datafilepath in enumerate(alldatafilepath):
-            folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
-            writecolno = writecolnomax
-            CycleMax = [0, 0, 0, 0, 0]
-            link_writerownum = [0, 0, 0, 0, 0]
-            
-            # CSV 파일에서 경로 읽기
-            cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
-            all_data_folder = np.array(cycle_path.cyclepath.tolist())
-            if hasattr(cycle_path, "cyclename"):
-                all_data_name = np.array(cycle_path.cyclename.tolist())
-            else:
-                all_data_name = []
-            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
-                mincapacity = name_capacity(datafilepath)
-                self.capacitytext.setText(str(self.mincapacity))
-            
-            # 병렬 데이터 로딩
-            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-                all_data_folder, mincapacity, firstCrate,
-                self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-                max_workers=4
-            )
-            
-            total_folders = len(all_data_folder)
-            colorno = colorno_base
-            
-            for i, cyclefolder in enumerate(all_data_folder):
-                if i in subfolder_map:
-                    subfolder = subfolder_map[i]
-                    folder_cnt = folder_cnt + 1
-                    colorno, writecolno, Chnl_num = colorno_base, 0, 0
-                    
-                    for sub_idx, FolderBase in enumerate(subfolder):
-                        if (i, sub_idx) not in loaded_data:
-                            continue
-                        
-                        folder_path, cyctemp = loaded_data[(i, sub_idx)]
-                        if cyctemp is None or cyctemp[1] is None:
-                            continue
-                        
-                        has_valid_data = True
-                        
-                        progress_val = int((k + (i + 1) / total_folders) / total_files * 80)
-                        self.progressBar.setValue(progress_val)
-                        
-                        cycnamelist = FolderBase.split("\\")
-                        headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-                        
-                        ch_label, sub_label = _make_channel_labels(cycnamelist, all_data_name, i)
-                        
-                        if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
-                            writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
-                            cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
-                            if xscale == 0:
-                                xscale = len(cyctemp[1].NewData) * (total_folders + 1)
-                            self.capacitytext.setText(str(cyctemp[0]))
-                            if irscale == 0:
-                                irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
-                            
-                            merge_key = (k, sub_label)
-                            if merge_key not in merged:
-                                merged[merge_key] = {
-                                    'frames': [],
-                                    'colorno': colorno,
-                                    'ch_label': ch_label,
-                                }
-                            merged[merge_key]['frames'].append(cyctemp[1].NewData.copy())
-                            
-                            if self.saveok.isChecked() and save_file_name:
-                                self._save_cycle_excel_data(cyctemp[1].NewData, writecolno, writerowno, headername)
-                                writecolno = writecolno + 2
-                            CycleMax[Chnl_num] = len(cyctemp[1].NewData)
-                            link_writerownum[Chnl_num] = writerowno
-                            Chnl_num = Chnl_num + 1
-                            writecolnomax = max(writecolno, writecolnomax)
-                colorno = colorno + 1
-            colorno_base = max(colorno, colorno_base)
-        
-        # ═══ 2단계: 병합 데이터로 plot ═══
-        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-        tab = None
-        tab_layout = None
-        canvas = None
-        toolbar = None
-        channel_map = {}
-        sub_channel_map = {}
-        _seen_ch_labels = set()
-        
-        for idx, ((k_idx, sub_label), info) in enumerate(merged.items()):
-            merged_df = pd.concat(info['frames']).sort_index()
-            _wrapper = type('CycData', (), {'NewData': merged_df})()
-            
-            if tab is None:
-                tab = QtWidgets.QWidget()
-                tab_layout = QtWidgets.QVBoxLayout(tab)
-                canvas = FigureCanvas(fig)
-                toolbar = NavigationToolbar(canvas, None)
-            
-            progress_val = 80 + int((idx + 1) / len(merged) * 20)
-            self.progressBar.setValue(progress_val)
-            
-            ch_label = info['ch_label']
-            if ch_label not in _seen_ch_labels:
-                lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
-                _seen_ch_labels.add(ch_label)
-            else:
-                lgnd = ""
-            
-            _artists, _color = graph_output_cycle(
-                _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
-                info['colorno'], graphcolor, self.mkdcir,
-                ax1, ax2, ax3, ax4, ax5, ax6
-            )
-            
-            _base = ch_label
-            _sfx = 2
-            while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                ch_label = f"{_base} ({_sfx})"
-                _sfx += 1
-            if ch_label in channel_map:
-                channel_map[ch_label]['artists'].extend(_artists)
-            else:
-                channel_map[ch_label] = {'artists': _artists, 'color': _color}
-            if sub_label in sub_channel_map:
-                sub_channel_map[sub_label]['artists'].extend(_artists)
-            else:
-                sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-        
-        if cycnamelist:
-            plt.suptitle(cycnamelist[-2], fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            ax1.legend(loc="lower left")
-            ax2.legend(loc="lower right")
-            ax3.legend(loc="upper right")
-            ax4.legend(loc="upper right")
-            place_dcir_labels(ax4)
-            ax5.legend(loc="upper right")
-            ax6.legend(loc="lower right")
-            place_avgrest_labels(ax6)
-            _opaque_legend_markers(ax1, ax2, ax3, ax4, ax5, ax6)
-        
-        if has_valid_data and tab_layout is not None:
-            axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-            self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                     channel_map, fig, axes_list, sub_channel_map)
-            tab_no = tab_no + 1
-            if cycnamelist:
-                output_fig(self.figsaveok, cycnamelist[-2])
-        else:
-            plt.close(fig)
-        
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
-
     @log_perf
     def step_confirm_button(self):
         # 함수 사용으로 변경
