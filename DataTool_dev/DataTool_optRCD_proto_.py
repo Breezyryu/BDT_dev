@@ -15533,9 +15533,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         root = Tk()
         root.withdraw()
         self.pathappcycestimation.setDisabled(True)
-        self.chk_cyclepath.setChecked(True)
-        pne_path = self.pne_path_setting()
-        self.chk_cyclepath.setChecked(False)
+        # stepnum_2에 직접 입력된 경로가 없을 때만 파일 대화상자 사용
+        if self.stepnum_2.toPlainText().strip() == "":
+            self.chk_cyclepath.setChecked(True)
+            pne_path = self.pne_path_setting()
+            self.chk_cyclepath.setChecked(False)
+        else:
+            pne_path = self.pne_path_setting()
         all_data_folder = pne_path[0]
         all_data_name = pne_path[1]
         if self.saveok.isChecked():
