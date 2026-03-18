@@ -11178,7 +11178,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ═══ Excel 그룹 (신뢰성) ═══
         if excel_groups:
-            fig, ((ax1,)) = plt.subplots(nrows=1, ncols=1, figsize=(14, 8))
+            fig, ax1 = plt.subplots(nrows=1, ncols=1, figsize=(14, 8))
             colorno = 0
             dfs_output = []
             col_name_output = []
