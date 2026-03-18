@@ -25,6 +25,12 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
+# stdout 버퍼링 해제 (클라우드 드라이브 등에서 출력 지연 방지)
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 # ── Excel COM 사용 가능 여부 감지 ──
 EXCEL_AVAILABLE = False
 try:
@@ -776,8 +782,8 @@ def scan_all(rawdata_dir):
         print(f"ERROR: {rawdata_dir}에 yymmdd 폴더가 없습니다.")
         sys.exit(1)
 
-    print(f"스캔 대상: {rawdata_dir}")
-    print(f"날짜 폴더: {len(date_folders)}개 ({date_folders[0][0]} ~ {date_folders[-1][0]})")
+    print(f"스캔 대상: {rawdata_dir}", flush=True)
+    print(f"날짜 폴더: {len(date_folders)}개 ({date_folders[0][0]} ~ {date_folders[-1][0]})", flush=True)
 
     groups = {}  # group_key → TestGroup
     folder_stats = []  # 각 폴더별 통계
@@ -805,8 +811,8 @@ def scan_all(rawdata_dir):
             except Exception as e:
                 print(f"  WARN: 파싱 실패 [{dirname}/{fname}]: {e}")
 
-        # 진행률 표시 (50개마다 또는 마지막)
-        if fi % 50 == 0 or fi == total_folders:
+        # 진행률 표시 (10개마다 또는 마지막)
+        if fi % 10 == 0 or fi == total_folders:
             elapsed = time.time() - t_start
             print(f"  스캔 진행: {fi}/{total_folders} 폴더 | "
                   f"파일 {total_files}개 | 그룹 {len(groups)}개 | "
