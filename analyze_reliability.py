@@ -782,9 +782,13 @@ def scan_all(rawdata_dir):
     groups = {}  # group_key → TestGroup
     folder_stats = []  # 각 폴더별 통계
     all_records = []  # 모든 FileRecord (Excel 검증용)
+    total_folders = len(date_folders)
+    total_files = 0
+    t_start = time.time()
 
-    for datestr, suffix, dirname, fullpath in date_folders:
+    for fi, (datestr, suffix, dirname, fullpath) in enumerate(date_folders, 1):
         files = list_xls_files(fullpath)
+        total_files += len(files)
         folder_stats.append({
             'date': datestr, 'suffix': suffix, 'dirname': dirname,
             'file_count': len(files),
@@ -800,6 +804,13 @@ def scan_all(rawdata_dir):
                 all_records.append(rec)
             except Exception as e:
                 print(f"  WARN: 파싱 실패 [{dirname}/{fname}]: {e}")
+
+        # 진행률 표시 (50개마다 또는 마지막)
+        if fi % 50 == 0 or fi == total_folders:
+            elapsed = time.time() - t_start
+            print(f"  스캔 진행: {fi}/{total_folders} 폴더 | "
+                  f"파일 {total_files}개 | 그룹 {len(groups)}개 | "
+                  f"{elapsed:.1f}초", flush=True)
 
     return date_folders, folder_stats, groups, all_records
 
