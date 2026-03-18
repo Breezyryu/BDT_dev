@@ -53,7 +53,11 @@ def _parse_args():
             rawdata = a
     if rawdata is None:
         rawdata = str(Path(__file__).parent)
-    return Path(rawdata), mode
+    resolved = Path(rawdata).resolve()
+    if not resolved.is_dir():
+        print(f"ERROR: 경로가 존재하지 않습니다: {resolved}")
+        sys.exit(1)
+    return resolved, mode
 
 RAWDATA_DIR, RUN_MODE = _parse_args()
 
@@ -393,7 +397,8 @@ class FileRecord:
         self.filename = filename
         self.folder_date = folder_date
         self.folder_name = folder_name
-        self.file_size = os.path.getsize(folder_path / filename)
+        fpath = folder_path / filename
+        self.file_size = os.path.getsize(fpath) if fpath.is_file() else 0
         self.category = classify_category(filename)
         self.model = extract_model_name(filename)
         self.vendor = extract_vendor(filename)
@@ -607,7 +612,7 @@ def validate_file_with_excel(app, fpath, rec):
     결과를 rec(FileRecord)에 직접 기록."""
     wb = None
     try:
-        wb = app.books.open(str(fpath))
+        wb = app.books.open(str(fpath))  # xlwings는 str 경로 필요
         rec.excel_sheets = [s.name for s in wb.sheets]
 
         if "Plot Base Data" not in rec.excel_sheets:
@@ -712,7 +717,12 @@ def run_excel_validation(all_records, rawdata_dir):
         app.screen_updating = False
 
         for idx, rec in enumerate(all_records, 1):
-            fpath = rawdata_dir / rec.folder_name / rec.filename
+            fpath = (rawdata_dir / rec.folder_name / rec.filename).resolve()
+            if not fpath.is_file():
+                rec.excel_status = 'ERROR'
+                rec.excel_issues = [f'파일 없음: {fpath}']
+                print(f"  [{idx:3d}/{len(all_records)}] SKIP | 파일 없음: {fpath}")
+                continue
             t0 = time.time()
             validate_file_with_excel(app, fpath, rec)
             elapsed = time.time() - t0
