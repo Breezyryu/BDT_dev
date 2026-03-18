@@ -3425,13 +3425,22 @@ class Ui_sitool(object):
         self.chk_ectpath.setChecked(False)
         self.chk_ectpath.setObjectName("chk_ectpath")
         self.horizontalLayout_108.addWidget(self.chk_ectpath)
+        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
+        self.chk_link_cycle.setMaximumSize(QtCore.QSize(160, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        self.chk_link_cycle.setFont(font)
+        self.chk_link_cycle.setObjectName("chk_link_cycle")
+        self.horizontalLayout_108.addWidget(self.chk_link_cycle)
         self.horizontalLayout_108.addStretch(1)
         self.verticalLayout_6.addLayout(self.horizontalLayout_108)
         self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self.CycTab)
-        self.stepnum_2.setMinimumSize(QtCore.QSize(240, 70))
-        self.stepnum_2.setMaximumSize(QtCore.QSize(240, 70))
+        self.stepnum_2.setMinimumSize(QtCore.QSize(380, 70))
+        self.stepnum_2.setMaximumSize(QtCore.QSize(16777215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3442,9 +3451,18 @@ class Ui_sitool(object):
         self.stepnum_2.setPlainText("")
         self.stepnum_2.setObjectName("stepnum_2")
         self.horizontalLayout_119.addWidget(self.stepnum_2)
+        # 경로 박스 펼치기/접기 버튼
+        self.btn_expand_path = QtWidgets.QPushButton(parent=self.CycTab)
+        self.btn_expand_path.setFixedSize(QtCore.QSize(24, 24))
+        self.btn_expand_path.setText("▼")
+        self.btn_expand_path.setToolTip("경로 입력 박스 펼치기/접기")
+        self.btn_expand_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
+        self.btn_expand_path.setObjectName("btn_expand_path")
+        self._stepnum2_expanded = False
+        self.horizontalLayout_119.addWidget(self.btn_expand_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         self.cycle_tab_reset = QtWidgets.QPushButton(parent=self.CycTab)
-        self.cycle_tab_reset.setMinimumSize(QtCore.QSize(240, 70))
-        self.cycle_tab_reset.setMaximumSize(QtCore.QSize(240, 70))
+        self.cycle_tab_reset.setMinimumSize(QtCore.QSize(100, 35))
+        self.cycle_tab_reset.setMaximumSize(QtCore.QSize(100, 35))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3573,6 +3591,11 @@ class Ui_sitool(object):
         self.mkdcir.setChecked(True)
         self.mkdcir.setObjectName("mkdcir")
         self.verticalLayout_14.addWidget(self.mkdcir)
+        # DCIR 라디오를 전용 ButtonGroup으로 묶어 개별/통합 라디오와 분리
+        self.dcir_mode_group = QtWidgets.QButtonGroup(self.tab_5)
+        self.dcir_mode_group.addButton(self.dcirchk)
+        self.dcir_mode_group.addButton(self.pulsedcir)
+        self.dcir_mode_group.addButton(self.mkdcir)
         self.dcirchk_2 = QtWidgets.QCheckBox(parent=self.tab_5)
         self.dcirchk_2.setMinimumSize(QtCore.QSize(234, 30))
         self.dcirchk_2.setMaximumSize(QtCore.QSize(234, 30))
@@ -3699,7 +3722,6 @@ class Ui_sitool(object):
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
         self.radio_indiv.setFont(font)
-        self.radio_indiv.setChecked(True)
         self.radio_indiv.setObjectName("radio_indiv")
         self.horizontalLayout_90.addWidget(self.radio_indiv)
         self.radio_overall = QtWidgets.QRadioButton(parent=self.tab_5)
@@ -3710,14 +3732,11 @@ class Ui_sitool(object):
         self.radio_overall.setFont(font)
         self.radio_overall.setObjectName("radio_overall")
         self.horizontalLayout_90.addWidget(self.radio_overall)
-        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self.tab_5)
-        self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        self.chk_link_cycle.setFont(font)
-        self.chk_link_cycle.setObjectName("chk_link_cycle")
-        self.horizontalLayout_90.addWidget(self.chk_link_cycle)
+        # DCIR 라디오와 분리하기 위한 ButtonGroup (같은 parent 내 자동 배타 방지)
+        self.cycle_mode_group = QtWidgets.QButtonGroup(self.tab_5)
+        self.cycle_mode_group.addButton(self.radio_indiv)
+        self.cycle_mode_group.addButton(self.radio_overall)
+        self.radio_indiv.setChecked(True)
         self.verticalLayout_17.addLayout(self.horizontalLayout_90)
         self.horizontalLayout_91 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_91.setObjectName("horizontalLayout_91")
@@ -9019,7 +9038,7 @@ class Ui_sitool(object):
         self.chk_cyclepath.setText(_translate("sitool", "지정Path사용"))
         self.chk_ectpath.setText(_translate("sitool", "ECT path 사용"))
         self.chk_coincell_cyc.setText(_translate("sitool", "코인셀"))
-        self.cycle_tab_reset.setText(_translate("sitool", "Tab Reset"))
+        self.cycle_tab_reset.setText(_translate("sitool", "Reset"))
         self.capacitygroup.setTitle(_translate("sitool", "용량 선택"))
         self.inicaprate.setText(_translate("sitool", "1) Cyclepath 이름 용량 기준\n"
 "2) 테스트 이름 용량 기준\n"
@@ -9043,6 +9062,7 @@ class Ui_sitool(object):
         self.radio_indiv.setText(_translate("sitool", "개별"))
         self.radio_overall.setText(_translate("sitool", "통합"))
         self.chk_link_cycle.setText(_translate("sitool", "연결처리"))
+        self.btn_expand_path.setToolTip(_translate("sitool", "경로 입력 박스 펼치기/접기"))
         self.cycle_confirm.setText(_translate("sitool", "Cycle 분석"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
         self.CycProfile.setText(_translate("sitool", "사이클 통합"))
@@ -9448,6 +9468,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.unmount_all.clicked.connect(self.unmount_all_button)
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
+        self.btn_expand_path.clicked.connect(self._toggle_stepnum2_expand)
+        self.chk_cyclepath.toggled.connect(self._on_cyclepath_toggled)
+        self._on_cyclepath_toggled(self.chk_cyclepath.isChecked())  # 초기 상태 반영
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
         self.RateConfirm.clicked.connect(self.rate_confirm_button)
@@ -11636,7 +11659,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def cycle_tab_reset_confirm_button(self):
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
-    
+
+    def _toggle_stepnum2_expand(self):
+        """경로 입력 박스 펼치기/접기 토글"""
+        if self._stepnum2_expanded:
+            self.stepnum_2.setMaximumHeight(70)
+            self.btn_expand_path.setText("▼")
+            self._stepnum2_expanded = False
+        else:
+            self.stepnum_2.setMaximumHeight(300)
+            self.btn_expand_path.setText("▲")
+            self._stepnum2_expanded = True
+
+    def _on_cyclepath_toggled(self, checked):
+        """지정Path사용 체크 시 연결처리 스위치 비활성화"""
+        self.chk_link_cycle.setEnabled(not checked)
+        if checked:
+            self.chk_link_cycle.setChecked(False)
+
     @log_perf
     def step_confirm_button(self):
         # 함수 사용으로 변경
