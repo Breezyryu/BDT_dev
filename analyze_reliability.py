@@ -53,11 +53,16 @@ def _parse_args():
             rawdata = a
     if rawdata is None:
         rawdata = str(Path(__file__).parent)
-    resolved = Path(rawdata).resolve()
-    if not resolved.is_dir():
-        print(f"ERROR: 경로가 존재하지 않습니다: {resolved}")
+    # Knox Drive 등 가상 드라이브에서 .resolve()가 경로를 깨뜨릴 수 있으므로 사용하지 않음
+    target = Path(rawdata)
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    if not os.path.isdir(str(target)):
+        print(f"ERROR: 경로가 존재하지 않습니다: {target}")
+        print(f"  (원본 입력: {rawdata!r})")
+        print(f"  os.path.exists = {os.path.exists(str(target))}")
         sys.exit(1)
-    return resolved, mode
+    return target, mode
 
 RAWDATA_DIR, RUN_MODE = _parse_args()
 
@@ -114,7 +119,13 @@ DEFAULT_CATEGORY = 'Phone'
 def discover_date_folders(rawdata_dir):
     """yymmdd 형식 폴더들을 날짜순으로 반환."""
     folders = []
-    for entry in os.listdir(rawdata_dir):
+    try:
+        entries = os.listdir(str(rawdata_dir))
+    except OSError as e:
+        print(f"ERROR: 폴더 목록 읽기 실패: {rawdata_dir}")
+        print(f"  {e}")
+        return []
+    for entry in entries:
         full = rawdata_dir / entry
         if not full.is_dir():
             continue
@@ -138,10 +149,10 @@ def list_xls_files(folder_path):
     """폴더 내 .xls 파일 목록 반환."""
     try:
         return sorted([
-            f for f in os.listdir(folder_path)
+            f for f in os.listdir(str(folder_path))
             if f.lower().endswith('.xls') and not f.startswith('~$')
         ])
-    except PermissionError:
+    except OSError:
         return []
 
 
@@ -397,8 +408,11 @@ class FileRecord:
         self.filename = filename
         self.folder_date = folder_date
         self.folder_name = folder_name
-        fpath = folder_path / filename
-        self.file_size = os.path.getsize(fpath) if fpath.is_file() else 0
+        fpath = str(folder_path / filename)
+        try:
+            self.file_size = os.path.getsize(fpath)
+        except OSError:
+            self.file_size = 0
         self.category = classify_category(filename)
         self.model = extract_model_name(filename)
         self.vendor = extract_vendor(filename)
@@ -717,8 +731,8 @@ def run_excel_validation(all_records, rawdata_dir):
         app.screen_updating = False
 
         for idx, rec in enumerate(all_records, 1):
-            fpath = (rawdata_dir / rec.folder_name / rec.filename).resolve()
-            if not fpath.is_file():
+            fpath = rawdata_dir / rec.folder_name / rec.filename
+            if not os.path.isfile(str(fpath)):
                 rec.excel_status = 'ERROR'
                 rec.excel_issues = [f'파일 없음: {fpath}']
                 print(f"  [{idx:3d}/{len(all_records)}] SKIP | 파일 없음: {fpath}")
