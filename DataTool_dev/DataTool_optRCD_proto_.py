@@ -11025,7 +11025,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return rows
 
     def _build_group_from_lines(self, lines, file_idx):
-        """직접입력 줄들로 CycleGroup 생성. .xlsx=excel, .txt=path파일 재파싱, 나머지=folder"""
+        """직접입력 줄들로 CycleGroup 생성. .xlsx/.xls=excel, .txt=path파일 재파싱, 나머지=folder"""
         all_paths = []
         path_names = []
         data_type = 'folder'
@@ -11033,7 +11033,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         for line in lines:
             ext = os.path.splitext(line)[1].lower()
-            if ext == '.xlsx':
+            if ext in ('.xlsx', '.xls'):
                 data_type = 'excel'
                 all_paths.append(line)
                 path_names.append('')
@@ -11070,7 +11070,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 fp = fp.strip()
                 ext = os.path.splitext(fp)[1].lower()
 
-                if ext == '.xlsx':
+                if ext in ('.xlsx', '.xls'):
                     groups.append(CycleGroup(
                         name=os.path.splitext(os.path.basename(fp))[0],
                         paths=[fp], path_names=[''],
