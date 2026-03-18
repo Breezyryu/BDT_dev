@@ -207,6 +207,29 @@ class CycleGroup:
     data_type: str = 'folder'          # 'folder' | 'excel'
     file_idx: int = 0                  # 출처 path 파일 번호
     source_file: str = ''              # 원본 path 파일 경로 (mAh 추출용)
+    per_path_channels: list = field(default_factory=list)  # [[ch1],[ch2]] path별 채널 필터 (빈=전체)
+
+
+def _normalize_ch(s):
+    """채널번호 정규화: '32' → '032', '032' → '032', 비숫자 → 원본"""
+    try:
+        return str(int(s)).zfill(3)
+    except (ValueError, TypeError):
+        return s
+
+
+def _parse_channel_str(ch_str):
+    """채널 문자열 파싱: '32,73,74' → ['032','073','074'], '105,-,-' → ['105','-','-']"""
+    if not ch_str or not ch_str.strip():
+        return []
+    result = []
+    for part in ch_str.split(','):
+        part = part.strip()
+        if part == '-' or part == '':
+            result.append('-')
+        else:
+            result.append(_normalize_ch(part))
+    return result
 
 # 여러 directory 선택하는 코드
 def multi_askopendirnames():
@@ -3413,6 +3436,15 @@ class Ui_sitool(object):
         self.chk_cyclepath.setChecked(True)
         self.chk_cyclepath.setObjectName("chk_cyclepath")
         self.horizontalLayout_108.addWidget(self.chk_cyclepath)
+        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
+        self.chk_link_cycle.setMaximumSize(QtCore.QSize(160, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        self.chk_link_cycle.setFont(font)
+        self.chk_link_cycle.setObjectName("chk_link_cycle")
+        self.horizontalLayout_108.addWidget(self.chk_link_cycle)
         self.chk_ectpath = QtWidgets.QCheckBox(parent=self.CycTab)
         self.chk_ectpath.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_ectpath.setMaximumSize(QtCore.QSize(240, 30))
@@ -3425,41 +3457,6 @@ class Ui_sitool(object):
         self.chk_ectpath.setChecked(False)
         self.chk_ectpath.setObjectName("chk_ectpath")
         self.horizontalLayout_108.addWidget(self.chk_ectpath)
-        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self.CycTab)
-        self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
-        self.chk_link_cycle.setMaximumSize(QtCore.QSize(160, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        self.chk_link_cycle.setFont(font)
-        self.chk_link_cycle.setObjectName("chk_link_cycle")
-        self.horizontalLayout_108.addWidget(self.chk_link_cycle)
-        self.horizontalLayout_108.addStretch(1)
-        self.verticalLayout_6.addLayout(self.horizontalLayout_108)
-        self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_119.setObjectName("horizontalLayout_119")
-        self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self.CycTab)
-        self.stepnum_2.setMinimumSize(QtCore.QSize(380, 70))
-        self.stepnum_2.setMaximumSize(QtCore.QSize(16777215, 70))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.stepnum_2.setFont(font)
-        self.stepnum_2.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhNone)
-        self.stepnum_2.setPlainText("")
-        self.stepnum_2.setObjectName("stepnum_2")
-        self.horizontalLayout_119.addWidget(self.stepnum_2)
-        # 경로 박스 펼치기/접기 버튼
-        self.btn_expand_path = QtWidgets.QPushButton(parent=self.CycTab)
-        self.btn_expand_path.setFixedSize(QtCore.QSize(24, 24))
-        self.btn_expand_path.setText("▼")
-        self.btn_expand_path.setToolTip("경로 입력 박스 펼치기/접기")
-        self.btn_expand_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
-        self.btn_expand_path.setObjectName("btn_expand_path")
-        self._stepnum2_expanded = False
-        self.horizontalLayout_119.addWidget(self.btn_expand_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         self.cycle_tab_reset = QtWidgets.QPushButton(parent=self.CycTab)
         self.cycle_tab_reset.setMinimumSize(QtCore.QSize(100, 35))
         self.cycle_tab_reset.setMaximumSize(QtCore.QSize(100, 35))
@@ -3471,11 +3468,66 @@ class Ui_sitool(object):
         font.setWeight(75)
         self.cycle_tab_reset.setFont(font)
         self.cycle_tab_reset.setObjectName("cycle_tab_reset")
-        self.horizontalLayout_119.addWidget(self.cycle_tab_reset)
+        self.horizontalLayout_108.addWidget(self.cycle_tab_reset)
+        self.horizontalLayout_108.addStretch(1)
+        self.verticalLayout_6.addLayout(self.horizontalLayout_108)
+        self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_119.setObjectName("horizontalLayout_119")
+        # ── 경로 테이블 (엑셀 시트형) ──
+        self.cycle_path_table = QtWidgets.QTableWidget(5, 4, parent=self.CycTab)
+        self.cycle_path_table.setHorizontalHeaderLabels(["경로명", "경로", "채널", "용량"])
+        self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
+        self.cycle_path_table.setMaximumHeight(120)
+        _hdr = self.cycle_path_table.horizontalHeader()
+        _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        _hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        _hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        self.cycle_path_table.setColumnWidth(0, 100)
+        self.cycle_path_table.setColumnWidth(2, 100)
+        self.cycle_path_table.setColumnWidth(3, 60)
+        self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        self.cycle_path_table.setFont(font)
+        self.cycle_path_table.setObjectName("cycle_path_table")
+        self.horizontalLayout_119.addWidget(self.cycle_path_table)
+        # 하위 호환용 숨김 위젯 (stepnum_2 참조 유지)
+        self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self.CycTab)
+        self.stepnum_2.setVisible(False)
+        self.stepnum_2.setObjectName("stepnum_2")
+        # 경로 박스 버튼 레이아웃
+        self._path_btn_layout = QtWidgets.QVBoxLayout()
+        self._path_btn_layout.setSpacing(4)
+        self.btn_expand_path = QtWidgets.QPushButton(parent=self.CycTab)
+        self.btn_expand_path.setFixedSize(QtCore.QSize(24, 24))
+        self.btn_expand_path.setText("▼")
+        self.btn_expand_path.setToolTip("경로 테이블 펼치기/접기")
+        self.btn_expand_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
+        self.btn_expand_path.setObjectName("btn_expand_path")
+        self._stepnum2_expanded = False
+        self._path_btn_layout.addWidget(self.btn_expand_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        self.btn_load_path = QtWidgets.QPushButton(parent=self.CycTab)
+        self.btn_load_path.setFixedSize(QtCore.QSize(24, 24))
+        self.btn_load_path.setText("📂")
+        self.btn_load_path.setToolTip("Path 파일 불러오기")
+        self.btn_load_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
+        self.btn_load_path.setObjectName("btn_load_path")
+        self._path_btn_layout.addWidget(self.btn_load_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        self.btn_save_path = QtWidgets.QPushButton(parent=self.CycTab)
+        self.btn_save_path.setFixedSize(QtCore.QSize(24, 24))
+        self.btn_save_path.setText("💾")
+        self.btn_save_path.setToolTip("Path 파일 저장")
+        self.btn_save_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
+        self.btn_save_path.setObjectName("btn_save_path")
+        self._path_btn_layout.addWidget(self.btn_save_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        self._path_btn_layout.addStretch(1)
+        self.horizontalLayout_119.addLayout(self._path_btn_layout)
         self.verticalLayout_6.addLayout(self.horizontalLayout_119)
         self.capacitygroup = QtWidgets.QGroupBox(parent=self.CycTab)
-        self.capacitygroup.setMinimumSize(QtCore.QSize(502, 120))
-        self.capacitygroup.setMaximumSize(QtCore.QSize(502, 120))
+        self.capacitygroup.setMinimumSize(QtCore.QSize(400, 100))
+        self.capacitygroup.setMaximumSize(QtCore.QSize(16777215, 120))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3490,8 +3542,8 @@ class Ui_sitool(object):
         self.horizontalLayout_120 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_120.setObjectName("horizontalLayout_120")
         self.inicaprate = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaprate.setMinimumSize(QtCore.QSize(352, 50))
-        self.inicaprate.setMaximumSize(QtCore.QSize(352, 50))
+        self.inicaprate.setMinimumSize(QtCore.QSize(250, 50))
+        self.inicaprate.setMaximumSize(QtCore.QSize(16777215, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3518,8 +3570,8 @@ class Ui_sitool(object):
         self.horizontalLayout_121 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_121.setObjectName("horizontalLayout_121")
         self.inicaptype = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaptype.setMinimumSize(QtCore.QSize(352, 20))
-        self.inicaptype.setMaximumSize(QtCore.QSize(352, 20))
+        self.inicaptype.setMinimumSize(QtCore.QSize(250, 20))
+        self.inicaptype.setMaximumSize(QtCore.QSize(16777215, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3546,8 +3598,8 @@ class Ui_sitool(object):
         self.horizontalLayout_122.addLayout(self.verticalLayout_18)
         self.verticalLayout_6.addWidget(self.capacitygroup)
         self.tabWidget_2 = QtWidgets.QTabWidget(parent=self.CycTab)
-        self.tabWidget_2.setMinimumSize(QtCore.QSize(502, 594))
-        self.tabWidget_2.setMaximumSize(QtCore.QSize(502, 594))
+        self.tabWidget_2.setMinimumSize(QtCore.QSize(400, 400))
+        self.tabWidget_2.setMaximumSize(QtCore.QSize(16777215, 16777215))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3562,8 +3614,8 @@ class Ui_sitool(object):
         self.verticalLayout_14 = QtWidgets.QVBoxLayout()
         self.verticalLayout_14.setObjectName("verticalLayout_14")
         self.dcirchk = QtWidgets.QRadioButton(parent=self.tab_5)
-        self.dcirchk.setMinimumSize(QtCore.QSize(450, 30))
-        self.dcirchk.setMaximumSize(QtCore.QSize(450, 30))
+        self.dcirchk.setMinimumSize(QtCore.QSize(300, 26))
+        self.dcirchk.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3571,8 +3623,8 @@ class Ui_sitool(object):
         self.dcirchk.setObjectName("dcirchk")
         self.verticalLayout_14.addWidget(self.dcirchk)
         self.pulsedcir = QtWidgets.QRadioButton(parent=self.tab_5)
-        self.pulsedcir.setMinimumSize(QtCore.QSize(450, 30))
-        self.pulsedcir.setMaximumSize(QtCore.QSize(450, 30))
+        self.pulsedcir.setMinimumSize(QtCore.QSize(300, 26))
+        self.pulsedcir.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3581,8 +3633,8 @@ class Ui_sitool(object):
         self.pulsedcir.setObjectName("pulsedcir")
         self.verticalLayout_14.addWidget(self.pulsedcir)
         self.mkdcir = QtWidgets.QRadioButton(parent=self.tab_5)
-        self.mkdcir.setMinimumSize(QtCore.QSize(450, 30))
-        self.mkdcir.setMaximumSize(QtCore.QSize(450, 30))
+        self.mkdcir.setMinimumSize(QtCore.QSize(300, 26))
+        self.mkdcir.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3597,8 +3649,8 @@ class Ui_sitool(object):
         self.dcir_mode_group.addButton(self.pulsedcir)
         self.dcir_mode_group.addButton(self.mkdcir)
         self.dcirchk_2 = QtWidgets.QCheckBox(parent=self.tab_5)
-        self.dcirchk_2.setMinimumSize(QtCore.QSize(234, 30))
-        self.dcirchk_2.setMaximumSize(QtCore.QSize(234, 30))
+        self.dcirchk_2.setMinimumSize(QtCore.QSize(150, 26))
+        self.dcirchk_2.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3608,127 +3660,75 @@ class Ui_sitool(object):
         self.dcirchk_2.setObjectName("dcirchk_2")
         self.verticalLayout_14.addWidget(self.dcirchk_2)
         self.verticalLayout_17.addLayout(self.verticalLayout_14)
-        self.horizontalLayout_86 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_86.setObjectName("horizontalLayout_86")
+        # ── 입력필드 2×2 그리드 배치 (Y축 최대/최소, X축 최대, DCIR scale) ──
+        _input_font = QtGui.QFont("맑은 고딕", 10)
+        self._cycle_input_grid = QtWidgets.QGridLayout()
+        self._cycle_input_grid.setSpacing(4)
+        self._cycle_input_grid.setContentsMargins(0, 4, 0, 4)
         self.cycxlabel_2 = QtWidgets.QLabel(parent=self.tab_5)
-        self.cycxlabel_2.setMinimumSize(QtCore.QSize(215, 30))
-        self.cycxlabel_2.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.cycxlabel_2.setFont(font)
+        self.cycxlabel_2.setFont(_input_font)
         self.cycxlabel_2.setObjectName("cycxlabel_2")
-        self.horizontalLayout_86.addWidget(self.cycxlabel_2)
+        self._cycle_input_grid.addWidget(self.cycxlabel_2, 0, 0)
         self.tcyclerngyhl = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.tcyclerngyhl.setMinimumSize(QtCore.QSize(215, 30))
-        self.tcyclerngyhl.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.tcyclerngyhl.setFont(font)
+        self.tcyclerngyhl.setMinimumSize(QtCore.QSize(80, 28))
+        self.tcyclerngyhl.setMaximumSize(QtCore.QSize(16777215, 28))
+        self.tcyclerngyhl.setFont(_input_font)
         self.tcyclerngyhl.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.tcyclerngyhl.setClearButtonEnabled(False)
         self.tcyclerngyhl.setObjectName("tcyclerngyhl")
-        self.horizontalLayout_86.addWidget(self.tcyclerngyhl)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_86)
-        self.horizontalLayout_87 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_87.setObjectName("horizontalLayout_87")
+        self._cycle_input_grid.addWidget(self.tcyclerngyhl, 0, 1)
         self.cycxlabel_3 = QtWidgets.QLabel(parent=self.tab_5)
-        self.cycxlabel_3.setMinimumSize(QtCore.QSize(215, 30))
-        self.cycxlabel_3.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.cycxlabel_3.setFont(font)
+        self.cycxlabel_3.setFont(_input_font)
         self.cycxlabel_3.setObjectName("cycxlabel_3")
-        self.horizontalLayout_87.addWidget(self.cycxlabel_3)
+        self._cycle_input_grid.addWidget(self.cycxlabel_3, 0, 2)
         self.tcyclerngyll = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.tcyclerngyll.setMinimumSize(QtCore.QSize(215, 30))
-        self.tcyclerngyll.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.tcyclerngyll.setFont(font)
+        self.tcyclerngyll.setMinimumSize(QtCore.QSize(80, 28))
+        self.tcyclerngyll.setMaximumSize(QtCore.QSize(16777215, 28))
+        self.tcyclerngyll.setFont(_input_font)
         self.tcyclerngyll.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.tcyclerngyll.setObjectName("tcyclerngyll")
-        self.horizontalLayout_87.addWidget(self.tcyclerngyll)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_87)
-        self.horizontalLayout_88 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_88.setObjectName("horizontalLayout_88")
+        self._cycle_input_grid.addWidget(self.tcyclerngyll, 0, 3)
         self.cycxlabel = QtWidgets.QLabel(parent=self.tab_5)
-        self.cycxlabel.setMinimumSize(QtCore.QSize(215, 30))
-        self.cycxlabel.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.cycxlabel.setFont(font)
+        self.cycxlabel.setFont(_input_font)
         self.cycxlabel.setObjectName("cycxlabel")
-        self.horizontalLayout_88.addWidget(self.cycxlabel)
+        self._cycle_input_grid.addWidget(self.cycxlabel, 1, 0)
         self.tcyclerng = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.tcyclerng.setMinimumSize(QtCore.QSize(215, 30))
-        self.tcyclerng.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.tcyclerng.setFont(font)
+        self.tcyclerng.setMinimumSize(QtCore.QSize(80, 28))
+        self.tcyclerng.setMaximumSize(QtCore.QSize(16777215, 28))
+        self.tcyclerng.setFont(_input_font)
         self.tcyclerng.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.tcyclerng.setObjectName("tcyclerng")
-        self.horizontalLayout_88.addWidget(self.tcyclerng)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_88)
-        self.horizontalLayout_89 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_89.setObjectName("horizontalLayout_89")
+        self._cycle_input_grid.addWidget(self.tcyclerng, 1, 1)
         self.dcirscalelb = QtWidgets.QLabel(parent=self.tab_5)
-        self.dcirscalelb.setMinimumSize(QtCore.QSize(215, 30))
-        self.dcirscalelb.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.dcirscalelb.setFont(font)
+        self.dcirscalelb.setFont(_input_font)
         self.dcirscalelb.setObjectName("dcirscalelb")
-        self.horizontalLayout_89.addWidget(self.dcirscalelb)
+        self._cycle_input_grid.addWidget(self.dcirscalelb, 1, 2)
         self.dcirscale = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.dcirscale.setMinimumSize(QtCore.QSize(215, 30))
-        self.dcirscale.setMaximumSize(QtCore.QSize(215, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.dcirscale.setFont(font)
+        self.dcirscale.setMinimumSize(QtCore.QSize(80, 28))
+        self.dcirscale.setMaximumSize(QtCore.QSize(16777215, 28))
+        self.dcirscale.setFont(_input_font)
         self.dcirscale.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.dcirscale.setObjectName("dcirscale")
-        self.horizontalLayout_89.addWidget(self.dcirscale)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_89)
-        # ── 통합 Cycle 분석 UI (6개 버튼 → 1버튼 + 라디오 + 체크박스) ──
+        self._cycle_input_grid.addWidget(self.dcirscale, 1, 3)
+        self._cycle_input_grid.setColumnStretch(1, 1)
+        self._cycle_input_grid.setColumnStretch(3, 1)
+        self.verticalLayout_17.addLayout(self._cycle_input_grid)
+        # 하위 호환: 기존 레이아웃 참조 유지
+        self.horizontalLayout_86 = self._cycle_input_grid
+        self.horizontalLayout_87 = self._cycle_input_grid
+        self.horizontalLayout_88 = self._cycle_input_grid
+        self.horizontalLayout_89 = self._cycle_input_grid
+        # ── 통합 Cycle 분석 UI (개별/통합 라디오 + 분석 버튼을 한 줄로) ──
         self.horizontalLayout_90 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_90.setObjectName("horizontalLayout_90")
         self.radio_indiv = QtWidgets.QRadioButton(parent=self.tab_5)
-        self.radio_indiv.setMinimumSize(QtCore.QSize(100, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        self.radio_indiv.setMinimumSize(QtCore.QSize(60, 28))
+        font = QtGui.QFont("맑은 고딕", 10)
         self.radio_indiv.setFont(font)
         self.radio_indiv.setObjectName("radio_indiv")
         self.horizontalLayout_90.addWidget(self.radio_indiv)
         self.radio_overall = QtWidgets.QRadioButton(parent=self.tab_5)
-        self.radio_overall.setMinimumSize(QtCore.QSize(100, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        self.radio_overall.setMinimumSize(QtCore.QSize(60, 28))
         self.radio_overall.setFont(font)
         self.radio_overall.setObjectName("radio_overall")
         self.horizontalLayout_90.addWidget(self.radio_overall)
@@ -3737,21 +3737,18 @@ class Ui_sitool(object):
         self.cycle_mode_group.addButton(self.radio_indiv)
         self.cycle_mode_group.addButton(self.radio_overall)
         self.radio_indiv.setChecked(True)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_90)
-        self.horizontalLayout_91 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_91.setObjectName("horizontalLayout_91")
+        self.horizontalLayout_90.addStretch(1)
         self.cycle_confirm = QtWidgets.QPushButton(parent=self.tab_5)
-        self.cycle_confirm.setMinimumSize(QtCore.QSize(430, 70))
-        self.cycle_confirm.setMaximumSize(QtCore.QSize(430, 70))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(12)
-        font.setBold(True)
-        font.setWeight(75)
+        self.cycle_confirm.setMinimumSize(QtCore.QSize(160, 45))
+        self.cycle_confirm.setMaximumSize(QtCore.QSize(16777215, 45))
+        font = QtGui.QFont("맑은 고딕", 11, QtGui.QFont.Weight.Bold)
         self.cycle_confirm.setFont(font)
         self.cycle_confirm.setObjectName("cycle_confirm")
-        self.horizontalLayout_91.addWidget(self.cycle_confirm)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_91)
+        self.horizontalLayout_90.addWidget(self.cycle_confirm)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_90)
+        self.verticalLayout_17.addStretch(1)
+        # 하위 호환: 기존 레이아웃 참조 유지
+        self.horizontalLayout_91 = self.horizontalLayout_90
         self.horizontalLayout_107.addLayout(self.verticalLayout_17)
         self.tabWidget_2.addTab(self.tab_5, "")
         self.tab_6 = QtWidgets.QWidget()
@@ -3847,167 +3844,94 @@ class Ui_sitool(object):
         self.stepnum.setObjectName("stepnum")
         self.horizontalLayout_111.addWidget(self.stepnum)
         self.verticalLayout_4.addLayout(self.horizontalLayout_111)
-        self.horizontalLayout_85 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_85.setObjectName("horizontalLayout_85")
+        # ── 전압 Y축 하한~dQ/dV 스케일: 3행 2열 그리드 배치 ──
+        _pf_font = QtGui.QFont("맑은 고딕", 10)
+        self._profile_input_grid = QtWidgets.QGridLayout()
+        self._profile_input_grid.setSpacing(4)
+        self._profile_input_grid.setContentsMargins(0, 2, 0, 2)
+        # row 0: Y축 하한 | Y축 상한
         self.smoothlb_3 = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb_3.setMinimumSize(QtCore.QSize(215, 25))
-        self.smoothlb_3.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.smoothlb_3.setFont(font)
+        self.smoothlb_3.setFont(_pf_font)
         self.smoothlb_3.setObjectName("smoothlb_3")
-        self.horizontalLayout_85.addWidget(self.smoothlb_3)
+        self._profile_input_grid.addWidget(self.smoothlb_3, 0, 0)
         self.volrngyhl = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.volrngyhl.setMinimumSize(QtCore.QSize(215, 25))
-        self.volrngyhl.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.volrngyhl.setFont(font)
+        self.volrngyhl.setMinimumSize(QtCore.QSize(60, 25))
+        self.volrngyhl.setMaximumHeight(25)
+        self.volrngyhl.setFont(_pf_font)
         self.volrngyhl.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.volrngyhl.setObjectName("volrngyhl")
-        self.horizontalLayout_85.addWidget(self.volrngyhl)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_85)
-        self.horizontalLayout_110 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_110.setObjectName("horizontalLayout_110")
+        self._profile_input_grid.addWidget(self.volrngyhl, 0, 1)
         self.smoothlb_2 = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb_2.setMinimumSize(QtCore.QSize(215, 25))
-        self.smoothlb_2.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.smoothlb_2.setFont(font)
+        self.smoothlb_2.setFont(_pf_font)
         self.smoothlb_2.setObjectName("smoothlb_2")
-        self.horizontalLayout_110.addWidget(self.smoothlb_2)
+        self._profile_input_grid.addWidget(self.smoothlb_2, 0, 2)
         self.volrngyll = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.volrngyll.setMinimumSize(QtCore.QSize(215, 25))
-        self.volrngyll.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.volrngyll.setFont(font)
+        self.volrngyll.setMinimumSize(QtCore.QSize(60, 25))
+        self.volrngyll.setMaximumHeight(25)
+        self.volrngyll.setFont(_pf_font)
         self.volrngyll.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.volrngyll.setObjectName("volrngyll")
-        self.horizontalLayout_110.addWidget(self.volrngyll)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_110)
-        self.horizontalLayout_109 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_109.setObjectName("horizontalLayout_109")
+        self._profile_input_grid.addWidget(self.volrngyll, 0, 3)
+        # row 1: Y축 간격 | Smooth
         self.smoothlb_4 = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb_4.setMinimumSize(QtCore.QSize(215, 25))
-        self.smoothlb_4.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.smoothlb_4.setFont(font)
+        self.smoothlb_4.setFont(_pf_font)
         self.smoothlb_4.setObjectName("smoothlb_4")
-        self.horizontalLayout_109.addWidget(self.smoothlb_4)
+        self._profile_input_grid.addWidget(self.smoothlb_4, 1, 0)
         self.volrnggap = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.volrnggap.setMinimumSize(QtCore.QSize(215, 25))
-        self.volrnggap.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.volrnggap.setFont(font)
+        self.volrnggap.setMinimumSize(QtCore.QSize(60, 25))
+        self.volrnggap.setMaximumHeight(25)
+        self.volrnggap.setFont(_pf_font)
         self.volrnggap.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.volrnggap.setObjectName("volrnggap")
-        self.horizontalLayout_109.addWidget(self.volrnggap)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_109)
-        self.horizontalLayout_113 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_113.setObjectName("horizontalLayout_113")
+        self._profile_input_grid.addWidget(self.volrnggap, 1, 1)
         self.smoothlb = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb.setMinimumSize(QtCore.QSize(215, 25))
-        self.smoothlb.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.smoothlb.setFont(font)
+        self.smoothlb.setFont(_pf_font)
         self.smoothlb.setObjectName("smoothlb")
-        self.horizontalLayout_113.addWidget(self.smoothlb)
+        self._profile_input_grid.addWidget(self.smoothlb, 1, 2)
         self.smooth = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.smooth.setMinimumSize(QtCore.QSize(215, 25))
-        self.smooth.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.smooth.setFont(font)
+        self.smooth.setMinimumSize(QtCore.QSize(60, 25))
+        self.smooth.setMaximumHeight(25)
+        self.smooth.setFont(_pf_font)
         self.smooth.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.smooth.setObjectName("smooth")
-        self.horizontalLayout_113.addWidget(self.smooth)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_113)
-        self.horizontalLayout_114 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_114.setObjectName("horizontalLayout_114")
+        self._profile_input_grid.addWidget(self.smooth, 1, 3)
+        # row 2: 컷오프 | dQ/dV 스케일
         self.cutofflb = QtWidgets.QLabel(parent=self.tab_6)
-        self.cutofflb.setMinimumSize(QtCore.QSize(215, 25))
-        self.cutofflb.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.cutofflb.setFont(font)
+        self.cutofflb.setFont(_pf_font)
         self.cutofflb.setObjectName("cutofflb")
-        self.horizontalLayout_114.addWidget(self.cutofflb)
+        self._profile_input_grid.addWidget(self.cutofflb, 2, 0)
         self.cutoff = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.cutoff.setMinimumSize(QtCore.QSize(215, 25))
-        self.cutoff.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.cutoff.setFont(font)
+        self.cutoff.setMinimumSize(QtCore.QSize(60, 25))
+        self.cutoff.setMaximumHeight(25)
+        self.cutoff.setFont(_pf_font)
         self.cutoff.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.cutoff.setObjectName("cutoff")
-        self.horizontalLayout_114.addWidget(self.cutoff)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_114)
-        self.horizontalLayout_115 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_115.setObjectName("horizontalLayout_115")
+        self._profile_input_grid.addWidget(self.cutoff, 2, 1)
         self.dqdvscalelb = QtWidgets.QLabel(parent=self.tab_6)
-        self.dqdvscalelb.setMinimumSize(QtCore.QSize(215, 25))
-        self.dqdvscalelb.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.dqdvscalelb.setFont(font)
+        self.dqdvscalelb.setFont(_pf_font)
         self.dqdvscalelb.setObjectName("dqdvscalelb")
-        self.horizontalLayout_115.addWidget(self.dqdvscalelb)
+        self._profile_input_grid.addWidget(self.dqdvscalelb, 2, 2)
         self.dqdvscale = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.dqdvscale.setMinimumSize(QtCore.QSize(215, 25))
-        self.dqdvscale.setMaximumSize(QtCore.QSize(215, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.dqdvscale.setFont(font)
+        self.dqdvscale.setMinimumSize(QtCore.QSize(60, 25))
+        self.dqdvscale.setMaximumHeight(25)
+        self.dqdvscale.setFont(_pf_font)
         self.dqdvscale.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.dqdvscale.setObjectName("dqdvscale")
-        self.horizontalLayout_115.addWidget(self.dqdvscale)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_115)
+        self._profile_input_grid.addWidget(self.dqdvscale, 2, 3)
+        self._profile_input_grid.setColumnStretch(1, 1)
+        self._profile_input_grid.setColumnStretch(3, 1)
+        self.verticalLayout_4.addLayout(self._profile_input_grid)
+        # 하위 호환: 기존 레이아웃 참조 유지
+        self.horizontalLayout_110 = self._profile_input_grid
+        self.horizontalLayout_109 = self._profile_input_grid
+        self.horizontalLayout_113 = self._profile_input_grid
+        self.horizontalLayout_114 = self._profile_input_grid
+        self.horizontalLayout_115 = self._profile_input_grid
         self.horizontalLayout_116 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_116.setObjectName("horizontalLayout_116")
         self.StepConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.StepConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.StepConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        self.StepConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.StepConfirm.setMaximumSize(QtCore.QSize(215, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -4017,8 +3941,8 @@ class Ui_sitool(object):
         self.StepConfirm.setObjectName("StepConfirm")
         self.horizontalLayout_116.addWidget(self.StepConfirm)
         self.ChgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ChgConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.ChgConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        self.ChgConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.ChgConfirm.setMaximumSize(QtCore.QSize(215, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -4031,8 +3955,8 @@ class Ui_sitool(object):
         self.horizontalLayout_117 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_117.setObjectName("horizontalLayout_117")
         self.RateConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.RateConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.RateConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        self.RateConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.RateConfirm.setMaximumSize(QtCore.QSize(215, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -4042,8 +3966,8 @@ class Ui_sitool(object):
         self.RateConfirm.setObjectName("RateConfirm")
         self.horizontalLayout_117.addWidget(self.RateConfirm)
         self.DchgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.DchgConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.DchgConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        self.DchgConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.DchgConfirm.setMaximumSize(QtCore.QSize(215, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -4056,8 +3980,8 @@ class Ui_sitool(object):
         self.horizontalLayout_118 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_118.setObjectName("horizontalLayout_118")
         self.ContinueConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ContinueConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.ContinueConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        self.ContinueConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.ContinueConfirm.setMaximumSize(QtCore.QSize(215, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -4067,8 +3991,8 @@ class Ui_sitool(object):
         self.ContinueConfirm.setObjectName("ContinueConfirm")
         self.horizontalLayout_118.addWidget(self.ContinueConfirm)
         self.DCIRConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.DCIRConfirm.setMinimumSize(QtCore.QSize(215, 70))
-        self.DCIRConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        self.DCIRConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.DCIRConfirm.setMaximumSize(QtCore.QSize(215, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -9469,6 +9393,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
         self.btn_expand_path.clicked.connect(self._toggle_stepnum2_expand)
+        self.btn_load_path.clicked.connect(self._load_path_file_to_table)
+        self.btn_save_path.clicked.connect(self._save_table_to_path_file)
+        # cycle_path_table Ctrl+C / Ctrl+V / Delete 단축키
+        _tbl = self.cycle_path_table
+        _tbl_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, _tbl)
+        _tbl_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tbl_copy.activated.connect(self._cycle_table_copy)
+        _tbl_paste = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Paste, _tbl)
+        _tbl_paste.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tbl_paste.activated.connect(self._cycle_table_paste)
+        _tbl_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, _tbl)
+        _tbl_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tbl_del.activated.connect(self._cycle_table_delete)
         self.chk_cyclepath.toggled.connect(self._on_cyclepath_toggled)
         self._on_cyclepath_toggled(self.chk_cyclepath.isChecked())  # 초기 상태 반영
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
@@ -11024,6 +10961,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     rows.append((' '.join(parts[:-1]), parts[-1]))
         return rows
 
+    @staticmethod
+    def _parse_path_file_extended(filepath):
+        """4열 확장 path 파일 파싱 (하위호환: 2열도 지원)
+        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str}, ...]
+        """
+        rows = []
+        with open(filepath, 'r', encoding='UTF-8') as f:
+            f.readline()  # 헤더 스킵
+            for line in f:
+                parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
+                if len(parts) >= 4:
+                    rows.append({'name': parts[0], 'path': parts[1],
+                                 'channel': parts[2], 'capacity': parts[3]})
+                elif len(parts) >= 2:
+                    rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
+                                 'channel': '', 'capacity': ''})
+        return rows
+
     def _build_group_from_lines(self, lines, file_idx):
         """직접입력 줄들로 CycleGroup 생성. .xlsx/.xls=excel, .txt=path파일 재파싱, 나머지=folder"""
         all_paths = []
@@ -11055,7 +11010,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         )
 
     def _parse_cycle_input(self):
-        """입력 모드를 판별하여 list[CycleGroup] 반환"""
+        """입력 모드를 판별하여 list[CycleGroup] 반환
+        우선순위: 1) 지정Path 체크 → 파일 대화상자
+                 2) 테이블에 데이터 있음 → 테이블에서 읽기
+                 3) 폴더 선택 대화상자
+        """
         groups = []
         root = Tk()
         root.withdraw()
@@ -11077,16 +11036,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         data_type='excel', file_idx=file_idx, source_file=fp
                     ))
                 elif ext in ('.txt', '.csv'):
-                    rows = self._parse_path_file(fp)
+                    rows = self._parse_path_file_extended(fp)
                     if not rows:
                         continue
                     # cyclename으로 그룹화 (동일 cyclename = 자동 연결)
                     name_order = OrderedDict()
-                    for cname, cpath in rows:
-                        name_order.setdefault(cname, []).append((cname, cpath))
+                    for row in rows:
+                        name_order.setdefault(row['name'], []).append(row)
                     for cname, items in name_order.items():
-                        cpaths = [x[1] for x in items]
-                        cnames = [x[0] for x in items]
+                        cpaths = [x['path'] for x in items]
+                        cnames = [x['name'] for x in items]
+                        # 첫 행의 capacity가 있으면 사용
+                        cap = items[0].get('capacity', '')
                         groups.append(CycleGroup(
                             name=cname, paths=cpaths, path_names=cnames,
                             is_link=len(cpaths) > 1, data_type='folder',
@@ -11099,31 +11060,71 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         data_type='folder', file_idx=file_idx, source_file=fp
                     ))
 
-        elif self.stepnum_2.toPlainText().strip():
-            # 직접 입력
-            text = self.stepnum_2.toPlainText()
+        elif self._has_table_data():
+            # 테이블에서 읽기
+            table_rows = self._get_table_rows()
             link_mode = self.chk_link_cycle.isChecked()
-            lines = text.split('\n')
 
             if link_mode:
-                # 연결 모드: 빈 줄 = 그룹 구분
-                current_group = []
-                for line in lines:
-                    stripped = line.strip().strip('"').strip("'")
-                    if stripped:
-                        current_group.append(stripped)
+                # 연결 모드: 경로명(name)이 같으면 같은 그룹
+                name_order = OrderedDict()
+                for row in table_rows:
+                    key = row['name'] if row['name'] else row['path']
+                    name_order.setdefault(key, []).append(row)
+                for gname, items in name_order.items():
+                    channels_per_row = [_parse_channel_str(r['channel']) for r in items]
+                    has_channels = any(chs for chs in channels_per_row)
+
+                    if has_channels:
+                        # 채널 위치 기반 분할: 같은 위치끼리 연결, '-'=해당 경로 없음
+                        max_pos = max((len(chs) for chs in channels_per_row), default=0)
+                        for pos in range(max_pos):
+                            pos_paths, pos_pnames, pos_chs = [], [], []
+                            for row_idx, row in enumerate(items):
+                                chs = channels_per_row[row_idx]
+                                if pos < len(chs) and chs[pos] != '-':
+                                    pos_paths.append(row['path'])
+                                    pos_pnames.append(row['name'])
+                                    pos_chs.append([chs[pos]])
+                            if pos_paths:
+                                groups.append(CycleGroup(
+                                    name=gname, paths=pos_paths, path_names=pos_pnames,
+                                    is_link=len(pos_paths) > 1, data_type='folder',
+                                    file_idx=0, source_file='',
+                                    per_path_channels=pos_chs,
+                                ))
                     else:
-                        if current_group:
-                            groups.append(self._build_group_from_lines(current_group, file_idx=0))
-                            current_group = []
-                if current_group:
-                    groups.append(self._build_group_from_lines(current_group, file_idx=0))
+                        # 채널 미지정: 기존 동작
+                        paths = [x['path'] for x in items]
+                        pnames = [x['name'] for x in items]
+                        groups.append(CycleGroup(
+                            name=gname, paths=paths, path_names=pnames,
+                            is_link=len(paths) > 1, data_type='folder',
+                            file_idx=0, source_file=''
+                        ))
             else:
-                # 개별 모드: 모든 줄 = 개별
-                for line in lines:
-                    stripped = line.strip().strip('"').strip("'")
-                    if stripped:
-                        groups.append(self._build_group_from_lines([stripped], file_idx=0))
+                # 개별 모드: 각 행 = 개별 그룹
+                for row in table_rows:
+                    path = row['path']
+                    ext = os.path.splitext(path)[1].lower()
+                    channels = _parse_channel_str(row['channel'])
+                    valid_chs = [ch for ch in channels if ch != '-']
+
+                    if ext in ('.xlsx', '.xls'):
+                        groups.append(CycleGroup(
+                            name=row['name'] or os.path.splitext(os.path.basename(path))[0],
+                            paths=[path], path_names=[row['name']],
+                            data_type='excel', file_idx=0, source_file=path
+                        ))
+                    elif ext in ('.txt', '.csv'):
+                        groups.append(self._build_group_from_lines([path], file_idx=0))
+                    else:
+                        groups.append(CycleGroup(
+                            name=row['name'] or os.path.basename(path),
+                            paths=[path], path_names=[row['name']],
+                            data_type='folder', file_idx=0, source_file='',
+                            per_path_channels=[valid_chs] if valid_chs else [],
+                        ))
 
         else:
             # 폴더 선택: 항상 개별
@@ -11178,7 +11179,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ═══ Excel 그룹 (신뢰성) ═══
         if excel_groups:
-            fig, ax1 = plt.subplots(nrows=1, ncols=1, figsize=(14, 8))
+            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
             colorno = 0
             dfs_output = []
             col_name_output = []
@@ -11312,12 +11313,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         merged = {}
                         channel_state = {}  # {sub_label: {'offset': int, 'last_len': int}}
                         _first_ch_label = None
+                        # 채널 필터가 있으면 통합 sub_label 결정
+                        _has_ch_filter = bool(group.per_path_channels)
+                        _unified_sub = group.per_path_channels[0][0] if _has_ch_filter else None
 
                         for path_idx, fi in enumerate(flat_indices):
                             if fi not in subfolder_map:
                                 continue
                             subfolder = subfolder_map[fi]
                             local_colorno = 0
+                            # 이 path에 허용된 채널 목록
+                            _allowed_chs = (group.per_path_channels[path_idx]
+                                            if _has_ch_filter and path_idx < len(group.per_path_channels)
+                                            else [])
 
                             for sub_idx, FolderBase in enumerate(subfolder):
                                 if (fi, sub_idx) not in loaded_data:
@@ -11331,6 +11339,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
 
                                 sub_label = extract_text_in_brackets(cycnamelist[-1])
+                                # 채널 필터 적용 (정규화 비교)
+                                if _allowed_chs and _normalize_ch(sub_label) not in _allowed_chs:
+                                    continue
+                                # 채널 매핑: 다른 채널 번호도 통합 sub_label로 병합
+                                if _unified_sub is not None:
+                                    sub_label = _unified_sub
                                 if group.path_names and group.path_names[path_idx]:
                                     ch_label = str(group.path_names[path_idx]).strip()
                                 else:
@@ -11394,9 +11408,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 lgnd = sub_label
 
+                            # 개별: sub_label별 다른 색 / 통합: 그룹(ch_label) 동일 색
+                            _plot_colorno = info['colorno'] + colorno if is_individual else colorno
+
                             _artists, _color = graph_output_cycle(
                                 _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
-                                info['colorno'] + colorno, graphcolor, self.mkdcir,
+                                _plot_colorno, graphcolor, self.mkdcir,
                                 ax1, ax2, ax3, ax4, ax5, ax6
                             )
 
@@ -11413,14 +11430,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             sub_channel_map[sub_label] = {
                                 'artists': list(_artists), 'color': _color, 'parent': _ch}
 
-                        colorno += len(merged)
+                        # 개별: sub 수만큼 증가 / 통합: 그룹 1개분만 증가
+                        if is_individual:
+                            colorno += len(merged)
+                        else:
+                            colorno += 1
 
                     else:
                         # ═══ 비연결 모드: 각 sub 직접 plot ═══
+                        _has_ch_filter = bool(group.per_path_channels)
                         for path_idx, fi in enumerate(flat_indices):
                             if fi not in subfolder_map:
                                 continue
                             subfolder = subfolder_map[fi]
+                            _allowed_chs = (group.per_path_channels[path_idx]
+                                            if _has_ch_filter and path_idx < len(group.per_path_channels)
+                                            else [])
 
                             for sub_idx, FolderBase in enumerate(subfolder):
                                 if (fi, sub_idx) not in loaded_data:
@@ -11440,6 +11465,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
 
                                 sub_label = extract_text_in_brackets(cycnamelist[-1])
+                                # 채널 필터 적용 (정규화 비교)
+                                if _allowed_chs and _normalize_ch(sub_label) not in _allowed_chs:
+                                    continue
                                 if group.path_names and group.path_names[path_idx]:
                                     ch_label = str(group.path_names[path_idx]).strip()
                                 else:
@@ -11490,7 +11518,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     sub_channel_map[sub_label] = {
                                         'artists': list(_artists), 'color': _color, 'parent': ch_label}
 
-                                    colorno += 1
+                                    if is_individual:
+                                        colorno += 1
 
                                     if self.saveok.isChecked() and save_file_name:
                                         self._save_cycle_excel_data(
@@ -11648,9 +11677,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     all_data_folder = multi_askopendirnames()
             else:
                 all_data_folder = multi_askopendirnames()
-        elif self.stepnum_2.toPlainText() != "":
-            datafilepath = [p.strip().strip('"').strip("'") for p in self.stepnum_2.toPlainText().split('\n') if p.strip()]
+        elif self._has_table_data():
+            table_rows = self._get_table_rows()
+            datafilepath = [r['path'] for r in table_rows]
             all_data_folder = np.array(datafilepath)
+            names = [r['name'] for r in table_rows if r['name']]
+            if names:
+                all_data_name = np.array([r['name'] for r in table_rows])
         else:
             all_data_folder = multi_askopendirnames()
             datafilepath = all_data_folder
@@ -11661,15 +11694,142 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_no = 0
 
     def _toggle_stepnum2_expand(self):
-        """경로 입력 박스 펼치기/접기 토글"""
+        """경로 테이블 펼치기/접기 토글"""
         if self._stepnum2_expanded:
-            self.stepnum_2.setMaximumHeight(70)
+            self.cycle_path_table.setMaximumHeight(120)
             self.btn_expand_path.setText("▼")
             self._stepnum2_expanded = False
         else:
-            self.stepnum_2.setMaximumHeight(300)
+            self.cycle_path_table.setMaximumHeight(400)
             self.btn_expand_path.setText("▲")
             self._stepnum2_expanded = True
+
+    # ── 테이블 ↔ 데이터 유틸리티 ──
+
+    def _get_table_cell(self, row, col):
+        """테이블 셀 텍스트를 안전하게 반환 (None → '')"""
+        item = self.cycle_path_table.item(row, col)
+        return item.text().strip() if item else ''
+
+    def _get_table_rows(self):
+        """테이블의 모든 행을 dict 리스트로 반환 (빈 행 제외)
+        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str}, ...]
+        """
+        rows = []
+        for r in range(self.cycle_path_table.rowCount()):
+            path = self._get_table_cell(r, 1)
+            if not path:
+                continue
+            rows.append({
+                'name': self._get_table_cell(r, 0),
+                'path': path,
+                'channel': self._get_table_cell(r, 2),
+                'capacity': self._get_table_cell(r, 3),
+            })
+        return rows
+
+    def _has_table_data(self):
+        """테이블에 데이터가 1행이라도 있으면 True"""
+        for r in range(self.cycle_path_table.rowCount()):
+            if self._get_table_cell(r, 1):
+                return True
+        return False
+
+    def _set_table_rows(self, rows):
+        """dict 리스트를 테이블에 채움. 필요 시 행 추가."""
+        self.cycle_path_table.setRowCount(max(len(rows), 5))
+        for r, row in enumerate(rows):
+            self.cycle_path_table.setItem(r, 0, QtWidgets.QTableWidgetItem(row.get('name', '')))
+            self.cycle_path_table.setItem(r, 1, QtWidgets.QTableWidgetItem(row.get('path', '')))
+            self.cycle_path_table.setItem(r, 2, QtWidgets.QTableWidgetItem(row.get('channel', '')))
+            self.cycle_path_table.setItem(r, 3, QtWidgets.QTableWidgetItem(row.get('capacity', '')))
+
+    def _clear_table(self):
+        """테이블 내용 초기화"""
+        self.cycle_path_table.setRowCount(5)
+        self.cycle_path_table.clearContents()
+
+    def _load_path_file_to_table(self):
+        """Path 파일(.txt)을 읽어 테이블에 채움 (4열 지원, 하위호환)"""
+        root = Tk()
+        root.withdraw()
+        fp = filedialog.askopenfilename(
+            initialdir="d://", title="Path 파일 선택",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if not fp:
+            return
+        rows = []
+        with open(fp, 'r', encoding='UTF-8') as f:
+            header = f.readline().strip()
+            for line in f:
+                parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
+                if len(parts) >= 4:
+                    rows.append({'name': parts[0], 'path': parts[1],
+                                 'channel': parts[2], 'capacity': parts[3]})
+                elif len(parts) >= 2:
+                    # 하위 호환: cyclename\tcyclepath
+                    rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
+                                 'channel': '', 'capacity': ''})
+        if rows:
+            self._set_table_rows(rows)
+
+    def _save_table_to_path_file(self):
+        """테이블 내용을 4열 탭구분 Path 파일로 저장"""
+        rows = self._get_table_rows()
+        if not rows:
+            return
+        root = Tk()
+        root.withdraw()
+        fp = filedialog.asksaveasfilename(
+            initialdir="d://", title="Path 파일 저장",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if not fp:
+            return
+        with open(fp, 'w', encoding='UTF-8') as f:
+            f.write("cyclename\tcyclepath\tchannel\tcapacity\n")
+            for row in rows:
+                f.write(f"{row['name']}\t{row['path']}\t{row['channel']}\t{row['capacity']}\n")
+
+    def _cycle_table_copy(self):
+        """선택 셀 → 클립보드 (탭 구분, 여러 행/열 지원)"""
+        sel = self.cycle_path_table.selectedRanges()
+        if not sel:
+            return
+        lines = []
+        for r in range(sel[0].topRow(), sel[0].bottomRow() + 1):
+            cols = []
+            for c in range(sel[0].leftColumn(), sel[0].rightColumn() + 1):
+                cols.append(self._get_table_cell(r, c))
+            lines.append('\t'.join(cols))
+        QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
+
+    def _cycle_table_paste(self):
+        """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)"""
+        text = QtWidgets.QApplication.clipboard().text()
+        if not text:
+            return
+        rows = [line.split('\t') for line in text.strip().split('\n') if line.strip()]
+        if not rows:
+            return
+        sel = self.cycle_path_table.selectedRanges()
+        start_row = sel[0].topRow() if sel else 0
+        start_col = sel[0].leftColumn() if sel else 0
+        need_rows = start_row + len(rows)
+        if need_rows > self.cycle_path_table.rowCount():
+            self.cycle_path_table.setRowCount(need_rows)
+        col_count = self.cycle_path_table.columnCount()
+        for ri, parts in enumerate(rows):
+            for ci, val in enumerate(parts):
+                c = start_col + ci
+                if c < col_count:
+                    self.cycle_path_table.setItem(
+                        start_row + ri, c, QtWidgets.QTableWidgetItem(val.strip()))
+
+    def _cycle_table_delete(self):
+        """선택 셀 내용 삭제"""
+        for item in self.cycle_path_table.selectedItems():
+            item.setText('')
 
     def _on_cyclepath_toggled(self, checked):
         """지정Path사용 체크 시 연결처리 스위치 비활성화"""
@@ -15533,8 +15693,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         root = Tk()
         root.withdraw()
         self.pathappcycestimation.setDisabled(True)
-        # stepnum_2에 직접 입력된 경로가 없을 때만 파일 대화상자 사용
-        if self.stepnum_2.toPlainText().strip() == "":
+        # 테이블에 경로가 없을 때만 파일 대화상자 사용
+        if not self._has_table_data():
             self.chk_cyclepath.setChecked(True)
             pne_path = self.pne_path_setting()
             self.chk_cyclepath.setChecked(False)
