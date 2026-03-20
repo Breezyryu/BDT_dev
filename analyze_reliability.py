@@ -400,6 +400,7 @@ class FileRecord:
         'voltage', 'capacity_mah', 'temperatures', 'cell_count',
         'blks', 'cycle_hints', 'date_in_file', 'tags',
         'mah_auto_ok',
+        'folder_dates_set',  # 이 파일이 존재했던 폴더 날짜 집합 (scan_all에서 설정)
         # Excel 검증 결과 (USE_EXCEL=True 일 때만 채워짐)
         'excel_status',     # 'OK' / 'WARN' / 'ERROR' / None
         'excel_issues',     # List[str]
@@ -433,6 +434,7 @@ class FileRecord:
         self.date_in_file = extract_date_from_filename(filename)
         self.tags = extract_tags(filename)
         self.mah_auto_ok = self.capacity_mah is not None
+        self.folder_dates_set = set()  # scan_all에서 채움
         # Excel 검증 필드 초기화 (나중에 validate_with_excel로 채움)
         self.excel_status = None
         self.excel_issues = []
@@ -469,6 +471,7 @@ class FileRecord:
             'date_in_file': self.date_in_file,
             'tags': self.tags,
             'mah_auto_ok': self.mah_auto_ok,
+            'folder_dates_set': sorted(self.folder_dates_set),
             'excel_status': self.excel_status,
             'excel_issues': self.excel_issues,
             'excel_warnings': self.excel_warnings,
@@ -559,7 +562,11 @@ class TestGroup:
 
     @property
     def folder_dates(self):
-        return sorted(set(r.folder_date for r in self.records))
+        """\uadf8\ub8f9 \ub0b4 \ubaa8\ub4e0 \ud30c\uc77c\uc774 \uc874\uc7ac\ud588\ub358 \ud3f4\ub354 \ub0a0\uc9dc \ud569\uc9d1."""
+        dates = set()
+        for r in self.records:
+            dates.update(r.folder_dates_set)
+        return sorted(dates)
 
     @property
     def first_seen(self):
@@ -579,9 +586,8 @@ class TestGroup:
 
     @property
     def latest_records(self):
-        """최신 폴더의 레코드만."""
-        last = self.last_seen
-        return [r for r in self.records if r.folder_date == last]
+        """2-pass에서는 모든 레코드가 최신 버전."""
+        return self.records
 
     @property
     def latest_file_count(self):
@@ -612,16 +618,8 @@ class TestGroup:
 
     @property
     def size_change(self):
-        """최초 → 최신 파일 크기 변화율."""
-        if self.folder_count < 2:
-            return None
-        first_recs = [r for r in self.records if r.folder_date == self.first_seen]
-        last_recs = self.latest_records
-        sz_first = sum(r.file_size for r in first_recs)
-        sz_last = sum(r.file_size for r in last_recs)
-        if sz_first == 0:
-            return None
-        return round((sz_last - sz_first) / sz_first * 100, 1)
+        """파일 크기 변화는 2-pass 모드에서 측정 불가 (최신만 보유)."""
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -776,7 +774,11 @@ def run_excel_validation(all_records, rawdata_dir):
 # 6. 메인 스캔 로직
 # ═══════════════════════════════════════════════════════════════════
 def scan_all(rawdata_dir):
-    """전체 스캔 → (folders_info, groups_dict, all_records)."""
+    """전체 스캔 → (folders_info, groups_dict, all_records).
+    2-pass 방식:
+      1단계: 모든 폴더의 파일명만 수집 (os.listdir만, I/O 최소)
+      2단계: 동일 파일명이 여러 폴더에 있으면 최신 것만 FileRecord 생성
+    """
     date_folders = discover_date_folders(rawdata_dir)
     if not date_folders:
         print(f"ERROR: {rawdata_dir}에 yymmdd 폴더가 없습니다.")
@@ -785,38 +787,68 @@ def scan_all(rawdata_dir):
     print(f"스캔 대상: {rawdata_dir}", flush=True)
     print(f"날짜 폴더: {len(date_folders)}개 ({date_folders[0][0]} ~ {date_folders[-1][0]})", flush=True)
 
-    groups = {}  # group_key → TestGroup
-    folder_stats = []  # 각 폴더별 통계
-    all_records = []  # 모든 FileRecord (Excel 검증용)
+    # ── 1단계: 파일명만 빠르게 수집 ──
+    print(f"\n[1단계] 폴더별 파일 목록 수집 중...", flush=True)
     total_folders = len(date_folders)
-    total_files = 0
+    folder_stats = []
+    # fname → (datestr, dirname, fullpath) : 같은 파일명이면 최신 폴더가 덮어쓴다
+    file_latest = {}  # filename → (datestr, dirname, fullpath)
+    # 이력 추적: fname → set of datestr (몇 개 폴더에 걸쳐 존재하는지)
+    file_history = defaultdict(set)
+    total_raw_files = 0
     t_start = time.time()
 
     for fi, (datestr, suffix, dirname, fullpath) in enumerate(date_folders, 1):
         files = list_xls_files(fullpath)
-        total_files += len(files)
+        total_raw_files += len(files)
         folder_stats.append({
             'date': datestr, 'suffix': suffix, 'dirname': dirname,
             'file_count': len(files),
         })
-
         for fname in files:
-            try:
-                rec = FileRecord(fname, datestr, dirname, fullpath)
-                key = rec.group_key
-                if key not in groups:
-                    groups[key] = TestGroup(key)
-                groups[key].add(rec)
-                all_records.append(rec)
-            except Exception as e:
-                print(f"  WARN: 파싱 실패 [{dirname}/{fname}]: {e}")
+            file_latest[fname] = (datestr, dirname, fullpath)
+            file_history[fname].add(datestr)
 
-        # 진행률 표시 (10개마다 또는 마지막)
         if fi % 10 == 0 or fi == total_folders:
             elapsed = time.time() - t_start
-            print(f"  스캔 진행: {fi}/{total_folders} 폴더 | "
-                  f"파일 {total_files}개 | 그룹 {len(groups)}개 | "
+            print(f"  목록 수집: {fi}/{total_folders} 폴더 | "
+                  f"누적 {total_raw_files}개 | "
+                  f"고유파일 {len(file_latest)}개 | "
                   f"{elapsed:.1f}초", flush=True)
+
+    dup_count = total_raw_files - len(file_latest)
+    print(f"  → 전체 {total_raw_files}개 중 고유 {len(file_latest)}개 "
+          f"(중복 {dup_count}개 제외)", flush=True)
+
+    # ── 2단계: 고유 파일만 FileRecord 생성 ──
+    print(f"\n[2단계] 고유 파일 메타데이터 파싱 중...", flush=True)
+    groups = {}
+    all_records = []
+    total_unique = len(file_latest)
+    t2_start = time.time()
+
+    for ui, (fname, (datestr, dirname, fullpath)) in enumerate(file_latest.items(), 1):
+        try:
+            rec = FileRecord(fname, datestr, dirname, fullpath)
+            # 이력 정보 보강: 이 파일이 존재했던 폴더 날짜들
+            rec.folder_dates_set = file_history[fname]
+            key = rec.group_key
+            if key not in groups:
+                groups[key] = TestGroup(key)
+            groups[key].add(rec)
+            all_records.append(rec)
+        except Exception as e:
+            print(f"  WARN: 파싱 실패 [{dirname}/{fname}]: {e}")
+
+        if ui % 100 == 0 or ui == total_unique:
+            elapsed = time.time() - t2_start
+            print(f"  파싱 진행: {ui}/{total_unique} 파일 | "
+                  f"그룹 {len(groups)}개 | "
+                  f"{elapsed:.1f}초", flush=True)
+
+    total_elapsed = time.time() - t_start
+    print(f"\n스캔 완료: {total_folders}폴더 → 고유 {total_unique}파일 → "
+          f"{len(groups)}그룹 | 총 {total_elapsed:.1f}초", flush=True)
 
     return date_folders, folder_stats, groups, all_records
 
@@ -848,11 +880,13 @@ def generate_report(date_folders, folder_stats, groups, rawdata_dir):
     pr(SEP)
 
     # ── 데이터 규모 ──
-    total_records = sum(g.file_count for g in all_groups)
+    total_unique = sum(g.file_count for g in all_groups)
+    total_raw = sum(s['file_count'] for s in folder_stats)
     pr()
     pr("■ 데이터 규모")
     pr(f"  날짜 폴더 수: {len(date_folders)}개 ({date_folders[0][0]} ~ {latest_date})")
-    pr(f"  총 파일 레코드: {total_records}개")
+    pr(f"  폴더 내 전체 파일: {total_raw}개 (중복 포함)")
+    pr(f"  고유 파일(최신 버전): {total_unique}개")
     pr(f"  고유 시험 항목(그룹): {len(all_groups)}개")
     pr(f"  최신 폴더 포함: {len(latest_groups)}개 / 미포함(과거만): {len(past_only)}개")
 
@@ -1159,17 +1193,18 @@ def main():
     # 콘솔 출력
     print(report_text)
 
-    # 파일 저장
-    txt_path = RAWDATA_DIR / '_신뢰성_종합현황.txt'
+    # 파일 저장 (실행 위치에 저장)
+    out_dir = Path.cwd()
+    txt_path = out_dir / '_신뢰성_종합현황.txt'
     with open(txt_path, 'w', encoding='utf-8') as f:
         f.write(report_text)
     print(f"\n텍스트 리포트 저장: {txt_path}")
 
-    csv_path = RAWDATA_DIR / '_신뢰성_종합현황.csv'
+    csv_path = out_dir / '_신뢰성_종합현황.csv'
     export_csv(groups, latest_date, csv_path)
     print(f"CSV 저장: {csv_path}")
 
-    json_path = RAWDATA_DIR / '_신뢰성_종합현황.json'
+    json_path = out_dir / '_신뢰성_종합현황.json'
     export_json(groups, latest_date, json_path)
     print(f"JSON 저장: {json_path}")
 

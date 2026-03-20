@@ -3144,6 +3144,32 @@ class BorderDelegate(QtWidgets.QStyledItemDelegate):
             painter.restore()
 
 
+class PathElideDelegate(QtWidgets.QStyledItemDelegate):
+    """경로 텍스트를 ElideMiddle로 표시하는 delegate.
+    전체 경로가 셀에 다 들어가지 않으면 중간을 ...으로 줄여 표시."""
+
+    def paint(self, painter, option, index):
+        # 기본 배경/선택 상태 그리기
+        self.initStyleOption(option, index)
+        painter.save()
+        # 배경
+        style = option.widget.style() if option.widget else QtWidgets.QApplication.style()
+        style.drawPrimitive(QtWidgets.QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget)
+        # 텍스트 ElideMiddle 처리
+        text = index.data(QtCore.Qt.ItemDataRole.DisplayRole) or ""
+        rect = style.subElementRect(QtWidgets.QStyle.SubElement.SE_ItemViewItemText, option, option.widget)
+        rect.adjust(2, 0, -2, 0)
+        fm = painter.fontMetrics()
+        elided = fm.elidedText(text, QtCore.Qt.TextElideMode.ElideMiddle, rect.width())
+        painter.setPen(option.palette.color(
+            QtGui.QPalette.ColorGroup.Normal if option.state & QtWidgets.QStyle.StateFlag.State_Enabled
+            else QtGui.QPalette.ColorGroup.Disabled,
+            QtGui.QPalette.ColorRole.HighlightedText if option.state & QtWidgets.QStyle.StateFlag.State_Selected
+            else QtGui.QPalette.ColorRole.Text))
+        painter.drawText(rect, QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft, elided)
+        painter.restore()
+
+
 class Ui_sitool(object):
     def setupUi(self, sitool):
         sitool.setObjectName("sitool")
@@ -3153,20 +3179,18 @@ class Ui_sitool(object):
         font.setPointSize(10)
         sitool.setFont(font)
         self.layoutWidget = QtWidgets.QWidget(parent=sitool)
-        self.layoutWidget.setGeometry(QtCore.QRect(12, 12, 1894, 984))
+        sitool.setCentralWidget(self.layoutWidget)
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
         self.layoutWidget.setFont(font)
         self.layoutWidget.setObjectName("layoutWidget")
         self.verticalLayout_39 = QtWidgets.QVBoxLayout(self.layoutWidget)
-        self.verticalLayout_39.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_39.setContentsMargins(6, 6, 6, 6)
         self.verticalLayout_39.setObjectName("verticalLayout_39")
         self.verticalLayout_38 = QtWidgets.QVBoxLayout()
         self.verticalLayout_38.setObjectName("verticalLayout_38")
         self.tabWidget = QtWidgets.QTabWidget(parent=self.layoutWidget)
-        self.tabWidget.setMinimumSize(QtCore.QSize(1890, 885))
-        self.tabWidget.setMaximumSize(QtCore.QSize(1890, 885))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3310,8 +3334,8 @@ class Ui_sitool(object):
         self.tb_summary.verticalHeader().setMinimumSectionSize(33)
         self.horizontalLayout_8.addWidget(self.tb_summary)
         self.tableWidget = QtWidgets.QTableWidget(parent=self.tab)
-        self.tableWidget.setMinimumSize(QtCore.QSize(1630, 80))
-        self.tableWidget.setMaximumSize(QtCore.QSize(1630, 80))
+        self.tableWidget.setMinimumSize(QtCore.QSize(400, 80))
+        self.tableWidget.setMaximumSize(QtCore.QSize(16777215, 80))
         font = QtGui.QFont()
         font.setPointSize(10)
         self.tableWidget.setFont(font)
@@ -3388,15 +3412,15 @@ class Ui_sitool(object):
         self.tableWidget.horizontalHeader().setVisible(False)
         self.tableWidget.horizontalHeader().setDefaultSectionSize(270)
         self.tableWidget.horizontalHeader().setHighlightSections(False)
-        self.tableWidget.horizontalHeader().setMinimumSectionSize(270)
+        self.tableWidget.horizontalHeader().setMinimumSectionSize(100)
+        self.tableWidget.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.verticalHeader().setDefaultSectionSize(25)
         self.tableWidget.verticalHeader().setMinimumSectionSize(25)
         self.horizontalLayout_8.addWidget(self.tableWidget)
         self.verticalLayout_5.addLayout(self.horizontalLayout_8)
         self.tb_channel = QtWidgets.QTableWidget(parent=self.tab)
-        self.tb_channel.setMinimumSize(QtCore.QSize(1860, 692))
-        self.tb_channel.setMaximumSize(QtCore.QSize(1860, 692))
+        self.tb_channel.setMinimumSize(QtCore.QSize(400, 200))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3406,7 +3430,8 @@ class Ui_sitool(object):
         self.tb_channel.setObjectName("tb_channel")
         self.tb_channel.horizontalHeader().setVisible(False)
         self.tb_channel.horizontalHeader().setDefaultSectionSize(232)
-        self.tb_channel.horizontalHeader().setMinimumSectionSize(232)
+        self.tb_channel.horizontalHeader().setMinimumSectionSize(100)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.tb_channel.verticalHeader().setVisible(False)
         self.tb_channel.verticalHeader().setDefaultSectionSize(43)
         self.tb_channel.verticalHeader().setMinimumSectionSize(43)
@@ -3420,7 +3445,10 @@ class Ui_sitool(object):
         self.horizontalLayout_172.setObjectName("horizontalLayout_172")
         self.horizontalLayout_112 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_112.setObjectName("horizontalLayout_112")
-        self.verticalLayout_6 = QtWidgets.QVBoxLayout()
+        # ── 왼쪽 패널: 스크롤 가능하도록 QScrollArea 래핑 ──
+        self._left_panel_widget = QtWidgets.QWidget()
+        self.verticalLayout_6 = QtWidgets.QVBoxLayout(self._left_panel_widget)
+        self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
         self.verticalLayout_6.setObjectName("verticalLayout_6")
         self.horizontalLayout_108 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_108.setObjectName("horizontalLayout_108")
@@ -3483,10 +3511,11 @@ class Ui_sitool(object):
         _hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         _hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        self.cycle_path_table.setColumnWidth(0, 100)
-        self.cycle_path_table.setColumnWidth(2, 100)
-        self.cycle_path_table.setColumnWidth(3, 60)
+        self.cycle_path_table.setColumnWidth(0, 55)
+        self.cycle_path_table.setColumnWidth(2, 70)
+        self.cycle_path_table.setColumnWidth(3, 55)
         self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
+        self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(9)
@@ -3611,9 +3640,12 @@ class Ui_sitool(object):
         self.horizontalLayout_107.setObjectName("horizontalLayout_107")
         self.verticalLayout_17 = QtWidgets.QVBoxLayout()
         self.verticalLayout_17.setObjectName("verticalLayout_17")
-        self.verticalLayout_14 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_14.setObjectName("verticalLayout_14")
-        self.dcirchk = QtWidgets.QRadioButton(parent=self.tab_5)
+        # ── DCIR 옵션 선택 GroupBox ──
+        self._dcir_groupbox = QtWidgets.QGroupBox("DCIR 옵션 선택", parent=self.tab_5)
+        _dcir_layout = QtWidgets.QVBoxLayout(self._dcir_groupbox)
+        _dcir_layout.setContentsMargins(6, 4, 6, 4)
+        _dcir_layout.setSpacing(2)
+        self.dcirchk = QtWidgets.QRadioButton(parent=self._dcir_groupbox)
         self.dcirchk.setMinimumSize(QtCore.QSize(300, 26))
         self.dcirchk.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
@@ -3621,8 +3653,8 @@ class Ui_sitool(object):
         font.setPointSize(10)
         self.dcirchk.setFont(font)
         self.dcirchk.setObjectName("dcirchk")
-        self.verticalLayout_14.addWidget(self.dcirchk)
-        self.pulsedcir = QtWidgets.QRadioButton(parent=self.tab_5)
+        _dcir_layout.addWidget(self.dcirchk)
+        self.pulsedcir = QtWidgets.QRadioButton(parent=self._dcir_groupbox)
         self.pulsedcir.setMinimumSize(QtCore.QSize(300, 26))
         self.pulsedcir.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
@@ -3631,10 +3663,9 @@ class Ui_sitool(object):
         self.pulsedcir.setFont(font)
         self.pulsedcir.setChecked(False)
         self.pulsedcir.setObjectName("pulsedcir")
-        self.verticalLayout_14.addWidget(self.pulsedcir)
-        self.mkdcir = QtWidgets.QRadioButton(parent=self.tab_5)
-        self.mkdcir.setMinimumSize(QtCore.QSize(300, 26))
-        self.mkdcir.setMaximumSize(QtCore.QSize(16777215, 26))
+        _dcir_layout.addWidget(self.pulsedcir)
+        self.mkdcir = QtWidgets.QRadioButton(parent=self._dcir_groupbox)
+        self.mkdcir.setMinimumSize(QtCore.QSize(300, 44))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3642,13 +3673,21 @@ class Ui_sitool(object):
         self.mkdcir.setCheckable(True)
         self.mkdcir.setChecked(True)
         self.mkdcir.setObjectName("mkdcir")
-        self.verticalLayout_14.addWidget(self.mkdcir)
+        _dcir_layout.addWidget(self.mkdcir)
         # DCIR 라디오를 전용 ButtonGroup으로 묶어 개별/통합 라디오와 분리
         self.dcir_mode_group = QtWidgets.QButtonGroup(self.tab_5)
         self.dcir_mode_group.addButton(self.dcirchk)
         self.dcir_mode_group.addButton(self.pulsedcir)
         self.dcir_mode_group.addButton(self.mkdcir)
-        self.dcirchk_2 = QtWidgets.QCheckBox(parent=self.tab_5)
+        # 하위 호환: 기존 verticalLayout_14 참조 유지
+        self.verticalLayout_14 = _dcir_layout
+        self.verticalLayout_17.addWidget(self._dcir_groupbox)
+        # ── 그래프 옵션 GroupBox ──
+        self._graph_opt_groupbox = QtWidgets.QGroupBox("그래프 옵션", parent=self.tab_5)
+        self._graph_opt_layout = QtWidgets.QVBoxLayout(self._graph_opt_groupbox)
+        self._graph_opt_layout.setContentsMargins(6, 4, 6, 4)
+        self._graph_opt_layout.setSpacing(4)
+        self.dcirchk_2 = QtWidgets.QCheckBox(parent=self._graph_opt_groupbox)
         self.dcirchk_2.setMinimumSize(QtCore.QSize(150, 26))
         self.dcirchk_2.setMaximumSize(QtCore.QSize(16777215, 26))
         font = QtGui.QFont()
@@ -3658,8 +3697,7 @@ class Ui_sitool(object):
         font.setWeight(50)
         self.dcirchk_2.setFont(font)
         self.dcirchk_2.setObjectName("dcirchk_2")
-        self.verticalLayout_14.addWidget(self.dcirchk_2)
-        self.verticalLayout_17.addLayout(self.verticalLayout_14)
+        self._graph_opt_layout.addWidget(self.dcirchk_2)
         # ── 입력필드 2×2 그리드 배치 (Y축 최대/최소, X축 최대, DCIR scale) ──
         _input_font = QtGui.QFont("맑은 고딕", 10)
         self._cycle_input_grid = QtWidgets.QGridLayout()
@@ -3712,7 +3750,8 @@ class Ui_sitool(object):
         self._cycle_input_grid.addWidget(self.dcirscale, 1, 3)
         self._cycle_input_grid.setColumnStretch(1, 1)
         self._cycle_input_grid.setColumnStretch(3, 1)
-        self.verticalLayout_17.addLayout(self._cycle_input_grid)
+        self._graph_opt_layout.addLayout(self._cycle_input_grid)
+        self.verticalLayout_17.addWidget(self._graph_opt_groupbox)
         # 하위 호환: 기존 레이아웃 참조 유지
         self.horizontalLayout_86 = self._cycle_input_grid
         self.horizontalLayout_87 = self._cycle_input_grid
@@ -4005,16 +4044,24 @@ class Ui_sitool(object):
         self.horizontalLayout_17.addLayout(self.verticalLayout_4)
         self.tabWidget_2.addTab(self.tab_6, "")
         self.verticalLayout_6.addWidget(self.tabWidget_2)
-        self.horizontalLayout_112.addLayout(self.verticalLayout_6)
+        self.verticalLayout_6.addStretch(1)
+        # 왼쪽 패널을 스크롤 영역으로 래핑
+        self._left_scroll = QtWidgets.QScrollArea(parent=self.CycTab)
+        self._left_scroll.setWidget(self._left_panel_widget)
+        self._left_scroll.setWidgetResizable(True)
+        self._left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self._left_scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        self._left_panel_widget.setStyleSheet("background: transparent;")
+        self.horizontalLayout_112.addWidget(self._left_scroll, 1)
         self.cycle_tab = QtWidgets.QTabWidget(parent=self.CycTab)
-        self.cycle_tab.setMinimumSize(QtCore.QSize(1350, 830))
-        self.cycle_tab.setMaximumSize(QtCore.QSize(1350, 830))
+        self.cycle_tab.setFixedSize(QtCore.QSize(1350, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
         self.cycle_tab.setFont(font)
         self.cycle_tab.setObjectName("cycle_tab")
-        self.horizontalLayout_112.addWidget(self.cycle_tab)
+        self.horizontalLayout_112.addWidget(self.cycle_tab, 0)
         self.horizontalLayout_172.addLayout(self.horizontalLayout_112)
         self.tabWidget.addTab(self.CycTab, "")
         self.tab_2 = QtWidgets.QWidget()
@@ -8210,7 +8257,9 @@ class Ui_sitool(object):
         self.pybamm_left_scroll.setMinimumWidth(360)
         self.pybamm_left_scroll.setMaximumWidth(360)
         self.pybamm_left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.pybamm_left_scroll.setStyleSheet("QScrollArea { background: transparent; }")
         self.pybamm_left_container = QtWidgets.QWidget()
+        self.pybamm_left_container.setStyleSheet("background: transparent;")
         self.pybamm_left_panel = QtWidgets.QVBoxLayout(self.pybamm_left_container)
         self.pybamm_left_panel.setObjectName("pybamm_left_panel")
         # [1] 모델 선택 GroupBox
@@ -8709,7 +8758,7 @@ class Ui_sitool(object):
         self.pybamm_main_layout.addWidget(self.pybamm_result_group, 1)  # stretch=1
         self.tabWidget.addTab(self.PyBaMMTab, "")
         # ===== PyBaMM 탭 끝 =====
-        self.verticalLayout_38.addWidget(self.tabWidget)
+        self.verticalLayout_38.addWidget(self.tabWidget, 1)
         self.horizontalLayout_23 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_23.setObjectName("horizontalLayout_23")
         self.mount_toyo = QtWidgets.QPushButton(parent=self.layoutWidget)
@@ -8828,6 +8877,7 @@ class Ui_sitool(object):
         self.unmount_all.setFont(font)
         self.unmount_all.setObjectName("unmount_all")
         self.horizontalLayout_23.addWidget(self.unmount_all)
+        self.horizontalLayout_23.addStretch(1)
         self.verticalLayout_38.addLayout(self.horizontalLayout_23)
         self.verticalLayout_39.addLayout(self.verticalLayout_38)
         self.line_7 = QtWidgets.QFrame(parent=self.layoutWidget)
@@ -8869,8 +8919,8 @@ class Ui_sitool(object):
         self.figsaveok.setObjectName("figsaveok")
         self.horizontalLayout_13.addWidget(self.figsaveok)
         self.progressBar = QtWidgets.QProgressBar(parent=self.layoutWidget)
-        self.progressBar.setMinimumSize(QtCore.QSize(1400, 30))
-        self.progressBar.setMaximumSize(QtCore.QSize(1400, 30))
+        self.progressBar.setMinimumSize(QtCore.QSize(200, 30))
+        self.progressBar.setMaximumSize(QtCore.QSize(16777215, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -8983,8 +9033,8 @@ class Ui_sitool(object):
         self.tcyclerng.setText(_translate("sitool", "0"))
         self.dcirscalelb.setText(_translate("sitool", "  DCIR scale 늘리기 (x ?배)"))
         self.dcirscale.setText(_translate("sitool", "0"))
-        self.radio_indiv.setText(_translate("sitool", "개별"))
-        self.radio_overall.setText(_translate("sitool", "통합"))
+        self.radio_indiv.setText(_translate("sitool", "개별 탭"))
+        self.radio_overall.setText(_translate("sitool", "통합 탭"))
         self.chk_link_cycle.setText(_translate("sitool", "연결처리"))
         self.btn_expand_path.setToolTip(_translate("sitool", "경로 입력 박스 펼치기/접기"))
         self.cycle_confirm.setText(_translate("sitool", "Cycle 분석"))
@@ -9395,6 +9445,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.btn_expand_path.clicked.connect(self._toggle_stepnum2_expand)
         self.btn_load_path.clicked.connect(self._load_path_file_to_table)
         self.btn_save_path.clicked.connect(self._save_table_to_path_file)
+        # 셀 편집 시 툴팁 자동 갱신
+        self.cycle_path_table.cellChanged.connect(self._update_cell_tooltip)
         # cycle_path_table Ctrl+C / Ctrl+V / Delete 단축키
         _tbl = self.cycle_path_table
         _tbl_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, _tbl)
@@ -11016,12 +11068,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                  3) 폴더 선택 대화상자
         """
         groups = []
-        root = Tk()
-        root.withdraw()
+        link_mode = self.chk_link_cycle.isChecked()
 
         if self.chk_cyclepath.isChecked():
             # 지정Path: 다중 파일 선택
+            root = Tk()
+            root.withdraw()
             filepaths = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
+            root.destroy()
             if not filepaths:
                 return groups
 
@@ -11063,45 +11117,47 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         elif self._has_table_data():
             # 테이블에서 읽기
             table_rows = self._get_table_rows()
-            link_mode = self.chk_link_cycle.isChecked()
 
             if link_mode:
-                # 연결 모드: 경로명(name)이 같으면 같은 그룹
-                name_order = OrderedDict()
-                for row in table_rows:
-                    key = row['name'] if row['name'] else row['path']
-                    name_order.setdefault(key, []).append(row)
-                for gname, items in name_order.items():
-                    channels_per_row = [_parse_channel_str(r['channel']) for r in items]
-                    has_channels = any(chs for chs in channels_per_row)
+                # 연결 모드: 모든 행을 하나의 연결 그룹으로 묶음
+                all_paths = [r['path'] for r in table_rows]
+                all_pnames = [r['name'] for r in table_rows]
+                all_channels = [_parse_channel_str(r['channel']) for r in table_rows]
+                has_channels = any(chs for chs in all_channels)
+                # 소스 파일명 추출 (mAh 용량 자동 감지용)
+                _src = ''
+                for r in table_rows:
+                    if 'mAh' in r.get('path', '') or 'mAh' in r.get('name', ''):
+                        _src = r['path']
+                        break
 
-                    if has_channels:
-                        # 채널 위치 기반 분할: 같은 위치끼리 연결, '-'=해당 경로 없음
-                        max_pos = max((len(chs) for chs in channels_per_row), default=0)
-                        for pos in range(max_pos):
-                            pos_paths, pos_pnames, pos_chs = [], [], []
-                            for row_idx, row in enumerate(items):
-                                chs = channels_per_row[row_idx]
-                                if pos < len(chs) and chs[pos] != '-':
-                                    pos_paths.append(row['path'])
-                                    pos_pnames.append(row['name'])
-                                    pos_chs.append([chs[pos]])
-                            if pos_paths:
-                                groups.append(CycleGroup(
-                                    name=gname, paths=pos_paths, path_names=pos_pnames,
-                                    is_link=len(pos_paths) > 1, data_type='folder',
-                                    file_idx=0, source_file='',
-                                    per_path_channels=pos_chs,
-                                ))
-                    else:
-                        # 채널 미지정: 기존 동작
-                        paths = [x['path'] for x in items]
-                        pnames = [x['name'] for x in items]
-                        groups.append(CycleGroup(
-                            name=gname, paths=paths, path_names=pnames,
-                            is_link=len(paths) > 1, data_type='folder',
-                            file_idx=0, source_file=''
-                        ))
+                if has_channels:
+                    # 채널 위치 기반 분할: 같은 위치끼리 연결, '-'=해당 경로 없음
+                    max_pos = max((len(chs) for chs in all_channels), default=0)
+                    for pos in range(max_pos):
+                        pos_paths, pos_pnames, pos_chs = [], [], []
+                        for row_idx, row in enumerate(table_rows):
+                            chs = all_channels[row_idx]
+                            if pos < len(chs) and chs[pos] != '-':
+                                pos_paths.append(row['path'])
+                                pos_pnames.append(row['name'])
+                                pos_chs.append([chs[pos]])
+                        if pos_paths:
+                            groups.append(CycleGroup(
+                                name=all_pnames[0] or os.path.basename(all_paths[0]),
+                                paths=pos_paths, path_names=pos_pnames,
+                                is_link=len(pos_paths) > 1, data_type='folder',
+                                file_idx=0, source_file=_src,
+                                per_path_channels=pos_chs,
+                            ))
+                else:
+                    # 채널 미지정: 모든 경로를 하나의 연결 그룹으로
+                    groups.append(CycleGroup(
+                        name=all_pnames[0] or os.path.basename(all_paths[0]),
+                        paths=all_paths, path_names=all_pnames,
+                        is_link=len(all_paths) > 1, data_type='folder',
+                        file_idx=0, source_file=_src
+                    ))
             else:
                 # 개별 모드: 각 행 = 개별 그룹
                 for row in table_rows:
@@ -11127,13 +11183,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         ))
 
         else:
-            # 폴더 선택: 항상 개별
+            # 폴더 선택
+            root = Tk()
+            root.withdraw()
             folders = multi_askopendirnames()
-            for fp in folders:
+            root.destroy()
+            if link_mode and len(folders) > 1:
+                # 연결 모드: 선택한 모든 폴더를 하나의 연결 그룹으로
                 groups.append(CycleGroup(
-                    name=os.path.basename(fp), paths=[fp], path_names=[''],
-                    data_type='folder', file_idx=0, source_file=''
+                    name=os.path.basename(folders[0]),
+                    paths=list(folders),
+                    path_names=[os.path.basename(fp) for fp in folders],
+                    is_link=True, data_type='folder',
+                    file_idx=0, source_file=''
                 ))
+            else:
+                for fp in folders:
+                    groups.append(CycleGroup(
+                        name=os.path.basename(fp), paths=[fp], path_names=[''],
+                        data_type='folder', file_idx=0, source_file=''
+                    ))
 
         return groups
 
@@ -11164,8 +11233,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 파일 저장 설정
         save_file_name = None
         if self.saveok.isChecked():
+            root = Tk()
+            root.withdraw()
             save_file_name = filedialog.asksaveasfilename(
                 initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            root.destroy()
             if save_file_name:
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.cycle_confirm.setEnabled(True)
@@ -11694,15 +11766,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_no = 0
 
     def _toggle_stepnum2_expand(self):
-        """경로 테이블 펼치기/접기 토글"""
+        """경로 테이블 펼치기/접기 토글 (스크롤 영역 내에서 아래 위젯 자연스럽게 이동)"""
         if self._stepnum2_expanded:
             self.cycle_path_table.setMaximumHeight(120)
             self.btn_expand_path.setText("▼")
             self._stepnum2_expanded = False
         else:
-            self.cycle_path_table.setMaximumHeight(400)
+            # 행 수에 맞춰 높이 계산 (헤더 + 행*22px + 여백)
+            row_count = max(self.cycle_path_table.rowCount(), 5)
+            header_h = self.cycle_path_table.horizontalHeader().height()
+            needed = header_h + row_count * 22 + 4
+            self.cycle_path_table.setMaximumHeight(max(needed, 200))
             self.btn_expand_path.setText("▲")
             self._stepnum2_expanded = True
+
+    def _update_cell_tooltip(self, row: int, col: int) -> None:
+        """셀 편집 시 툴팁을 셀 텍스트로 자동 갱신"""
+        item = self.cycle_path_table.item(row, col)
+        if item:
+            item.setToolTip(item.text())
 
     # ── 테이블 ↔ 데이터 유틸리티 ──
 
@@ -11739,10 +11821,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """dict 리스트를 테이블에 채움. 필요 시 행 추가."""
         self.cycle_path_table.setRowCount(max(len(rows), 5))
         for r, row in enumerate(rows):
-            self.cycle_path_table.setItem(r, 0, QtWidgets.QTableWidgetItem(row.get('name', '')))
-            self.cycle_path_table.setItem(r, 1, QtWidgets.QTableWidgetItem(row.get('path', '')))
-            self.cycle_path_table.setItem(r, 2, QtWidgets.QTableWidgetItem(row.get('channel', '')))
-            self.cycle_path_table.setItem(r, 3, QtWidgets.QTableWidgetItem(row.get('capacity', '')))
+            for col, key in enumerate(['name', 'path', 'channel', 'capacity']):
+                val = row.get(key, '')
+                item = QtWidgets.QTableWidgetItem(val)
+                item.setToolTip(val)
+                self.cycle_path_table.setItem(r, col, item)
 
     def _clear_table(self):
         """테이블 내용 초기화"""
