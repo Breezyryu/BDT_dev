@@ -208,6 +208,8 @@ class CycleGroup:
     file_idx: int = 0                  # 출처 path 파일 번호
     source_file: str = ''              # 원본 path 파일 경로 (mAh 추출용)
     per_path_channels: list = field(default_factory=list)  # [[ch1],[ch2]] path별 채널 필터 (빈=전체)
+    channel_link_map: dict = field(default_factory=dict)  # {norm_ch: unified_sub} 위치 기반 채널 병합 매핑
+    per_path_capacities: list = field(default_factory=list)  # [float, ...] path별 테이블 입력 용량 (빈=[])
 
 
 def _normalize_ch(s):
@@ -227,8 +229,9 @@ def _parse_channel_str(ch_str):
         part = part.strip()
         if part == '-' or part == '':
             result.append('-')
-        else:
+        elif part.isdigit():
             result.append(_normalize_ch(part))
+        # 숫자가 아닌 문자열(예: processed_data)은 무시
     return result
 
 # 여러 directory 선택하는 코드
@@ -251,6 +254,13 @@ def multi_askopendirnames():
     return directories
 
 # 대괄호 안의 문자 추출
+def _is_channel_folder(name):
+    """서브폴더가 채널 폴더인지 판별: [xxx] 형식이거나 순수 숫자 폴더만 True"""
+    if re.search(r'\[.*?\]', name):
+        return True
+    stripped = name.strip()
+    return stripped.isdigit()
+
 def extract_text_in_brackets(input_string):
     # 정규 표현식으로 대괄호 안의 문자 추출
     match = re.search(r'\[(.*?)\]', input_string)
@@ -402,16 +412,16 @@ def graph_base_parameter(graph_ax, xlabel, ylabel):
 
 # Cycle 그래프 기본, x축, y축 min, max 및 범위 설정
 def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xscale, overall_xlimit):
-    if xscale == 0 and len(x_data) != 0:
-        xlimit = max(x_data)
-        if xlimit < overall_xlimit:
-            xlimit = overall_xlimit
-        xrangemax = (xlimit // 100 + 2) * 100
-    else:
-        xlimit = xscale
+    # xscale==0 (자동 모드): xlim/xtick은 _auto_adjust_cycle_axes에서 일괄 설정
+    if xscale != 0:
         xrangemax = xscale
-    xrangegap = ((xlimit >= 400) + (xlimit >= 800) + (xlimit >= 1500) * 2 + (xlimit >= 3000) * 2 + (xlimit >= 6000) * 4 + 1) * 50
-    ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
+        xlimit = xscale
+        xrangegap = ((xlimit >= 400) + (xlimit >= 800) + (xlimit >= 1500) * 2 + (xlimit >= 3000) * 2 + (xlimit >= 6000) * 4 + 1) * 50
+        if xrangemax > 0 and xrangegap > 0:
+            while xrangemax / xrangegap > 7:
+                xrangegap += 50
+        ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
+        ax.set_xlim(-xrangemax * 0.02, xrangemax * 1.02)
     if highlimit != 0:
         ax.set_yticks(np.arange(lowlimit, highlimit, y_gap))
         ax.set_ylim(lowlimit, highlimit)
@@ -461,14 +471,14 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
     artists.append(graph_cycle(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
                       "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
     artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
-                      "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, color))
+                      "Cycle", "Average/Discharge Rest Voltage (V)", temp_lgnd, xscale, color))
     _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
     _dcir_es = THEME['SCATTER_EMPTY_SIZE'] * 3
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
         artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "DC-IR (mΩ)", "_nolegend_", xscale, color, _size=_dcir_es))
+                        "Cycle", "DC-IR @Discharge (mΩ)", "_nolegend_", xscale, color, _size=_dcir_es))
         artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
+                    "Cycle", "DC-IR @Discharge (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
         # DCIR scatter 점을 잇는 라인
         _dcir_valid = df.NewData.soc70_dcir.dropna()
         if len(_dcir_valid) > 1:
@@ -480,7 +490,7 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
             artists.append(_ln)
     else:
         artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
+                    "Cycle", "DC-IR @Discharge(mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
         _dcir_only = df.NewData.dcir.dropna()
         if len(_dcir_only) > 1:
             _ln, = ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
@@ -620,6 +630,90 @@ def place_dcir_labels(ax4):
         ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw)
     if dcir_median is not None:
         ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
+
+def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
+    """사이클 그래프 축 범위 자동 조정
+    - xlim: 전체 채널 데이터 기반 x축 동기화 (마지막 채널 덮어쓰기 방지)
+    - ax1: 방전용량비 ylim 동적 확장 (데이터가 설정 범위 밖일 때)
+    - ax4: DC-IR ylim 상한 제한 (반쪽셀 등 이상치 방지)
+    - 빈 축: 기본 범위 유지
+    """
+    ax1, ax2, ax3, ax4, ax5, ax6 = axes_list
+
+    # ── 전체 채널 x축 범위 동기화 (xscale=0 자동 모드일 때) ──
+    if xscale == 0:
+        all_x = []
+        for ax in [ax1, ax2, ax3, ax4, ax5, ax6]:
+            for coll in ax.collections:
+                offsets = coll.get_offsets()
+                if len(offsets) > 0:
+                    xs = offsets[:, 0]
+                    valid = xs[~np.isnan(xs)]
+                    if len(valid) > 0:
+                        all_x.append(np.max(valid))
+        if all_x:
+            xlimit = max(all_x)
+            xrangemax = (xlimit // 100 + 2) * 100
+            xrangegap = ((xlimit >= 400) + (xlimit >= 800) + (xlimit >= 1500) * 2
+                         + (xlimit >= 3000) * 2 + (xlimit >= 6000) * 4 + 1) * 50
+            if xrangemax > 0 and xrangegap > 0:
+                while xrangemax / xrangegap > 7:
+                    xrangegap += 50
+            for ax in [ax1, ax2, ax3, ax4, ax5, ax6]:
+                ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
+                ax.set_xlim(-xrangemax * 0.02, xrangemax * 1.02)
+
+    # ── ax1 (Discharge Capacity Ratio) ylim 동적 조정 ──
+    cap_ys = []
+    for coll in ax1.collections:
+        offsets = coll.get_offsets()
+        if len(offsets) > 0:
+            ys = np.array(offsets[:, 1], dtype=float)
+            valid = ys[~np.isnan(ys)]
+            if len(valid) > 0:
+                cap_ys.extend(valid.tolist())
+    if cap_ys:
+        ymin_data = min(cap_ys)
+        ymax_data = max(cap_ys)
+        step = 0.05
+        new_low = ylimitlow
+        new_high = ylimithigh
+        # 데이터가 하한 아래로 벗어나면 확장
+        if ymin_data < ylimitlow + step:
+            new_low = np.floor(ymin_data / step) * step - step
+            new_low = round(max(new_low, 0), 2)
+        # 데이터가 상한 위로 벗어나면 확장
+        if ymax_data > ylimithigh - step:
+            new_high = np.ceil(ymax_data / step) * step + step
+            new_high = round(new_high, 2)
+        # y 범위가 넓으면 step 자동 확대 (tick 최대 ~10개 이내)
+        y_range = new_high - new_low
+        if y_range / step > 10:
+            step = round(np.ceil(y_range / 10 / 0.05) * 0.05, 2)
+        if new_low != ylimitlow or new_high != ylimithigh:
+            ax1.set_ylim(new_low, new_high)
+            ax1.set_yticks(np.arange(new_low, new_high + step / 2, step))
+
+    # ── ax4 (DC-IR) ylim 상한 제한 (500mΩ 초과 시 보정) ──
+    dcir_ylim = ax4.get_ylim()
+    if dcir_ylim[1] > 500:
+        dcir_ys = []
+        for coll in ax4.collections:
+            offsets = coll.get_offsets()
+            if len(offsets) > 0:
+                ys = np.array(offsets[:, 1], dtype=float)
+                valid = ys[(~np.isnan(ys)) & (ys > 0)]
+                if len(valid) > 0:
+                    dcir_ys.extend(valid.tolist())
+        if dcir_ys:
+            cap = max(max(dcir_ys) * 1.3, 240)
+        else:
+            cap = 240
+        cap = int(np.ceil(cap / 20) * 20)
+        gap = max(int(np.ceil(cap / 6 / 20) * 20), 20)
+        ax4.set_ylim(0, cap)
+        ax4.set_yticks(np.arange(0, cap + gap, gap))
+
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
@@ -1084,6 +1178,416 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
         cycle_map[logical_num] = (first_file, dchg_ori_max)
 
     return cycle_map, mincapacity
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 사이클 카테고리 분류 (경로별 RPT / Rss / 가속수명 / GITT / initial 판별)
+# ═══════════════════════════════════════════════════════════════════
+
+CATEGORY_LABELS = {
+    'RPT': 'RPT (0.2C 충방전)',
+    'Rss': 'Rss (DCIR pulse)',
+    '가속수명': '가속수명 (멀티스텝 충전)',
+    'GITT': 'GITT (펄스 그룹)',
+    'initial': 'initial (초기 반사이클)',
+    'unknown': 'unknown (분류불가)',
+}
+
+
+def _classify_single_pne_cycle(group: pd.DataFrame) -> dict:
+    """단일 PNE raw cycle의 기본 정보 및 카테고리 분류."""
+    n_charge = int((group['StepType'] == 1).sum())
+    n_discharge = int((group['StepType'] == 2).sum())
+    n_rest = int((group['StepType'] == 3).sum())
+    has_es78 = 78 in group['EndState'].values
+    total_steps = len(group)
+
+    # 주 동작: REST 제외 후 어떤 동작인지 판별
+    active_steps = [int(s) for s in group['StepType'].values if int(s) in (1, 2)]
+    if not active_steps:
+        action = 'REST_ONLY'
+    elif all(s == 1 for s in active_steps):
+        action = 'CHG_ONLY'
+    elif all(s == 2 for s in active_steps):
+        action = 'DCHG_ONLY'
+    else:
+        action = 'MIXED'
+
+    if n_charge == 0 and n_discharge == 0:
+        cat = 'initial'
+    elif action in ('CHG_ONLY', 'DCHG_ONLY'):
+        cat = '_pulse'  # GITT 병합 대상
+    elif has_es78:
+        cat = 'Rss'
+    elif n_charge >= 2 and n_discharge >= 1:
+        cat = '가속수명'
+    elif n_charge == 1 and n_discharge >= 1:
+        cat = 'RPT'
+    else:
+        cat = 'unknown'
+
+    return {
+        'n_charge': n_charge, 'n_discharge': n_discharge, 'n_rest': n_rest,
+        'total_steps': total_steps, 'has_es78': has_es78,
+        'action': action, 'category': cat,
+    }
+
+
+def _merge_pulse_groups(raw_results: list[dict]) -> list[dict]:
+    """연속 동일 동작 펄스(_pulse)를 GITT 논리 사이클로 병합."""
+    if not raw_results:
+        return []
+
+    # 1단계: 연속 _pulse 그룹화
+    segments: list[tuple] = []
+    for r in raw_results:
+        if r['category'] == '_pulse':
+            if segments and segments[-1][0] == 'pulse' and segments[-1][2] == r['action']:
+                segments[-1][1].append(r)
+            else:
+                segments.append(('pulse', [r], r['action']))
+        else:
+            segments.append(('normal', [r], None))
+
+    # 2단계: 인접 펄스 그룹 쌍 → GITT 논리 사이클로 병합
+    merged = []
+    si = 0
+    while si < len(segments):
+        seg_type, items, action = segments[si]
+        if seg_type == 'normal':
+            for r in items:
+                merged.append(r)
+            si += 1
+            continue
+
+        paired_items = list(items)
+        has_multi_pulse = len(items) >= 2
+        if (si + 1 < len(segments)
+                and segments[si + 1][0] == 'pulse'
+                and segments[si + 1][2] != action):
+            si += 1
+            paired_items.extend(segments[si][1])
+            if len(segments[si][1]) >= 2:
+                has_multi_pulse = True
+
+        if not has_multi_pulse:
+            for r in paired_items:
+                r['category'] = 'initial'
+                merged.append(r)
+            si += 1
+            continue
+
+        raw_cycles = [r['cycle'] for r in paired_items]
+        merged.append({
+            'cycle': raw_cycles[0],
+            'category': 'GITT',
+            'n_charge': sum(r['n_charge'] for r in paired_items),
+            'n_discharge': sum(r['n_discharge'] for r in paired_items),
+            'n_rest': sum(r['n_rest'] for r in paired_items),
+            'total_steps': sum(r['total_steps'] for r in paired_items),
+            'raw_cycles': len(paired_items),
+            'raw_range': f'{min(raw_cycles)}-{max(raw_cycles)}',
+        })
+        si += 1
+
+    return merged
+
+
+def classify_pne_cycles(df: pd.DataFrame, capacity: int) -> list[dict]:
+    """PNE SaveEndData 기반 사이클별 카테고리 분류.
+
+    분류 기준 (StepType==8 루프마커 제외 후):
+      - 충전+방전 포함, n_charge >= 2  → 가속수명
+      - 충전+방전 포함, EndState==78    → Rss
+      - 충전+방전 포함, n_charge == 1   → RPT
+      - 단일 동작 펄스 반복             → GITT
+      - 방전만                          → initial
+    """
+    real = df[df['StepType'] != 8].copy()
+    raw_results = []
+    for cyc, group in real.groupby('TotlCycle'):
+        info = _classify_single_pne_cycle(group)
+        info['cycle'] = int(cyc)
+        raw_results.append(info)
+
+    merged = _merge_pulse_groups(raw_results)
+    results = []
+    for r in merged:
+        entry = {
+            'cycle': r['cycle'],
+            'category': r['category'],
+            'n_charge': r['n_charge'],
+            'n_discharge': r['n_discharge'],
+        }
+        if 'raw_cycles' in r:
+            entry['raw_cycles'] = r['raw_cycles']
+            entry['raw_range'] = r['raw_range']
+        results.append(entry)
+    return results
+
+
+def classify_toyo_cycles(df: pd.DataFrame, capacity: int) -> list[dict]:
+    """Toyo CAPACITY.LOG 기반 사이클별 카테고리 분류.
+
+    분류 기준 (충전 행 수 기반):
+      - chg_rows == 0 → initial
+      - chg_rows == 1 → RPT
+      - chg_rows >= 2 → 가속수명
+    """
+    results = []
+    if df is None or df.empty:
+        return results
+
+    conds = df['Condition'].values
+    caps = df['Cap[mAh]'].values
+
+    # 연속 동일 Condition 병합
+    groups = []
+    i = 0
+    while i < len(df):
+        start = i
+        cond = int(conds[i])
+        while i < len(df) and int(conds[i]) == cond:
+            i += 1
+        total_cap = float(caps[start:i].sum())
+        n_rows = i - start
+        groups.append((cond, n_rows, total_cap))
+
+    gi = 0
+    cycle_num = 0
+    while gi < len(groups):
+        cond, n, cap = groups[gi]
+        if cond == 1:
+            chg_rows, chg_cap = n, cap
+            if gi + 1 < len(groups) and groups[gi + 1][0] == 2:
+                dchg_rows, dchg_cap = groups[gi + 1][1], groups[gi + 1][2]
+                gi += 2
+            else:
+                dchg_rows, dchg_cap = 0, 0.0
+                gi += 1
+        elif cond == 2:
+            chg_rows, chg_cap = 0, 0.0
+            dchg_rows, dchg_cap = n, cap
+            gi += 1
+        else:
+            gi += 1
+            continue
+
+        cycle_num += 1
+        if chg_rows == 0:
+            cat = 'initial'
+        elif chg_rows == 1:
+            cat = 'RPT'
+        elif chg_rows >= 2:
+            cat = '가속수명'
+        else:
+            cat = 'unknown'
+
+        results.append({
+            'cycle': cycle_num,
+            'category': cat,
+            'chg_rows': chg_rows,
+            'dchg_rows': dchg_rows,
+            'chg_cap': round(chg_cap, 1),
+            'dchg_cap': round(dchg_cap, 1),
+        })
+    return results
+
+
+def detect_schedule_pattern(classified: list[dict]) -> str:
+    """카테고리 시퀀스의 RLE → 패턴 문자열 생성."""
+    if not classified:
+        return ''
+    categories = [c['category'] for c in classified]
+    rle = []
+    current = categories[0]
+    count = 1
+    for cat in categories[1:]:
+        if cat == current:
+            count += 1
+        else:
+            rle.append((current, count))
+            current = cat
+            count = 1
+    rle.append((current, count))
+    parts = [f'{cat}×{n}' if n > 1 else cat for cat, n in rle]
+    return ' → '.join(parts)
+
+
+def detect_test_type(counts: dict) -> str:
+    """카테고리 분포로 시험 종류 추정."""
+    total = sum(counts.values())
+    if total == 0:
+        return '데이터 없음'
+    accel = counts.get('가속수명', 0)
+    rss = counts.get('Rss', 0)
+    rpt = counts.get('RPT', 0)
+    gitt = counts.get('GITT', 0)
+    if gitt > total * 0.3:
+        return 'GITT 시험'
+    if accel > total * 0.5:
+        return '가속수명 시험'
+    if rss > total * 0.3:
+        return 'Rss/DCIR 시험'
+    if rpt > total * 0.5:
+        return 'RPT 전용'
+    if accel > 0 and rss > 0:
+        return '가속수명 + Rss 복합'
+    return '기타'
+
+
+def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None:
+    """단일 채널 폴더의 사이클 카테고리를 분류.
+
+    Parameters
+    ----------
+    channel_path : str
+        채널 폴더 경로 (예: rawdata/dataset/[032])
+    capacity : float
+        추정 용량(mAh). 0이면 자동 감지 시도.
+
+    Returns
+    -------
+    dict | None
+        {
+            'cycler': 'Toyo' | 'PNE',
+            'total_cycles': int,
+            'counts': {'RPT': n, '가속수명': n, ...},
+            'classified': [{'cycle': 1, 'category': 'RPT', ...}, ...],
+            'schedule_pattern': str,
+            'test_type': str,
+        }
+    """
+    # Pattern 폴더는 채널 서브폴더가 아닌 상위 데이터 경로에 있음
+    parent_path = os.path.dirname(channel_path)
+    is_pne = check_cycler(parent_path)
+
+    if is_pne:
+        # PNE: SaveEndData.csv 로딩
+        restore_path = os.path.join(channel_path, 'Restore')
+        if not os.path.isdir(restore_path):
+            return None
+        save_end_file = None
+        try:
+            for f in os.listdir(restore_path):
+                if 'SaveEndData' in f and f.endswith('.csv'):
+                    save_end_file = f
+                    break
+        except OSError:
+            return None
+        if not save_end_file:
+            return None
+        fp = os.path.join(restore_path, save_end_file)
+        try:
+            df = pd.read_csv(fp, header=None, encoding='cp949', on_bad_lines='skip')
+        except Exception:
+            return None
+        if df.shape[1] < 28:
+            return None
+        summary = df[[27, 2, 6, 9, 10, 11, 17]].copy()
+        summary.columns = ['TotlCycle', 'StepType', 'EndState', 'Current', 'ChgCap', 'DchgCap', 'StepTime']
+        classified = classify_pne_cycles(summary, int(capacity))
+    else:
+        # Toyo: capacity.log 로딩
+        cap_log_path = os.path.join(channel_path, 'capacity.log')
+        if not os.path.isfile(cap_log_path):
+            # 대소문자 차이 허용
+            for f in os.listdir(channel_path):
+                if f.upper() == 'CAPACITY.LOG':
+                    cap_log_path = os.path.join(channel_path, f)
+                    break
+            else:
+                return None
+        try:
+            df = pd.read_csv(cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip')
+        except Exception:
+            return None
+        needed = ['Condition', 'TotlCycle', 'Cap[mAh]']
+        if not all(c in df.columns for c in needed):
+            return None
+        classified = classify_toyo_cycles(df[['Condition', 'TotlCycle', 'Cap[mAh]']].copy(), int(capacity))
+
+    if not classified:
+        return None
+
+    counts = {}
+    for c in classified:
+        cat = c['category']
+        counts[cat] = counts.get(cat, 0) + 1
+
+    return {
+        'cycler': 'PNE' if is_pne else 'Toyo',
+        'total_cycles': len(classified),
+        'counts': counts,
+        'classified': classified,
+        'schedule_pattern': detect_schedule_pattern(classified),
+        'test_type': detect_test_type(counts),
+    }
+
+
+def classify_paths_summary(path_list: list, capacity_list: list | None = None) -> dict:
+    """여러 경로의 사이클 분류를 일괄 수행하여 요약 dict 반환.
+
+    Parameters
+    ----------
+    path_list : list[str]
+        상위 데이터 경로 목록 (각 경로 안에 채널 서브폴더 탐색)
+    capacity_list : list[float] | None
+        경로별 용량 (mAh), None이면 모두 0(자동 감지)
+
+    Returns
+    -------
+    dict
+        {
+            'channels': [{'path': str, 'channel': str, ...classify result...}, ...],
+            'summary_text': str,  # 콘솔 출력용 요약 문자열
+        }
+    """
+    results = []
+    for idx, data_path in enumerate(path_list):
+        cap = capacity_list[idx] if capacity_list and idx < len(capacity_list) else 0
+        if not os.path.isdir(data_path):
+            continue
+        # 채널 서브폴더 탐색
+        try:
+            subfolders = [f.path for f in os.scandir(data_path)
+                          if f.is_dir() and _is_channel_folder(f.name)]
+        except OSError:
+            continue
+        for ch_path in subfolders:
+            if 'Pattern' in os.path.basename(ch_path):
+                continue
+            result = classify_channel_path(ch_path, cap)
+            if result:
+                result['path'] = data_path
+                result['channel'] = os.path.basename(ch_path)
+                results.append(result)
+
+    # 요약 텍스트 생성
+    lines = []
+    if results:
+        lines.append('─' * 60)
+        lines.append('  사이클 카테고리 분류 결과')
+        lines.append('─' * 60)
+        for r in results:
+            ch_name = r['channel']
+            test_type = r['test_type']
+            total = r['total_cycles']
+            counts = r['counts']
+            cat_parts = []
+            for cat in ['RPT', 'Rss', '가속수명', 'GITT', 'initial', 'unknown']:
+                n = counts.get(cat, 0)
+                if n > 0:
+                    cat_parts.append(f'{cat}:{n}')
+            lines.append(f'  [{r["cycler"]}] {ch_name}  |  {test_type}  |  총 {total}cyc  |  {", ".join(cat_parts)}')
+            if r['schedule_pattern']:
+                lines.append(f'         패턴: {r["schedule_pattern"]}')
+        lines.append('─' * 60)
+
+    return {
+        'channels': results,
+        'summary_text': '\n'.join(lines),
+    }
 
 
 def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
@@ -1918,7 +2422,7 @@ def pne_min_cap(raw_file_path, mincapacity, ini_crate):
                         inicapraw = pd.read_csv(raw_file_path + "\\Restore\\" + files, sep=",", skiprows=0, engine="c",
                                                 header=None, encoding="cp949", on_bad_lines='skip')
                         if len(inicapraw) > 2:
-                            mincapacity = int(round(abs(inicapraw.iloc[2, 9]/1000))/ini_crate)
+                            mincapacity = int(round(abs(inicapraw.iloc[1, 9]/1000))/ini_crate)
     return mincapacity
 
 # PNE Cycle data 처리
@@ -2232,6 +2736,10 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                                 df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
                                 df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
                                 df.NewData.loc[0, "dcir"] = 0
+                        # 충·방전 쌍이 없는 사이클 제거 (출하상태 방전 등)
+                        if hasattr(df, 'NewData'):
+                            df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
+                            df.NewData = df.NewData.reset_index(drop=True)
     return [mincapacity, df]
 
 # PNE Step charge Profile data 처리 class
@@ -3164,8 +3672,7 @@ class PathElideDelegate(QtWidgets.QStyledItemDelegate):
         painter.setPen(option.palette.color(
             QtGui.QPalette.ColorGroup.Normal if option.state & QtWidgets.QStyle.StateFlag.State_Enabled
             else QtGui.QPalette.ColorGroup.Disabled,
-            QtGui.QPalette.ColorRole.HighlightedText if option.state & QtWidgets.QStyle.StateFlag.State_Selected
-            else QtGui.QPalette.ColorRole.Text))
+            QtGui.QPalette.ColorRole.Text))
         painter.drawText(rect, QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft, elided)
         painter.restore()
 
@@ -3447,12 +3954,31 @@ class Ui_sitool(object):
         self.horizontalLayout_112.setObjectName("horizontalLayout_112")
         # ── 왼쪽 패널: 스크롤 가능하도록 QScrollArea 래핑 ──
         self._left_panel_widget = QtWidgets.QWidget()
+        # 탭 pane 배경색(Button 역할)으로 통일
+        _lp_pal = self._left_panel_widget.palette()
+        _lp_pal.setColor(_lp_pal.ColorRole.Window,
+                         _lp_pal.color(_lp_pal.ColorRole.Button))
+        self._left_panel_widget.setPalette(_lp_pal)
+        self._left_panel_widget.setAutoFillBackground(True)
         self.verticalLayout_6 = QtWidgets.QVBoxLayout(self._left_panel_widget)
         self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
         self.verticalLayout_6.setObjectName("verticalLayout_6")
+        # ── 경로 입력 GroupBox ──
+        self._path_groupbox = QtWidgets.QGroupBox("1. 경로 입력", parent=self.CycTab)
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        font.setBold(False)
+        font.setWeight(50)
+        self._path_groupbox.setFont(font)
+        self._path_groupbox.setObjectName("_path_groupbox")
+        self._path_groupbox_vlayout = QtWidgets.QVBoxLayout(self._path_groupbox)
+        self._path_groupbox_vlayout.setContentsMargins(6, 4, 6, 4)
+        self._path_groupbox_vlayout.setSpacing(4)
+        # 체크박스 행 (경로 테이블 위)
         self.horizontalLayout_108 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_108.setObjectName("horizontalLayout_108")
-        self.chk_cyclepath = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_cyclepath = QtWidgets.QCheckBox(parent=self._path_groupbox)
         self.chk_cyclepath.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_cyclepath.setMaximumSize(QtCore.QSize(240, 30))
         font = QtGui.QFont()
@@ -3464,7 +3990,7 @@ class Ui_sitool(object):
         self.chk_cyclepath.setChecked(True)
         self.chk_cyclepath.setObjectName("chk_cyclepath")
         self.horizontalLayout_108.addWidget(self.chk_cyclepath)
-        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self._path_groupbox)
         self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_link_cycle.setMaximumSize(QtCore.QSize(160, 30))
         font = QtGui.QFont()
@@ -3473,7 +3999,7 @@ class Ui_sitool(object):
         self.chk_link_cycle.setFont(font)
         self.chk_link_cycle.setObjectName("chk_link_cycle")
         self.horizontalLayout_108.addWidget(self.chk_link_cycle)
-        self.chk_ectpath = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_ectpath = QtWidgets.QCheckBox(parent=self._path_groupbox)
         self.chk_ectpath.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_ectpath.setMaximumSize(QtCore.QSize(240, 30))
         font = QtGui.QFont()
@@ -3485,27 +4011,16 @@ class Ui_sitool(object):
         self.chk_ectpath.setChecked(False)
         self.chk_ectpath.setObjectName("chk_ectpath")
         self.horizontalLayout_108.addWidget(self.chk_ectpath)
-        self.cycle_tab_reset = QtWidgets.QPushButton(parent=self.CycTab)
-        self.cycle_tab_reset.setMinimumSize(QtCore.QSize(100, 35))
-        self.cycle_tab_reset.setMaximumSize(QtCore.QSize(100, 35))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setUnderline(True)
-        font.setWeight(75)
-        self.cycle_tab_reset.setFont(font)
-        self.cycle_tab_reset.setObjectName("cycle_tab_reset")
-        self.horizontalLayout_108.addWidget(self.cycle_tab_reset)
         self.horizontalLayout_108.addStretch(1)
-        self.verticalLayout_6.addLayout(self.horizontalLayout_108)
+        self._path_groupbox_vlayout.addLayout(self.horizontalLayout_108)
+        # 경로 테이블 + 버튼 행
         self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_119.setSpacing(4)
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
-        self.cycle_path_table = QtWidgets.QTableWidget(5, 4, parent=self.CycTab)
+        self.cycle_path_table = QtWidgets.QTableWidget(5, 4, parent=self._path_groupbox)
         self.cycle_path_table.setHorizontalHeaderLabels(["경로명", "경로", "채널", "용량"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
-        self.cycle_path_table.setMaximumHeight(120)
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
@@ -3516,47 +4031,53 @@ class Ui_sitool(object):
         self.cycle_path_table.setColumnWidth(3, 55)
         self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
         self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(9)
-        self.cycle_path_table.setFont(font)
+        _table_font = QtGui.QFont()
+        _table_font.setFamily("맑은 고딕")
+        _table_font.setPointSize(9)
+        self.cycle_path_table.setFont(_table_font)
+        self.cycle_path_table.setStyleSheet(
+            "QTableWidget::item:selected { color: #000000; }\n"
+            "QTableWidget::item:focus { outline: 1px solid #3C5488; border: none; }\n"
+            "QHeaderView::section:checked { background-color: #D6EAF8; font-weight: bold; }")
+        self.cycle_path_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.cycle_path_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectItems)
+        self.cycle_path_table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.cycle_path_table.setObjectName("cycle_path_table")
         self.horizontalLayout_119.addWidget(self.cycle_path_table)
         # 하위 호환용 숨김 위젯 (stepnum_2 참조 유지)
-        self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self.CycTab)
+        self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self._path_groupbox)
         self.stepnum_2.setVisible(False)
         self.stepnum_2.setObjectName("stepnum_2")
         # 경로 박스 버튼 레이아웃
+        _path_btn_qss = ("QPushButton { border: 1px solid #B0B0B0; border-radius: 3px;"
+                         " background: #F5F5F5; font-size: 10px; }"
+                         " QPushButton:hover { background: #E0E0E0; }"
+                         " QPushButton:pressed { background: #D0D0D0; }")
         self._path_btn_layout = QtWidgets.QVBoxLayout()
         self._path_btn_layout.setSpacing(4)
-        self.btn_expand_path = QtWidgets.QPushButton(parent=self.CycTab)
-        self.btn_expand_path.setFixedSize(QtCore.QSize(24, 24))
-        self.btn_expand_path.setText("▼")
-        self.btn_expand_path.setToolTip("경로 테이블 펼치기/접기")
-        self.btn_expand_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
-        self.btn_expand_path.setObjectName("btn_expand_path")
-        self._stepnum2_expanded = False
-        self._path_btn_layout.addWidget(self.btn_expand_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        self.btn_load_path = QtWidgets.QPushButton(parent=self.CycTab)
+        self._table_undo_stack = []          # 테이블 Undo 스택
+        self._table_undo_restoring = False   # Undo 복원 중 플래그
+        self.btn_load_path = QtWidgets.QPushButton(parent=self._path_groupbox)
         self.btn_load_path.setFixedSize(QtCore.QSize(24, 24))
         self.btn_load_path.setText("📂")
         self.btn_load_path.setToolTip("Path 파일 불러오기")
-        self.btn_load_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
+        self.btn_load_path.setStyleSheet(_path_btn_qss)
         self.btn_load_path.setObjectName("btn_load_path")
         self._path_btn_layout.addWidget(self.btn_load_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        self.btn_save_path = QtWidgets.QPushButton(parent=self.CycTab)
+        self.btn_save_path = QtWidgets.QPushButton(parent=self._path_groupbox)
         self.btn_save_path.setFixedSize(QtCore.QSize(24, 24))
         self.btn_save_path.setText("💾")
         self.btn_save_path.setToolTip("Path 파일 저장")
-        self.btn_save_path.setStyleSheet("QPushButton { border: 1px solid #aaa; border-radius: 3px; font-size: 10px; }")
+        self.btn_save_path.setStyleSheet(_path_btn_qss)
         self.btn_save_path.setObjectName("btn_save_path")
         self._path_btn_layout.addWidget(self.btn_save_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         self._path_btn_layout.addStretch(1)
         self.horizontalLayout_119.addLayout(self._path_btn_layout)
-        self.verticalLayout_6.addLayout(self.horizontalLayout_119)
+        self._path_groupbox_vlayout.addLayout(self.horizontalLayout_119)
+        self.verticalLayout_6.addWidget(self._path_groupbox, stretch=0)
         self.capacitygroup = QtWidgets.QGroupBox(parent=self.CycTab)
-        self.capacitygroup.setMinimumSize(QtCore.QSize(400, 100))
-        self.capacitygroup.setMaximumSize(QtCore.QSize(16777215, 120))
+        self.capacitygroup.setMinimumSize(QtCore.QSize(400, 60))
+        self.capacitygroup.setMaximumSize(QtCore.QSize(16777215, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -3566,22 +4087,16 @@ class Ui_sitool(object):
         self.capacitygroup.setObjectName("capacitygroup")
         self.horizontalLayout_122 = QtWidgets.QHBoxLayout(self.capacitygroup)
         self.horizontalLayout_122.setObjectName("horizontalLayout_122")
-        self.verticalLayout_18 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_18.setObjectName("verticalLayout_18")
-        self.horizontalLayout_120 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_120.setObjectName("horizontalLayout_120")
-        self.inicaprate = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaprate.setMinimumSize(QtCore.QSize(250, 50))
-        self.inicaprate.setMaximumSize(QtCore.QSize(16777215, 50))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.inicaprate.setFont(font)
-        self.inicaprate.setChecked(True)
-        self.inicaprate.setObjectName("inicaprate")
-        self.horizontalLayout_120.addWidget(self.inicaprate)
+        # 용량 안내 라벨
+        self._cap_info_label = QtWidgets.QLabel(parent=self.capacitygroup)
+        self._cap_info_label.setFont(font)
+        self._cap_info_label.setText("용량: 테이블 입력 또는 자동파싱(빈칸)")
+        self.horizontalLayout_122.addWidget(self._cap_info_label)
+        self.horizontalLayout_122.addStretch(1)
+        # C-rate 입력
+        self._crate_label = QtWidgets.QLabel("C-rate:", parent=self.capacitygroup)
+        self._crate_label.setFont(font)
+        self.horizontalLayout_122.addWidget(self._crate_label)
         self.ratetext = QtWidgets.QLineEdit(parent=self.capacitygroup)
         self.ratetext.setMinimumSize(QtCore.QSize(120, 25))
         self.ratetext.setMaximumSize(QtCore.QSize(120, 25))
@@ -3594,38 +4109,21 @@ class Ui_sitool(object):
         self.ratetext.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.ratetext.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ratetext.setObjectName("ratetext")
-        self.horizontalLayout_120.addWidget(self.ratetext)
-        self.verticalLayout_18.addLayout(self.horizontalLayout_120)
-        self.horizontalLayout_121 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_121.setObjectName("horizontalLayout_121")
+        self.horizontalLayout_122.addWidget(self.ratetext)
+        self._rate_unit_label = QtWidgets.QLabel("C", parent=self.capacitygroup)
+        self._rate_unit_label.setFont(font)
+        self.horizontalLayout_122.addWidget(self._rate_unit_label)
+        # 하위 호환용 숨김 위젯 (inicaprate, inicaptype, capacitytext 참조 유지)
+        self.inicaprate = QtWidgets.QRadioButton(parent=self.capacitygroup)
+        self.inicaprate.setChecked(True)
+        self.inicaprate.setVisible(False)
         self.inicaptype = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaptype.setMinimumSize(QtCore.QSize(250, 20))
-        self.inicaptype.setMaximumSize(QtCore.QSize(16777215, 20))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.inicaptype.setFont(font)
         self.inicaptype.setChecked(False)
-        self.inicaptype.setObjectName("inicaptype")
-        self.horizontalLayout_121.addWidget(self.inicaptype)
+        self.inicaptype.setVisible(False)
         self.capacitytext = QtWidgets.QLineEdit(parent=self.capacitygroup)
-        self.capacitytext.setMinimumSize(QtCore.QSize(120, 25))
-        self.capacitytext.setMaximumSize(QtCore.QSize(120, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.capacitytext.setFont(font)
-        self.capacitytext.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
-        self.capacitytext.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.capacitytext.setVisible(False)
         self.capacitytext.setObjectName("capacitytext")
-        self.horizontalLayout_121.addWidget(self.capacitytext)
-        self.verticalLayout_18.addLayout(self.horizontalLayout_121)
-        self.horizontalLayout_122.addLayout(self.verticalLayout_18)
-        self.verticalLayout_6.addWidget(self.capacitygroup)
+        self.verticalLayout_6.addWidget(self.capacitygroup, stretch=0)
         self.tabWidget_2 = QtWidgets.QTabWidget(parent=self.CycTab)
         self.tabWidget_2.setMinimumSize(QtCore.QSize(400, 400))
         self.tabWidget_2.setMaximumSize(QtCore.QSize(16777215, 16777215))
@@ -3641,7 +4139,7 @@ class Ui_sitool(object):
         self.verticalLayout_17 = QtWidgets.QVBoxLayout()
         self.verticalLayout_17.setObjectName("verticalLayout_17")
         # ── DCIR 옵션 선택 GroupBox ──
-        self._dcir_groupbox = QtWidgets.QGroupBox("DCIR 옵션 선택", parent=self.tab_5)
+        self._dcir_groupbox = QtWidgets.QGroupBox("3. DCIR 옵션 선택", parent=self.tab_5)
         _dcir_layout = QtWidgets.QVBoxLayout(self._dcir_groupbox)
         _dcir_layout.setContentsMargins(6, 4, 6, 4)
         _dcir_layout.setSpacing(2)
@@ -3651,6 +4149,8 @@ class Ui_sitool(object):
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
+        font.setBold(False)
+        font.setWeight(50)
         self.dcirchk.setFont(font)
         self.dcirchk.setObjectName("dcirchk")
         _dcir_layout.addWidget(self.dcirchk)
@@ -3660,6 +4160,8 @@ class Ui_sitool(object):
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
+        font.setBold(False)
+        font.setWeight(50)
         self.pulsedcir.setFont(font)
         self.pulsedcir.setChecked(False)
         self.pulsedcir.setObjectName("pulsedcir")
@@ -3669,6 +4171,8 @@ class Ui_sitool(object):
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
+        font.setBold(False)
+        font.setWeight(50)
         self.mkdcir.setFont(font)
         self.mkdcir.setCheckable(True)
         self.mkdcir.setChecked(True)
@@ -3683,7 +4187,7 @@ class Ui_sitool(object):
         self.verticalLayout_14 = _dcir_layout
         self.verticalLayout_17.addWidget(self._dcir_groupbox)
         # ── 그래프 옵션 GroupBox ──
-        self._graph_opt_groupbox = QtWidgets.QGroupBox("그래프 옵션", parent=self.tab_5)
+        self._graph_opt_groupbox = QtWidgets.QGroupBox("4. 그래프 옵션", parent=self.tab_5)
         self._graph_opt_layout = QtWidgets.QVBoxLayout(self._graph_opt_groupbox)
         self._graph_opt_layout.setContentsMargins(6, 4, 6, 4)
         self._graph_opt_layout.setSpacing(4)
@@ -3757,16 +4261,24 @@ class Ui_sitool(object):
         self.horizontalLayout_87 = self._cycle_input_grid
         self.horizontalLayout_88 = self._cycle_input_grid
         self.horizontalLayout_89 = self._cycle_input_grid
-        # ── 통합 Cycle 분석 UI (개별/통합 라디오 + 분석 버튼을 한 줄로) ──
-        self.horizontalLayout_90 = QtWidgets.QHBoxLayout()
+        # ── 사이클 분석 GroupBox (개별/통합 라디오 + 분석 버튼) ──
+        self._cycle_analysis_groupbox = QtWidgets.QGroupBox("5. 사이클 분석", parent=self.tab_5)
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        font.setBold(False)
+        font.setWeight(50)
+        self._cycle_analysis_groupbox.setFont(font)
+        self.horizontalLayout_90 = QtWidgets.QHBoxLayout(self._cycle_analysis_groupbox)
+        self.horizontalLayout_90.setContentsMargins(6, 4, 6, 4)
+        self.horizontalLayout_90.setSpacing(4)
         self.horizontalLayout_90.setObjectName("horizontalLayout_90")
-        self.radio_indiv = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.radio_indiv = QtWidgets.QRadioButton(parent=self._cycle_analysis_groupbox)
         self.radio_indiv.setMinimumSize(QtCore.QSize(60, 28))
-        font = QtGui.QFont("맑은 고딕", 10)
         self.radio_indiv.setFont(font)
         self.radio_indiv.setObjectName("radio_indiv")
         self.horizontalLayout_90.addWidget(self.radio_indiv)
-        self.radio_overall = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.radio_overall = QtWidgets.QRadioButton(parent=self._cycle_analysis_groupbox)
         self.radio_overall.setMinimumSize(QtCore.QSize(60, 28))
         self.radio_overall.setFont(font)
         self.radio_overall.setObjectName("radio_overall")
@@ -3777,14 +4289,22 @@ class Ui_sitool(object):
         self.cycle_mode_group.addButton(self.radio_overall)
         self.radio_indiv.setChecked(True)
         self.horizontalLayout_90.addStretch(1)
-        self.cycle_confirm = QtWidgets.QPushButton(parent=self.tab_5)
-        self.cycle_confirm.setMinimumSize(QtCore.QSize(160, 45))
+        self.cycle_confirm = QtWidgets.QPushButton(parent=self._cycle_analysis_groupbox)
+        self.cycle_confirm.setMinimumSize(QtCore.QSize(144, 45))
         self.cycle_confirm.setMaximumSize(QtCore.QSize(16777215, 45))
         font = QtGui.QFont("맑은 고딕", 11, QtGui.QFont.Weight.Bold)
         self.cycle_confirm.setFont(font)
         self.cycle_confirm.setObjectName("cycle_confirm")
         self.horizontalLayout_90.addWidget(self.cycle_confirm)
-        self.verticalLayout_17.addLayout(self.horizontalLayout_90)
+        self.cycle_tab_reset = QtWidgets.QPushButton(parent=self._cycle_analysis_groupbox)
+        self.cycle_tab_reset.setMinimumSize(QtCore.QSize(144, 45))
+        self.cycle_tab_reset.setMaximumSize(QtCore.QSize(16777215, 45))
+        font = QtGui.QFont("맑은 고딕", 11, QtGui.QFont.Weight.Bold)
+        self.cycle_tab_reset.setFont(font)
+        self.cycle_tab_reset.setEnabled(False)
+        self.cycle_tab_reset.setObjectName("cycle_tab_reset")
+        self.horizontalLayout_90.addWidget(self.cycle_tab_reset)
+        self.verticalLayout_17.addWidget(self._cycle_analysis_groupbox)
         self.verticalLayout_17.addStretch(1)
         # 하위 호환: 기존 레이아웃 참조 유지
         self.horizontalLayout_91 = self.horizontalLayout_90
@@ -4043,16 +4563,13 @@ class Ui_sitool(object):
         self.verticalLayout_4.addLayout(self.horizontalLayout_118)
         self.horizontalLayout_17.addLayout(self.verticalLayout_4)
         self.tabWidget_2.addTab(self.tab_6, "")
-        self.verticalLayout_6.addWidget(self.tabWidget_2)
-        self.verticalLayout_6.addStretch(1)
+        self.verticalLayout_6.addWidget(self.tabWidget_2, stretch=0)
         # 왼쪽 패널을 스크롤 영역으로 래핑
         self._left_scroll = QtWidgets.QScrollArea(parent=self.CycTab)
         self._left_scroll.setWidget(self._left_panel_widget)
         self._left_scroll.setWidgetResizable(True)
         self._left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        self._left_scroll.setStyleSheet("QScrollArea { background: transparent; }")
-        self._left_panel_widget.setStyleSheet("background: transparent;")
         self.horizontalLayout_112.addWidget(self._left_scroll, 1)
         self.cycle_tab = QtWidgets.QTabWidget(parent=self.CycTab)
         self.cycle_tab.setFixedSize(QtCore.QSize(1350, 830))
@@ -8257,9 +8774,13 @@ class Ui_sitool(object):
         self.pybamm_left_scroll.setMinimumWidth(360)
         self.pybamm_left_scroll.setMaximumWidth(360)
         self.pybamm_left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        self.pybamm_left_scroll.setStyleSheet("QScrollArea { background: transparent; }")
         self.pybamm_left_container = QtWidgets.QWidget()
-        self.pybamm_left_container.setStyleSheet("background: transparent;")
+        # 탭 pane 배경색(Button 역할)으로 통일
+        _pb_pal = self.pybamm_left_container.palette()
+        _pb_pal.setColor(_pb_pal.ColorRole.Window,
+                         _pb_pal.color(_pb_pal.ColorRole.Button))
+        self.pybamm_left_container.setPalette(_pb_pal)
+        self.pybamm_left_container.setAutoFillBackground(True)
         self.pybamm_left_panel = QtWidgets.QVBoxLayout(self.pybamm_left_container)
         self.pybamm_left_panel.setObjectName("pybamm_left_panel")
         # [1] 모델 선택 GroupBox
@@ -8361,25 +8882,30 @@ class Ui_sitool(object):
         self.pybamm_exp_vlayout.setObjectName("pybamm_exp_vlayout")
         # 모드 선택 라디오버튼 (4개)
         self.pybamm_mode_hlayout1 = QtWidgets.QHBoxLayout()
+        _radio_font = QtGui.QFont()
+        _radio_font.setFamily("맑은 고딕")
+        _radio_font.setPointSize(10)
+        _radio_font.setBold(False)
+        _radio_font.setWeight(50)
         self.pybamm_mode_charge = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
         self.pybamm_mode_charge.setText("충전")
-        self.pybamm_mode_charge.setFont(font)
+        self.pybamm_mode_charge.setFont(_radio_font)
         self.pybamm_mode_charge.setChecked(True)
         self.pybamm_mode_charge.setObjectName("pybamm_mode_charge")
         self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_charge)
         self.pybamm_mode_discharge = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
         self.pybamm_mode_discharge.setText("방전")
-        self.pybamm_mode_discharge.setFont(font)
+        self.pybamm_mode_discharge.setFont(_radio_font)
         self.pybamm_mode_discharge.setObjectName("pybamm_mode_discharge")
         self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_discharge)
         self.pybamm_mode_gitt = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
         self.pybamm_mode_gitt.setText("GITT/HPPC")
-        self.pybamm_mode_gitt.setFont(font)
+        self.pybamm_mode_gitt.setFont(_radio_font)
         self.pybamm_mode_gitt.setObjectName("pybamm_mode_gitt")
         self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_gitt)
         self.pybamm_mode_custom = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
         self.pybamm_mode_custom.setText("커스텀")
-        self.pybamm_mode_custom.setFont(font)
+        self.pybamm_mode_custom.setFont(_radio_font)
         self.pybamm_mode_custom.setObjectName("pybamm_mode_custom")
         self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_custom)
         self.pybamm_exp_vlayout.addLayout(self.pybamm_mode_hlayout1)
@@ -9012,14 +9538,10 @@ class Ui_sitool(object):
         self.chk_cyclepath.setText(_translate("sitool", "지정Path사용"))
         self.chk_ectpath.setText(_translate("sitool", "ECT path 사용"))
         self.chk_coincell_cyc.setText(_translate("sitool", "코인셀"))
-        self.cycle_tab_reset.setText(_translate("sitool", "Reset"))
-        self.capacitygroup.setTitle(_translate("sitool", "용량 선택"))
-        self.inicaprate.setText(_translate("sitool", "1) Cyclepath 이름 용량 기준\n"
-"2) 테스트 이름 용량 기준\n"
-"3) 첫 Cycle의 Crate 기준"))
+        self.cycle_tab_reset.setText(_translate("sitool", "초기화"))
+        self.capacitygroup.setTitle(_translate("sitool", "2. 용량 · C-rate 설정"))
         self.ratetext.setText(_translate("sitool", "0.2"))
-        self.inicaptype.setText(_translate("sitool", "용량값 직접 입력"))
-        self.capacitytext.setText(_translate("sitool", "58"))
+        self.capacitytext.setText(_translate("sitool", "0"))
         self.dcirchk.setText(_translate("sitool", "PNE 설비 DCIR (SOC100 10s 방전 Pulse)"))
         self.pulsedcir.setText(_translate("sitool", "PNE 10s DCIR (SOC5, 50 10s 방전 Pulse)"))
         self.mkdcir.setText(_translate("sitool", "PNE DCIR (SOC 30/50/70 충전, SOC 70/50/30 방전, 1s Pulse/RSS)\n"
@@ -9036,7 +9558,6 @@ class Ui_sitool(object):
         self.radio_indiv.setText(_translate("sitool", "개별 탭"))
         self.radio_overall.setText(_translate("sitool", "통합 탭"))
         self.chk_link_cycle.setText(_translate("sitool", "연결처리"))
-        self.btn_expand_path.setToolTip(_translate("sitool", "경로 입력 박스 펼치기/접기"))
         self.cycle_confirm.setText(_translate("sitool", "Cycle 분석"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
         self.CycProfile.setText(_translate("sitool", "사이클 통합"))
@@ -9401,10 +9922,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycparameter2.setText("d:/!cyc_parameter_trend/para_data_Gen4 SDI MP1 업체 05C 수명 241212.txt")
         # UI 기준 초기치 설정 set-up
         self.firstCrate = float(self.ratetext.text())
-        if self.inicaprate.isChecked():
-            self.mincapacity = 0
-        elif self.inicaptype.isChecked():
-            self.mincapacity = float(self.capacitytext.text())
+        self.mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
         self.xscale = int(self.tcyclerng.text())
         self.setxscale = int(self.setcyclexscale.text())
         self.ylimithigh = float(self.tcyclerngyhl.text())
@@ -9442,7 +9960,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.unmount_all.clicked.connect(self.unmount_all_button)
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
-        self.btn_expand_path.clicked.connect(self._toggle_stepnum2_expand)
         self.btn_load_path.clicked.connect(self._load_path_file_to_table)
         self.btn_save_path.clicked.connect(self._save_table_to_path_file)
         # 셀 편집 시 툴팁 자동 갱신
@@ -9458,6 +9975,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _tbl_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, _tbl)
         _tbl_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         _tbl_del.activated.connect(self._cycle_table_delete)
+        # Ctrl+Z Undo
+        _tbl_undo = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, _tbl)
+        _tbl_undo.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tbl_undo.activated.connect(self._undo_table)
+        # Ctrl+A 전체 선택
+        _tbl_selall = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.SelectAll, _tbl)
+        _tbl_selall.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tbl_selall.activated.connect(self.cycle_path_table.selectAll)
+        # Enter 키로 마지막 행에서 새 행 자동 추가
+        self.cycle_path_table.installEventFilter(self)
+        # 우클릭 컨텍스트 메뉴
+        self.cycle_path_table.customContextMenuRequested.connect(self._cycle_table_context_menu)
+        # 연결처리 토글 시 그룹 구분선 갱신
+        self.chk_link_cycle.toggled.connect(self._update_group_separators)
         self.chk_cyclepath.toggled.connect(self._on_cyclepath_toggled)
         self._on_cyclepath_toggled(self.chk_cyclepath.isChecked())  # 초기 상태 반영
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
@@ -10603,11 +11134,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return overlay
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
-                            channel_map, fig, axes_list, sub_channel_map=None):
+                            channel_map, fig, axes_list, sub_channel_map=None,
+                            classify_info=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
+        classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
         """
-        from PyQt6.QtWidgets import QHBoxLayout
+        from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
@@ -10622,10 +11155,67 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab_layout.addLayout(toolbar_row)
         else:
             tab_layout.addWidget(toolbar)
+
+        # ── 사이클 카테고리 분류 정보 바 ──
+        if classify_info:
+            info_label = self._build_classify_info_label(classify_info)
+            if info_label:
+                tab_layout.addWidget(info_label)
+
         tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
-        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        self.cycle_tab_reset.setEnabled(True)
+        # 범례가 figure 오른쪽 외부에 있으면 여백 확보
+        if getattr(self, '_cycle_legend_outside', False):
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.82, 1])
+            self._cycle_legend_outside = False
+        else:
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+
+    @staticmethod
+    def _build_classify_info_label(classify_info: list[dict]):
+        """분류 결과 리스트 → QLabel 위젯 1줄 요약 바 생성."""
+        from PyQt6.QtWidgets import QLabel
+        if not classify_info:
+            return None
+
+        # 전체 채널의 카테고리 합산
+        total_counts: dict[str, int] = {}
+        test_types: list[str] = []
+        for cr in classify_info:
+            for cat, n in cr['counts'].items():
+                total_counts[cat] = total_counts.get(cat, 0) + n
+            if cr['test_type'] not in test_types:
+                test_types.append(cr['test_type'])
+
+        total_cycles = sum(total_counts.values())
+        cat_parts = []
+        for cat in ['RPT', 'Rss', '가속수명', 'GITT', 'initial', 'unknown']:
+            n = total_counts.get(cat, 0)
+            if n > 0:
+                cat_parts.append(f'<b>{cat}</b>:{n}')
+
+        n_channels = len(classify_info)
+        test_str = ', '.join(test_types) if test_types else ''
+        # 패턴 (단일 채널인 경우에만 표시)
+        pattern_str = ''
+        if n_channels == 1 and classify_info[0].get('schedule_pattern'):
+            pattern_str = f'  |  패턴: {classify_info[0]["schedule_pattern"]}'
+            # 패턴이 너무 길면 축약
+            if len(pattern_str) > 80:
+                pattern_str = pattern_str[:80] + '...'
+
+        html = (f'<span style="color:#3C5488; font-size:11px;">'
+                f'📊 {n_channels}채널  |  {test_str}  |  총 {total_cycles}cyc  |  '
+                f'{", ".join(cat_parts)}{pattern_str}</span>')
+
+        label = QLabel(html)
+        label.setStyleSheet(
+            'QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
+            'border-radius: 3px; padding: 3px 8px; }')
+        label.setMaximumHeight(24)
+        return label
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
                            channel_map=None, fig=None, axes_list=None,
@@ -10646,6 +11236,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
+        self.cycle_tab_reset.setEnabled(True)
         if getattr(self, '_has_colorbar', False):
             plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.88, 1])
             self._has_colorbar = False
@@ -10744,7 +11335,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                subfolder = [f.path for f in os.scandir(cyclefolder)
+                             if f.is_dir() and _is_channel_folder(f.name)]
                 is_pne = check_cycler(cyclefolder)
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
@@ -10822,7 +11414,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                subfolder = [f.path for f in os.scandir(cyclefolder)
+                             if f.is_dir() and _is_channel_folder(f.name)]
                 is_pne = check_cycler(cyclefolder)
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
@@ -10858,7 +11451,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6 = axes
         
-        self.capacitytext.setText(str(capacity))
         # 의도적 3중 플롯: 추후 축별 확대/범위 조정 용도
         _artists = []
         _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax1, self.vol_y_hlimit, self.vol_y_llimit,
@@ -10911,9 +11503,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     
     @log_perf
     def _load_all_cycle_data_parallel(self, all_data_folder, mincapacity, firstCrate, 
-                                       dcirchk, dcirchk_2, mkdcir, max_workers=4):
+                                       dcirchk, dcirchk_2, mkdcir, max_workers=4,
+                                       per_path_capacities=None):
         """
         모든 폴더의 사이클 데이터를 병렬로 로딩
+        per_path_capacities: 테이블 용량 배열 (all_data_folder와 1:1 대응, > 0이면 우선 사용)
         Returns: (results, subfolder_map)
           - results: {(folder_idx, subfolder_idx): (folder_path, cyctemp)}
           - subfolder_map: {folder_idx: [subfolder_path, ...]}
@@ -10922,12 +11516,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         subfolder_map = {}  # 폴더별 subfolder 캐시 (os.scandir 1회만)
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.exists(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                subfolder = [f.path for f in os.scandir(cyclefolder)
+                             if f.is_dir() and _is_channel_folder(f.name)]
                 subfolder_map[i] = subfolder
                 is_pne = check_cycler(cyclefolder)
+                # 테이블 용량이 있으면 해당 path용 mincapacity 로 사용
+                _cap = mincapacity
+                if per_path_capacities and i < len(per_path_capacities) and per_path_capacities[i] > 0:
+                    _cap = per_path_capacities[i]
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
-                        task_info = (folder_path, mincapacity, firstCrate, 
+                        task_info = (folder_path, _cap, firstCrate, 
                                      dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
                         tasks.append(task_info)
         
@@ -11116,61 +11715,84 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         elif self._has_table_data():
             # 테이블에서 읽기
-            table_rows = self._get_table_rows()
-
             if link_mode:
-                # 연결 모드: 모든 행을 하나의 연결 그룹으로 묶음
-                all_paths = [r['path'] for r in table_rows]
-                all_pnames = [r['name'] for r in table_rows]
-                all_channels = [_parse_channel_str(r['channel']) for r in table_rows]
-                has_channels = any(chs for chs in all_channels)
-                # 소스 파일명 추출 (mAh 용량 자동 감지용)
-                _src = ''
-                for r in table_rows:
-                    if 'mAh' in r.get('path', '') or 'mAh' in r.get('name', ''):
-                        _src = r['path']
-                        break
+                # 연결 모드: 빈 행으로 그룹 분리
+                row_groups = self._get_table_row_groups()
+                for grp_idx, grp_rows in enumerate(row_groups):
+                    file_idx = 0  # 테이블은 단일 소스 → 통합 탭 시 1개 탭으로 합침
+                    all_paths = [r['path'] for r in grp_rows]
+                    all_pnames = [r['name'] for r in grp_rows]
+                    all_channels = [_parse_channel_str(r['channel']) for r in grp_rows]
+                    # 테이블 용량 수집 (per-path)
+                    all_caps = []
+                    for r in grp_rows:
+                        try:
+                            all_caps.append(float(r.get('capacity', '') or 0))
+                        except ValueError:
+                            all_caps.append(0.0)
+                    has_channels = any(chs for chs in all_channels)
+                    _src = ''
+                    for r in grp_rows:
+                        if 'mAh' in r.get('path', '') or 'mAh' in r.get('name', ''):
+                            _src = r['path']
+                            break
 
-                if has_channels:
-                    # 채널 위치 기반 분할: 같은 위치끼리 연결, '-'=해당 경로 없음
-                    max_pos = max((len(chs) for chs in all_channels), default=0)
-                    for pos in range(max_pos):
-                        pos_paths, pos_pnames, pos_chs = [], [], []
-                        for row_idx, row in enumerate(table_rows):
-                            chs = all_channels[row_idx]
-                            if pos < len(chs) and chs[pos] != '-':
-                                pos_paths.append(row['path'])
-                                pos_pnames.append(row['name'])
-                                pos_chs.append([chs[pos]])
-                        if pos_paths:
-                            groups.append(CycleGroup(
-                                name=all_pnames[0] or os.path.basename(all_paths[0]),
-                                paths=pos_paths, path_names=pos_pnames,
-                                is_link=len(pos_paths) > 1, data_type='folder',
-                                file_idx=0, source_file=_src,
-                                per_path_channels=pos_chs,
-                            ))
-                else:
-                    # 채널 미지정: 모든 경로를 하나의 연결 그룹으로
-                    groups.append(CycleGroup(
-                        name=all_pnames[0] or os.path.basename(all_paths[0]),
-                        paths=all_paths, path_names=all_pnames,
-                        is_link=len(all_paths) > 1, data_type='folder',
-                        file_idx=0, source_file=_src
-                    ))
+                    if has_channels:
+                        # 채널 위치 기반 매핑: 같은 위치의 채널은 첫 번째 채널로 통합
+                        max_pos = max((len(chs) for chs in all_channels), default=0)
+                        link_map = {}  # {norm_ch: unified_sub_label}
+                        for pos in range(max_pos):
+                            unified_label = None
+                            for row_idx in range(len(grp_rows)):
+                                chs = all_channels[row_idx]
+                                if pos < len(chs) and chs[pos] != '-':
+                                    norm = _normalize_ch(chs[pos])
+                                    if unified_label is None:
+                                        unified_label = norm
+                                    link_map[norm] = unified_label
+                        # '-' 제거한 per_path_channels 구성
+                        clean_channels = []
+                        for chs in all_channels:
+                            clean_channels.append([_normalize_ch(ch) for ch in chs if ch != '-'])
+                        groups.append(CycleGroup(
+                            name=all_pnames[0] or os.path.basename(all_paths[0]),
+                            paths=all_paths, path_names=all_pnames,
+                            is_link=len(all_paths) > 1, data_type='folder',
+                            file_idx=file_idx, source_file=_src,
+                            per_path_channels=clean_channels,
+                            channel_link_map=link_map,
+                            per_path_capacities=all_caps,
+                        ))
+                    else:
+                        # 채널 미지정: 그룹 내 모든 경로를 연결
+                        groups.append(CycleGroup(
+                            name=all_pnames[0] or os.path.basename(all_paths[0]),
+                            paths=all_paths, path_names=all_pnames,
+                            is_link=len(all_paths) > 1, data_type='folder',
+                            file_idx=file_idx, source_file=_src,
+                            per_path_capacities=all_caps,
+                        ))
             else:
-                # 개별 모드: 각 행 = 개별 그룹
+                # 개별 모드: 빈 행 무시, 각 행 = 개별 그룹
+                table_rows = self._get_table_rows()
                 for row in table_rows:
                     path = row['path']
                     ext = os.path.splitext(path)[1].lower()
                     channels = _parse_channel_str(row['channel'])
                     valid_chs = [ch for ch in channels if ch != '-']
+                    # 테이블 용량
+                    try:
+                        _cap = float(row.get('capacity', '') or 0)
+                    except ValueError:
+                        _cap = 0.0
+                    _caps = [_cap] if _cap > 0 else []
 
                     if ext in ('.xlsx', '.xls'):
                         groups.append(CycleGroup(
                             name=row['name'] or os.path.splitext(os.path.basename(path))[0],
                             paths=[path], path_names=[row['name']],
-                            data_type='excel', file_idx=0, source_file=path
+                            data_type='excel', file_idx=0, source_file=path,
+                            per_path_capacities=_caps,
                         ))
                     elif ext in ('.txt', '.csv'):
                         groups.append(self._build_group_from_lines([path], file_idx=0))
@@ -11180,6 +11802,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             paths=[path], path_names=[row['name']],
                             data_type='folder', file_idx=0, source_file='',
                             per_path_channels=[valid_chs] if valid_chs else [],
+                            per_path_capacities=_caps,
                         ))
 
         else:
@@ -11220,15 +11843,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.cycle_confirm.setEnabled(True)
             return
 
-        # 용량 추출 (path file name에 mAh가 포함된 경우)
-        if self.inicaprate.isChecked():
-            for g in groups:
-                if g.source_file and "mAh" in g.source_file:
-                    cap = name_capacity(g.source_file)
-                    if cap:
-                        mincapacity = cap
-                        self.capacitytext.setText(str(mincapacity))
-                    break
+        # 테이블 빈 셀 자동 채우기 (경로명, 채널, 용량)
+        if self._has_table_data():
+            self._autofill_table_empty_cells()
+
+        # 용량: 테이블 용량 열 입력 또는 자동파싱(빈칸)
+        # mincapacity=0 유지 → 각 서브폴더가 자체 경로에서 용량 감지
+        # 테이블 per_path_capacities > 0 이면 해당 값 우선 사용
 
         # 파일 저장 설정
         save_file_name = None
@@ -11261,11 +11882,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
             for g in excel_groups:
                 for datafilepath in g.paths:
-                    if self.inicaprate.isChecked() and "mAh" in datafilepath:
+                    # 용량: 파일명에서 자동 추출, 없으면 0
+                    if "mAh" in datafilepath:
                         mincapacity = name_capacity(datafilepath)
-                        self.capacitytext.setText(str(mincapacity))
                     else:
-                        mincapacity = float(self.capacitytext.text())
+                        mincapacity = 0
 
                     filename = os.path.splitext(os.path.basename(datafilepath))[0]
                     try:
@@ -11330,6 +11951,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 tab_layout.addWidget(canvas)
                 self.cycle_tab.addTab(tab, str(tab_no))
                 self.cycle_tab.setCurrentWidget(tab)
+                self.cycle_tab_reset.setEnabled(True)
                 tab_no += 1
             plt.close(fig)
 
@@ -11343,11 +11965,48 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     flat_idx_of[(gi, pi)] = len(all_paths)
                     all_paths.append(p)
 
+            # 테이블 용량 → per-path 배열 구성 (테이블 데이터 사용 시)
+            _per_path_caps = None
+            if self._has_table_data():
+                _per_path_caps = []
+                for gi, g in enumerate(folder_groups):
+                    for pi in range(len(g.paths)):
+                        cap_val = 0.0
+                        if g.per_path_capacities and pi < len(g.per_path_capacities):
+                            cap_val = g.per_path_capacities[pi]
+                        _per_path_caps.append(cap_val)
+
             loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
                 np.array(all_paths), mincapacity, firstCrate,
                 self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-                max_workers=4
+                max_workers=4, per_path_capacities=_per_path_caps
             )
+
+            # ── 경로별 사이클 카테고리 분류 ──
+            _classify_results = {}  # {flat_idx: {sub_idx: classify_result}}
+            for fi, subs in subfolder_map.items():
+                _classify_results[fi] = {}
+                cap_val = _per_path_caps[fi] if _per_path_caps and fi < len(_per_path_caps) else 0
+                for sub_idx, ch_path in enumerate(subs):
+                    if 'Pattern' in os.path.basename(ch_path):
+                        continue
+                    try:
+                        cr = classify_channel_path(ch_path, cap_val)
+                        if cr:
+                            cr['channel'] = os.path.basename(ch_path)
+                            _classify_results[fi][sub_idx] = cr
+                    except Exception:
+                        pass
+            # 콘솔 요약 출력
+            _all_cr = [cr for fi_dict in _classify_results.values() for cr in fi_dict.values()]
+            if _all_cr:
+                _perf_logger.info('▶ 사이클 카테고리 분류 완료')
+                for cr in _all_cr:
+                    cat_parts = [f'{cat}:{n}' for cat, n in cr['counts'].items() if n > 0]
+                    _perf_logger.info(
+                        f'  [{cr["cycler"]}] {cr["channel"]}  '
+                        f'{cr["test_type"]}  총 {cr["total_cycles"]}cyc  {", ".join(cat_parts)}'
+                    )
 
             # 탭 할당: 개별=group별, 통합=file_idx별
             if is_individual:
@@ -11359,9 +12018,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 tab_units = list(by_file.values())
 
             total_tabs = len(tab_units)
+            # 사용자 원본 설정 보존 (탭 단위 리셋용)
+            _user_xscale = xscale
+            _user_irscale = irscale
 
             for tab_idx, group_indices in enumerate(tab_units):
-                fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+                # 탭 단위로 auto-detect 값 리셋
+                xscale = _user_xscale
+                irscale = _user_irscale
+                # 예상 채널 수 → figure 폭 동적 결정
+                _n_expected = 0
+                for _gi in group_indices:
+                    _g = folder_groups[_gi]
+                    for _pi in range(len(_g.paths)):
+                        _fi = flat_idx_of.get((_gi, _pi), -1)
+                        if _fi in subfolder_map:
+                            _n_expected += len(subfolder_map[_fi])
+                _fig_w = 14
+                if _n_expected > 15:
+                    _fig_w = min(14 + (_n_expected - 15) * 0.2, 20)
+                elif _n_expected > 8:
+                    _fig_w = min(14 + (_n_expected - 8) * 0.15, 17)
+
+                fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(
+                    nrows=2, ncols=3, figsize=(_fig_w, 8))
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
 
                 tab = None
@@ -11385,9 +12065,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         merged = {}
                         channel_state = {}  # {sub_label: {'offset': int, 'last_len': int}}
                         _first_ch_label = None
-                        # 채널 필터가 있으면 통합 sub_label 결정
+                        # 채널 필터·위치 매핑 준비
                         _has_ch_filter = bool(group.per_path_channels)
-                        _unified_sub = group.per_path_channels[0][0] if _has_ch_filter else None
+                        _link_map = group.channel_link_map  # {norm_ch: unified_sub}
 
                         for path_idx, fi in enumerate(flat_indices):
                             if fi not in subfolder_map:
@@ -11414,9 +12094,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 # 채널 필터 적용 (정규화 비교)
                                 if _allowed_chs and _normalize_ch(sub_label) not in _allowed_chs:
                                     continue
-                                # 채널 매핑: 다른 채널 번호도 통합 sub_label로 병합
-                                if _unified_sub is not None:
-                                    sub_label = _unified_sub
+                                # 위치 기반 채널 매핑: 같은 위치의 채널을 통합 label로 병합
+                                if _link_map:
+                                    norm = _normalize_ch(sub_label)
+                                    sub_label = _link_map.get(norm, sub_label)
                                 if group.path_names and group.path_names[path_idx]:
                                     ch_label = str(group.path_names[path_idx]).strip()
                                 else:
@@ -11433,11 +12114,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 ch_label = _first_ch_label
 
                                 if hasattr(cyctemp[1], "NewData"):
-                                    self.capacitytext.setText(str(cyctemp[0]))
                                     if irscale == 0 and cyctemp[0] != 0:
                                         irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
-                                    if xscale == 0:
-                                        xscale = len(cyctemp[1].NewData) * (len(flat_indices) + 1)
+                                        irscale = min(irscale, 20)  # DC-IR 스케일 상한 제한
 
                                     # index 오프셋 적용
                                     if sub_label not in channel_state:
@@ -11561,9 +12240,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     lgnd = sub_label
 
                                 if hasattr(cyctemp[1], "NewData"):
-                                    self.capacitytext.setText(str(cyctemp[0]))
                                     if float(self.dcirscale.text()) == 0 and cyctemp[0] != 0:
                                         new_irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
+                                        new_irscale = min(new_irscale, 20)  # DC-IR 스케일 상한 제한
                                         irscale = max(irscale, new_irscale)
 
                                     _artists, _color = graph_output_cycle(
@@ -11619,46 +12298,126 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                  fontweight=THEME['SUPTITLE_WEIGHT'])
 
                 # 범례 설정
+                # 축 범위 자동 조정 (xlim 동기화, ylim 확장, DCIR 상한 제한)
                 if has_valid_data:
+                    _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale)
+
+                if has_valid_data:
+                    n_legend = len(channel_map)
                     if not is_individual:
                         _lkw = dict(fontsize=THEME['LEGEND_SIZE'],
                                     framealpha=THEME['LEGEND_FRAMEALPHA'],
                                     edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
-                        _legend_locs = [
-                            (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
-                            (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
-                            (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
-                        ]
-                        for _ax, _loc, _anchor in _legend_locs:
-                            _handles, _labels = _ax.get_legend_handles_labels()
-                            _hl = [(h, l) for h, l in zip(_handles, _labels)
-                                   if l and not l.startswith('_')]
+                        # 채널 수에 따른 범례 크기/열 수 조정
+                        if n_legend > 15:
+                            _lkw['fontsize'] = 'x-small'
+                            _lkw['ncol'] = 3
+                            _lkw['columnspacing'] = 0.5
+                            _lkw['handletextpad'] = 0.3
+                        elif n_legend > 8:
+                            _lkw['fontsize'] = 'x-small'
+                            _lkw['ncol'] = 2
+                            _lkw['columnspacing'] = 0.5
+
+                        # 범례 항목이 매우 많으면 → figure 오른쪽 외부에 공용 범례 1개
+                        if n_legend > 8:
+                            # ax1에서 고유 범례 항목 수집
+                            _handles, _labels = ax1.get_legend_handles_labels()
                             _seen = set()
                             _hl_unique = []
-                            for h, l in _hl:
-                                if l not in _seen:
+                            for h, l in zip(_handles, _labels):
+                                if l and not l.startswith('_') and l not in _seen:
                                     _seen.add(l)
                                     _hl_unique.append((h, l))
+                            # 개별 subplot 범례 제거
+                            for _ax in axes_list:
+                                _leg = _ax.get_legend()
+                                if _leg:
+                                    _leg.remove()
+                            # figure 범례 배치 (오른쪽 외부)
                             if _hl_unique:
-                                _ax.legend([h for h, l in _hl_unique],
-                                           [l for h, l in _hl_unique],
-                                           loc=_loc, bbox_to_anchor=_anchor,
-                                           borderaxespad=0.5, **_lkw)
+                                _fig_leg_kw = dict(
+                                    fontsize='x-small',
+                                    framealpha=THEME['LEGEND_FRAMEALPHA'],
+                                    edgecolor=THEME['LEGEND_EDGECOLOR'],
+                                    fancybox=True,
+                                    handletextpad=0.3,
+                                    labelspacing=0.3,
+                                )
+                                _ncol_fig = 1
+                                if n_legend > 30:
+                                    _ncol_fig = 2
+                                    _fig_leg_kw['columnspacing'] = 0.8
+                                fig.legend(
+                                    [h for h, l in _hl_unique],
+                                    [l for h, l in _hl_unique],
+                                    loc='center right',
+                                    ncol=_ncol_fig,
+                                    **_fig_leg_kw
+                                )
+                            # tight_layout에서 범례 공간 확보 (오른쪽 여백)
+                            self._cycle_legend_outside = True
+                        else:
+                            _legend_locs = [
+                                (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
+                                (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
+                                (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
+                            ]
+                            for _ax, _loc, _anchor in _legend_locs:
+                                _handles, _labels = _ax.get_legend_handles_labels()
+                                _hl = [(h, l) for h, l in zip(_handles, _labels)
+                                       if l and not l.startswith('_')]
+                                _seen = set()
+                                _hl_unique = []
+                                for h, l in _hl:
+                                    if l not in _seen:
+                                        _seen.add(l)
+                                        _hl_unique.append((h, l))
+                                if _hl_unique:
+                                    _ax.legend([h for h, l in _hl_unique],
+                                               [l for h, l in _hl_unique],
+                                               loc=_loc, bbox_to_anchor=_anchor,
+                                               borderaxespad=0.5, **_lkw)
+                            self._cycle_legend_outside = False
                     else:
-                        ax1.legend(loc="lower left")
-                        ax2.legend(loc="lower right")
-                        ax3.legend(loc="upper right")
-                        ax4.legend(loc="upper right")
-                        ax5.legend(loc="upper right")
-                        ax6.legend(loc="lower right")
+                        _lkw_ind = {}
+                        if n_legend > 15:
+                            _lkw_ind = dict(fontsize='x-small', ncol=3,
+                                            columnspacing=0.5, handletextpad=0.3)
+                        elif n_legend > 8:
+                            _lkw_ind = dict(fontsize='x-small', ncol=2,
+                                            columnspacing=0.5)
+                        ax1.legend(loc="lower left", **_lkw_ind)
+                        ax2.legend(loc="lower right", **_lkw_ind)
+                        ax3.legend(loc="upper right", **_lkw_ind)
+                        ax4.legend(loc="upper right", **_lkw_ind)
+                        ax5.legend(loc="upper right", **_lkw_ind)
+                        ax6.legend(loc="lower right", **_lkw_ind)
+                        self._cycle_legend_outside = False
                     place_dcir_labels(ax4)
+                    # DCIR(ax4) x축 범위를 방전용량(ax1)과 동일하게 설정
+                    ax4.set_xlim(ax1.get_xlim())
                     place_avgrest_labels(ax6)
                     _opaque_legend_markers(*axes_list)
+                    # figure 범례(외부 범례)도 alpha 보정
+                    for _fig_leg in fig.legends:
+                        for handle in _fig_leg.legend_handles:
+                            handle.set_alpha(1.0)
 
                 # 탭 추가
                 if has_valid_data and tab_layout is not None:
+                    # 이 탭에 해당하는 분류 결과 수집
+                    _tab_classify = []
+                    for gi in group_indices:
+                        _g = folder_groups[gi]
+                        for _pi in range(len(_g.paths)):
+                            _fi = flat_idx_of.get((gi, _pi), -1)
+                            if _fi in _classify_results:
+                                for _si, _cr in _classify_results[_fi].items():
+                                    _tab_classify.append(_cr)
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list, sub_channel_map)
+                                             channel_map, fig, axes_list, sub_channel_map,
+                                             classify_info=_tab_classify if _tab_classify else None)
                     tab_no += 1
                     if suptitle_name:
                         output_fig(self.figsaveok, suptitle_name)
@@ -11667,6 +12426,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                 # 진행률
                 self.progressBar.setValue(50 + int((tab_idx + 1) / total_tabs * 50))
+
+            # Phase 2: 실측 1st Dchg 교차 검증 (measured 데이터 구축 → Phase 1 재호출)
+            if self._has_table_data():
+                _measured = self._collect_measured_first_dchg(
+                    loaded_data, subfolder_map, len(all_paths))
+                self._build_row_measured_map(_measured, flat_idx_of, folder_groups)
+                self._highlight_capacity_mismatch()
 
         if self.saveok.isChecked() and save_file_name:
             writer.close()
@@ -11677,10 +12443,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         set_coincell_mode(self.chk_coincell_cyc.isChecked())
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
-        if self.inicaprate.isChecked():
-            mincapacity = 0
-        elif self.inicaptype.isChecked():
-            mincapacity = float(self.capacitytext.text())
+        mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
         xscale = int(self.tcyclerng.text())
         ylimithigh = float(self.tcyclerngyhl.text())
         ylimitlow = float(self.tcyclerngyll.text())
@@ -11690,10 +12453,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def Profile_ini_set(self):
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
-        if self.inicaprate.isChecked():
-            mincapacity = 0
-        elif self.inicaptype.isChecked():
-            mincapacity = float(self.capacitytext.text())
+        mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
         CycleNo = convert_steplist(self.stepnum.toPlainText())
         smoothdegree = int(self.smooth.text())
         mincrate = float(self.cutoff.text())
@@ -11713,10 +12473,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         sys.exit()
 
     def inicaprate_on(self):
-        self.inicaprate.setChecked(True)
+        pass  # 하위 호환 유지 (용량 테이블 통합으로 더 이상 사용하지 않음)
 
     def inicaptype_on(self):
-        self.inicaptype.setChecked(True)
+        pass  # 하위 호환 유지 (용량 테이블 통합으로 더 이상 사용하지 않음)
 
     def pne_path_setting(self):
         all_data_name = []
@@ -11742,9 +12502,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     all_data_folder = np.array([p.strip().strip('"').strip("'") for p in cycle_path.cyclepath.tolist()])
                     if hasattr(cycle_path, "cyclename"):
                         all_data_name = np.array([n.strip().strip('"').strip("'") for n in cycle_path.cyclename.tolist()])
-                    if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
+                    if "mAh" in datafilepath:
                         self.mincapacity = name_capacity(datafilepath)
-                        self.capacitytext.setText(str(self.mincapacity))
                 else:
                     all_data_folder = multi_askopendirnames()
             else:
@@ -11764,34 +12523,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def cycle_tab_reset_confirm_button(self):
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
-
-    def _toggle_stepnum2_expand(self):
-        """경로 테이블 펼치기/접기 토글 (스크롤 영역 내에서 아래 위젯 자연스럽게 이동)"""
-        if self._stepnum2_expanded:
-            self.cycle_path_table.setMaximumHeight(120)
-            self.btn_expand_path.setText("▼")
-            self._stepnum2_expanded = False
-        else:
-            # 행 수에 맞춰 높이 계산 (헤더 + 행*22px + 여백)
-            row_count = max(self.cycle_path_table.rowCount(), 5)
-            header_h = self.cycle_path_table.horizontalHeader().height()
-            needed = header_h + row_count * 22 + 4
-            self.cycle_path_table.setMaximumHeight(max(needed, 200))
-            self.btn_expand_path.setText("▲")
-            self._stepnum2_expanded = True
+        self.cycle_tab_reset.setEnabled(False)
 
     def _update_cell_tooltip(self, row: int, col: int) -> None:
-        """셀 편집 시 툴팁을 셀 텍스트로 자동 갱신"""
+        """셀 편집 시 툴팁 자동 갱신 + 경로 존재 여부 + 그룹 구분선"""
+        if self._table_undo_restoring:
+            return
         item = self.cycle_path_table.item(row, col)
         if item:
             item.setToolTip(item.text())
+        # 경로 컬럼(1) 변경 시 존재 여부 시각 표시 및 구분선 갱신
+        if col == 1:
+            self._highlight_path_cell(row)
+            self._update_group_separators()
 
     # ── 테이블 ↔ 데이터 유틸리티 ──
 
     def _get_table_cell(self, row, col):
-        """테이블 셀 텍스트를 안전하게 반환 (None → '')"""
+        """테이블 셀 텍스트를 안전하게 반환 (None → '', 따옴표 제거)"""
         item = self.cycle_path_table.item(row, col)
-        return item.text().strip() if item else ''
+        return item.text().strip().strip('"').strip("'") if item else ''
 
     def _get_table_rows(self):
         """테이블의 모든 행을 dict 리스트로 반환 (빈 행 제외)
@@ -11816,6 +12567,144 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if self._get_table_cell(r, 1):
                 return True
         return False
+
+    def _get_table_row_groups(self):
+        """테이블 행을 빈 행 기준으로 그룹 분리하여 반환
+        빈 행(경로 없음)이 그룹 구분자 역할.
+        Returns: list[list[dict]] — 각 그룹은 연속된 행의 dict 리스트
+        """
+        groups = []
+        current_group = []
+        for r in range(self.cycle_path_table.rowCount()):
+            path = self._get_table_cell(r, 1)
+            if not path:
+                if current_group:
+                    groups.append(current_group)
+                    current_group = []
+                continue
+            current_group.append({
+                'name': self._get_table_cell(r, 0),
+                'path': path,
+                'channel': self._get_table_cell(r, 2),
+                'capacity': self._get_table_cell(r, 3),
+            })
+        if current_group:
+            groups.append(current_group)
+        return groups
+
+    def _autofill_table_empty_cells(self):
+        """사이클 분석 시 테이블 셀 자동 채우기
+        경로(col1)를 기준으로 경로명(col0), 채널(col2), 용량(col3) 유추
+        - 빈 셀: 자동 산정값으로 채움
+        - 기존값 있음 + 자동값과 동일: 폰트 유지
+        - 기존값 있음 + 자동값과 다름: 기존값 유지, bold 폰트 처리
+        - 연결 모드: 그룹 내 첫 행과 동일한 값은 후속 행에 채우지 않음
+          다른 값만 후속 행에 표시
+        """
+        tbl = self.cycle_path_table
+        link_mode = self.chk_link_cycle.isChecked()
+        tbl.blockSignals(True)
+        try:
+            # ── Pass 1: 각 행의 자동값 산정 ──
+            auto_vals = []  # [{'name':..,'ch':..,'cap':..} or None]
+            for r in range(tbl.rowCount()):
+                path = self._get_table_cell(r, 1)
+                if not path:
+                    auto_vals.append(None)
+                    continue
+                # 경로명
+                basename = os.path.basename(path)
+                auto_name = basename
+                if "mAh_" in auto_name:
+                    auto_name = auto_name.split("mAh_", 1)[1]
+                if len(auto_name) > 30:
+                    auto_name = auto_name[:30] + "..."
+                # 채널
+                auto_ch = ""
+                if os.path.isdir(path):
+                    subfolders = sorted(
+                        [f.name for f in os.scandir(path)
+                         if f.is_dir() and "Pattern" not in f.name
+                         and _is_channel_folder(f.name)])
+                    channels = []
+                    for sf in subfolders:
+                        ch = extract_text_in_brackets(sf)
+                        channels.append(ch)
+                    if channels:
+                        auto_ch = ",".join(channels)
+                # 용량
+                auto_cap = None
+                if "mAh" in path:
+                    auto_cap = name_capacity(path)
+                if not auto_cap and os.path.isdir(path):
+                    try:
+                        first_crate = float(self.ratetext.text())
+                        subs = sorted([f.path for f in os.scandir(path)
+                                       if f.is_dir() and "Pattern" not in f.name])
+                        if subs:
+                            if check_cycler(path):
+                                auto_cap = pne_min_cap(subs[0], 0, first_crate)
+                            else:
+                                auto_cap = toyo_min_cap(subs[0], 0, first_crate)
+                    except Exception:
+                        auto_cap = None
+                auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
+                auto_vals.append({
+                    'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str})
+
+            # ── Pass 2: 셀 채우기 (연결 모드 시 그룹 내 중복 제거) ──
+            grp_first = None  # 그룹 첫 행의 auto값 dict
+            for r in range(tbl.rowCount()):
+                if auto_vals[r] is None:
+                    grp_first = None
+                    continue
+                auto = auto_vals[r]
+                is_grp_first = (grp_first is None)
+                if is_grp_first:
+                    grp_first = auto
+                # (col, 이 행의 자동값, 그룹 첫 행의 자동값)
+                cols = [
+                    (0, auto['name'], grp_first['name']),
+                    (2, auto['ch'],   grp_first['ch']),
+                    (3, auto['cap'],  grp_first['cap']),
+                ]
+                for col, auto_val, first_val in cols:
+                    existing = self._get_table_cell(r, col)
+                    # 연결 모드 후속 행:
+                    #   col 0(경로명): 항상 공란 (첫 행에만 표시)
+                    #   col 2,3(채널,용량): 첫 행과 동일하면 공란
+                    if link_mode and not is_grp_first and col == 0:
+                        skip_dup = True
+                    else:
+                        skip_dup = (link_mode and not is_grp_first
+                                    and auto_val and first_val
+                                    and auto_val.strip() == first_val.strip())
+                    if not existing:
+                        if auto_val and not skip_dup:
+                            item = tbl.item(r, col)
+                            if item is None:
+                                item = QtWidgets.QTableWidgetItem(auto_val)
+                                tbl.setItem(r, col, item)
+                            else:
+                                item.setText(auto_val)
+                            item.setToolTip(auto_val)
+                    else:
+                        # 기존값 bold 비교
+                        if auto_val:
+                            item = tbl.item(r, col)
+                            if item:
+                                font = item.font()
+                                font.setBold(
+                                    existing.strip() != auto_val.strip())
+                                item.setFont(font)
+        finally:
+            tbl.blockSignals(False)
+        # 경로 하이라이트 갱신
+        self._highlight_all_paths()
+        # 연결 모드: 채널 불일치 빨간 폰트 표시
+        self._highlight_channel_mismatch()
+        # 연결 모드: 용량 불일치 빨간 폰트 표시
+        self._highlight_capacity_mismatch()
 
     def _set_table_rows(self, rows):
         """dict 리스트를 테이블에 채움. 필요 시 행 추가."""
@@ -11892,7 +12781,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         text = QtWidgets.QApplication.clipboard().text()
         if not text:
             return
-        rows = [line.split('\t') for line in text.strip().split('\n') if line.strip()]
+        self._push_table_undo()
+        # 빈 행 보존하되, 연속 2칸 이상 빈 행은 1칸으로 축소
+        raw_lines = text.strip().split('\n')
+        rows = []
+        prev_empty = False
+        for line in raw_lines:
+            is_empty = not line.strip()
+            if is_empty:
+                if not prev_empty:
+                    rows.append([''] * self.cycle_path_table.columnCount())
+                prev_empty = True
+            else:
+                rows.append(line.split('\t'))
+                prev_empty = False
+        # 맨 끝 빈 행 제거
+        while rows and all(c == '' for c in rows[-1]):
+            rows.pop()
         if not rows:
             return
         sel = self.cycle_path_table.selectedRanges()
@@ -11907,12 +12812,524 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 c = start_col + ci
                 if c < col_count:
                     self.cycle_path_table.setItem(
-                        start_row + ri, c, QtWidgets.QTableWidgetItem(val.strip()))
+                        start_row + ri, c, QtWidgets.QTableWidgetItem(val.strip().strip('"').strip("'")))
 
     def _cycle_table_delete(self):
         """선택 셀 내용 삭제"""
+        self._push_table_undo()
         for item in self.cycle_path_table.selectedItems():
             item.setText('')
+
+    def _swap_table_rows(self, row1, row2):
+        """테이블 두 행의 내용을 교환"""
+        tbl = self.cycle_path_table
+        for c in range(tbl.columnCount()):
+            text1 = self._get_table_cell(row1, c)
+            text2 = self._get_table_cell(row2, c)
+            item1 = tbl.item(row1, c)
+            item2 = tbl.item(row2, c)
+            if item1 is None:
+                item1 = QtWidgets.QTableWidgetItem('')
+                tbl.setItem(row1, c, item1)
+            if item2 is None:
+                item2 = QtWidgets.QTableWidgetItem('')
+                tbl.setItem(row2, c, item2)
+            item1.setText(text2)
+            item1.setToolTip(text2)
+            item2.setText(text1)
+            item2.setToolTip(text1)
+
+    def _highlight_path_cell(self, row):
+        """경로 셀의 존재 여부에 따라 폰트색 표시"""
+        item = self.cycle_path_table.item(row, 1)
+        if not item:
+            return
+        path = item.text().strip().strip('"').strip("'")
+        if not path:
+            item.setForeground(QtGui.QBrush())  # 기본색 복원
+            return
+        if os.path.exists(path):
+            item.setForeground(QtGui.QBrush())  # 기본색 — 경로 존재
+        else:
+            item.setForeground(QtGui.QColor('#E64B35'))  # 빨간 폰트 — 경로 없음
+
+    def _highlight_all_paths(self):
+        """모든 경로 셀의 존재 여부 갱신"""
+        self.cycle_path_table.blockSignals(True)
+        for r in range(self.cycle_path_table.rowCount()):
+            self._highlight_path_cell(r)
+        self.cycle_path_table.blockSignals(False)
+
+    def _highlight_channel_mismatch(self):
+        """연결 모드: 그룹 내 경로 간 채널 불일치 시 빨간 폰트 표시
+        - 위치 기반 입력('-' 포함): 위치 수 불일치만 경고
+        - 자동 채움(전체 채널): set 비교로 누락 채널 경고"""
+        if not self.chk_link_cycle.isChecked():
+            return
+        tbl = self.cycle_path_table
+        tbl.blockSignals(True)
+        try:
+            # 행 그룹 수집 (빈 행 기준 분리, row index 추적)
+            groups = []
+            current = []
+            for r in range(tbl.rowCount()):
+                path = self._get_table_cell(r, 1)
+                if not path:
+                    if current:
+                        groups.append(current)
+                        current = []
+                    continue
+                current.append(r)
+            if current:
+                groups.append(current)
+
+            for grp_rows in groups:
+                if len(grp_rows) < 2:
+                    for r in grp_rows:
+                        item = tbl.item(r, 2)
+                        if item:
+                            item.setForeground(QtGui.QBrush())
+                    continue
+
+                # 각 행의 원본 채널 문자열과 파싱 결과 수집
+                row_raw = {}       # {row: 원본 문자열}
+                row_ch_lists = {}  # {row: ['032','073','074'] 또는 ['105','-','-']}
+                row_ch_sets = {}   # {row: {정규화된 유효 채널}}
+                has_dash = False
+                for r in grp_rows:
+                    ch_str = self._get_table_cell(r, 2)
+                    row_raw[r] = ch_str
+                    if ch_str:
+                        parts = [c.strip() for c in ch_str.split(',')]
+                        row_ch_lists[r] = parts
+                        if '-' in parts:
+                            has_dash = True
+                        chs = {_normalize_ch(p) for p in parts
+                               if p and p != '-'}
+                    else:
+                        row_ch_lists[r] = []
+                        chs = set()
+                    row_ch_sets[r] = chs
+
+                # 비교 가능한 채널이 2행 미만이면 기본색
+                non_empty = [s for s in row_ch_sets.values() if s]
+                if len(non_empty) < 2:
+                    for r in grp_rows:
+                        item = tbl.item(r, 2)
+                        if item:
+                            item.setForeground(QtGui.QBrush())
+                    continue
+
+                if has_dash:
+                    # ── 위치 기반 입력: '-'가 포함된 경우 ──
+                    # 최대 위치 수 계산
+                    max_pos = max(len(row_ch_lists[r]) for r in grp_rows)
+                    for r in grp_rows:
+                        item = tbl.item(r, 2)
+                        if not item:
+                            continue
+                        n = len(row_ch_lists[r])
+                        if n < max_pos:
+                            # 위치 수 부족 → 빨간 폰트
+                            item.setForeground(QtGui.QColor('#E64B35'))
+                            item.setToolTip(
+                                f"채널 위치 {n}개 / 그룹 최대 {max_pos}개\n"
+                                f"부족한 위치가 {max_pos - n}개 있습니다")
+                        else:
+                            item.setForeground(QtGui.QBrush())
+                            item.setToolTip(row_raw[r])
+                else:
+                    # ── set 비교: 자동 채움(전체 채널) ──
+                    all_union = set()
+                    for s in non_empty:
+                        all_union |= s
+                    for r in grp_rows:
+                        item = tbl.item(r, 2)
+                        if not item:
+                            continue
+                        chs = row_ch_sets[r]
+                        if not chs:
+                            continue
+                        missing = all_union - chs
+                        if missing:
+                            item.setForeground(QtGui.QColor('#E64B35'))
+                            item.setToolTip(
+                                f"채널: {','.join(sorted(chs))}\n"
+                                f"누락: {','.join(sorted(missing))}")
+                        else:
+                            item.setForeground(QtGui.QBrush())
+        finally:
+            tbl.blockSignals(False)
+
+    def _highlight_capacity_mismatch(self):
+        """용량 검증: Phase 1(연결 그룹 불일치), Phase 2(실측 교차검증)
+        다수결로 기준값 결정, 소수파 행에 빨간색 적용
+        2행 동률 시 Phase 2 실측으로 기준 해소"""
+        tbl = self.cycle_path_table
+        tbl.blockSignals(True)
+        is_link = self.chk_link_cycle.isChecked()
+        _has_measured = hasattr(self, '_row_measured_cap') and bool(self._row_measured_cap)
+        try:
+            # 빈 행 기준 그룹 분리 (row index 추적)
+            groups = []
+            current = []
+            for r in range(tbl.rowCount()):
+                path = self._get_table_cell(r, 1)
+                if not path:
+                    if current:
+                        groups.append(current)
+                        current = []
+                    continue
+                current.append(r)
+            if current:
+                groups.append(current)
+
+            for grp_rows in groups:
+                # Phase 1~2: 연결 모드가 아니면 건너뜀
+                if not is_link:
+                    continue
+                # 각 행의 용량값 수집
+                row_caps = {}  # {row: float or None}
+                for r in grp_rows:
+                    cap_str = self._get_table_cell(r, 3)
+                    if cap_str:
+                        try:
+                            row_caps[r] = float(cap_str)
+                        except ValueError:
+                            row_caps[r] = None
+                    else:
+                        row_caps[r] = None
+
+                valid_caps = {r: v for r, v in row_caps.items() if v is not None and v > 0}
+                majority_val = None
+                majority_cnt = 0
+
+                # ── Phase 1: 다수결 기반 공칭 불일치 표시 ──
+                if len(grp_rows) < 2 or len(valid_caps) < 2:
+                    for r in grp_rows:
+                        item = tbl.item(r, 3)
+                        if item:
+                            item.setForeground(QtGui.QBrush())
+                elif len(set(valid_caps.values())) == 1:
+                    for r in grp_rows:
+                        item = tbl.item(r, 3)
+                        if item:
+                            item.setForeground(QtGui.QBrush())
+                else:
+                    from collections import Counter
+                    unique_vals = set(valid_caps.values())
+                    val_counts = Counter(valid_caps.values())
+                    majority_val, majority_cnt = val_counts.most_common(1)[0]
+
+                    # Phase 2 판정 불가 해소: 실측으로 기준 결정
+                    if majority_cnt == 1 and _has_measured:
+                        grp_meas = [self._row_measured_cap[r]
+                                    for r in grp_rows if r in self._row_measured_cap]
+                        if grp_meas:
+                            avg_meas = sum(grp_meas) / len(grp_meas)
+                            best_nom = None
+                            best_diff = float('inf')
+                            for nom_val in unique_vals:
+                                ratio_check = avg_meas / nom_val
+                                if 0.5 <= ratio_check <= 1.05:
+                                    diff = abs(ratio_check - 1.0)
+                                    if diff < best_diff:
+                                        best_diff = diff
+                                        best_nom = nom_val
+                            if best_nom is not None:
+                                # 실측으로 기준 해소 → 다수결처럼 처리
+                                majority_val = best_nom
+                                majority_cnt = 2  # 해소됨 표시
+
+                    for r in grp_rows:
+                        item = tbl.item(r, 3)
+                        if not item:
+                            continue
+                        cap = valid_caps.get(r)
+                        if cap is None:
+                            continue
+                        if majority_cnt == 1:
+                            # 실측으로도 해소 불가 → 전부 빨간색
+                            item.setForeground(QtGui.QColor('#E64B35'))
+                            vals_str = ', '.join(str(int(v)) for v in sorted(unique_vals))
+                            item.setToolTip(f"그룹 내 용량 불일치: {vals_str}\n(판정 불가)")
+                        elif cap != majority_val:
+                            item.setForeground(QtGui.QColor('#E64B35'))
+                            item.setToolTip(
+                                f"용량 {int(cap)} ≠ 그룹 기준값 {int(majority_val)}")
+                        else:
+                            item.setForeground(QtGui.QBrush())
+                            item.setToolTip(self._get_table_cell(r, 3))
+
+                # ── Phase 2: 실측 2nd Dchg 교차 검증 (툴팁 보강) ──
+                if not _has_measured:
+                    continue
+                for r in grp_rows:
+                    item = tbl.item(r, 3)
+                    if not item:
+                        continue
+                    cap = valid_caps.get(r)
+                    meas = self._row_measured_cap.get(r)
+                    if not meas or not cap or cap <= 0:
+                        continue
+                    ratio = meas / cap
+                    existing_tip = item.toolTip() or ''
+                    is_red = (item.foreground().color() == QtGui.QColor('#E64B35'))
+
+                    if is_red and majority_val and cap != majority_val:
+                        # 소수파 → 실측이 다수결/해소 기준 정상 범위인지
+                        ratio_maj = meas / majority_val
+                        if 0.5 <= ratio_maj <= 1.05:
+                            tip_add = (f"\n[실측 검증] 2nd Dchg {meas:.0f}mAh "
+                                       f"(실측/기준 = {ratio_maj:.2f}) "
+                                       f"→ 공칭 오류 가능성")
+                        else:
+                            tip_add = (f"\n[실측 검증] 2nd Dchg {meas:.0f}mAh "
+                                       f"(실측/기준 = {ratio_maj:.2f}) "
+                                       f"→ 기준 범위 벗어남")
+                        item.setToolTip((existing_tip + tip_add).strip())
+                    elif ratio > 1.2 or ratio < 0.5:
+                        warn = "과대" if ratio > 1.2 else "과소"
+                        tip_add = (f"\n[실측 경고] 2nd Dchg {meas:.0f}mAh "
+                                   f"(실측/공칭 = {ratio:.2f}) → {warn}")
+                        item.setToolTip((existing_tip + tip_add).strip())
+                        if not is_red:
+                            item.setForeground(QtGui.QColor('#FF8C00'))
+                    elif 0.5 <= ratio <= 1.05:
+                        tip_add = (f"\n[실측] 2nd Dchg {meas:.0f}mAh "
+                                   f"(실측/공칭 = {ratio:.2f})")
+                        item.setToolTip((existing_tip + tip_add).strip())
+        finally:
+            tbl.blockSignals(False)
+
+    def _collect_measured_first_dchg(self, loaded_data, subfolder_map, n_paths):
+        """각 path(folder_idx)의 실측 2nd Dchg(mAh) 수집
+        첫 번째 채널의 2nd cycle Dchg 기준 (1st는 초기 안정화 영향)
+        2nd가 없으면 1st 사용
+        Returns: {folder_idx: measured_mAh}
+        """
+        measured = {}
+        for fi in range(n_paths):
+            if fi not in subfolder_map:
+                continue
+            for sub_idx in range(len(subfolder_map[fi])):
+                if (fi, sub_idx) not in loaded_data:
+                    continue
+                _, cyctemp = loaded_data[(fi, sub_idx)]
+                if cyctemp is None or cyctemp[1] is None:
+                    continue
+                if not hasattr(cyctemp[1], 'NewData') or cyctemp[1].NewData.empty:
+                    continue
+                cap = cyctemp[0]
+                if cap <= 0:
+                    continue
+                # Dchg는 mincapacity로 정규화된 값 → 실측 mAh = ratio × mincapacity
+                # 2nd cycle 우선, 없으면 1st
+                df = cyctemp[1].NewData
+                idx = 1 if len(df) >= 2 else 0
+                dchg_ratio = df['Dchg'].iloc[idx]
+                measured[fi] = round(dchg_ratio * cap, 1)
+                break  # 첫 채널만
+        return measured
+
+    def _build_row_measured_map(self, measured, flat_idx_of, folder_groups):
+        """테이블 row → 실측 1st Dchg(mAh) 매핑 구축
+        measured: {folder_idx: mAh}
+        flat_idx_of: {(gi, pi): folder_idx}
+        """
+        self._row_measured_cap = {}
+        tbl = self.cycle_path_table
+        link_mode = self.chk_link_cycle.isChecked()
+        _gi = 0
+        _pi = 0
+        _in_group = False
+        for row in range(tbl.rowCount()):
+            path = self._get_table_cell(row, 1)
+            if not path:
+                if _in_group and link_mode:
+                    _gi += 1
+                    _pi = 0
+                    _in_group = False
+                continue
+            _in_group = True
+            fi = flat_idx_of.get((_gi, _pi))
+            if fi is not None and fi in measured:
+                self._row_measured_cap[row] = measured[fi]
+            if link_mode:
+                _pi += 1
+            else:
+                _gi += 1  # 개별 모드: 각 행이 별도 그룹
+
+    def _update_group_separators(self):
+        """연결처리 활성 시 빈 행(그룹 구분자)에 시각적 구분선 표시 + 그룹별 번호
+        구분선 조건: 모든 셀이 비어있는 행만 구분선 처리 (경로만 지워도 다른 데이터가 있으면 일반 행 유지)
+        """
+        tbl = self.cycle_path_table
+        tbl.blockSignals(True)
+        link_mode = self.chk_link_cycle.isChecked()
+        sep_bg = QtGui.QColor('#D5D8DC')
+        clear_bg = QtGui.QBrush()
+
+        def _is_row_all_empty(row):
+            """행의 모든 셀이 비어있는지 판별"""
+            return not any(self._get_table_cell(row, c) for c in range(tbl.columnCount()))
+
+        # 1차: 구분자 위치 판별 + 그룹 번호 계산
+        group_no = 0
+        in_group = False
+        row_labels = []
+        for r in range(tbl.rowCount()):
+            path = self._get_table_cell(r, 1)
+            is_sep = False
+            # 구분선: 연결처리 활성 + 행 전체가 비어있음 + 위에 경로가 있는 행 존재
+            if link_mode and not path and _is_row_all_empty(r):
+                for above in range(r - 1, -1, -1):
+                    if self._get_table_cell(above, 1):
+                        is_sep = True
+                        break
+            if is_sep:
+                row_labels.append('')
+                in_group = False
+            elif path:
+                if not in_group:
+                    group_no += 1
+                    in_group = True
+                    row_labels.append(str(group_no))  # 그룹 첫 행만 번호 표시
+                else:
+                    row_labels.append('')  # 같은 그룹 나머지 행은 빈칸
+            else:
+                row_labels.append('')
+                in_group = False
+        # 2차: 스타일 적용 + 행 헤더 설정
+        for r in range(tbl.rowCount()):
+            path = self._get_table_cell(r, 1)
+            # 구분선: 행 전체가 비어있을 때만 적용
+            _is_sep = False
+            if link_mode and not path and _is_row_all_empty(r):
+                for above in range(r - 1, -1, -1):
+                    if self._get_table_cell(above, 1):
+                        _is_sep = True
+                        break
+            tbl.setRowHeight(r, 6 if _is_sep else 22)
+            # 행 헤더 (그룹 번호)
+            if link_mode:
+                header_item = QtWidgets.QTableWidgetItem(row_labels[r])
+                header_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                tbl.setVerticalHeaderItem(r, header_item)
+            else:
+                tbl.setVerticalHeaderItem(r, QtWidgets.QTableWidgetItem(str(r + 1)))
+            for c in range(tbl.columnCount()):
+                item = tbl.item(r, c)
+                if _is_sep:
+                    if item is None:
+                        item = QtWidgets.QTableWidgetItem('')
+                        tbl.setItem(r, c, item)
+                    item.setBackground(sep_bg)
+                elif item and c != 1:
+                    item.setBackground(clear_bg)
+        tbl.blockSignals(False)
+
+    def _push_table_undo(self):
+        """현재 테이블 상태를 Undo 스택에 저장"""
+        tbl = self.cycle_path_table
+        state = []
+        for r in range(tbl.rowCount()):
+            row_data = []
+            for c in range(tbl.columnCount()):
+                item = tbl.item(r, c)
+                row_data.append(item.text() if item else '')
+            state.append(row_data)
+        self._table_undo_stack.append(state)
+        if len(self._table_undo_stack) > 20:
+            self._table_undo_stack.pop(0)
+
+    def _undo_table(self):
+        """테이블 상태를 이전으로 복원 (Ctrl+Z)"""
+        if not self._table_undo_stack:
+            return
+        state = self._table_undo_stack.pop()
+        self._table_undo_restoring = True
+        tbl = self.cycle_path_table
+        tbl.setRowCount(len(state))
+        for r, row_data in enumerate(state):
+            for c, text in enumerate(row_data):
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setToolTip(text)
+                tbl.setItem(r, c, item)
+        self._table_undo_restoring = False
+        self._highlight_all_paths()
+        self._update_group_separators()
+
+    def _cycle_table_context_menu(self, pos):
+        """경로 테이블 우클릭 컨텍스트 메뉴"""
+        menu = QtWidgets.QMenu(self.cycle_path_table)
+        row = self.cycle_path_table.rowAt(pos.y())
+        tbl = self.cycle_path_table
+        selected_rows = sorted({idx.row() for idx in tbl.selectedIndexes()})
+
+        act_insert_above = menu.addAction("행 삽입 (위)")
+        act_insert_below = menu.addAction("행 삽입 (아래)")
+        menu.addSeparator()
+        act_move_up = menu.addAction("행 이동 ↑")
+        act_move_down = menu.addAction("행 이동 ↓")
+        menu.addSeparator()
+        act_clear = menu.addAction("행 클리어")
+        act_delete = menu.addAction("행 삭제")
+
+        # 이동 제한
+        if row <= 0:
+            act_move_up.setEnabled(False)
+        if row < 0 or row >= tbl.rowCount() - 1:
+            act_move_down.setEnabled(False)
+        # 최소 1행 유지
+        if tbl.rowCount() <= 1:
+            act_delete.setEnabled(False)
+
+        action = menu.exec(tbl.viewport().mapToGlobal(pos))
+        if action is None:
+            return
+
+        self._push_table_undo()
+        target = row if row >= 0 else 0
+
+        if action == act_insert_above:
+            tbl.insertRow(target)
+        elif action == act_insert_below:
+            tbl.insertRow(target + 1)
+        elif action == act_move_up:
+            self._swap_table_rows(target, target - 1)
+            tbl.selectRow(target - 1)
+        elif action == act_move_down:
+            self._swap_table_rows(target, target + 1)
+            tbl.selectRow(target + 1)
+        elif action == act_clear:
+            rows_to_clear = selected_rows if selected_rows else ([row] if row >= 0 else [])
+            for r in rows_to_clear:
+                for c in range(tbl.columnCount()):
+                    item = tbl.item(r, c)
+                    if item:
+                        item.setText('')
+        elif action == act_delete:
+            rows_to_del = selected_rows if selected_rows else ([row] if row >= 0 else [])
+            if tbl.rowCount() - len(rows_to_del) < 1:
+                rows_to_del = rows_to_del[:-1]
+            for r in reversed(rows_to_del):
+                tbl.removeRow(r)
+
+        # 시각 갱신
+        self._highlight_all_paths()
+        self._update_group_separators()
+
+    def eventFilter(self, obj, event):
+        """경로 테이블에서 Enter 키로 마지막 행 자동 확장"""
+        if obj is self.cycle_path_table and event.type() == QtCore.QEvent.Type.KeyPress:
+            key = event.key()
+            if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+                row = self.cycle_path_table.currentRow()
+                if row >= self.cycle_path_table.rowCount() - 1:
+                    self._push_table_undo()
+                    self.cycle_path_table.setRowCount(row + 2)
+        return super().eventFilter(obj, event)
 
     def _on_cyclepath_toggled(self, checked):
         """지정Path사용 체크 시 연결처리 스위치 비활성화"""
@@ -12970,9 +14387,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ect_cycle = np.array(cycle_path.cycle.tolist())
             ect_CD = np.array(cycle_path.CD.tolist())
             ect_save = np.array(cycle_path.save.tolist())
-            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
+            if "mAh" in datafilepath:
                 self.mincapacity = name_capacity(datafilepath)
-                self.capacitytext.setText(str(self.mincapacity))
         self.ContinueConfirm.setEnabled(True)
         tab_no = 0
         for i, cyclefolder in enumerate(ect_path):
@@ -13385,6 +14801,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                 self.cycle_tab.addTab(tab, "chg" + str(chg_tab_no))
                                                 chg_tab_no = chg_tab_no + 1
                                             self.cycle_tab.setCurrentWidget(tab)
+                                            self.cycle_tab_reset.setEnabled(True)
                                             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                                             output_fig(self.figsaveok, title)
                             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
