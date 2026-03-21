@@ -74,6 +74,22 @@ if not _perf_logger.handlers:
     _perf_logger.propagate = False
 
 
+def calc_optimal_workers(task_count: int) -> int:
+    """PC 리소스 기반 최적 worker 수 계산
+
+    네트워크 드라이브 I/O 바운드 환경(사내 갤럭시 북) 기준:
+    - GIL 체감이 줄어들어 cpu_count // 3 까지 효과적
+    - 네트워크 경합 + 저사양 RAM(8GB) 보호를 위해 상한 8
+    - task 수보다 workers가 많으면 오버헤드만 증가
+    """
+    cpu = os.cpu_count() or 4
+    max_by_cpu = min(max(2, cpu // 3), 8)
+    workers = max(1, min(max_by_cpu, task_count))
+    _perf_logger.info(f'  workers 자동결정: cpu_count={cpu}, max_by_cpu={max_by_cpu}, '
+                      f'tasks={task_count} -> workers={workers}')
+    return workers
+
+
 def log_perf(func):
     """함수 시작/종료 + 소요 시간을 콘솔에 기록하는 데코레이터"""
     import inspect
@@ -1436,6 +1452,19 @@ def detect_test_type(counts: dict) -> str:
     return '기타'
 
 
+def _extract_capacity_from_path(path: str) -> float:
+    """경로 문자열에서 용량(mAh) 추출.
+
+    폴더 명명 규칙 '_XXXXmAh_' 패턴에서 숫자 부분을 추출한다.
+    예: '1689mAh' → 1689.0, '2335mAh' → 2335.0
+    매칭 실패 시 0.0 반환.
+    """
+    import re
+    # 폴더명에서 '숫자+mAh' 패턴 검색 (대소문자 무시)
+    m = re.search(r'(\d+(?:\.\d+)?)\s*mAh', path, re.IGNORECASE)
+    return float(m.group(1)) if m else 0.0
+
+
 def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None:
     """단일 채널 폴더의 사이클 카테고리를 분류.
 
@@ -1444,7 +1473,7 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
     channel_path : str
         채널 폴더 경로 (예: rawdata/dataset/[032])
     capacity : float
-        추정 용량(mAh). 0이면 자동 감지 시도.
+        추정 용량(mAh). 0이면 폴더명에서 자동 추출 시도.
 
     Returns
     -------
@@ -1461,6 +1490,10 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
     # Pattern 폴더는 채널 서브폴더가 아닌 상위 데이터 경로에 있음
     parent_path = os.path.dirname(channel_path)
     is_pne = check_cycler(parent_path)
+
+    # capacity가 0이면 폴더명에서 자동 추출 시도
+    if not capacity:
+        capacity = _extract_capacity_from_path(parent_path)
 
     if is_pne:
         # PNE: SaveEndData.csv 로딩
@@ -1515,7 +1548,7 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
         cat = c['category']
         counts[cat] = counts.get(cat, 0) + 1
 
-    return {
+    result = {
         'cycler': 'PNE' if is_pne else 'Toyo',
         'total_cycles': len(classified),
         'counts': counts,
@@ -1523,6 +1556,15 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
         'schedule_pattern': detect_schedule_pattern(classified),
         'test_type': detect_test_type(counts),
     }
+
+    # 가속수명 충방전 패턴 분석
+    accel_pattern = analyze_accel_pattern(
+        channel_path, capacity, classified, is_pne,
+    )
+    if accel_pattern:
+        result['accel_pattern'] = accel_pattern
+
+    return result
 
 
 def classify_paths_summary(path_list: list, capacity_list: list | None = None) -> dict:
@@ -1588,6 +1630,418 @@ def classify_paths_summary(path_list: list, capacity_list: list | None = None) -
         'channels': results,
         'summary_text': '\n'.join(lines),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 가속수명 충방전 패턴 분석 (스텝 수, C-rate, CC/CCCV cutoff)
+# ═══════════════════════════════════════════════════════════════════
+
+# 표준 C-rate 그리드 (배터리 시험에서 사용되는 대표값)
+_CRATE_GRID = [
+    0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.33, 0.4, 0.5,
+    0.6, 0.65, 0.7, 0.75, 0.8, 0.9, 1.0, 1.2, 1.4, 1.5,
+    1.65, 2.0, 2.8,
+]
+
+
+def _snap_crate(raw: float, tolerance: float = 0.05) -> float:
+    """원시 C-rate를 표준 그리드 가장 가까운 값으로 스냅.
+
+    tolerance 비율(기본 5%) 이내에 그리드 값이 있으면 스냅,
+    없으면 0.05C 단위로 반올림한다.
+    """
+    if raw <= 0:
+        return 0.0
+    best_val = raw
+    best_rel = tolerance + 1  # 초기값: 허용 범위 밖
+    for g in _CRATE_GRID:
+        rel = abs(raw - g) / g
+        if rel < best_rel:
+            best_rel = rel
+            best_val = g
+    if best_rel <= tolerance:
+        return best_val
+    # 그리드에 매칭 안 되면 0.05C 단위 반올림
+    return round(round(raw / 0.05) * 0.05, 2)
+
+
+def _snap_voltage(raw: float) -> float:
+    """원시 전압을 0.01V 단위로 반올림 (센서 미세 오차 보정).
+
+    Python round()의 부동소수점 오차 방지를 위해 Decimal 사용.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    return float(Decimal(str(raw)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+
+
+def _snap_accel_pattern(pattern: dict) -> dict:
+    """패턴 분석 결과의 C-rate/전압을 표준값으로 일괄 스냅."""
+    for step in pattern['charge_steps']:
+        step['crate'] = _snap_crate(step['crate'])
+        step['voltage_cutoff'] = _snap_voltage(step['voltage_cutoff'])
+        if 'current_cutoff_crate' in step:
+            step['current_cutoff_crate'] = _snap_crate(step['current_cutoff_crate'])
+    for step in pattern['discharge_steps']:
+        step['crate'] = _snap_crate(step['crate'])
+        step['voltage_cutoff'] = _snap_voltage(step['voltage_cutoff'])
+    return pattern
+
+
+def _extract_toyo_step_currents(
+    channel_path: str, totl_cycle: int, condition: int,
+) -> tuple[float, float]:
+    """Toyo 원시 사이클 파일에서 CC 전류(mA)와 CV cutoff 전류(mA) 추출."""
+    cycle_file = os.path.join(channel_path, '%06d' % totl_cycle)
+    if not os.path.isfile(cycle_file):
+        return (0.0, 0.0)
+    try:
+        raw = pd.read_csv(
+            cycle_file, sep=',', skiprows=3,
+            encoding='cp949', on_bad_lines='skip',
+        )
+    except Exception:
+        return (0.0, 0.0)
+
+    cur_col = 'Current[mA]'
+    cond_col = 'Condition'
+    if cur_col not in raw.columns or cond_col not in raw.columns:
+        return (0.0, 0.0)
+
+    active = raw[(raw[cond_col] == condition) & (raw[cur_col].abs() > 0)]
+    if active.empty:
+        return (0.0, 0.0)
+
+    currents = active[cur_col].abs().values
+    # CC 전류: 최대 전류의 95% 이상인 값의 중앙값 (CC 플래토 추출)
+    max_cur = currents.max()
+    cc_plateau = currents[currents >= max_cur * 0.95]
+    cc_current = float(np.median(cc_plateau)) if len(cc_plateau) > 0 else float(max_cur)
+    # CV cutoff 전류: 마지막 전류
+    cv_cutoff = float(currents[-1])
+    return (cc_current, cv_cutoff)
+
+
+def _analyze_accel_pattern_toyo(
+    channel_path: str, capacity: float,
+) -> dict | None:
+    """Toyo capacity.log 기반 가속수명 충방전 패턴 분석.
+
+    첫 번째 가속수명 사이클의 충전/방전 스텝별
+    C-rate, CC/CCCV 모드, voltage/current cutoff 정보를 추출한다.
+    """
+    cap_log_path = os.path.join(channel_path, 'capacity.log')
+    if not os.path.isfile(cap_log_path):
+        for f in os.listdir(channel_path):
+            if f.upper() == 'CAPACITY.LOG':
+                cap_log_path = os.path.join(channel_path, f)
+                break
+        else:
+            return None
+
+    try:
+        df = pd.read_csv(
+            cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip',
+        )
+    except Exception:
+        return None
+
+    # 컬럼명 통일
+    col_map = {
+        'Total Cycle': 'TotlCycle', 'Capacity[mAh]': 'Cap[mAh]',
+        'End Factor': 'Finish', 'Peak Volt.[V]': 'PeakVolt[V]',
+    }
+    df.rename(columns={k: v for k, v in col_map.items() if k in df.columns},
+              inplace=True)
+    for need in ('Condition', 'TotlCycle', 'Finish', 'PeakVolt[V]', 'Cap[mAh]'):
+        if need not in df.columns:
+            return None
+
+    conds = df['Condition'].values
+
+    # 첫 번째 가속수명 구간 탐색 (연속 Condition==1 행 2개 이상)
+    i = 0
+    chg_start = chg_end = dchg_start = dchg_end = None
+    while i < len(df):
+        start = i
+        cond = int(conds[i])
+        while i < len(df) and int(conds[i]) == cond:
+            i += 1
+        if cond == 1 and (i - start) >= 2 and chg_start is None:
+            chg_start, chg_end = start, i
+            # 직후 방전 그룹도 포함
+            if i < len(df) and int(conds[i]) == 2:
+                dchg_start = i
+                while i < len(df) and int(conds[i]) == 2:
+                    i += 1
+                dchg_end = i
+            break
+    if chg_start is None:
+        return None
+
+    # 충전 스텝 분석
+    charge_steps = []
+    for idx, row_idx in enumerate(range(chg_start, chg_end)):
+        row = df.iloc[row_idx]
+        tc = int(row['TotlCycle'])
+        finish = str(row['Finish']).strip()
+        peak_v = float(row['PeakVolt[V]'])
+        step_cap = float(row['Cap[mAh]'])
+        cc_cur, cv_cut = _extract_toyo_step_currents(channel_path, tc, 1)
+
+        if finish in ('Cur', 'Cur.'):
+            # CCCV: CC 충전 → 전압 도달 후 CV → 전류 cutoff
+            charge_steps.append({
+                'step': idx + 1,
+                'mode': 'CCCV',
+                'crate': round(cc_cur / capacity, 2) if capacity else 0,
+                'current_mA': round(cc_cur, 1),
+                'voltage_cutoff': round(peak_v, 3),
+                'current_cutoff_crate': round(cv_cut / capacity, 2) if capacity else 0,
+                'current_cutoff_mA': round(cv_cut, 1),
+                'capacity_mAh': round(step_cap, 1),
+            })
+        else:
+            # CC: 정전류 충전 → 전압 도달 시 종료
+            charge_steps.append({
+                'step': idx + 1,
+                'mode': 'CC',
+                'crate': round(cc_cur / capacity, 2) if capacity else 0,
+                'current_mA': round(cc_cur, 1),
+                'voltage_cutoff': round(peak_v, 3),
+                'capacity_mAh': round(step_cap, 1),
+            })
+
+    # 방전 스텝 분석
+    discharge_steps = []
+    if dchg_start is not None and dchg_end is not None:
+        for idx, row_idx in enumerate(range(dchg_start, dchg_end)):
+            row = df.iloc[row_idx]
+            tc = int(row['TotlCycle'])
+            peak_v = float(row['PeakVolt[V]'])
+            step_cap = float(row['Cap[mAh]'])
+            cc_cur, _ = _extract_toyo_step_currents(channel_path, tc, 2)
+
+            # 방전 전압 cutoff: 원시 파일의 최저 전압
+            cycle_file = os.path.join(channel_path, '%06d' % tc)
+            min_v = peak_v
+            if os.path.isfile(cycle_file):
+                try:
+                    raw = pd.read_csv(
+                        cycle_file, sep=',', skiprows=3,
+                        encoding='cp949', on_bad_lines='skip',
+                    )
+                    part = raw[raw['Condition'] == 2]
+                    if not part.empty:
+                        min_v = float(part['Voltage[V]'].min())
+                except Exception:
+                    pass
+
+            discharge_steps.append({
+                'step': idx + 1,
+                'mode': 'CC',
+                'crate': round(cc_cur / capacity, 2) if capacity else 0,
+                'current_mA': round(cc_cur, 1),
+                'voltage_cutoff': round(min_v, 3),
+                'capacity_mAh': round(step_cap, 1),
+            })
+
+    return {
+        'charge_steps': charge_steps,
+        'discharge_steps': discharge_steps,
+        'n_charge_steps': len(charge_steps),
+        'n_discharge_steps': len(discharge_steps),
+    }
+
+
+def _analyze_accel_pattern_pne(
+    channel_path: str, capacity: float,
+) -> dict | None:
+    """PNE SaveEndData 기반 가속수명 충방전 패턴 분석.
+
+    PNE SaveEndData 주요 컬럼 인덱스:
+      [2]  StepType  1=Chg, 2=Dchg, 3=Rest, 8=Loop
+      [6]  EndState  65=전압종료(CC), 66=전류종료(CCCV)
+      [8]  EndVoltage (μV)
+      [9]  EndCurrent (μA, 충전=양수, 방전=음수)
+      [27] TotlCycle
+      [32] CV구간 시간 (centisec)
+      [38] CC구간 시간 (centisec)
+      [39] CC구간 용량 (μAh)
+      [40] CV구간 용량 (μAh)
+    """
+    restore_path = os.path.join(channel_path, 'Restore')
+    if not os.path.isdir(restore_path):
+        return None
+
+    sed_file = None
+    try:
+        for f in os.listdir(restore_path):
+            if 'SaveEndData' in f and f.endswith('.csv'):
+                sed_file = f
+                break
+    except OSError:
+        return None
+    if not sed_file:
+        return None
+
+    try:
+        df = pd.read_csv(
+            os.path.join(restore_path, sed_file),
+            header=None, encoding='cp949', on_bad_lines='skip',
+        )
+    except Exception:
+        return None
+    if df.shape[1] < 41:
+        return None
+
+    # 가속수명 사이클 찾기: StepType==8 제외 후 충전 스텝 2개 이상인 첫 TotlCycle
+    real = df[df[2] != 8]
+    first_accel_cyc = None
+    for cyc, group in real.groupby(27):
+        n_chg = (group[2] == 1).sum()
+        n_dchg = (group[2] == 2).sum()
+        if n_chg >= 2 and n_dchg >= 1:
+            first_accel_cyc = cyc
+            break
+    if first_accel_cyc is None:
+        return None
+
+    cyc_data = real[real[27] == first_accel_cyc]
+
+    # 충전 스텝 분석
+    charge_steps = []
+    chg_rows = cyc_data[cyc_data[2] == 1]
+    for idx, (_, row) in enumerate(chg_rows.iterrows()):
+        end_state = int(row[6])
+        end_v = row[8] / 1e6        # μV → V
+        end_cur = row[9] / 1000     # μA → mA
+        cc_time = row[38] / 100     # centisec → sec
+        cv_time = row[32] / 100
+        cc_cap = row[39] / 1000     # μAh → mAh
+        cv_cap = row[40] / 1000
+
+        if end_state == 66 and cc_time > 0:
+            # CCCV: CC 전류를 용량/시간으로 계산
+            cc_cur = cc_cap / (cc_time / 3600)  # mA
+            cutoff_cur = abs(end_cur)            # mA
+            charge_steps.append({
+                'step': idx + 1,
+                'mode': 'CCCV',
+                'crate': round(cc_cur / capacity, 2) if capacity else 0,
+                'current_mA': round(cc_cur, 1),
+                'voltage_cutoff': round(end_v, 3),
+                'current_cutoff_crate': round(cutoff_cur / capacity, 2) if capacity else 0,
+                'current_cutoff_mA': round(cutoff_cur, 1),
+                'capacity_mAh': round(cc_cap + cv_cap, 1),
+            })
+        else:
+            # CC: 종료 전류 = CC 전류
+            charge_steps.append({
+                'step': idx + 1,
+                'mode': 'CC',
+                'crate': round(abs(end_cur) / capacity, 2) if capacity else 0,
+                'current_mA': round(abs(end_cur), 1),
+                'voltage_cutoff': round(end_v, 3),
+                'capacity_mAh': round(cc_cap, 1),
+            })
+
+    # 방전 스텝 분석
+    discharge_steps = []
+    dchg_rows = cyc_data[cyc_data[2] == 2]
+    for idx, (_, row) in enumerate(dchg_rows.iterrows()):
+        end_v = row[8] / 1e6
+        end_cur = abs(row[9] / 1000)  # mA (절대값)
+        dchg_cap = row[11] / 1000
+
+        discharge_steps.append({
+            'step': idx + 1,
+            'mode': 'CC',
+            'crate': round(end_cur / capacity, 2) if capacity else 0,
+            'current_mA': round(end_cur, 1),
+            'voltage_cutoff': round(end_v, 3),
+            'capacity_mAh': round(dchg_cap, 1),
+        })
+
+    return {
+        'charge_steps': charge_steps,
+        'discharge_steps': discharge_steps,
+        'n_charge_steps': len(charge_steps),
+        'n_discharge_steps': len(discharge_steps),
+    }
+
+
+def analyze_accel_pattern(
+    channel_path: str, capacity: float,
+    classified: list[dict], is_pne: bool,
+) -> dict | None:
+    """가속수명 사이클의 충방전 패턴(스텝 수, C-rate, cutoff) 분석.
+
+    Parameters
+    ----------
+    channel_path : str
+        채널 폴더 경로
+    capacity : float
+        공칭 용량(mAh)
+    classified : list[dict]
+        classify_*_cycles 결과
+    is_pne : bool
+        PNE 여부
+
+    Returns
+    -------
+    dict | None
+        {
+            'charge_steps': [{'step', 'mode', 'crate', ...}, ...],
+            'discharge_steps': [...],
+            'n_charge_steps': int,
+            'n_discharge_steps': int,
+        }
+    """
+    accel_exists = any(c.get('category') == '가속수명' for c in classified)
+    if not accel_exists:
+        return None
+    if is_pne:
+        result = _analyze_accel_pattern_pne(channel_path, capacity)
+    else:
+        result = _analyze_accel_pattern_toyo(channel_path, capacity)
+    # C-rate / 전압 표준값 스냅 (충방전기 미세 오차 보정)
+    if result:
+        result = _snap_accel_pattern(result)
+    return result
+
+
+def _fmt_crate(val: float) -> str:
+    """C-rate 표시: 정수면 '2.0C', 아니면 소수점 적절히."""
+    if val == int(val):
+        return f'{val:.1f}'
+    # 0.05 단위 → 소수점 2자리까지
+    return f'{val:.2f}'
+
+
+def format_accel_pattern(pattern: dict) -> list[str]:
+    """가속수명 패턴을 콘솔 로그용 문자열 목록으로 반환."""
+    lines = []
+    lines.append('    ▷ 가속수명 충방전 패턴:')
+    lines.append(f'      충전 ({pattern["n_charge_steps"]} steps):')
+    for s in pattern['charge_steps']:
+        cr = _fmt_crate(s['crate'])
+        vcut = f'{s["voltage_cutoff"]:.2f}'
+        if s['mode'] == 'CCCV':
+            icut = _fmt_crate(s['current_cutoff_crate'])
+            lines.append(
+                f'        Step {s["step"]}: CCCV {cr}C'
+                f' → {vcut}V, {icut}C cutoff'
+            )
+        else:
+            lines.append(
+                f'        Step {s["step"]}: CC {cr}C → {vcut}V'
+            )
+    lines.append(f'      방전 ({pattern["n_discharge_steps"]} steps):')
+    for s in pattern['discharge_steps']:
+        cr = _fmt_crate(s['crate'])
+        vcut = f'{s["voltage_cutoff"]:.2f}'
+        lines.append(f'        Step {s["step"]}: CC {cr}C → {vcut}V')
+    return lines
 
 
 def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
@@ -11175,7 +11629,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     @staticmethod
     def _build_classify_info_label(classify_info: list[dict]):
-        """분류 결과 리스트 → QLabel 위젯 1줄 요약 바 생성."""
+        """분류 결과 리스트 → QLabel 위젯 요약 바 생성."""
         from PyQt6.QtWidgets import QLabel
         if not classify_info:
             return None
@@ -11202,19 +11656,44 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         pattern_str = ''
         if n_channels == 1 and classify_info[0].get('schedule_pattern'):
             pattern_str = f'  |  패턴: {classify_info[0]["schedule_pattern"]}'
-            # 패턴이 너무 길면 축약
             if len(pattern_str) > 80:
                 pattern_str = pattern_str[:80] + '...'
 
+        # 가속수명 충방전 패턴 (첫 번째 채널 기준)
+        accel_line = ''
+        for cr in classify_info:
+            ap = cr.get('accel_pattern')
+            if ap:
+                chg_parts = []
+                for s in ap['charge_steps']:
+                    cr_str = _fmt_crate(s['crate'])
+                    v_str = f'{s["voltage_cutoff"]:.2f}'
+                    if s['mode'] == 'CCCV':
+                        ic = _fmt_crate(s['current_cutoff_crate'])
+                        chg_parts.append(f'{cr_str}C→{v_str}V/{ic}C')
+                    else:
+                        chg_parts.append(f'{cr_str}C→{v_str}V')
+                dchg_parts = [
+                    f'{_fmt_crate(s["crate"])}C→{s["voltage_cutoff"]:.2f}V'
+                    for s in ap['discharge_steps']
+                ]
+                accel_line = (
+                    f'<br/>▷ 충전 {ap["n_charge_steps"]}step'
+                    f'({" → ".join(chg_parts)})'
+                    f' | 방전 {ap["n_discharge_steps"]}step'
+                    f'({" → ".join(dchg_parts)})')
+                break
+
         html = (f'<span style="color:#3C5488; font-size:11px;">'
                 f'📊 {n_channels}채널  |  {test_str}  |  총 {total_cycles}cyc  |  '
-                f'{", ".join(cat_parts)}{pattern_str}</span>')
+                f'{", ".join(cat_parts)}{pattern_str}{accel_line}</span>')
 
         label = QLabel(html)
         label.setStyleSheet(
             'QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
             'border-radius: 3px; padding: 3px 8px; }')
-        label.setMaximumHeight(24)
+        label.setWordWrap(True)
+        label.setMaximumHeight(48 if accel_line else 24)
         return label
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
@@ -11328,7 +11807,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return (folder_idx, subfolder_idx, None)
     
     @log_perf
-    def _load_all_step_data_parallel(self, all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=4):
+    def _load_all_step_data_parallel(self, all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=None):
         """
         모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩 (채널 단위 배치)
         """
@@ -11343,6 +11822,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         task_info = (folder_path, CycleNo, mincapacity, mincrate, firstCrate, is_pne, i, j)
                         tasks.append(task_info)
         
+        if max_workers is None:
+            max_workers = calc_optimal_workers(len(tasks))
         _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
                           f'cycles={CycleNo}, workers={max_workers}')
         results = {}
@@ -11406,7 +11887,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return (folder_idx, subfolder_idx, None)
 
     @log_perf
-    def _load_all_profile_data_parallel(self, all_data_folder, profile_type, params, max_workers=4):
+    def _load_all_profile_data_parallel(self, all_data_folder, profile_type, params, max_workers=None):
         """
         모든 폴더의 프로파일 데이터를 병렬로 로딩 (범용).
         profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
@@ -11422,6 +11903,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         task = (folder_path, profile_type, params, is_pne, i, j)
                         tasks.append(task)
 
+        if max_workers is None:
+            max_workers = calc_optimal_workers(len(tasks))
         _perf_logger.info(f'  조건: type={profile_type}, folders={len(all_data_folder)}, '
                           f'tasks={len(tasks)}, workers={max_workers}')
         results = {}
@@ -11503,7 +11986,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     
     @log_perf
     def _load_all_cycle_data_parallel(self, all_data_folder, mincapacity, firstCrate, 
-                                       dcirchk, dcirchk_2, mkdcir, max_workers=4,
+                                       dcirchk, dcirchk_2, mkdcir, max_workers=None,
                                        per_path_capacities=None):
         """
         모든 폴더의 사이클 데이터를 병렬로 로딩
@@ -11530,6 +12013,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                      dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
                         tasks.append(task_info)
         
+        if max_workers is None:
+            max_workers = calc_optimal_workers(len(tasks))
         _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
                           f'mincap={mincapacity}, firstCrate={firstCrate}, '
                           f'dcir={dcirchk}, dcir2={dcirchk_2}, workers={max_workers}')
@@ -11979,7 +12464,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
                 np.array(all_paths), mincapacity, firstCrate,
                 self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-                max_workers=4, per_path_capacities=_per_path_caps
+                per_path_capacities=_per_path_caps
             )
 
             # ── 경로별 사이클 카테고리 분류 ──
@@ -12001,12 +12486,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _all_cr = [cr for fi_dict in _classify_results.values() for cr in fi_dict.values()]
             if _all_cr:
                 _perf_logger.info('▶ 사이클 카테고리 분류 완료')
+                _pattern_logged = False
                 for cr in _all_cr:
                     cat_parts = [f'{cat}:{n}' for cat, n in cr['counts'].items() if n > 0]
                     _perf_logger.info(
                         f'  [{cr["cycler"]}] {cr["channel"]}  '
                         f'{cr["test_type"]}  총 {cr["total_cycles"]}cyc  {", ".join(cat_parts)}'
                     )
+                    # 가속수명 패턴: 첫 번째 채널만 한 번 출력
+                    if not _pattern_logged and 'accel_pattern' in cr:
+                        for line in format_accel_pattern(cr['accel_pattern']):
+                            _perf_logger.info(line)
+                        _pattern_logged = True
 
             # 탭 할당: 개별=group별, 통합=file_idx별
             if is_individual:
@@ -13162,7 +13653,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _update_group_separators(self):
         """연결처리 활성 시 빈 행(그룹 구분자)에 시각적 구분선 표시 + 그룹별 번호
-        구분선 조건: 모든 셀이 비어있는 행만 구분선 처리 (경로만 지워도 다른 데이터가 있으면 일반 행 유지)
+        구분선 조건: 위·아래 모두 경로가 존재하는 빈 행만 구분선 처리
+        (테이블 끝의 빈 행이나 단일 그룹 뒤 빈 행은 구분선이 아님)
         """
         tbl = self.cycle_path_table
         tbl.blockSignals(True)
@@ -13174,19 +13666,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             """행의 모든 셀이 비어있는지 판별"""
             return not any(self._get_table_cell(row, c) for c in range(tbl.columnCount()))
 
+        def _is_between_groups(row):
+            """빈 행이 두 그룹 사이에 있는지 판별 (위·아래 모두 경로 존재)"""
+            has_above = False
+            for above in range(row - 1, -1, -1):
+                if self._get_table_cell(above, 1):
+                    has_above = True
+                    break
+            if not has_above:
+                return False
+            for below in range(row + 1, tbl.rowCount()):
+                if self._get_table_cell(below, 1):
+                    return True
+            return False
+
         # 1차: 구분자 위치 판별 + 그룹 번호 계산
         group_no = 0
         in_group = False
         row_labels = []
         for r in range(tbl.rowCount()):
             path = self._get_table_cell(r, 1)
-            is_sep = False
-            # 구분선: 연결처리 활성 + 행 전체가 비어있음 + 위에 경로가 있는 행 존재
-            if link_mode and not path and _is_row_all_empty(r):
-                for above in range(r - 1, -1, -1):
-                    if self._get_table_cell(above, 1):
-                        is_sep = True
-                        break
+            is_sep = (link_mode and not path
+                      and _is_row_all_empty(r) and _is_between_groups(r))
             if is_sep:
                 row_labels.append('')
                 in_group = False
@@ -13203,13 +13704,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 2차: 스타일 적용 + 행 헤더 설정
         for r in range(tbl.rowCount()):
             path = self._get_table_cell(r, 1)
-            # 구분선: 행 전체가 비어있을 때만 적용
-            _is_sep = False
-            if link_mode and not path and _is_row_all_empty(r):
-                for above in range(r - 1, -1, -1):
-                    if self._get_table_cell(above, 1):
-                        _is_sep = True
-                        break
+            _is_sep = (link_mode and not path
+                       and _is_row_all_empty(r) and _is_between_groups(r))
             tbl.setRowHeight(r, 6 if _is_sep else 22)
             # 행 헤더 (그룹 번호)
             if link_mode:
@@ -13225,7 +13721,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         item = QtWidgets.QTableWidgetItem('')
                         tbl.setItem(r, c, item)
                     item.setBackground(sep_bg)
-                elif item and c != 1:
+                elif item:
                     item.setBackground(clear_bg)
         tbl.blockSignals(False)
 
@@ -13354,7 +13850,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 데이터 병렬 로딩 (ThreadPoolExecutor)
         self.progressBar.setValue(0)
         loaded_data = self._load_all_step_data_parallel(
-            all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=4
+            all_data_folder, CycleNo, mincapacity, mincrate, firstCrate
         )
         
         tab_no = 0
@@ -13561,7 +14057,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 데이터 병렬 로딩 (ThreadPoolExecutor)
         self.progressBar.setValue(0)
         loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'rate', (CycleNo, mincapacity, mincrate, firstCrate), max_workers=4)
+            all_data_folder, 'rate', (CycleNo, mincapacity, mincrate, firstCrate))
         
         tab_no = 0
         all_profile = self.AllProfile.isChecked()
@@ -13824,7 +14320,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 데이터 병렬 로딩 (ThreadPoolExecutor)
         self.progressBar.setValue(0)
         loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'chg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree), max_workers=4)
+            all_data_folder, 'chg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree))
         
         tab_no = 0
         all_profile = self.AllProfile.isChecked()
@@ -14104,7 +14600,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 데이터 병렬 로딩 (ThreadPoolExecutor)
         self.progressBar.setValue(0)
         loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'dchg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree), max_workers=4)
+            all_data_folder, 'dchg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree))
         
         tab_no = 0
         all_profile = self.AllProfile.isChecked()
@@ -14495,7 +14991,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 step_ranges.append((s, e))
             self.progressBar.setValue(0)
             loaded_data = self._load_all_profile_data_parallel(
-                all_data_folder, 'continue', (step_ranges, mincapacity, firstCrate, ""), max_workers=4)
+                all_data_folder, 'continue', (step_ranges, mincapacity, firstCrate, ""))
             
             tab_no = 0
             all_profile = self.AllProfile.isChecked()
