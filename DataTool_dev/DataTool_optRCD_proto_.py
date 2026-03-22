@@ -26,6 +26,16 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as Navigation
 from datetime import timezone
 import glob
 import xlwings as xw
+from pathlib import Path
+
+try:
+    from parse_pne_schedule import (
+        extract_accel_pattern_from_sch,
+        extract_schedule_structure_from_sch,
+    )
+    HAS_SCH_PARSER = True
+except ImportError:
+    HAS_SCH_PARSER = False
 
 # PyInstaller exe 실행 시 필요: Pybamm casadi DLL 경로 등록
 # 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
@@ -142,7 +152,7 @@ THEME = {
                 '#8491B4', '#B09C85', '#91D1C2', '#DC0000', '#7E6148'],
     'FIG_FACECOLOR': '#FFFFFF',
     'AX_FACECOLOR': '#FAFBFD',
-    'TITLE_SIZE': 15,
+    'TITLE_SIZE': 13,  # 기존 15에서 13으로 축소
     'LABEL_SIZE': 12,
     'TICK_SIZE': 10,
     'SCATTER_SIZE': 7,
@@ -1548,16 +1558,41 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
         cat = c['category']
         counts[cat] = counts.get(cat, 0) + 1
 
+    # .sch 우선 전략: PNE + 파서 있으면 .sch에서 test_type, pattern 결정
+    sch_struct = None
+    if is_pne and HAS_SCH_PARSER:
+        sch_file = _find_sch_file(channel_path)
+        if sch_file:
+            sch_struct = extract_schedule_structure_from_sch(sch_file, capacity)
+
+    if sch_struct:
+        # .sch 기반 (설계 의도)
+        test_type = sch_struct['schedule_type']
+        schedule_pattern = sch_struct['pattern_string']
+    else:
+        # CSV 폴백 (Toyo 또는 .sch 없는 경우)
+        test_type = detect_test_type(counts)
+        schedule_pattern = detect_schedule_pattern(classified)
+
     result = {
         'cycler': 'PNE' if is_pne else 'Toyo',
         'total_cycles': len(classified),
         'counts': counts,
         'classified': classified,
-        'schedule_pattern': detect_schedule_pattern(classified),
-        'test_type': detect_test_type(counts),
+        'schedule_pattern': schedule_pattern,
+        'test_type': test_type,
     }
 
-    # 가속수명 충방전 패턴 분석
+    # .sch 구조 정보 첨부 (있는 경우)
+    if sch_struct:
+        result['sch_info'] = {
+            'has_rss': sch_struct['has_rss'],
+            'has_gitt_hppc': sch_struct['has_gitt_hppc'],
+            'pattern_string': sch_struct['pattern_string'],
+            'schedule_type': sch_struct['schedule_type'],
+        }
+
+    # 가속수명 충방전 패턴 분석 (.sch_struct 있으면 .sch 파싱 재사용)
     accel_pattern = analyze_accel_pattern(
         channel_path, capacity, classified, is_pne,
     )
@@ -2001,7 +2036,14 @@ def analyze_accel_pattern(
     if not accel_exists:
         return None
     if is_pne:
-        result = _analyze_accel_pattern_pne(channel_path, capacity)
+        # .sch 우선 → CSV 폴백 전략
+        result = None
+        if HAS_SCH_PARSER:
+            sch_file = _find_sch_file(channel_path)
+            if sch_file:
+                result = extract_accel_pattern_from_sch(sch_file, capacity)
+        if result is None:
+            result = _analyze_accel_pattern_pne(channel_path, capacity)
     else:
         result = _analyze_accel_pattern_toyo(channel_path, capacity)
     # C-rate / 전압 표준값 스냅 (충방전기 미세 오차 보정)
@@ -2018,30 +2060,48 @@ def _fmt_crate(val: float) -> str:
     return f'{val:.2f}'
 
 
+_ORDINALS = ['1st', '2nd', '3rd'] + [f'{i}th' for i in range(4, 21)]
+
+
+def _ordinal(n: int) -> str:
+    """1-based 인덱스 → 서수 문자열 (1st, 2nd, 3rd, 4th ...)."""
+    if 1 <= n <= len(_ORDINALS):
+        return _ORDINALS[n - 1]
+    return f'{n}th'
+
+
+def _find_sch_file(channel_path: str) -> str | None:
+    """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None."""
+    try:
+        for f in os.listdir(channel_path):
+            if f.endswith('.sch'):
+                return os.path.join(channel_path, f)
+    except OSError:
+        pass
+    return None
+
+
+def _fmt_step(s: dict) -> str:
+    """단일 스텝 → '[Nth] MODE C-rate/Voltage(/cutoff)' 포맷 문자열."""
+    ord_str = _ordinal(s['step'])
+    cr = _fmt_crate(s['crate'])
+    vcut = f'{s["voltage_cutoff"]:.2f}'
+    if s['mode'] == 'CCCV':
+        if 'current_cutoff_crate' in s:
+            icut = _fmt_crate(s['current_cutoff_crate'])
+            return f'[{ord_str}] CCCV {cr}C/{vcut}V/cut{icut}C'
+        return f'[{ord_str}] CCCV {cr}C/{vcut}V'
+    return f'[{ord_str}] CC {cr}C/{vcut}V'
+
+
 def format_accel_pattern(pattern: dict) -> list[str]:
     """가속수명 패턴을 콘솔 로그용 문자열 목록으로 반환."""
-    lines = []
-    lines.append('    ▷ 가속수명 충방전 패턴:')
-    lines.append(f'      충전 ({pattern["n_charge_steps"]} steps):')
-    for s in pattern['charge_steps']:
-        cr = _fmt_crate(s['crate'])
-        vcut = f'{s["voltage_cutoff"]:.2f}'
-        if s['mode'] == 'CCCV':
-            icut = _fmt_crate(s['current_cutoff_crate'])
-            lines.append(
-                f'        Step {s["step"]}: CCCV {cr}C'
-                f' → {vcut}V, {icut}C cutoff'
-            )
-        else:
-            lines.append(
-                f'        Step {s["step"]}: CC {cr}C → {vcut}V'
-            )
-    lines.append(f'      방전 ({pattern["n_discharge_steps"]} steps):')
-    for s in pattern['discharge_steps']:
-        cr = _fmt_crate(s['crate'])
-        vcut = f'{s["voltage_cutoff"]:.2f}'
-        lines.append(f'        Step {s["step"]}: CC {cr}C → {vcut}V')
-    return lines
+    chg = ' → '.join(_fmt_step(s) for s in pattern['charge_steps'])
+    dchg = ' → '.join(_fmt_step(s) for s in pattern['discharge_steps'])
+    return [
+        f'    ▷ 충전 {pattern["n_charge_steps"]}step: {chg}'
+        f' | 방전 {pattern["n_discharge_steps"]}step: {dchg}',
+    ]
 
 
 def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
@@ -4088,7 +4148,7 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
     # 4) 시뮬레이션 실행
     sim = pybamm.Simulation(model, experiment=experiment, parameter_values=param)
     solution = sim.solve(initial_soc=init_soc)
-    return solution
+    return solution, param
 
 
 class BorderDelegate(QtWidgets.QStyledItemDelegate):
@@ -9256,7 +9316,7 @@ class Ui_sitool(object):
         self.pybamm_model_combo = QtWidgets.QComboBox(parent=self.pybamm_model_group)
         self.pybamm_model_combo.setMinimumSize(QtCore.QSize(200, 25))
         self.pybamm_model_combo.setFont(font)
-        self.pybamm_model_combo.addItems(["SPM", "SPMe", "DFN"])
+        self.pybamm_model_combo.addItems(["DFN", "SPMe", "SPM"])
         self.pybamm_model_combo.setObjectName("pybamm_model_combo")
         self.pybamm_model_hlayout.addWidget(self.pybamm_model_combo)
         self.pybamm_left_panel.addWidget(self.pybamm_model_group)
@@ -9275,11 +9335,16 @@ class Ui_sitool(object):
         self.pybamm_preset_label.setFont(font)
         self.pybamm_preset_hlayout.addWidget(self.pybamm_preset_label)
         self.pybamm_param_combo = QtWidgets.QComboBox(parent=self.pybamm_param_group)
-        self.pybamm_param_combo.setMinimumSize(QtCore.QSize(130, 25))
+        self.pybamm_param_combo.setMinimumSize(QtCore.QSize(220, 25))
         self.pybamm_param_combo.setFont(font)
         self.pybamm_param_combo.addItems([
-            "Chen2020", "Ai2020", "Ecker2015", "Marquis2019", "Mohtat2020",
-            "NCA_Kim2011", "OKane2022", "ORegan2022", "Prada2013", "Ramadass2004",
+            "Chen2020 - Gr(Si)/NMC811",
+            "Ecker2015 - Gr/NMC111",
+            "Marquis2019 - Gr/NMC",
+            "Mohtat2020 - Gr/NMC111",
+            "NCA_Kim2011 - Gr/NCA",
+            "OKane2022 - Gr(Si)/NMC811",
+            "ORegan2022 - Gr(Si)/NMC811",
             "사용자 정의",
         ])
         self.pybamm_param_combo.setObjectName("pybamm_param_combo")
@@ -9433,8 +9498,12 @@ class Ui_sitool(object):
         self.pybamm_chg_list.setMinimumSize(QtCore.QSize(310, 180))
         self.pybamm_chg_list.setObjectName("pybamm_chg_list")
         self.pybamm_chg_list.addItems([
-            "CC  |  Charge at 1C until 4.2V",
-            "CV  |  Hold at 4.2V until C/50",
+            "[1] CC  |  Charge at 2.0C until 3.9V",
+            "[2] CC  |  Charge at 1.6C until 4.0V",
+            "[3] CC  |  Charge at 1.3C until 4.1V",
+            "    └ CV  |  Hold at 4.1V until 1.0C",
+            "[4] CC  |  Charge at 1.0C until 4.2V",
+            "    └ CV  |  Hold at 4.2V until 0.1C",
         ])
         self.pybamm_chg_vlayout.addWidget(self.pybamm_chg_list)
         # 수정/삭제 버튼
@@ -9546,7 +9615,7 @@ class Ui_sitool(object):
         self.pybamm_dchg_list.setMinimumSize(QtCore.QSize(310, 180))
         self.pybamm_dchg_list.setObjectName("pybamm_dchg_list")
         self.pybamm_dchg_list.addItems([
-            "CC  |  Discharge at 1C until 2.5V",
+            "[1] CC  |  Discharge at 1C until 2.5V",
         ])
         self.pybamm_dchg_vlayout.addWidget(self.pybamm_dchg_list)
         # 수정/삭제 버튼
@@ -10493,6 +10562,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_reset_btn.clicked.connect(self.pybamm_tab_reset_button)
         self.pybamm_param_combo.activated.connect(self._pybamm_load_preset)
         self.pybamm_edit_btn.toggled.connect(self._pybamm_toggle_param_table)
+        self._pybamm_setup_model_tooltips()
         # 충/방전 스텝 리스트 버튼
         self.pybamm_chg_add_btn.clicked.connect(self._pybamm_chg_add_step)
         self.pybamm_chg_edit_btn.clicked.connect(
@@ -10673,7 +10743,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return tab, tab_layout, canvas, toolbar
 
-    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None, sub2_channel_map=None):
+    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None, sub2_channel_map=None, save_context=None):
         """
         Cycle 그래프 채널 제어 위젯 생성 (Lazy Init: 첫 클릭 시 초기화)
         """
@@ -10796,7 +10866,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for idx, label in enumerate(channel_map, 1):
             _display = label.split("_")[-1] if "_" in label else label
             item = QListWidgetItem(f"{idx:0{_nw}d}. {_display}")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEditable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             item.setIcon(_make_color_icon(channel_map[label]['color']))
             item.setForeground(QColor(channel_map[label]['color']))
@@ -10840,9 +10910,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             art.set_linewidths([val])
                 canvas.draw_idle()
         ch_list.customContextMenuRequested.connect(_on_ch_context_menu)
-        
-        # 범례 별칭 매핑: {원본라벨: 사용자지정이름}
-        _legend_aliases = {}
         
         # 하이라이트 상태 추적 (다중 선택)
         highlight_state = {'active': set(), 'enabled': False}
@@ -10981,25 +11048,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         legend.remove()
 
         def on_item_changed(item):
-            """개별 채널 표시/숨김 + 범례 이름 편집 처리"""
+            """개별 채널 표시/숨김 처리"""
             if _chk_guard['updating']:
                 return
             orig_key = item.data(Qt.ItemDataRole.UserRole)
-            new_display = _strip_numbering(item.text())
-            
-            # 텍스트 편집 감지: 현재 표시명 ≠ 원본키 AND 별칭과도 다를 때
-            current_alias = _legend_aliases.get(orig_key, orig_key)
-            if new_display and new_display != current_alias:
-                # 범례 별칭 갱신
-                _legend_aliases[orig_key] = new_display
-                # matplotlib artist의 label 갱신
-                if orig_key in channel_map:
-                    for art in channel_map[orig_key]['artists']:
-                        art.set_label(new_display)
-                _rebuild_legend()
-                canvas.draw_idle()
-                return
-            
             # 체크 상태 변경 → 표시/숨김
             visible = item.checkState() == Qt.CheckState.Checked
             if orig_key in channel_map:
@@ -11180,12 +11232,178 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # --- 설정 저장/불러오기 (#15) ---
         import json as _json
         from pathlib import Path as _Path
+        import numpy as _np
         _settings_dir = _Path(__file__).resolve().parent / '.ch_settings'
         
+        def _extract_artist_data(art):
+            """matplotlib artist → 직렬화 가능한 dict 변환."""
+            from matplotlib.collections import PathCollection
+            from matplotlib.lines import Line2D
+            info = {}
+            if isinstance(art, Line2D):
+                xd, yd = art.get_xdata(), art.get_ydata()
+                info['type'] = 'line'
+                info['x'] = [float(v) for v in xd] if hasattr(xd, '__iter__') else []
+                info['y'] = [float(v) for v in yd] if hasattr(yd, '__iter__') else []
+                info['label'] = art.get_label()
+                info['color'] = art.get_color()
+                info['alpha'] = art.get_alpha()
+                info['linestyle'] = art.get_linestyle()
+                info['linewidth'] = art.get_linewidth()
+                info['visible'] = art.get_visible()
+            elif isinstance(art, PathCollection):
+                offsets = art.get_offsets()
+                info['type'] = 'scatter'
+                info['x'] = [float(v) for v in offsets[:, 0]] if len(offsets) > 0 else []
+                info['y'] = [float(v) for v in offsets[:, 1]] if len(offsets) > 0 else []
+                info['label'] = art.get_label()
+                fc = art.get_facecolors()
+                if len(fc) > 0:
+                    info['facecolor'] = [float(c) for c in fc[0]]
+                ec = art.get_edgecolors()
+                if len(ec) > 0:
+                    info['edgecolor'] = [float(c) for c in ec[0]]
+                info['alpha'] = art.get_alpha()
+                sizes = art.get_sizes()
+                info['size'] = float(sizes[0]) if len(sizes) > 0 else THEME['SCATTER_SIZE']
+                lw = art.get_linewidths()
+                info['linewidth'] = float(lw[0]) if len(lw) > 0 else 0
+                info['visible'] = art.get_visible()
+            return info
+
+        def _extract_ax_settings(ax):
+            """ax의 축 설정(label, limit, tick 등) 추출."""
+            return {
+                'xlabel': ax.get_xlabel(),
+                'ylabel': ax.get_ylabel(),
+                'xlim': [float(v) for v in ax.get_xlim()],
+                'ylim': [float(v) for v in ax.get_ylim()],
+                'title': ax.get_title(),
+            }
+
+        def _save_figure_data():
+            """데이터 + figure 설정 + 스타일을 JSON으로 저장."""
+            from PyQt6.QtWidgets import QFileDialog
+            default_name = ''
+            if fig._suptitle:
+                default_name = fig._suptitle.get_text()
+            fp, _ = QFileDialog.getSaveFileName(
+                ch_list, '사이클 Figure 저장',
+                str(_settings_dir / f'{default_name}.bdt.json') if default_name
+                else str(_settings_dir / 'figure.bdt.json'),
+                'BDT Figure (*.bdt.json)')
+            if not fp:
+                return
+            fp = _Path(fp)
+            fp.parent.mkdir(parents=True, exist_ok=True)
+
+            # 메타데이터
+            import datetime as _dt
+            meta = {
+                'version': '1.0',
+                'created': _dt.datetime.now().isoformat(),
+                'tool': 'BDT DataTool',
+                'suptitle': fig._suptitle.get_text() if fig._suptitle else '',
+            }
+
+            # 데이터 소스 및 분석 파라미터 (save_context에서 추출)
+            _ctx = save_context or {}
+            source = {
+                'source_file': _ctx.get('source_file', ''),
+                'data_paths': _ctx.get('data_paths', []),
+                'is_link': _ctx.get('is_link', False),
+                'per_path_capacities': _ctx.get('per_path_capacities', []),
+                'channel_link_map': _ctx.get('channel_link_map', {}),
+                'per_path_channels': _ctx.get('per_path_channels', []),
+            }
+            params = {
+                'firstCrate': _ctx.get('firstCrate', 0),
+                'mincapacity': _ctx.get('mincapacity', 0),
+                'xscale': _ctx.get('xscale', 0),
+                'ylimitlow': _ctx.get('ylimitlow', 0.65),
+                'ylimithigh': _ctx.get('ylimithigh', 1.05),
+                'irscale': _ctx.get('irscale', 1.0),
+                'dcirchk': _ctx.get('dcirchk', False),
+                'dcirchk_2': _ctx.get('dcirchk_2', False),
+                'mkdcir': _ctx.get('mkdcir', False),
+                'tab_mode': _ctx.get('tab_mode', 'individual'),
+            }
+            # 채널별 마지막 사이클 번호 (증분 업데이트용)
+            last_cycles = {}
+            for ch_key, ch_info in channel_map.items():
+                max_x = 0
+                for art in ch_info['artists']:
+                    art_info = _extract_artist_data(art)
+                    if art_info and art_info.get('x'):
+                        _xmax = max(art_info['x'])
+                        if _xmax > max_x:
+                            max_x = _xmax
+                last_cycles[ch_key] = int(max_x)
+            # 분류 결과
+            classify = _ctx.get('classify_info', [])
+
+            # 축 설정
+            axes_settings = []
+            for ax in axes_list:
+                axes_settings.append(_extract_ax_settings(ax))
+
+            # 채널별 데이터 + 스타일
+            channels = {}
+            for ch_key, ch_info in channel_map.items():
+                ch_data = {
+                    'color': ch_info['color'],
+                    'artists': [],
+                }
+                for art in ch_info['artists']:
+                    art_info = _extract_artist_data(art)
+                    if art_info:
+                        ch_data['artists'].append(art_info)
+                channels[ch_key] = ch_data
+
+            # 서브 채널
+            sub_channels = {}
+            if sub_channel_map:
+                for sk, si in sub_channel_map.items():
+                    sub_data = {
+                        'color': si['color'],
+                        'parent': si.get('parent', ''),
+                        'artists': [],
+                    }
+                    for art in si['artists']:
+                        art_info = _extract_artist_data(art)
+                        if art_info:
+                            sub_data['artists'].append(art_info)
+                    sub_channels[sk] = sub_data
+
+            # CH 제어 상태 (스타일 정보)
+            style = {
+                'font_size': font_slider.value(),
+                'checked': {},
+            }
+            for i in range(ch_list.count()):
+                it = ch_list.item(i)
+                key = it.data(Qt.ItemDataRole.UserRole)
+                style['checked'][key] = it.checkState() == Qt.CheckState.Checked
+
+            data = {
+                'meta': meta,
+                'source': source,
+                'params': params,
+                'last_cycles': last_cycles,
+                'classify_info': classify,
+                'axes': axes_settings,
+                'channels': channels,
+                'sub_channels': sub_channels,
+                'style': style,
+            }
+
+            fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2),
+                          encoding='utf-8')
+
         def _save_settings():
+            """CH 스타일 설정만 빠르게 저장 (자동 저장용)."""
             _settings_dir.mkdir(exist_ok=True)
             data = {
-                'aliases': _legend_aliases,
                 'font_size': font_slider.value(),
                 'checked': {},
             }
@@ -11197,62 +11415,52 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         
         def _load_settings():
-            fp = _settings_dir / 'last.json'
-            if not fp.exists():
+            """bdt.json 파일에서 스타일(체크 상태, 폰트 크기) 복원."""
+            from PyQt6.QtWidgets import QFileDialog
+            fp, _ = QFileDialog.getOpenFileName(
+                ch_list, '스타일 불러오기',
+                str(_settings_dir),
+                'BDT Figure (*.bdt.json);;JSON (*.json)')
+            if not fp:
                 return
-            data = _json.loads(fp.read_text(encoding='utf-8'))
-            # 폰트 크기
-            if 'font_size' in data:
-                font_slider.setValue(data['font_size'])
-            # 별칭 복원
-            if 'aliases' in data:
-                _legend_aliases.update(data['aliases'])
-                for orig_key, alias in data['aliases'].items():
-                    if orig_key in channel_map:
-                        for art in channel_map[orig_key]['artists']:
-                            art.set_label(alias)
-                # 리스트 텍스트 업데이트
-                ch_list.blockSignals(True)
-                for i in range(ch_list.count()):
-                    it = ch_list.item(i)
-                    key = it.data(Qt.ItemDataRole.UserRole)
-                    if key in data['aliases']:
-                        # 넘버링 유지하면서 이름 부분만 교체
-                        m = _re.match(r'^(\d+\.\s*)', it.text())
-                        prefix = m.group(1) if m else ''
-                        it.setText(prefix + data['aliases'][key])
-                ch_list.blockSignals(False)
+            data = _json.loads(_Path(fp).read_text(encoding='utf-8'))
+            # .bdt.json 형식이면 style 섹션 사용
+            style = data.get('style', data)
+            if 'font_size' in style:
+                font_slider.setValue(style['font_size'])
             # 체크 상태 복원
-            if 'checked' in data:
+            if 'checked' in style:
                 ch_list.blockSignals(True)
                 for i in range(ch_list.count()):
                     it = ch_list.item(i)
                     key = it.data(Qt.ItemDataRole.UserRole)
-                    if key in data['checked']:
+                    if key in style['checked']:
                         it.setCheckState(
-                            Qt.CheckState.Checked if data['checked'][key]
+                            Qt.CheckState.Checked if style['checked'][key]
                             else Qt.CheckState.Unchecked)
                         if key in channel_map:
                             for art in channel_map[key]['artists']:
-                                art.set_visible(data['checked'][key])
+                                art.set_visible(style['checked'][key])
                 ch_list.blockSignals(False)
                 _update_ch_count()
             canvas.draw_idle()
         
-        _save_btn = QPushButton("💾 저장")
-        _save_btn.setFixedHeight(20)
-        _save_btn.setStyleSheet(
+        _btn_style = (
             f"QPushButton {{ font-size: 10px; padding: 0 4px; "
             f"border: 1px solid {_btn_border}; border-radius: 3px; "
             f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        _load_btn = QPushButton("📂 불러오기")
+            f"QPushButton:hover {{ background: {_btn_hover}; }}")
+        _save_fig_btn = QPushButton("💾 Figure 저장")
+        _save_fig_btn.setFixedHeight(20)
+        _save_fig_btn.setStyleSheet(_btn_style)
+        _save_fig_btn.setToolTip('데이터 + Figure 설정을 JSON으로 저장')
+        _save_fig_btn.clicked.connect(_save_figure_data)
+        _load_btn = QPushButton("📂 스타일 불러오기")
         _load_btn.setFixedHeight(20)
-        _load_btn.setStyleSheet(_save_btn.styleSheet())
-        _save_btn.clicked.connect(_save_settings)
+        _load_btn.setStyleSheet(_btn_style)
+        _load_btn.setToolTip('채널 체크 상태, 폰트 크기 등 스타일만 복원')
         _load_btn.clicked.connect(_load_settings)
-        ctrl_col.addWidget(_save_btn)
+        ctrl_col.addWidget(_save_fig_btn)
         ctrl_col.addWidget(_load_btn)
         ctrl_col.addStretch()
         
@@ -11296,23 +11504,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.itemChanged.disconnect(on_item_changed)
             
             def on_item_changed_linked(item):
-                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경 + 범례 편집"""
+                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경"""
                 if _chk_guard['updating']:
                     return
                 orig_key = item.data(Qt.ItemDataRole.UserRole)
-                new_display = _strip_numbering(item.text())
-                
-                # 텍스트 편집 감지
-                current_alias = _legend_aliases.get(orig_key, orig_key)
-                if new_display and new_display != current_alias:
-                    _legend_aliases[orig_key] = new_display
-                    if orig_key in channel_map:
-                        for art in channel_map[orig_key]['artists']:
-                            art.set_label(new_display)
-                    _rebuild_legend()
-                    canvas.draw_idle()
-                    return
-                
                 visible = item.checkState() == Qt.CheckState.Checked
                 if orig_key in channel_map:
                     for art in channel_map[orig_key]['artists']:
@@ -11454,16 +11649,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if _chk_guard['updating']:
                         return
                     orig_key = item.data(Qt.ItemDataRole.UserRole)
-                    new_display = _strip_numbering(item.text())
-                    current_alias = _legend_aliases.get(orig_key, orig_key)
-                    if new_display and new_display != current_alias:
-                        _legend_aliases[orig_key] = new_display
-                        if orig_key in channel_map:
-                            for art in channel_map[orig_key]['artists']:
-                                art.set_label(new_display)
-                        _rebuild_legend()
-                        canvas.draw_idle()
-                        return
                     visible = item.checkState() == Qt.CheckState.Checked
                     if orig_key in channel_map:
                         for art in channel_map[orig_key]['artists']:
@@ -11515,16 +11700,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if _chk_guard['updating']:
                         return
                     orig_key = item.data(Qt.ItemDataRole.UserRole)
-                    new_display = _strip_numbering(item.text())
-                    current_alias = _legend_aliases.get(orig_key, orig_key)
-                    if new_display and new_display != current_alias:
-                        _legend_aliases[orig_key] = new_display
-                        if orig_key in channel_map:
-                            for art in channel_map[orig_key]['artists']:
-                                art.set_label(new_display)
-                        _rebuild_legend()
-                        canvas.draw_idle()
-                        return
                     visible = item.checkState() == Qt.CheckState.Checked
                     if orig_key in channel_map:
                         for art in channel_map[orig_key]['artists']:
@@ -11589,17 +11764,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list, sub_channel_map=None,
-                            classify_info=None):
+                            classify_info=None, save_context=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
+        save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
+        # save_context에 classify_info 포함
+        if save_context is not None and classify_info:
+            save_context['classify_info'] = [
+                {k: v for k, v in cr.items() if k != 'classified'}
+                for cr in classify_info
+            ]
         # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
                 channel_map, canvas, fig, axes_list, args_parent_tab=tab,
-                sub_channel_map=sub_channel_map)
+                sub_channel_map=sub_channel_map,
+                save_context=save_context)
             # toolbar + toggle_btn 을 한 줄에 배치
             toolbar_row = QHBoxLayout()
             toolbar_row.setContentsMargins(0, 0, 0, 0)
@@ -11659,41 +11842,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if len(pattern_str) > 80:
                 pattern_str = pattern_str[:80] + '...'
 
-        # 가속수명 충방전 패턴 (첫 번째 채널 기준)
+        # 가속수명 충방전 패턴 (첫 번째 채널 기준) — 화면에는 이 정보만 표시
         accel_line = ''
         for cr in classify_info:
             ap = cr.get('accel_pattern')
             if ap:
-                chg_parts = []
-                for s in ap['charge_steps']:
-                    cr_str = _fmt_crate(s['crate'])
-                    v_str = f'{s["voltage_cutoff"]:.2f}'
-                    if s['mode'] == 'CCCV':
-                        ic = _fmt_crate(s['current_cutoff_crate'])
-                        chg_parts.append(f'{cr_str}C→{v_str}V/{ic}C')
-                    else:
-                        chg_parts.append(f'{cr_str}C→{v_str}V')
-                dchg_parts = [
-                    f'{_fmt_crate(s["crate"])}C→{s["voltage_cutoff"]:.2f}V'
-                    for s in ap['discharge_steps']
-                ]
+                chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
+                dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
                 accel_line = (
-                    f'<br/>▷ 충전 {ap["n_charge_steps"]}step'
-                    f'({" → ".join(chg_parts)})'
-                    f' | 방전 {ap["n_discharge_steps"]}step'
-                    f'({" → ".join(dchg_parts)})')
+                    f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
+                    f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
                 break
 
+        if not accel_line:
+            return None
+
         html = (f'<span style="color:#3C5488; font-size:11px;">'
-                f'📊 {n_channels}채널  |  {test_str}  |  총 {total_cycles}cyc  |  '
-                f'{", ".join(cat_parts)}{pattern_str}{accel_line}</span>')
+                f'{accel_line}</span>')
 
         label = QLabel(html)
         label.setStyleSheet(
             'QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
             'border-radius: 3px; padding: 3px 8px; }')
         label.setWordWrap(True)
-        label.setMaximumHeight(48 if accel_line else 24)
+        label.setMaximumHeight(24)
         return label
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
@@ -12090,9 +12262,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """단일 .txt path 파일을 파싱하여 [(cyclename, cyclepath), ...] 반환"""
         rows = []
         with open(filepath, 'r', encoding='UTF-8') as f:
-            f.readline()  # 헤더 스킵
+            # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
+            for raw in f:
+                stripped = raw.strip()
+                if not stripped or stripped.startswith('#'):
+                    continue
+                break  # 헤더 줄 도달 → 스킵 후 탈출
             for line in f:
-                parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
+                if not line.strip():
+                    continue  # 그룹 구분자(빈 행) 무시
+                parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
                 if len(parts) >= 2:
                     rows.append((' '.join(parts[:-1]), parts[-1]))
         return rows
@@ -12104,9 +12283,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         rows = []
         with open(filepath, 'r', encoding='UTF-8') as f:
-            f.readline()  # 헤더 스킵
+            # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
+            for raw in f:
+                stripped = raw.strip()
+                if not stripped or stripped.startswith('#'):
+                    continue
+                break  # 헤더 줄 도달 → 스킵 후 탈출
             for line in f:
-                parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
+                if not line.strip():
+                    continue  # 그룹 구분자(빈 행) 무시
+                parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
                 if len(parts) >= 4:
                     rows.append({'name': parts[0], 'path': parts[1],
                                  'channel': parts[2], 'capacity': parts[3]})
@@ -12489,9 +12675,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _pattern_logged = False
                 for cr in _all_cr:
                     cat_parts = [f'{cat}:{n}' for cat, n in cr['counts'].items() if n > 0]
+                    src_tag = '[sch]' if 'sch_info' in cr else '[csv]'
                     _perf_logger.info(
                         f'  [{cr["cycler"]}] {cr["channel"]}  '
-                        f'{cr["test_type"]}  총 {cr["total_cycles"]}cyc  {", ".join(cat_parts)}'
+                        f'{cr["test_type"]} {src_tag}  총 {cr["total_cycles"]}cyc  {", ".join(cat_parts)}'
                     )
                     # 가속수명 패턴: 첫 번째 채널만 한 번 출력
                     if not _pattern_logged and 'accel_pattern' in cr:
@@ -12906,9 +13093,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if _fi in _classify_results:
                                 for _si, _cr in _classify_results[_fi].items():
                                     _tab_classify.append(_cr)
+                    # Figure 저장용 컨텍스트 구성
+                    _first_group = folder_groups[group_indices[0]]
+                    _save_ctx = {
+                        'source_file': _first_group.source_file,
+                        'data_paths': [p for gi in group_indices
+                                       for p in folder_groups[gi].paths],
+                        'is_link': _first_group.is_link,
+                        'per_path_capacities': [
+                            c for gi in group_indices
+                            for c in (folder_groups[gi].per_path_capacities
+                                      or [0.0] * len(folder_groups[gi].paths))],
+                        'channel_link_map': _first_group.channel_link_map,
+                        'per_path_channels': [
+                            ch for gi in group_indices
+                            for ch in (folder_groups[gi].per_path_channels
+                                       or [[] for _ in folder_groups[gi].paths])],
+                        'firstCrate': firstCrate,
+                        'mincapacity': mincapacity,
+                        'xscale': xscale,
+                        'ylimitlow': ylimitlow,
+                        'ylimithigh': ylimithigh,
+                        'irscale': irscale,
+                        'dcirchk': self.dcirchk.isChecked(),
+                        'dcirchk_2': self.dcirchk_2.isChecked(),
+                        'mkdcir': self.mkdcir.isChecked(),
+                        'tab_mode': 'individual' if is_individual else 'overall',
+                    }
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                              channel_map, fig, axes_list, sub_channel_map,
-                                             classify_info=_tab_classify if _tab_classify else None)
+                                             classify_info=_tab_classify if _tab_classify else None,
+                                             save_context=_save_ctx)
                     tab_no += 1
                     if suptitle_name:
                         output_fig(self.figsaveok, suptitle_name)
@@ -13198,9 +13413,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._highlight_capacity_mismatch()
 
     def _set_table_rows(self, rows):
-        """dict 리스트를 테이블에 채움. 필요 시 행 추가."""
+        """dict 리스트를 테이블에 채움. None 항목은 빈 행(그룹 구분자)."""
         self.cycle_path_table.setRowCount(max(len(rows), 5))
         for r, row in enumerate(rows):
+            if row is None:
+                # 그룹 구분자: 빈 행
+                for col in range(4):
+                    self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
+                continue
             for col, key in enumerate(['name', 'path', 'channel', 'capacity']):
                 val = row.get(key, '')
                 item = QtWidgets.QTableWidgetItem(val)
@@ -13212,8 +13432,39 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.setRowCount(5)
         self.cycle_path_table.clearContents()
 
+    @staticmethod
+    def _detect_path_columns(header_line):
+        """헤더 줄에서 열 이름 → 위치 매핑 반환.
+        지원 헤더 형식:
+          cyclename\tcyclepath\tchannel\tcapacity  (4열 신규)
+          cyclename\tcyclepath                      (2열 이전1/2)
+          cyclepath\tchannel\tcapacity              (3열 이전3)
+          cyclepath                                 (1열 이전4)
+        Returns: {'name': int|None, 'path': int, 'channel': int|None, 'capacity': int|None}
+        """
+        cols = [c.strip().lower() for c in header_line.rstrip('\n\r').split('\t')]
+        mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None}
+        # 알려진 별명 → 키 매핑
+        alias = {
+            'cyclename': 'name', 'name': 'name',
+            'cyclepath': 'path', 'path': 'path',
+            'channel': 'channel', 'ch': 'channel',
+            'capacity': 'capacity', 'cap': 'capacity',
+        }
+        for idx, col in enumerate(cols):
+            key = alias.get(col)
+            if key:
+                mapping[key] = idx
+        # path 열이 감지되지 않으면 → 첫 번째 열을 path로 간주
+        if mapping['path'] is None:
+            mapping['path'] = 0
+        return mapping
+
     def _load_path_file_to_table(self):
-        """Path 파일(.txt)을 읽어 테이블에 채움 (4열 지원, 하위호환)"""
+        """Path 파일(.txt)을 읽어 테이블에 채움
+        헤더 기반 열 자동 감지로 모든 이전 형식 지원:
+          4열(신규), 2열(이전1/2), 3열(이전3), 1열(이전4)
+        """
         root = Tk()
         root.withdraw()
         fp = filedialog.askopenfilename(
@@ -13221,25 +13472,53 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
         if not fp:
             return
-        rows = []
+        rows = []  # dict 또는 None(빈 행)
+        link_mode = None
         with open(fp, 'r', encoding='UTF-8') as f:
-            header = f.readline().strip()
+            # DRM 회피용 공란 + 메타데이터 스킵 → 헤더 줄 캡처
+            header_line = None
+            for raw in f:
+                stripped = raw.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith('#link_mode='):
+                    link_mode = stripped.split('=', 1)[1].strip() == '1'
+                    continue
+                header_line = raw  # 헤더 줄 보존
+                break
+            if header_line is None:
+                return
+            col_map = self._detect_path_columns(header_line)
+            # 데이터 줄 파싱
             for line in f:
-                parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
-                if len(parts) >= 4:
-                    rows.append({'name': parts[0], 'path': parts[1],
-                                 'channel': parts[2], 'capacity': parts[3]})
-                elif len(parts) >= 2:
-                    # 하위 호환: cyclename\tcyclepath
-                    rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
-                                 'channel': '', 'capacity': ''})
+                if not line.strip():
+                    rows.append(None)  # 그룹 구분자 (빈 행)
+                    continue
+                parts = [p.strip().strip('"').strip("'")
+                         for p in line.rstrip('\n\r').split('\t')]
+                path = parts[col_map['path']] if col_map['path'] < len(parts) else ''
+                name = parts[col_map['name']] if col_map['name'] is not None and col_map['name'] < len(parts) else ''
+                channel = parts[col_map['channel']] if col_map['channel'] is not None and col_map['channel'] < len(parts) else ''
+                capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
+                if path:
+                    rows.append({'name': name, 'path': path,
+                                 'channel': channel, 'capacity': capacity})
+                elif name or channel or capacity:
+                    # path 비어있지만 다른 열에 값 있으면 → 데이터 행
+                    rows.append({'name': name, 'path': '',
+                                 'channel': channel, 'capacity': capacity})
+        # 연결처리 체크박스 복원
+        if link_mode is not None and self.chk_link_cycle.isEnabled():
+            self.chk_link_cycle.setChecked(link_mode)
         if rows:
             self._set_table_rows(rows)
 
     def _save_table_to_path_file(self):
-        """테이블 내용을 4열 탭구분 Path 파일로 저장"""
-        rows = self._get_table_rows()
-        if not rows:
+        """테이블 내용을 4열 탭구분 Path 파일로 저장
+        - 연결처리 상태를 메타데이터로 보존
+        - 빈 행(그룹 구분자)도 함께 저장
+        """
+        if not self._has_table_data():
             return
         root = Tk()
         root.withdraw()
@@ -13249,10 +13528,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
         if not fp:
             return
+        link_mode = self.chk_link_cycle.isChecked()
         with open(fp, 'w', encoding='UTF-8') as f:
+            f.write("\n")  # DRM 회피용 공란
+            f.write(f"#link_mode={int(link_mode)}\n")
             f.write("cyclename\tcyclepath\tchannel\tcapacity\n")
-            for row in rows:
-                f.write(f"{row['name']}\t{row['path']}\t{row['channel']}\t{row['capacity']}\n")
+            # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
+            last_data_row = -1
+            for r in range(self.cycle_path_table.rowCount()):
+                if self._get_table_cell(r, 1):
+                    last_data_row = r
+            for r in range(last_data_row + 1):
+                name = self._get_table_cell(r, 0)
+                path = self._get_table_cell(r, 1)
+                ch = self._get_table_cell(r, 2)
+                cap = self._get_table_cell(r, 3)
+                if path:
+                    f.write(f"{name}\t{path}\t{ch}\t{cap}\n")
+                elif link_mode:
+                    f.write("\n")  # 그룹 구분자 (빈 행)
 
     def _cycle_table_copy(self):
         """선택 셀 → 클립보드 (탭 구분, 여러 행/열 지원)"""
@@ -19884,7 +20178,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         try:
             self.progressBar.setRange(0, 0)  # indeterminate 모드
             QtWidgets.QApplication.processEvents()
-            sol = run_pybamm_simulation(model_name, params_dict, experiment_config)
+            sol, param_vals = run_pybamm_simulation(model_name, params_dict, experiment_config)
         except Exception as e:
             self.progressBar.setRange(0, 100)
             self.progressBar.setValue(0)
@@ -20033,60 +20327,263 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         graph_base_parameter(ax, "Time [min]", "Terminal Voltage [V]")
         ax.set_title("Cell Voltage & Current", fontsize=TS, fontweight=TW)
         ax_r = ax.twinx()
-        ax_r.plot(t_min, I, color=palette[1], linewidth=LW, alpha=LA, label="Current")
-        ax_r.set_ylabel("Current [A]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
+        ax_r.plot(t_min, np.abs(I), color=palette[1], linewidth=LW, alpha=LA, label="Current")
+        ax_r.set_ylabel("|Current| [A]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
         ax_r.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
         # 두 축 범례 합치기
         h1, l1 = ax.get_legend_handles_labels()
         h2, l2 = ax_r.get_legend_handles_labels()
         ax.legend(h1 + h2, l1 + l2, fontsize=8, loc='best')
+        # 좌우 Y축 tick 위치 일치
+        _nt = 6
+        _l1, _l2 = ax.get_ylim()
+        _r1, _r2 = ax_r.get_ylim()
+        ax.set_yticks(np.linspace(_l1, _l2, _nt))
+        ax_r.set_yticks(np.linspace(_r1, _r2, _nt))
 
-        # [1.2] V-Q Curve
+        # [1.2] Electrode Balance — SoC_Cell vs OCP
+        # X축: SoC_Cell [%] (100→0 반전), 좌Y: PE OCP + Cell V, 우Y: NE OCP
         ax = axes_g[0, 1]
-        ax.plot(Q, V, color=palette[1], linewidth=LW, alpha=LA)
-        graph_base_parameter(ax, "Capacity [A.h]", "Terminal Voltage [V]")
-        ax.set_title("V-Q Curve", fontsize=TS, fontweight=TW)
+        _has_12 = (pos_ocp is not None and neg_ocp is not None
+                   and pos_lith is not None and neg_lith is not None)
+        if _has_12:
+            # 전체 OCP 함수 가져오기
+            _f_pos, _f_neg = None, None
+            try:
+                _fp = param_vals["Positive electrode OCP [V]"]
+                _fn = param_vals["Negative electrode OCP [V]"]
+                if callable(_fp):
+                    _f_pos = _fp
+                if callable(_fn):
+                    _f_neg = _fn
+            except Exception:
+                pass
 
-        # [1.3] Electrode Thermodynamics (전극 전위 + OCP)
-        ax = axes_g[0, 2]
-        _has_13 = False
-        if pos_potential is not None:
-            ax.plot(t_min, pos_potential, color=palette[1], linewidth=LW, alpha=LA, label="Cathode φ_s")
-            _has_13 = True
-        if pos_ocp is not None:
-            ax.plot(t_min, pos_ocp, color=palette[1], linewidth=LW, alpha=0.35, linestyle='--', label="Cathode OCP")
-            _has_13 = True
-        if neg_potential is not None:
-            ax.plot(t_min, neg_potential, color=palette[0], linewidth=LW, alpha=LA, label="Anode φ_s")
-            _has_13 = True
-        if neg_ocp is not None:
-            ax.plot(t_min, neg_ocp, color=palette[0], linewidth=LW, alpha=0.35, linestyle='--', label="Anode OCP")
-            _has_13 = True
-        if not _has_13:
-            _no_data(ax, "Electrode potential\ndata not available")
+            # Stoichiometry → SoC_Cell 선형 매핑
+            _sto_p0, _sto_pN = pos_lith[0], pos_lith[-1]
+            _sto_n0, _sto_nN = neg_lith[0], neg_lith[-1]
+            _d_p = _sto_pN - _sto_p0
+            _d_n = _sto_nN - _sto_n0
+
+            # 시뮬레이션 데이터의 SoC_Cell (PE 기준)
+            if abs(_d_p) > 1e-10:
+                _soc_sim = 100.0 * (pos_lith - _sto_p0) / _d_p
+            else:
+                _soc_sim = np.linspace(0, 100, len(pos_lith))
+
+            # 전체 OCP 커브 (연한 배경) — sto → SoC 선형 외삽
+            _sto_full = np.linspace(0.001, 0.999, 500)
+            if _f_pos is not None and abs(_d_p) > 1e-10:
+                _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
+                _soc_pe_full = 100.0 * (_sto_full - _sto_p0) / _d_p
+                ax.plot(_soc_pe_full, _ocp_pos_full, color=palette[1],
+                        linewidth=0.8, alpha=0.7, linestyle='-')
+            ax_r12 = ax.twinx()
+            if _f_neg is not None and abs(_d_n) > 1e-10:
+                _ocp_neg_full = np.asarray(_f_neg(_sto_full), dtype=float).ravel()
+                _soc_ne_full = 100.0 * (_sto_full - _sto_n0) / _d_n
+                ax_r12.plot(_soc_ne_full, _ocp_neg_full, color=palette[0],
+                            linewidth=0.8, alpha=0.7, linestyle='-')
+
+            # ── 양극 OCP 실사용 영역 (좌Y, 빨간) ──
+            ax.plot(_soc_sim, pos_ocp, color=palette[1],
+                    linewidth=LW + 0.5, alpha=LA, label="PE OCP")
+
+            # ── Cell Voltage 오버레이 (좌Y, 회색 점선) ──
+            ax.plot(_soc_sim, V, color='black',
+                    linewidth=LW, alpha=0.7, linestyle='-', label="Cell Voltage")
+
+            # ── 음극 OCP 실사용 영역 (우Y, 파란) ──
+            ax_r12.plot(_soc_sim, neg_ocp, color=palette[0],
+                        linewidth=LW + 0.5, alpha=LA, label="NE OCP")
+
+            # V_max, V_min 수평 기준선
+            _v_max_val = experiment_config.get("v_max", None)
+            _v_min_val = experiment_config.get("v_min", None)
+            if _v_max_val is None:
+                try:
+                    _v_max_val = float(param_vals["Upper voltage cut-off [V]"])
+                except Exception:
+                    pass
+            if _v_min_val is None:
+                try:
+                    _v_min_val = float(param_vals["Lower voltage cut-off [V]"])
+                except Exception:
+                    pass
+            
+
+            # stoichiometry 범위 주석
+            ax.annotate(f"PE: x={pos_lith[0]:.3f}→{pos_lith[-1]:.3f}",
+                        xy=(0.02, 0.97), xycoords='axes fraction',
+                        fontsize=6.5, color=palette[1], va='top')
+            ax_r12.annotate(f"NE: x={neg_lith[0]:.3f}→{neg_lith[-1]:.3f}",
+                            xy=(0.98, 0.97), xycoords='axes fraction',
+                            fontsize=6.5, color=palette[0], va='top', ha='right')
+
+            # 범례 합치기
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax_r12.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2, fontsize=7, loc='best')
+            ax_r12.set_ylabel("NE Voltage [V]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
+            ax_r12.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
+            ax.yaxis.label.set_color(palette[1])
+            ax.tick_params(axis='y', colors=palette[1])
+            ax_r12.yaxis.label.set_color(palette[0])
+            ax_r12.tick_params(axis='y', colors=palette[0])
+            ax.set_xlim([110, -10])  # 100%→0% 반전
+            ax.set_ylim([2.5, 4.5])
+            ax_r12.set_ylim([-0.05, 1.0])
+            # 좌우 Y축 tick 위치 일치
+            _nt = 6
+            ax.set_yticks(np.linspace(2.5, 4.5, _nt))
+            ax_r12.set_yticks(np.linspace(-0.05, 1.0, _nt))
         else:
-            ax.legend(fontsize=7, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Potential [V]")
-        ax.set_title("Electrode Thermodynamics", fontsize=TS, fontweight=TW)
+            _no_data(ax, "Electrode OCP\ndata not available")
+        graph_base_parameter(ax, "SoC_Cell [%]", "PE / Cell Voltage [V]")
+        ax.set_title("Electrode Balance", fontsize=TS, fontweight=TW)
 
-        # [1.4] Electrode SOC / Lithiation
+        # [1.4] Voltage Components (전압 분해 — stacked area)
+        # OCP(Neg/Pos) + Overpotential 합(Neg/Pos) + Ohmic 합(Neg/Pos) 3그룹
         ax = axes_g[1, 0]
-        _has_14 = False
-        if pos_lith is not None:
-            ax.plot(t_min, pos_lith, color=palette[1], linewidth=LW, alpha=LA, label="Cathode lithiation")
-            _has_14 = True
-        if neg_lith is not None:
-            ax.plot(t_min, neg_lith, color=palette[0], linewidth=LW, alpha=LA, label="Anode lithiation")
-            _has_14 = True
-        if not _has_14:
-            _no_data(ax, "Lithiation data\nnot available")
+        _vc_neg_ocp = _safe("Negative electrode bulk open-circuit potential [V]")
+        _vc_pos_ocp = _safe("Positive electrode bulk open-circuit potential [V]")
+        _vc_neg_pco = _safe("Negative particle concentration overpotential [V]")
+        _vc_pos_pco = _safe("Positive particle concentration overpotential [V]")
+        _vc_neg_rxn = _safe("X-averaged negative electrode reaction overpotential [V]")
+        _vc_pos_rxn = _safe("X-averaged positive electrode reaction overpotential [V]")
+        _vc_conc_ovp = _safe("X-averaged battery concentration overpotential [V]")
+        _vc_elyte_ohm = _safe("X-averaged battery electrolyte ohmic losses [V]")
+        _vc_neg_solid = _safe("X-averaged battery negative solid phase ohmic losses [V]")
+        _vc_pos_solid = _safe("X-averaged battery positive solid phase ohmic losses [V]")
+        _vc_ok = (_vc_neg_ocp is not None and _vc_pos_ocp is not None)
+        if _vc_ok:
+            _zeros = np.zeros_like(t_min)
+            initial_ocp_n = _vc_neg_ocp[0]
+            initial_ocp_p = _vc_pos_ocp[0]
+            initial_ocv = initial_ocp_p - initial_ocp_n
+            delta_ocp_n = _vc_neg_ocp - initial_ocp_n
+            delta_ocp_p = _vc_pos_ocp - initial_ocp_p
+            # ① Neg OCP
+            top = initial_ocv
+            ax.fill_between(t_min, initial_ocv - delta_ocp_n, initial_ocv,
+                            alpha=0.6, label="Neg OCP", color=palette[0])
+            top = initial_ocv - delta_ocp_n
+            # ② Pos OCP
+            ax.fill_between(t_min, top + delta_ocp_p, top,
+                            alpha=0.6, label="Pos OCP", color=palette[4])
+            top = top + delta_ocp_p
+            # ③ Neg Overpotential 합 (particle conc. + reaction)
+            _neg_ovp = ((_vc_neg_pco if _vc_neg_pco is not None else _zeros)
+                        + (_vc_neg_rxn if _vc_neg_rxn is not None else _zeros))
+            bottom = top + (-1) * _neg_ovp
+            ax.fill_between(t_min, bottom, top, alpha=0.6,
+                            label="Neg Overpotential", color=palette[2])
+            top = bottom
+            # ④ Pos Overpotential 합 (particle conc. + reaction)
+            _pos_ovp = ((_vc_pos_pco if _vc_pos_pco is not None else _zeros)
+                        + (_vc_pos_rxn if _vc_pos_rxn is not None else _zeros))
+            bottom = top + _pos_ovp
+            ax.fill_between(t_min, bottom, top, alpha=0.6,
+                            label="Pos Overpotential", color=palette[1])
+            top = bottom
+            # ⑤ Ohmic 합 (electrolyte conc. + electrolyte ohmic + solid neg + solid pos)
+            _ohmic_total = ((_vc_conc_ovp if _vc_conc_ovp is not None else _zeros)
+                           + (_vc_elyte_ohm if _vc_elyte_ohm is not None else _zeros)
+                           + ((-1) * _vc_neg_solid if _vc_neg_solid is not None else _zeros)
+                           + (_vc_pos_solid if _vc_pos_solid is not None else _zeros))
+            bottom = top + _ohmic_total
+            ax.fill_between(t_min, bottom, top, alpha=0.6,
+                            label="Ohmic Losses", color=palette[8])
+            top = bottom
+            ax.plot(t_min, V, 'k--', linewidth=LW, alpha=0.8, label="Voltage")
+            ax.legend(fontsize=7, loc='best', frameon=True, framealpha=0.85)
+            _v_min = 0.98 * min(np.nanmin(V), np.nanmin(initial_ocv - delta_ocp_n))
+            _v_max = 1.02 * max(np.nanmax(V), np.nanmax(initial_ocv))
+            ax.set_ylim([_v_min, _v_max])
         else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Extent of Lithiation")
-        ax.set_title("Electrode SOC", fontsize=TS, fontweight=TW)
+            _no_data(ax, "Voltage component\ndata not available")
+        graph_base_parameter(ax, "Time [min]", "Voltage [V]")
+        ax.set_title("Voltage Components", fontsize=TS, fontweight=TW)
 
-        # [1.5] Cell Temperature
+        # [1.5] Electrode Balance — Stoichiometry vs OCP
+        # X축: Stoichiometry (x) 0~1, 좌Y: PE OCP, 우Y: NE OCP
+        # 전체 OCP 커브(연장선)와 실사용 영역(굵은선)을 함께 표시
         ax = axes_g[1, 1]
+        _has_13 = (pos_ocp is not None and neg_ocp is not None
+                   and pos_lith is not None and neg_lith is not None)
+        if _has_13:
+            # 전체 OCP 함수 가져오기
+            _f_pos, _f_neg = None, None
+            try:
+                _fp = param_vals["Positive electrode OCP [V]"]
+                _fn = param_vals["Negative electrode OCP [V]"]
+                if callable(_fp):
+                    _f_pos = _fp
+                if callable(_fn):
+                    _f_neg = _fn
+            except Exception:
+                pass
+
+            # 전체 OCP 커브 (연한 배경)
+            _sto_full = np.linspace(0.001, 0.999, 500)
+            if _f_pos is not None:
+                _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
+                ax.plot(_sto_full, _ocp_pos_full, color=palette[1],
+                        linewidth=0.8, alpha=0.2, linestyle='-')
+            ax_r13 = ax.twinx()
+            if _f_neg is not None:
+                _ocp_neg_full = np.asarray(_f_neg(_sto_full), dtype=float).ravel()
+                ax_r13.plot(_sto_full, _ocp_neg_full, color=palette[0],
+                            linewidth=0.8, alpha=0.2, linestyle='-')
+
+            # ── 양극 OCP 실사용 영역 (좌Y, 빨간) ──
+            ax.plot(pos_lith, pos_ocp, color=palette[1],
+                    linewidth=LW + 0.5, alpha=LA, label="PE OCP")
+            ax.plot(pos_lith[0], pos_ocp[0], 'o', color=palette[1],
+                    markersize=5, zorder=5)
+            ax.plot(pos_lith[-1], pos_ocp[-1], 's', color=palette[1],
+                    markersize=5, zorder=5)
+
+            # ── 음극 OCP 실사용 영역 (우Y, 파란) ──
+            ax_r13.plot(neg_lith, neg_ocp, color=palette[0],
+                        linewidth=LW + 0.5, alpha=LA, label="NE OCP")
+            ax_r13.plot(neg_lith[0], neg_ocp[0], 'o', color=palette[0],
+                        markersize=5, zorder=5)
+            ax_r13.plot(neg_lith[-1], neg_ocp[-1], 's', color=palette[0],
+                        markersize=5, zorder=5)
+
+            # stoichiometry 범위 주석
+            ax.annotate(f"PE: x={pos_lith[0]:.3f}→{pos_lith[-1]:.3f}",
+                        xy=(0.02, 0.97), xycoords='axes fraction',
+                        fontsize=6.5, color=palette[1], va='top')
+            ax_r13.annotate(f"NE: x={neg_lith[0]:.3f}→{neg_lith[-1]:.3f}",
+                            xy=(0.98, 0.97), xycoords='axes fraction',
+                            fontsize=6.5, color=palette[0], va='top', ha='right')
+
+            # 범례 합치기
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax_r13.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2, fontsize=7, loc='center left')
+            ax_r13.set_ylabel("NE Voltage [V]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
+            ax_r13.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
+            ax.yaxis.label.set_color(palette[1])
+            ax.tick_params(axis='y', colors=palette[1])
+            ax_r13.yaxis.label.set_color(palette[0])
+            ax_r13.tick_params(axis='y', colors=palette[0])
+            ax.set_xlim([-0.1, 1.1])
+            ax.set_ylim([3.0, 4.5])
+            ax_r13.set_ylim([-0.05, 1.0])
+            # 좌우 Y축 tick 위치 일치
+            _nt = 6
+            ax.set_yticks(np.linspace(3.0, 4.5, _nt))
+            ax_r13.set_yticks(np.linspace(-0.05, 1.0, _nt))
+        else:
+            _no_data(ax, "Electrode OCP\ndata not available")
+        graph_base_parameter(ax, "Stoichiometry (x)", "PE Voltage [V]")
+        ax.set_title("Electrode Balance", fontsize=TS, fontweight=TW)
+
+        # [1.3] Cell Temperature
+        ax = axes_g[0, 2]
         if T_cell is not None:
             ax.plot(t_min, T_cell, color=palette[2], linewidth=LW, alpha=LA)
         else:
@@ -20314,6 +20811,65 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             list_widget.insertItem(insert_at + i, text)
         # 삽입된 마지막 항목 선택
         list_widget.setCurrentRow(insert_at + len(items) - 1)
+        self._pybamm_renumber_steps(list_widget)
+
+    def _pybamm_strip_step_prefix(self, text):
+        """스텝 번호 접두사 ([n] 또는 └) 제거"""
+        import re
+        return re.sub(r'^(\[\d+\]\s*|\s*└\s*)', '', text)
+
+    def _pybamm_setup_model_tooltips(self):
+        """모델 콤보박스 각 항목에 설명 + 이미지 툴팁 설정"""
+        import base64
+        from pathlib import Path
+
+        base_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+        img_path = base_dir / "Electrochemical_tooltip.png"
+        img_tag = ""
+        if img_path.exists():
+            img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+            img_tag = (f'<br><img src="data:image/png;base64,{img_b64}"'
+                       f' width="450"/>')
+
+        descs = {
+            "SPM": ("<b>SPM</b> — Single Particle Model<br>"
+                    "대표 입자 1개 · 전해질 무시<br>"
+                    "BMS 실시간 계산에 적합&nbsp;&nbsp;"
+                    "<span style='color:#00A087'>⚡ 가장 빠름</span>"),
+            "SPMe": ("<b>SPMe</b> — SPM + electrolyte<br>"
+                     "대표 입자 1개 + 전해질 효과 반영<br>"
+                     "속도↑ · 중간 정확도&nbsp;&nbsp;"
+                     "<span style='color:#3C5488'>⚡ 빠름 / 정확도 중간</span>"),
+            "DFN": ("<b>DFN (P2D)</b> — Doyle-Fuller-Newman<br>"
+                    "다수 입자 · 모든 물리량이 위치(x)에 따라 변화<br>"
+                    "가장 정밀 · 계산량 큼&nbsp;&nbsp;"
+                    "<span style='color:#E64B35'>⚡ 느림 / 정확도 높음</span>"),
+        }
+        for i in range(self.pybamm_model_combo.count()):
+            model = self.pybamm_model_combo.itemText(i)
+            desc = descs.get(model, "")
+            html = f"<div style='padding:4px'>{desc}{img_tag}</div>"
+            self.pybamm_model_combo.setItemData(
+                i, html, QtCore.Qt.ItemDataRole.ToolTipRole)
+
+    def _pybamm_renumber_steps(self, list_widget):
+        """리스트 위젯의 모든 스텝에 번호/그룹 접두사 재부여
+        CC/Rest → [n], CC 바로 뒤 CV(CCCV 쌍) → └"""
+        n = 1
+        for i in range(list_widget.count()):
+            item = list_widget.item(i)
+            raw = self._pybamm_strip_step_prefix(item.text())
+            tag = raw.split("|", 1)[0].strip().upper() if "|" in raw else ""
+            if tag == "CV" and i > 0:
+                prev_raw = self._pybamm_strip_step_prefix(
+                    list_widget.item(i - 1).text())
+                prev_tag = (prev_raw.split("|", 1)[0].strip().upper()
+                            if "|" in prev_raw else "")
+                if prev_tag == "CC":
+                    item.setText(f"    └ {raw}")
+                    continue
+            item.setText(f"[{n}] {raw}")
+            n += 1
 
     def _pybamm_update_step_fields(self, step_type, crate_w, vcut_w, cutoff_w, prefix):
         """유형 변경 시 입력 필드의 활성/비활성
@@ -20506,13 +21062,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         rows = sorted([idx.row() for idx in list_widget.selectedIndexes()], reverse=True)
         for row in rows:
             list_widget.takeItem(row)
+        self._pybamm_renumber_steps(list_widget)
 
     def _pybamm_copy_steps(self, list_widget):
         """선택된 스텝 항목을 클립보드에 복사 (Ctrl+C)"""
         rows = sorted(idx.row() for idx in list_widget.selectedIndexes())
         if not rows:
             return
-        lines = [list_widget.item(r).text() for r in rows]
+        lines = [self._pybamm_strip_step_prefix(list_widget.item(r).text()) for r in rows]
         QtWidgets.QApplication.clipboard().setText("\n".join(lines))
 
     def _pybamm_paste_steps(self, list_widget):
@@ -20528,11 +21085,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for i, line in enumerate(lines):
             list_widget.insertItem(insert_at + i, line)
         list_widget.setCurrentRow(insert_at + len(lines) - 1)
+        self._pybamm_renumber_steps(list_widget)
 
     def _pybamm_load_step_to_fields(self, item, step_type_w, crate_w, vcut_w, cutoff_w, prefix):
         """리스트 항목을 더블클릭하면 입력 필드에 값을 로드"""
         import re
-        text = item.text()
+        text = self._pybamm_strip_step_prefix(item.text())
         if "|" not in text:
             return
         tag = text.split("|", 1)[0].strip().upper()
@@ -20616,7 +21174,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # CCCV는 2줄(CC+CV)이므로 현재 행만 CC로, 다음 행이 CV면 교체
             list_widget.item(row).setText(f"CC  |  {direction} at {crate}C until {vcut}V")
             if row + 1 < list_widget.count():
-                next_tag = list_widget.item(row + 1).text().split("|", 1)[0].strip().upper()
+                next_text = self._pybamm_strip_step_prefix(list_widget.item(row + 1).text())
+                next_tag = next_text.split("|", 1)[0].strip().upper()
                 if next_tag == "CV":
                     list_widget.item(row + 1).setText(f"CV  |  {cv_str}")
                 else:
@@ -20626,12 +21185,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         elif step_type == "Rest":
             rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
             list_widget.item(row).setText(f"Rest  |  Rest for {rest_str}")
+        self._pybamm_renumber_steps(list_widget)
 
     def _pybamm_collect_list_steps(self, list_widget):
         """QListWidget에서 PyBaMM Experiment 문자열 리스트 추출"""
         steps = []
         for i in range(list_widget.count()):
-            text = list_widget.item(i).text()
+            text = self._pybamm_strip_step_prefix(list_widget.item(i).text())
             if "|" in text:
                 steps.append(text.split("|", 1)[1].strip())
             else:
@@ -20644,55 +21204,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         #       음극두께 음극입자 음극활물질 음극Brug
         #       분리막두께 분리막Brug 전해질농도 전극면적 셀용량 온도
         presets = {
-            "Chen2020": [
+            "Chen2020 - Gr(Si)/NMC811": [
                 "75.6", "5.22", "0.665", "1.5",
                 "85.2", "5.86", "0.75", "1.5",
                 "12.0", "1.5", "1000", "1.58", "5.0", "25",
             ],
-            "Ai2020": [
-                "68.0", "3.0", "0.62", "1.83",
-                "76.5", "5.0", "0.61", "2.91",
-                "25.0", "1.5", "1000", "0.047", "2.28", "25",
-            ],
-            "Ecker2015": [
+            "Ecker2015 - Gr/NMC111": [
                 "54.0", "6.5", "0.408", "1.54",
                 "74.0", "13.7", "0.372", "1.64",
                 "20.0", "1.98", "1000", "0.085", "0.156", "25",
             ],
-            "Marquis2019": [
+            "Marquis2019 - Gr/NMC": [
                 "100.0", "10.0", "0.5", "1.5",
                 "100.0", "10.0", "0.6", "1.5",
                 "25.0", "1.5", "1000", "0.207", "0.68", "25",
             ],
-            "Mohtat2020": [
+            "Mohtat2020 - Gr/NMC111": [
                 "67.0", "3.5", "0.445", "1.5",
                 "62.0", "2.5", "0.61", "1.5",
                 "12.0", "1.5", "1000", "0.205", "5.0", "25",
             ],
-            "NCA_Kim2011": [
+            "NCA_Kim2011 - Gr/NCA": [
                 "50.0", "1.63", "0.41", "2.0",
                 "70.0", "0.508", "0.51", "2.0",
                 "25.0", "2.0", "1200", "0.14", "0.43", "25",
             ],
-            "OKane2022": [
+            "OKane2022 - Gr(Si)/NMC811": [
                 "75.6", "5.22", "0.665", "1.5",
                 "85.2", "5.86", "0.75", "1.5",
                 "12.0", "1.5", "1000", "1.58", "5.0", "25",
             ],
-            "ORegan2022": [
+            "ORegan2022 - Gr(Si)/NMC811": [
                 "75.6", "5.22", "0.665", "1.5",
                 "85.2", "5.86", "0.75", "1.5",
                 "12.0", "1.5", "1000", "1.58", "5.0", "25",
-            ],
-            "Prada2013": [
-                "80.0", "0.05", "0.374", "1.5",
-                "34.0", "5.0", "0.58", "1.5",
-                "25.0", "1.5", "1200", "0.3", "2.3", "25",
-            ],
-            "Ramadass2004": [
-                "80.0", "2.0", "0.59", "4.0",
-                "88.0", "2.0", "0.49", "4.0",
-                "25.0", "1.98", "1000", "1.061", "1.0", "25",
             ],
         }
         combo_text = self.pybamm_param_combo.currentText()
@@ -20703,37 +21248,57 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ── 프리셋별 충방전 패턴 연동 ──
         patterns = {
-            #  chg_steps,  dchg_steps,  upper_v, lower_v
-            "Chen2020":     (["CC  |  Charge at 1C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
+            #  chg_steps (CC, CC, CCCV, CCCV 4스텝 구조),  dchg_steps
+            #  전압 스텝: v_max-0.3, v_max-0.2, v_max-0.1(+CV), v_max(+CV)
+            "Chen2020 - Gr(Si)/NMC811":     (["CC  |  Charge at 2.0C until 3.9V",
+                             "CC  |  Charge at 1.6C until 4.0V",
+                             "CC  |  Charge at 1.3C until 4.1V",
+                             "CV  |  Hold at 4.1V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.2V",
+                             "CV  |  Hold at 4.2V until 0.1C"],
                             ["CC  |  Discharge at 1C until 2.5V"]),
-            "Ai2020":       (["CC  |  Charge at 1C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
-                            ["CC  |  Discharge at 1C until 3.0V"]),
-            "Ecker2015":    (["CC  |  Charge at 1C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
+            "Ecker2015 - Gr/NMC111":    (["CC  |  Charge at 2.0C until 3.9V",
+                             "CC  |  Charge at 1.6C until 4.0V",
+                             "CC  |  Charge at 1.3C until 4.1V",
+                             "CV  |  Hold at 4.1V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.2V",
+                             "CV  |  Hold at 4.2V until 0.1C"],
                             ["CC  |  Discharge at 1C until 2.5V"]),
-            "Marquis2019":  (["CC  |  Charge at 1C until 4.1V",
-                             "CV  |  Hold at 4.1V until C/50"],
+            "Marquis2019 - Gr/NMC":  (["CC  |  Charge at 2.0C until 3.8V",
+                             "CC  |  Charge at 1.6C until 3.9V",
+                             "CC  |  Charge at 1.3C until 4.0V",
+                             "CV  |  Hold at 4.0V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.1V",
+                             "CV  |  Hold at 4.1V until 0.1C"],
                             ["CC  |  Discharge at 1C until 3.105V"]),
-            "Mohtat2020":   (["CC  |  Charge at 1C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
+            "Mohtat2020 - Gr/NMC111":   (["CC  |  Charge at 2.0C until 3.9V",
+                             "CC  |  Charge at 1.6C until 4.0V",
+                             "CC  |  Charge at 1.3C until 4.1V",
+                             "CV  |  Hold at 4.1V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.2V",
+                             "CV  |  Hold at 4.2V until 0.1C"],
                             ["CC  |  Discharge at 1C until 2.8V"]),
-            "NCA_Kim2011":  (["CC  |  Charge at 0.5C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
+            "NCA_Kim2011 - Gr/NCA":  (["CC  |  Charge at 2.0C until 3.9V",
+                             "CC  |  Charge at 1.6C until 4.0V",
+                             "CC  |  Charge at 1.3C until 4.1V",
+                             "CV  |  Hold at 4.1V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.2V",
+                             "CV  |  Hold at 4.2V until 0.1C"],
                             ["CC  |  Discharge at 0.5C until 2.7V"]),
-            "OKane2022":    (["CC  |  Charge at 1C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
+            "OKane2022 - Gr(Si)/NMC811":    (["CC  |  Charge at 2.0C until 3.9V",
+                             "CC  |  Charge at 1.6C until 4.0V",
+                             "CC  |  Charge at 1.3C until 4.1V",
+                             "CV  |  Hold at 4.1V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.2V",
+                             "CV  |  Hold at 4.2V until 0.1C"],
                             ["CC  |  Discharge at 1C until 2.5V"]),
-            "ORegan2022":   (["CC  |  Charge at 1C until 4.4V",
-                             "CV  |  Hold at 4.4V until C/50"],
+            "ORegan2022 - Gr(Si)/NMC811":   (["CC  |  Charge at 2.0C until 4.1V",
+                             "CC  |  Charge at 1.6C until 4.2V",
+                             "CC  |  Charge at 1.3C until 4.3V",
+                             "CV  |  Hold at 4.3V until 1.0C",
+                             "CC  |  Charge at 1.0C until 4.4V",
+                             "CV  |  Hold at 4.4V until 0.1C"],
                             ["CC  |  Discharge at 1C until 2.5V"]),
-            "Prada2013":    (["CC  |  Charge at 1C until 3.6V",
-                             "CV  |  Hold at 3.6V until C/50"],
-                            ["CC  |  Discharge at 1C until 2.0V"]),
-            "Ramadass2004": (["CC  |  Charge at 1C until 4.2V",
-                             "CV  |  Hold at 4.2V until C/50"],
-                            ["CC  |  Discharge at 1C until 2.8V"]),
         }
         if combo_text in patterns:
             chg_steps, dchg_steps = patterns[combo_text]
@@ -20741,6 +21306,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.pybamm_chg_list.addItems(chg_steps)
             self.pybamm_dchg_list.clear()
             self.pybamm_dchg_list.addItems(dchg_steps)
+            self._pybamm_renumber_steps(self.pybamm_chg_list)
+            self._pybamm_renumber_steps(self.pybamm_dchg_list)
             self.pybamm_chg_cycles.setText("1")
             self.pybamm_dchg_cycles.setText("1")
             self.pybamm_init_soc.setText("auto")

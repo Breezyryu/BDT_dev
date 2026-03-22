@@ -1,0 +1,6207 @@
+{
+  "Gen4 2C|SDI": {
+    "capacity_mah": 430,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 2C) 참조 → 430mAh"
+  },
+  "Gen4 45V 2C|Cosmx": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Tab S12|ATL": {
+    "capacity_mah": 5196,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S12) 참조 → 5196mAh"
+  },
+  "H8 Sub|ATL": {
+    "capacity_mah": 2393,
+    "source": "auto_reference",
+    "comment": "같은 모델(H8 Sub) 참조 → 2393mAh"
+  },
+  "Tab S11 Ultra R|ATL": {
+    "capacity_mah": 5687,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S11) 참조 → 5687mAh"
+  },
+  "Gen5|Cosmx": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5) 참조 → 4900mAh"
+  },
+  "H8 Main|ATL": {
+    "capacity_mah": 2267,
+    "source": "auto_reference",
+    "comment": "같은 모델(H8 Main) 참조 → 2267mAh"
+  },
+  "JDM A07 5G|ATL": {
+    "capacity_mah": 5830,
+    "source": "auto_reference",
+    "comment": "같은 모델(JDM A07) 참조 → 5830mAh"
+  },
+  "Buds4|EVE": {
+    "capacity_mah": 42,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds4) 참조 → 42mAh"
+  },
+  "Gen5 Boosting|SDI": {
+    "capacity_mah": 2688,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boosting) 참조 → 2688mAh"
+  },
+  "Gen5 Gr MP2 1|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Gen5 Gr MP2 2|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Gen5 Gr MP2 3|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Gen5 Gr 2rd|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Gen5 Gr MP2 4|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Gen5 Gr MP2 5|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Gen5 Gr MP2 6|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "JDM DM3 R|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2 main2 at 470cycle|ATL": {
+    "capacity_mah": 3980,
+    "source": "auto_reference",
+    "comment": "같은 모델(M2 main2) 참조 → 3980mAh"
+  },
+  "M3 PR SET|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galaxy Ring US14 Low Voltage|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab A11 CELL|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galaxy Ring US8 Low Voltage|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galaxy Ring US6 Low Voltage|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galaxy Ring US17 Low Voltage|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DM1 Stack|SDI": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "Q5 Main|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Mini Cell|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C Main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A25 SB 13C|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 45V 2C|BYD": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen4 45V 2C DOE|BYD": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen4 45V 2C Main|BYD": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen4 45V 2C Main|LGES": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen5 Boosting|ATL": {
+    "capacity_mah": 2688,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boosting) 참조 → 2688mAh"
+  },
+  "Phase2 SB|BYD": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Phase2 SB|Cosmx": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Q6 Main|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q7 Sub|SDI": {
+    "capacity_mah": 2146,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7 Sub) 참조 → 2146mAh"
+  },
+  "13C MP2|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "2C DOE|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B5 Main 13C LiCMC|SDI": {
+    "capacity_mah": 971,
+    "source": "auto_reference",
+    "comment": "같은 모델(B5 Main) 참조 → 971mAh"
+  },
+  "DM1 Stack Cell|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "ED750 45V|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP2|LGES": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "A21s Lishen|-": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(A21s Lishen) 참조 → 4900mAh"
+  },
+  "A33 Safety|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A71 5G|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B4 Main Improve Cycle|ATL": {
+    "capacity_mah": 3700,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Main) 참조 → 3700mAh"
+  },
+  "DCH 13C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DM1 Winding|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Winding) 참조 → 3785mAh"
+  },
+  "ED750|BYD": {
+    "capacity_mah": 4955,
+    "source": "auto_reference",
+    "comment": "같은 모델(ED750) 참조 → 4955mAh"
+  },
+  "Fresh L|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M52|ATL": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(M52) 참조 → 4860mAh"
+  },
+  "M52|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(M52) 참조 → 4860mAh"
+  },
+  "Mars3|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcover5|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Zenith cradle|SDI": {
+    "capacity_mah": 500,
+    "source": "auto_reference",
+    "comment": "같은 모델(Zenith cradle) 참조 → 500mAh"
+  },
+  "Zstack 2C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP1|LGES": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "PA3 R|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Phase2 SB|SDI": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "T2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "T2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250|-": {
+    "capacity_mah": 58,
+    "source": "auto_reference",
+    "comment": "같은 모델(Varta1250) 참조 → 58mAh"
+  },
+  "Varta1250 Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 QPA Run|-": {
+    "capacity_mah": 58,
+    "source": "auto_reference",
+    "comment": "같은 모델(Varta1250 QPA) 참조 → 58mAh"
+  },
+  "13C MP1|SDI": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "23C MP1|ATL": {
+    "capacity_mah": 4340,
+    "source": "auto_reference",
+    "comment": "같은 모델(23C MP1) 참조 → 4340mAh"
+  },
+  "2C|ATL": {
+    "capacity_mah": 3828,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C) 참조 → 3828mAh"
+  },
+  "42V 2C Ni MP1|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21S VE2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Main Fix|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DM1 Stack|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "G0|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 13C ED775|ATL": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "Laser Ablation GEN4|SDI": {
+    "capacity_mah": 4512,
+    "source": "auto_reference",
+    "comment": "같은 모델(Laser Ablation) 참조 → 4512mAh"
+  },
+  "M52 5G safety|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Wise Large cycle|SDI": {
+    "capacity_mah": 350,
+    "source": "auto_reference",
+    "comment": "같은 모델(Wise Large) 참조 → 350mAh"
+  },
+  "Watch8 Large|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch5 Large|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch5 PE Project X|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C|BYD": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C) 참조 → 2620mAh"
+  },
+  "13C MFS9|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MFS9 2nd|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP1 2nd|SDI": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "13C Proto|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28C MP1|ATL": {
+    "capacity_mah": 4750,
+    "source": "auto_reference",
+    "comment": "같은 모델(28C MP1) 참조 → 4750mAh"
+  },
+  "2C MP1 R MAIN|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C MP2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C MP3|LGES": {
+    "capacity_mah": 4510,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C MP3) 참조 → 4510mAh"
+  },
+  "42V 2C Ni MP2|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A01core|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A13 5G|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A33 A53|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A33 A53) 참조 → 4860mAh"
+  },
+  "A33 A53 5G|BYD": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A33 A53) 참조 → 4860mAh"
+  },
+  "A53|TSDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A53) 참조 → 4860mAh"
+  },
+  "B0|ATL": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(B0) 참조 → 4855mAh"
+  },
+  "B2 Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B4 Main|SDI": {
+    "capacity_mah": 3700,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Main) 참조 → 3700mAh"
+  },
+  "B4 Sub|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 3rd|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub Cell|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "ED725 2C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED728 2C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "G0|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galileo L|EVE": {
+    "capacity_mah": 472,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo L) 참조 → 472mAh"
+  },
+  "Joan|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Joan|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M52 PET VE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Mars13|SDI": {
+    "capacity_mah": 4090,
+    "source": "auto_reference",
+    "comment": "같은 모델(Mars13) 참조 → 4090mAh"
+  },
+  "NS1250|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Zenith cradle 1st|EVE": {
+    "capacity_mah": 500,
+    "source": "auto_reference",
+    "comment": "같은 모델(Zenith cradle) 참조 → 500mAh"
+  },
+  "A42|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 13C|SDI": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "Q6 Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch small Si PF Mini|-": {
+    "capacity_mah": 316,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch small) 참조 → 316mAh"
+  },
+  "13C DOE|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21s Sepa VE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B7 SUB|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GEN4 45V 2C MAIN|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 45V 2C|LGES": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Hermes|SDI": {
+    "capacity_mah": 5420,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hermes) 참조 → 5420mAh"
+  },
+  "N2 sepa|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "JDM A05 Ganfeng|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP1 Main|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "Xcover4 SDIEM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch5 Large|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch5 Large|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A16 5G safety|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A16 5G) 참조 → 4860mAh"
+  },
+  "A3656 JR|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B4 Sub 2nd|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub Winding|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "Gen4 45V 13C Main MP1|SDI": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen5 4C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NS1250 MP2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main 3blk|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q7 sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C|ATL": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C) 참조 → 2620mAh"
+  },
+  "447v 13c mp2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A13|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A3656|ATL": {
+    "capacity_mah": 4905,
+    "source": "auto_reference",
+    "comment": "같은 모델(A3656) 참조 → 4905mAh"
+  },
+  "Elite|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen5 Boost|ATL": {
+    "capacity_mah": 3289,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boost) 참조 → 3289mAh"
+  },
+  "Pen BLE Panasonic|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 Main 8|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q5 Sub|ATL": {
+    "capacity_mah": 2310,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Sub) 참조 → 2310mAh"
+  },
+  "Q6 Main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SmartRing IR Spec|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SB ED740 13C|SDI": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(SB ED740) 참조 → 4900mAh"
+  },
+  "Z stack GEN2 13C|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch8 Classic SI|ATL": {
+    "capacity_mah": 435,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch8 Classic) 참조 → 435mAh"
+  },
+  "13C|SDI": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C) 참조 → 2620mAh"
+  },
+  "13C MAIN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C|LGES": {
+    "capacity_mah": 3828,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C) 참조 → 3828mAh"
+  },
+  "2C MP1 DOE 210726R|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C MP1 MAIN 210726R|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "447v 13c|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A01Core SDIEM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21S|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A3656 240920r|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A41|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 sub AGING22HR|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 sub AGING22Hr|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B7 Main|ATL": {
+    "capacity_mah": 1189,
+    "source": "auto_reference",
+    "comment": "같은 모델(B7 Main) 참조 → 1189mAh"
+  },
+  "Eureka2|ATL": {
+    "capacity_mah": 4755,
+    "source": "auto_reference",
+    "comment": "같은 모델(Eureka2) 참조 → 4755mAh"
+  },
+  "Gen5 Gr|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "M52|LGES": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(M52) 참조 → 4860mAh"
+  },
+  "M52 SAFETY|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "N2|SDI": {
+    "capacity_mah": 4660,
+    "source": "auto_reference",
+    "comment": "같은 모델(N2) 참조 → 4660mAh"
+  },
+  "Next DM 15C Stack|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Polymer Foil Complex Q6 Sub|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 A 1|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "[ED740|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata Dent 개선 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom 5G Main & Sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Brio|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 2C|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC 상온수명|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "M33 INDIA Safety|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Vpack Watch6|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Fresh6 Large Trans cell|TSDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Fresh6 Large) 참조 → 417mAh"
+  },
+  "Mini Cell MP2 2nd|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C|LGES": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C) 참조 → 2620mAh"
+  },
+  "2C 3|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C LGC 1ST DOE|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C MP1 MAIN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C MP2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C Main NEW|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "4 43 LGC 선행 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "4 43 Murata normal,step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A01Core|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A13 5G|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A16 5G EU Pack Cycle|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A16 5G) 참조 → 4860mAh"
+  },
+  "A31|ATL": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A31) 참조 → 4860mAh"
+  },
+  "A31 SITE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A40 상온|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 201019rrrr|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 main, doe 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata 15C 고온,상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata dent개선 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 상온수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 Murata 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 SUB HEAD2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 sub HPC|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B4 Sub Cell|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B7 MAIN MisAlignment|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond X 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 step 상온수명 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond1 step 상온수명 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond2 step 상온수명 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom Sub LongStock|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 2C|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 상온수명|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 상온수명 두께추가|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "DM3 6um|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM3 6um) 참조 → 4855mAh"
+  },
+  "ED720 13C MP2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eider|BYD": {
+    "capacity_mah": 800,
+    "source": "auto_reference",
+    "comment": "같은 모델(Eider) 참조 → 800mAh"
+  },
+  "Eider luhe 상온수명|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Fresh6 Large Trans cell B1|TSDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Fresh6 Large) 참조 → 417mAh"
+  },
+  "Fresh6 Large Trans cell B2|TSDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Fresh6 Large) 참조 → 417mAh"
+  },
+  "Galileo S|ATL": {
+    "capacity_mah": 270,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo S) 참조 → 270mAh"
+  },
+  "Gen4 13C ED775 DOE|SDI": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "Gen4 13C ED775 Main|SDI": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "KAIROS|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 main,doe 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M52 Line|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Moden 상온수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "N2 LongStock|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NextEureka3 DOE3|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Project X Heart PE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q7 sub to|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TAB3 7 LT SVC cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TabS4 lv 상온|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "VDL1254|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Venus3|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(Venus3) 참조 → 4855mAh"
+  },
+  "Winner Main&sub 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner sub normal, step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Wise6 Large Cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "[ED728|SDI": {
+    "capacity_mah": 4820,
+    "source": "auto_reference",
+    "comment": "같은 모델([ED728) 참조 → 4820mAh"
+  },
+  "moden|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "moden lite 상온고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "q7 sub|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "선행 LGC 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C step , LGC 수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A31 업체별 비교|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 & Mline 상온|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 Main, DOE 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 main doe 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 1 5C 한계수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata 1 5C 수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 SDIEM 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A60 수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A60 수명 data|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 , SDIEM 상온|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 , 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 SDIEM , 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 상온,고온수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 A7 상온수명 비교|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 PTO&MP 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 PTO&MP 상온 한계수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 Murata 저온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B012 02C 방전용량 rawdata|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B6 SUB|ATL": {
+    "capacity_mah": 2790,
+    "source": "auto_reference",
+    "comment": "같은 모델(B6 SUB) 참조 → 2790mAh"
+  },
+  "Beyond0 M2, 한계수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 binder off & Beyond0|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 step&08C 한계수명 비교|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond1 step&08C 한계수명 비교|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond2 step&08C 한계수명 비교|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond2,1 한계수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 2C &LGC|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 3차 64개|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 3차 64개 두께|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC 1 58|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC DOE|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC 고온|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC 상온|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC 상온수명 두께|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 상온수명|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 상온수명 3차샘플 완료xls|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 수명 및 두께|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 LGC 충전시간 비교|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 충전량1|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 충전시간1|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C DOE|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galileo L|ATL": {
+    "capacity_mah": 472,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo L) 참조 → 472mAh"
+  },
+  "Galileo L & 장수명|ATL": {
+    "capacity_mah": 472,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo L) 참조 → 472mAh"
+  },
+  "Galileo S & 장수명|ATL": {
+    "capacity_mah": 270,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo S) 참조 → 270mAh"
+  },
+  "Gen4 28C DOE 1|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 28C DOE 2|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 28C DOE 3|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen5 Boost Si 1|-": {
+    "capacity_mah": 3289,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boost) 참조 → 3289mAh"
+  },
+  "H Y2 최종|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Y2 200121r|ATL": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 조건변경&변경전 비교|-": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "LGC D2 스웰링 이슈 재현시험|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC 고전압 선행 상온,고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Cell&Pack 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Main Doe 고온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Main Doe 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 저온|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M33 INDIA safety QPA|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Mini Cell MP2 2nd B3|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Moden lite, Pulse 고온수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Moden lite, Pulse 상온수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NS1250 MP2 2nd Cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NextEureka3 DOE1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Pulse, Moden 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Pulse, Moden 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub with|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Rubens SDIEM 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Rubens fan off|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S21, S22 장수명 비교 data|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Star1 step 상온수명 한계 승인그룹|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 3rd A 1 2nd|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner Main,Sub step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner main normal, step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "moden 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "murata 1 5C 선행 수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "q7m sub|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "선행 step, normal 상온수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S7 SDIEM Cell|-": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S7) 참조 → 4900mAh"
+  },
+  "Tab S8 Ultra 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S8 Ultra 2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch8 classic si Algo|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(B0) 참조 → 4855mAh"
+  },
+  "TWS NI|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A06 JDM|ATL": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(A06 JDM) 참조 → 4855mAh"
+  },
+  "Watch8 classic si|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Buds3 Pro|Cosmx": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro NS1150 1|SDI": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro NS1150 2|SDI": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds4 Pro|SDI": {
+    "capacity_mah": 515,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds4 Pro) 참조 → 515mAh"
+  },
+  "2C 2nd|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C 2nd 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C LGC|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C Main add|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A31 Site|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A60|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Sub HPC|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B7 main MisAlignment|ATL": {
+    "capacity_mah": 1189,
+    "source": "auto_reference",
+    "comment": "같은 모델(B7 main) 참조 → 1189mAh"
+  },
+  "C1 13C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "EVE1254|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 V1 Condition|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 13C Main retest|SDI": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "Haechi x pack|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Kairos|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M52 Laser|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(M52 Laser) 참조 → 4860mAh"
+  },
+  "NS|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Phase2 SB B1|BYD": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Phase2 SB B3|BYD": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Q4 sub HMAtape|LGES": {
+    "capacity_mah": 2270,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q4 sub) 참조 → 2270mAh"
+  },
+  "Q6 Main 7blk|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main with|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 SUB|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q7 Main|ATL": {
+    "capacity_mah": 2126,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7 Main) 참조 → 2126mAh"
+  },
+  "Q7 Sub|ATL": {
+    "capacity_mah": 2146,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7 Sub) 참조 → 2146mAh"
+  },
+  "S8 200mA discharge|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Y2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "heart pro PCM|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "선행 LGC 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C 95T 191021r|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C Main MP1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack 401ch|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack 601ch 2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack b1|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack b2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack b6|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack b7|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T b1|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C 2nd 2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C step 충전량|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A3656 2step hybrid|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 201019rrr|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 Cycle|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 main, doe step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 A7 고온수명 비교|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B4 Sub 3rd 14more|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 4rd r|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "BM Iphone 용량|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Brio Continue|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Brio SH|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Brio SH2|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C2 DOE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C2 Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 2C 4차 수명 완료|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 천안1차 NG품|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 충전용량|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "ED740 13C cycle|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED760 13C DOE|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED760 13C MAIN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 1|ATL": {
+    "capacity_mah": 4755,
+    "source": "auto_reference",
+    "comment": "같은 모델(Eureka2 1) 참조 → 4755mAh"
+  },
+  "Eureka2 SPL 2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "F3 NEureka 4855mAg|ATL": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(F3 NEureka) 참조 → 4855mAh"
+  },
+  "GEN4 45V 2C Main|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galileo|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 28C DOE 2 ch1|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 28C DOE 4|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 45V 13C DOE MP1|SDI": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen5|ATL": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5) 참조 → 4900mAh"
+  },
+  "Gen5 Boost Si 2|-": {
+    "capacity_mah": 3289,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boost) 참조 → 3289mAh"
+  },
+  "Haechi|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble X1 mmW|SDI": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble X1) 참조 → 3880mAh"
+  },
+  "Level U2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M31 SDIEM sample|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M51 443V08C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NS1254 Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Phase2 SB 1|Cosmx": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Phase2 SB 2|Cosmx": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Q2 MAIN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 SUB|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 Main 16|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q6 Main 6blk|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main 6blk 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main for decap|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub 6blk|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub 6blk 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub for decap|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9 210429r|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Rubens SDIEM 상온,고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S21 상온 수명|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S22 상온 수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S22 상온 수명|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TWS Gen4 3C|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 Lot|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 lot|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "d2|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "gen4 1 3C cell 완료|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TAB A 10|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab Active Pro|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab Active Pro 2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S11 Ultra|ATL": {
+    "capacity_mah": 5687,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S11) 참조 → 5687mAh"
+  },
+  "Tab S8 Ultra|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A36 SB|SDI": {
+    "capacity_mah": 4905,
+    "source": "auto_reference",
+    "comment": "같은 모델(A36 SB) 참조 → 4905mAh"
+  },
+  "A57 Boost|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LT Storage J5 7blk|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "PA1 Set ACT|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 A 1 Lot|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "m2030|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S7 C rate|SDI": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S7) 참조 → 4900mAh"
+  },
+  "Buds FE2|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "bud3|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C LGC ERROR|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MAIN ADD|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP2 chg|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "13C Main Extra|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C Main cycle Extra|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T test2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C LGC ERROR|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "3C 4 4V|SDI": {
+    "capacity_mah": 3502,
+    "source": "auto_reference",
+    "comment": "같은 모델(3C 4) 참조 → 3502mAh"
+  },
+  "A01 Core|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A20e|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A20e , , 방전시간|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A20e , , 충전시간|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21S VE1 RT|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A3656 GREEN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A40|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A53 Safety Cycle|LGES": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A53 Safety) 참조 → 4860mAh"
+  },
+  "A6 1 5C 수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A60 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0|TSDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(B0) 참조 → 4855mAh"
+  },
+  "B4 Sub Cell Straight|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B6 Sub 13C|SDI": {
+    "capacity_mah": 2790,
+    "source": "auto_reference",
+    "comment": "같은 모델(B6 Sub) 참조 → 2790mAh"
+  },
+  "C1 2ND 23 MAIN|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 MAIN|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DOE 2C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C MAIN|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 SPL 1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GEN4 2C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 13C DOE retest|SDI": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "Gen5 Boosting 2|ATL": {
+    "capacity_mah": 2688,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boosting) 참조 → 2688mAh"
+  },
+  "Hubble Y2|ATL": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 and Z3 LGC|-": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "LT Storage J5 3blk|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M15|ATL": {
+    "capacity_mah": 5880,
+    "source": "auto_reference",
+    "comment": "같은 모델(M15) 참조 → 5880mAh"
+  },
+  "M52 line|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Mini Cell MP2 2nd B2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NextEureka3 DOE1 decap|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "P3400 Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "P5300 Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Phase2 SB for decap|SDI": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Polymer Complex Q6A Main DOE|ATL": {
+    "capacity_mah": 2044,
+    "source": "auto_reference",
+    "comment": "같은 모델(Polymer Complex) 참조 → 2044mAh"
+  },
+  "Polymer Foil Complex Q6 Sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 Main decap4|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q6 Main 6|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main 6|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main 6blk|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main 8blk|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub 6|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Sub decap|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 sub for decap|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q7 Sub decap|SDI": {
+    "capacity_mah": 2146,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7 Sub) 참조 → 2146mAh"
+  },
+  "Q7 sub from ch27 31|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q7M Sub for decap|ATL": {
+    "capacity_mah": 2068,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7M Sub) 참조 → 2068mAh"
+  },
+  "R1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9 Add|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S6 Long Stock|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S6 LongStock|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SB Phase2|BYD": {
+    "capacity_mah": 5432,
+    "source": "auto_reference",
+    "comment": "같은 모델(SB Phase2) 참조 → 5432mAh"
+  },
+  "SUS CAN Gen4 2C|ATL": {
+    "capacity_mah": 337,
+    "source": "auto_reference",
+    "comment": "같은 모델(SUS CAN) 참조 → 337mAh"
+  },
+  "Safety 2C MP4|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Star step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 Lot Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "X2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ni last cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Buds FE2 1|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C|-": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C) 참조 → 2620mAh"
+  },
+  "13C AFTER100CYCLE|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C CYCLE|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C CYCLE MP1|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C Cycle|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C Cycle MP1 B7|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C DOE 2nd for Heat|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C DOE AFTER100CYCLE|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C DOE FOR HEAT|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C LGC 1st DOE|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C LGC 1st Main|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP1 DOE|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "13C MP1 MAIN|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "13C MP1 cycle|LGES": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP1) 참조 → 4758mAh"
+  },
+  "13C MP2|SDI": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "13C MP2 210524r|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "13C MP2 ^|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "13C MP2 bending|ATL": {
+    "capacity_mah": 4758,
+    "source": "auto_reference",
+    "comment": "같은 모델(13C MP2) 참조 → 4758mAh"
+  },
+  "13C MP3|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP3 1|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C MP3 2|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C Proto cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "23C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "23C MP1 EXTRA1|ATL": {
+    "capacity_mah": 4340,
+    "source": "auto_reference",
+    "comment": "같은 모델(23C MP1) 참조 → 4340mAh"
+  },
+  "28C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28T Zstack 3v|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "28t z stack|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C|SDI": {
+    "capacity_mah": 3828,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C) 참조 → 3828mAh"
+  },
+  "2C DOE|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C DOE LGC|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C LGC Cycle|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C LGC MAIN 1ST FOR|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C LGC MAIN 1st 200417r|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C LGC MAIN 1st cycle|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C LGC step 충전량|-": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(2C LGC) 참조 → 4190mAh"
+  },
+  "2C MAIN|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C MP1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C MP1 R MAIN AFTER100CYCLE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C extra1|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "3C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "3C 2S1P Dent개선품|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "3C 4 4V|ATL": {
+    "capacity_mah": 3502,
+    "source": "auto_reference",
+    "comment": "같은 모델(3C 4) 참조 → 3502mAh"
+  },
+  "3C Proto 1st re2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "3C Proto 1st re3|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "4 43V 2C 선행|ATL": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(4 43V) 참조 → 4190mAh"
+  },
+  "4 43V 2C 선행|SDI": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(4 43V) 참조 → 4190mAh"
+  },
+  "4 43V DOE normal, step|ATL": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(4 43V) 참조 → 4190mAh"
+  },
+  "4 43V Main normal, step|ATL": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(4 43V) 참조 → 4190mAh"
+  },
+  "447v 13c bending|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "447v 13c mp1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "447v 2c DOE|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "447v 2c MAIN|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "44V 13C MP2 AFTER100|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "4V 3C LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A01 Core|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A01core 2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10 상온 1차, 2차run|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10e docomo|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10e 도코모향|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A16|BYD": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A16) 참조 → 4860mAh"
+  },
+  "A16 5G safety Cell|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A16 5G) 참조 → 4860mAh"
+  },
+  "A20e 한계 상온|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21s|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A21s Lishen 01|-": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(A21s Lishen) 참조 → 4900mAh"
+  },
+  "A21s Lishen 02|-": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(A21s Lishen) 참조 → 4900mAh"
+  },
+  "A21s Sepa VE RT|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A31|TSDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A31) 참조 → 4860mAh"
+  },
+  "A31 Lishen|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A31 장수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A33 A53 Charge|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A33 A53) 참조 → 4860mAh"
+  },
+  "A33 Safety CH02|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A33 Safety CH05|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A36 56 GREEN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A36 56 Greentape|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A36 56 green|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A36 A56 SB TO|ATL": {
+    "capacity_mah": 4905,
+    "source": "auto_reference",
+    "comment": "같은 모델(A36 A56) 참조 → 4905mAh"
+  },
+  "A3656 JR ODAOAP|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A40 1 3C|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A40 한계|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 01|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 02|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 2|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 3|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 1 3C step|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 1 3C step 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 Main,DOE step 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 Mline 상온|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 Mline 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 main,doe 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50main doe 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50s|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A51 5G|ATL": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(A51 5G) 참조 → 4370mAh"
+  },
+  "A51 5G no231|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(A51 5G) 참조 → 4370mAh"
+  },
+  "A51 5G re8|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(A51 5G) 참조 → 4370mAh"
+  },
+  "A51 M line 2|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A51 MLINE|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A53 Safety Battery Charge|SDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A53 Safety) 참조 → 4860mAh"
+  },
+  "A53 Safety cycle|LGES": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(A53 Safety) 참조 → 4860mAh"
+  },
+  "A6 lgc|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 분리막변경 , normal, step|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 LGC 1 3C|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 한계|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 A7|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A91|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A91 LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A91 LGC ORT Sample|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ASTAR|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Attic Varta1250 A1|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Attic Varta1250 A1st|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 & M2|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 Step 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 murata step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 step|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 step 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B1 Step 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B1 step|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B1 step 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B1 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 M2,|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Main C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 SUB|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 SUB|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Step 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 Sub HEAD2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 step|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 step 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B4 Sub|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 1 more sample|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 3rd 4more|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 3rd cell charge|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 4rd|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub 4th 1more|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub Cell chg|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub Winding Ch63|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub Winding charge|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub at|SDI": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B4 Sub straight|ATL": {
+    "capacity_mah": 2555,
+    "source": "auto_reference",
+    "comment": "같은 모델(B4 Sub) 참조 → 2555mAh"
+  },
+  "B5 Main 400cycle|SDI": {
+    "capacity_mah": 971,
+    "source": "auto_reference",
+    "comment": "같은 모델(B5 Main) 참조 → 971mAh"
+  },
+  "B5 Main 971mA|SDI": {
+    "capacity_mah": 971,
+    "source": "auto_reference",
+    "comment": "같은 모델(B5 Main) 참조 → 971mAh"
+  },
+  "B5 Sub|ATL": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(B5 Sub) 참조 → 2620mAh"
+  },
+  "B5 Sub Long term Inventory|ATL": {
+    "capacity_mah": 2620,
+    "source": "auto_reference",
+    "comment": "같은 모델(B5 Sub) 참조 → 2620mAh"
+  },
+  "B5 main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B5 sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B7 MAIN|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B7 SUB 241127Q7 Sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B7 sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "BEYOND2 LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond X step 상온|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 Murata A 1 step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom 5G Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom Main|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom Main Step|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom SUB Mline|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom5G Sub 인정1차 상온|-": {
+    "capacity_mah": 704,
+    "source": "auto_reference",
+    "comment": "같은 모델(Bloom5G Sub) 참조 → 704mAh"
+  },
+  "Brio 2 Continue|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Brio re1|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 13C 1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 2nd 23 DOE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 DOE1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 DOE2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 New Seperator|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 New Sperator|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 THK CH05|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C2 New Seperator|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Crown2 Binder|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Cycle|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Cycle 23|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 13C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 2C 4차 수명|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC Main|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC main|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C SDU|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C Sample|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 인정4차|TSDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 인정5차|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC 1 3step 충전량|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC 1 58|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC MP|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC MP 400완료|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC ORT Sample|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC main|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 한계|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D22C|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D22C LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DM1 Stack 12e|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "DM1 Stack Cell (Ch|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "DM1 Stack Cell 221014CH|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "DM1 Stack Cell 221014CH2|ATL": {
+    "capacity_mah": 3785,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM1 Stack) 참조 → 3785mAh"
+  },
+  "DM3 6um decap4|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM3 6um) 참조 → 4855mAh"
+  },
+  "DM3 6um re2|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM3 6um) 참조 → 4855mAh"
+  },
+  "DM3 6um re3|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM3 6um) 참조 → 4855mAh"
+  },
+  "DM3 6um re4|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(DM3 6um) 참조 → 4855mAh"
+  },
+  "Dream1 Murata|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Dream1 Sony Piercinghole|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED720 13C 1|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED720 13C 30D|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED720 13C MP2|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED720 13C MP2 1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED725 2C DOE|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED725 2C MAIN|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C Main|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka SPL|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 2|ATL": {
+    "capacity_mah": 4755,
+    "source": "auto_reference",
+    "comment": "같은 모델(Eureka2 2) 참조 → 4755mAh"
+  },
+  "Eureka2 3|ATL": {
+    "capacity_mah": 4755,
+    "source": "auto_reference",
+    "comment": "같은 모델(Eureka2 3) 참조 → 4755mAh"
+  },
+  "Eureka2 V1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 ch95 85|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 condition 1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka2 condition 2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Eureka3 recycled Cobalt|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "G0 1retry|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "G0 New|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GEN4 2C 1eaRE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GEN4 45V 2C|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GEN4 45V 2C|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GEN4 45V 2C main|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galileo|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Galileo S 라인추가|SDI": {
+    "capacity_mah": 270,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo S) 참조 → 270mAh"
+  },
+  "Gen2 z stack|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 13C|ATL": {
+    "capacity_mah": 5030,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 13C) 참조 → 5030mAh"
+  },
+  "Gen4 28C DOE 13ch|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 28C DOE 5|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Gen4 2C Mini 45V|ATL": {
+    "capacity_mah": 430,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 2C) 참조 → 430mAh"
+  },
+  "Gen4 45V 2C 300Y|Cosmx": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen4 45V 2C DOE|LGES": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen4 45V 2C DOE 66Cycle|BYD": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen4 45V 2C MAIN|BYD": {
+    "capacity_mah": 4365,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen4 45V) 참조 → 4365mAh"
+  },
+  "Gen5 Boost Si 2 charge|-": {
+    "capacity_mah": 3289,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Boost) 참조 → 3289mAh"
+  },
+  "Gen5 Gr MP1 3|BYD": {
+    "capacity_mah": 5060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Gen5 Gr) 참조 → 5060mAh"
+  },
+  "Hermes|ATL": {
+    "capacity_mah": 5420,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hermes) 참조 → 5420mAh"
+  },
+  "Hermes 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hermes 1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hermes 2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hermes 2nd|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Y2 상온 완료|ATL": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 조건변경 전|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 조건변경&변경전|-": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Jackpot lgc|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC MP셀 충전량|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC rebuild|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC rebuild normal, step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LongTerm Storage J7|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M1, N2 O3 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M20 SDIEM 사이트이원화|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Main,DOE 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M30s|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M30s|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M31 SDIEM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M33 5G SAFETY|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M33 5G safety|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M33 INDIA Safety 5|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M33 INDIA Safety NG|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M51 443V088C|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M51 443v 088c|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M52 Laser Welding|TSDI": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(M52 Laser) 참조 → 4860mAh"
+  },
+  "M52 SAFETY CH02|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M52 Safety|ATL": {
+    "capacity_mah": 4860,
+    "source": "auto_reference",
+    "comment": "같은 모델(M52 Safety) 참조 → 4860mAh"
+  },
+  "MARS13|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "MM33 INDIA Safety re1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "MP1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "MP2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "MURATA NORMAL, STEP|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Main 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Mars3 1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Mini Cell wrong|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Moden lite 한계|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Murata step,normal 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NDM1 STACK|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NDM1 Stack|SDI": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(NDM1 Stack) 참조 → 3880mAh"
+  },
+  "NI|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NS1250 Cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NS1254 Cycle 2|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NS1454 Cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Next DM 15C Stack Additional|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Next DM 15C Stack Cell|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NextEureka3 DOE2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "OnAir Lishen 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "OnAir lishen|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "P3300 Power Bank Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "P5300 Power Bank Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "PL FREE 13C 2ND|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Phase2|Cosmx": {
+    "capacity_mah": 5935,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2) 참조 → 5935mAh"
+  },
+  "Phase2 1|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Phase2 2|Cosmx": {
+    "capacity_mah": 5935,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 2) 참조 → 5935mAh"
+  },
+  "Phase2 SB 2nd|Cosmx": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Phase2 SB MP|Cosmx": {
+    "capacity_mah": 5990,
+    "source": "auto_reference",
+    "comment": "같은 모델(Phase2 SB) 참조 → 5990mAh"
+  },
+  "Project X Heart PE charge|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Project X Heart PE charge1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Pulse 한계|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Main 30 days Ref|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Main 30 days Ref|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Main re1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 SUB 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 sub|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q4 Main|LGES": {
+    "capacity_mah": 2005,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q4 Main) 참조 → 2005mAh"
+  },
+  "Q4 Main r|LGES": {
+    "capacity_mah": 2005,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q4 Main) 참조 → 2005mAh"
+  },
+  "Q4 main x2|LGES": {
+    "capacity_mah": 2005,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q4 main) 참조 → 2005mAh"
+  },
+  "Q5 Main Decap4|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q5 Main decap 4|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q5 Main decap6|ATL": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q5 Sub Long5|ATL": {
+    "capacity_mah": 2310,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Sub) 참조 → 2310mAh"
+  },
+  "Q5 Sub decap6|ATL": {
+    "capacity_mah": 2310,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Sub) 참조 → 2310mAh"
+  },
+  "Q5 Sub decap6 200CH|ATL": {
+    "capacity_mah": 2310,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Sub) 참조 → 2310mAh"
+  },
+  "Q5 main|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 main EU|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 main Long5|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 sub decap4|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 main from|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6A Main|ATL": {
+    "capacity_mah": 1995,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q6A Main) 참조 → 1995mAh"
+  },
+  "Q6A Sub 1|ATL": {
+    "capacity_mah": 2277,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q6A Sub) 참조 → 2277mAh"
+  },
+  "Q6A Sub 2|ATL": {
+    "capacity_mah": 2277,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q6A Sub) 참조 → 2277mAh"
+  },
+  "Q7 Sub to|SDI": {
+    "capacity_mah": 2146,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7 Sub) 참조 → 2146mAh"
+  },
+  "Q7M Sub|ATL": {
+    "capacity_mah": 2068,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q7M Sub) 참조 → 2068mAh"
+  },
+  "Q7M sub 100to200cy|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9 2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9 Cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R9 extra|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Recycle LCO Charge|ATL": {
+    "capacity_mah": 3590,
+    "source": "auto_reference",
+    "comment": "같은 모델(Recycle LCO) 참조 → 3590mAh"
+  },
+  "Renaissance L|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance L|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance S|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance S|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "S21 상온 수명|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Star1 step 상온수명 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Star2 Murta|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Sub 인정1차 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TWS|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TabES|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TabS4|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "U3300 Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "U3300 Power Bank Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ULTRA THIN PHASE2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "UltraThin Phase2|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "VDL 2|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "VST MR NM|-": {
+    "capacity_mah": 1460,
+    "source": "auto_reference",
+    "comment": "같은 모델(VST MR) 참조 → 1460mAh"
+  },
+  "Varta Lot Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 A Cycle|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Varta1250 Lot Additional|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "WINNER MAIN STEP, BEYOND X|TSDI": {
+    "capacity_mah": 2050,
+    "source": "auto_reference",
+    "comment": "같은 모델(WINNER MAIN) 참조 → 2050mAh"
+  },
+  "Winner Main 한계, Main Sub|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner Sub step 상온, Mate|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Wise Large HPC|SDI": {
+    "capacity_mah": 350,
+    "source": "auto_reference",
+    "comment": "같은 모델(Wise Large) 참조 → 350mAh"
+  },
+  "Wise6 Large|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Wise6 Large Cycle block2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Wise6 Large Cycle block5|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcover5 LT|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcover5 RE6|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcover7 Pro|ATL": {
+    "capacity_mah": 4265,
+    "source": "auto_reference",
+    "comment": "같은 모델(Xcover7 Pro) 참조 → 4265mAh"
+  },
+  "XcoverPro|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcoverpro|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Zenith|EVE": {
+    "capacity_mah": 500,
+    "source": "auto_reference",
+    "comment": "같은 모델(Zenith) 참조 → 500mAh"
+  },
+  "Zeus|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "[Z-STACK]|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "[undefined].xls|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "a9 mp|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "a9 pto|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "d2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "d22c|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "m2030|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "m2030 main,doe 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "m2030 main,doe 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "moden 상온수명 완료|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ni|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "normal, step|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "star1 murata type1|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "zstack gen2 13c|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "F3|ATL": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(F3) 참조 → 4855mAh"
+  },
+  "Tab S7 Cycle|SDI": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S7) 참조 → 4900mAh"
+  },
+  "Watch5 PE Project X|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch6 Fresh Small 1|ATL": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "4 43V 1 3C|BYD": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(4 43V) 참조 → 4190mAh"
+  },
+  "4 43V 2C|ATL": {
+    "capacity_mah": 4190,
+    "source": "auto_reference",
+    "comment": "같은 모델(4 43V) 참조 → 4190mAh"
+  },
+  "A10 상온|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 방전시간|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 방전시간|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 충전시간|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 충전시간|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 max murata|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 min|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 LGC,|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 15 binder off 완료|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LongTerm Storage J72016|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NPC Zeus Cell 45|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "PA3|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "PA3 SEVT defect sample 23|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q5 Main|LGES": {
+    "capacity_mah": 1960,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Main) 참조 → 1960mAh"
+  },
+  "Q5 Sub|LGES": {
+    "capacity_mah": 2310,
+    "source": "auto_reference",
+    "comment": "같은 모델(Q5 Sub) 참조 → 2310mAh"
+  },
+  "Renaissance S Z Improve 3|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "m2030 dch|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "murata|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A06 JDM more|ATL": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(A06 JDM) 참조 → 4855mAh"
+  },
+  "Watch7 Next Pro X2|-": {
+    "capacity_mah": 578,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch7 Next) 참조 → 578mAh"
+  },
+  "Buds3 Pro 1|Cosmx": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro NS1150 5|SDI": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "10000.xls|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "11Pro max 최종|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C DOE MP1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "13C main 2nd for Heat|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C 23|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C CYCLE|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C step 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2C 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "2c|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "3C 2S1P 2차의뢰|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "3C 4 4V 선행|SDI": {
+    "capacity_mah": 3502,
+    "source": "auto_reference",
+    "comment": "같은 모델(3C 4) 참조 → 3502mAh"
+  },
+  "4 47V 1 3C DOE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "4 47V 1 3C Main|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "443v Murata 액상 step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "5kg 가압|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10 1차 lot|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10 2차 lot|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10 고온|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A10e Docomo|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A20e 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A31 SDIEM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A40|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A42 Charge|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 13C step 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 MLINE|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 SDIEM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50 main 저온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50s OPS 변경품|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A50s OPS사이즈변경품|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A51|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A51|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata 1 5C|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata 1 5C 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 Murata 15C 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A6 SDIEM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A60 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 SDIEM , sample|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 SDIEM SAMPLE 150G회 완료|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 SDIEM SAMPLE 고온 150회|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A7 SEPA|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 LGC 1 3C step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 LGC 2C|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 SDIEM 사이트이원화|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 step|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A70 상온|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A71|TSDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(A71) 참조 → 4370mAh"
+  },
+  "A71 LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A9 A7 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A91|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A91 인정2차|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "A91 인정2차|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Allrounder NPC Lishen|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 08C 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 Murata|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B0 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B1 08C 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 08C 한계|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 LGC|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 LGC 2C|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "B2 LGC 충방전 그래프 비교|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "BM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond Main step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond Sub step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond X step 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 Murata A 1 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 binder off 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond0 이원화 step 상온수명|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Beyond2 LGC 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom 5G Sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom SUB 7라인|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom SUb 2step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom SUb 3step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom Sub|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Bloom5G Sub 인정1차 고온|-": {
+    "capacity_mah": 704,
+    "source": "auto_reference",
+    "comment": "같은 모델(Bloom5G Sub) 참조 → 704mAh"
+  },
+  "Bloom5G Sub 인정2차 고온|-": {
+    "capacity_mah": 704,
+    "source": "auto_reference",
+    "comment": "같은 모델(Bloom5G Sub) 참조 → 704mAh"
+  },
+  "Bloom5G Sub 인정2차 상온|-": {
+    "capacity_mah": 704,
+    "source": "auto_reference",
+    "comment": "같은 모델(Bloom5G Sub) 참조 → 704mAh"
+  },
+  "C1 LIMIT|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C1 LIMIT400|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "C2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "CBRAND BM|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Cycle23|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Cycle23 2|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D1 상온|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 23|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 2C , LGC|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C DOE|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C LGC DOE|-": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 고온|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 고온 완료|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 상온|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 2C 인정5차 고온|SDI": {
+    "capacity_mah": 4170,
+    "source": "auto_reference",
+    "comment": "같은 모델(D2 2C) 참조 → 4170mAh"
+  },
+  "D2 443v step 상온수명|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC 2C 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC 5% margin|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC 5kg 가압 수명|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 LGC DOE|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 충전량2|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D2 충전시간2|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "D22C LGC DOE|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DOE normal, step 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "DOE step, normal|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED700 13C CHG|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED700 2C 2ND 200108r|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED720 13C|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C DOE 15|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C DOE 45|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C DOE charge|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C DOE cycle 23|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C MAIN 15|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C MAIN 45|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ED740 13C Main cycle 23|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Fold2 Main ForcedDischarge Charge|-": {
+    "capacity_mah": 2215,
+    "source": "auto_reference",
+    "comment": "같은 모델(Fold2 Main) 참조 → 2215mAh"
+  },
+  "Fold2 Sub Forceddischarge CHARGE|-": {
+    "capacity_mah": 2060,
+    "source": "auto_reference",
+    "comment": "같은 모델(Fold2 Sub) 참조 → 2060mAh"
+  },
+  "Fresh6 Large|SDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Fresh6 Large) 참조 → 417mAh"
+  },
+  "Galileo S 라인추가 변경점|SDI": {
+    "capacity_mah": 270,
+    "source": "auto_reference",
+    "comment": "같은 모델(Galileo S) 참조 → 270mAh"
+  },
+  "Gen2 Z stack 13C|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Great Murata vd temp|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble X1|SDI": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble X1) 참조 → 3880mAh"
+  },
+  "Hubble X1 LGC|-": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble X1) 참조 → 3880mAh"
+  },
+  "Hubble X1 조건 변경 후|SDI": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble X1) 참조 → 3880mAh"
+  },
+  "Hubble X1 조건변경|SDI": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble X1) 참조 → 3880mAh"
+  },
+  "Hubble X1 최종 장수명|SDI": {
+    "capacity_mah": 3880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble X1) 참조 → 3880mAh"
+  },
+  "Hubble Y2|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 1st장수명|ATL": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 LGC 고온수명|-": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 LGC 저온수명|-": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 가열 개선 전|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 가열 개선 후|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 고온수명|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 수명조건 변경 전|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 저온수명|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 조건변경|SDI": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Y2 조건변경&변경 전 저온수명|-": {
+    "capacity_mah": 4370,
+    "source": "auto_reference",
+    "comment": "같은 모델(Hubble Y2) 참조 → 4370mAh"
+  },
+  "Hubble Z3|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Z3 44V|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Z3 LGC 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Z3 LGC 저온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Z3 고온수명|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Hubble Z3 저온수명|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Iphone11 ProMax|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC BUILD Normal|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC MP|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC REBUILD NORMAL, STEP|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC normal, step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "LGC 고전압 선행 상온,고온 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M1, N2 O3 저온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M15 02C05C capa|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Cell|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Main doe|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Main doe 고온|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 Pack|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 main,doe 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M2030 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "M31s|ATL": {
+    "capacity_mah": 5830,
+    "source": "auto_reference",
+    "comment": "같은 모델(M31s) 참조 → 5830mAh"
+  },
+  "M52 HTHH ch3|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "MAIN normal, step 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "MP2|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Main step, normal|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Main sub상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Moden lite|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Murata step|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Murata, 충전 그래프 비교|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NORMAL, STEP|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NPA2 2 more sample|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "NPA2 Main1 1 more sample|ATL": {
+    "capacity_mah": 4078,
+    "source": "auto_reference",
+    "comment": "같은 모델(NPA2 Main1) 참조 → 4078mAh"
+  },
+  "NS1250 Cycle45|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "OnAir lishen 고온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "P3 Process|SDI": {
+    "capacity_mah": 4855,
+    "source": "auto_reference",
+    "comment": "같은 모델(P3 Process) 참조 → 4855mAh"
+  },
+  "Pulse|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Pulse 상온고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Sub 45|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q2 Sub 45 re1|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Q6 Main with|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "R1 murata|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance L 파우치변경|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance S Z Improve|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance S Z Improve 2|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Renaissance S Z Improve 4|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Rubens|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Rubens SDIEM 고온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Rubens SDIEM상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SB ED740 SAFETY|SDI": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(SB ED740) 참조 → 4900mAh"
+  },
+  "STS PL free A 1|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Safety 2C MP4 15|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Safety 2C MP4 45|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Space|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Star1 step 상온수명 한계 form|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Sub 인정2차 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Sub 인정2차 저온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "WINNER MAIN SUB|-": {
+    "capacity_mah": 2050,
+    "source": "auto_reference",
+    "comment": "같은 모델(WINNER MAIN) 참조 → 2050mAh"
+  },
+  "WISE6 L LI CMC|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner 5G|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner Main Sub step 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner Main step 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner Main step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner Sub step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Winner main step 상온수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "X1 mmW|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcover4 HT Cycle|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "XcoverPro 고온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "XcoverPro 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Xcoverpro 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Z STACK 15|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Z stack Gen2 13C|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "ZENITH CRADEL SAFETY CHARGE|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Ze|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "[LnF|LGES": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "a7 sdiem , qpa sample|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "a9 pto 고온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "allo kokiri onan iriver 42|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "asdfasdf|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "asdfasdfasdfasdf|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "asdfasdfasdfasdfsdf|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "coin Gwonseon 3 Cycle|EVE": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "d2 lgc 2c|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "d2 lgc 2c set|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "j3 luhe|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "kGekn4 k28C Cosmkkxkk|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "m2030 main,doe 고온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "moden lite|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "moden lite 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "moden lite, pulse 고온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "murata 1 5C|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "normal step|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "pulse 상온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "pulse, moden lite 고온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "samsung zmi|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "star1 murata NEW|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "step,normal 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "stop|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "sub저온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "test.xls|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "varta 58|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "varta 82|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "wise6 Li cmc|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "xiami|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "니치콘 14C 수명|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "저온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "정Sub 인정2차 저온|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "JDM A07|ATL": {
+    "capacity_mah": 5830,
+    "source": "auto_reference",
+    "comment": "같은 모델(JDM A07) 참조 → 5830mAh"
+  },
+  "JDM DM3 RTAPE|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "JDM DM3 Rtape|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "JDM Fit3|LWN": {
+    "capacity_mah": 200,
+    "source": "auto_reference",
+    "comment": "같은 모델(JDM Fit3) 참조 → 200mAh"
+  },
+  "JDM S1 SCUD Pack 용량|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "JDM S1 Sunwoda Pack용량|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SmartRing Molding SPL Cycle US12|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S10 Plus NVT|ATL": {
+    "capacity_mah": 10880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S10) 참조 → 10880mAh"
+  },
+  "Vpack20 Watch6|SDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Vpack20 Watch6) 참조 → 417mAh"
+  },
+  "Watch6 Fresh Large|ATL": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "Watch8 Classic si|SDI": {
+    "capacity_mah": 435,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch8 Classic) 참조 → 435mAh"
+  },
+  "Watch8 Large Gr|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "GB6 Pro14|ATL": {
+    "capacity_mah": 4286,
+    "source": "auto_reference",
+    "comment": "같은 모델(GB6 Pro14) 참조 → 4286mAh"
+  },
+  "Tab A3|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab Active pro|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S10 Plus Cell|-": {
+    "capacity_mah": 10880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S10) 참조 → 10880mAh"
+  },
+  "Tab S10 Plus Cell Battery|-": {
+    "capacity_mah": 10880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S10) 참조 → 10880mAh"
+  },
+  "Tab S10 Ultra Cell|-": {
+    "capacity_mah": 10880,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S10) 참조 → 10880mAh"
+  },
+  "Tab S4 lv 상온|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S4 lv 한계|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S5e|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S5e 삼원화|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S7 Cycle23|SDI": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S7) 참조 → 4900mAh"
+  },
+  "Tab S7 SDIEM|-": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S7) 참조 → 4900mAh"
+  },
+  "Watch5 PE Project X charge|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch6 Fresh Large 1|ATL": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "Watch6 Fresh Large 2|ATL": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "Watch6 Fresh Large Cycle23|-": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "Watch6 Fresh Small ch60|ATL": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "Watch6 Wise Large|SDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Wise) 참조 → 417mAh"
+  },
+  "Watch6 Wise Small|SDI": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Wise) 참조 → 417mAh"
+  },
+  "Watch8 Large 100to|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch8 Large to|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch8 Small Si cell chg|ATL": {
+    "capacity_mah": 312,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch8 Small) 참조 → 312mAh"
+  },
+  "Buds FE2 2|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Buds FE2 3|Cosmx": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Buds3 Pro 2|Cosmx": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro NS1150|SDI": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro NS1150 3|SDI": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro NS1150 4|SDI": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "Buds3 Pro charge|Cosmx": {
+    "capacity_mah": 50,
+    "source": "auto_reference",
+    "comment": "같은 모델(Buds3 Pro) 참조 → 50mAh"
+  },
+  "JDM Ganfeng Cell|-": {
+    "capacity_mah": 5000,
+    "source": "auto_reference",
+    "comment": "같은 모델(JDM Ganfeng) 참조 → 5000mAh"
+  },
+  "JDM Lishen Cell|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Grepow|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch6 Fresh Small Cycle45|-": {
+    "capacity_mah": 295,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Fresh) 참조 → 295mAh"
+  },
+  "Watch8 Classic|SDI": {
+    "capacity_mah": 435,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch8 Classic) 참조 → 435mAh"
+  },
+  "1C|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SmartRing|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "SmartRing Molding US12|-": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TAB A3|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "TAB S4 LV|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab A3|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab A3 상온|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab A3 상온수명|BYD": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab A4s|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S4 lv|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S5e|SDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S5e|TSDI": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Tab S7 Cycle23 1|SDI": {
+    "capacity_mah": 4900,
+    "source": "auto_reference",
+    "comment": "같은 모델(Tab S7) 참조 → 4900mAh"
+  },
+  "tab a3|ATL": {
+    "capacity_mah": null,
+    "source": "manual_required",
+    "comment": "Excel 열어서 확인 또는 스펙 문서 참조 필요"
+  },
+  "Watch6 Wise Lrage cycle45|-": {
+    "capacity_mah": 417,
+    "source": "auto_reference",
+    "comment": "같은 모델(Watch6 Wise) 참조 → 417mAh"
+  },
+  "SmartRing US12 SPL|-": {
+    "capacity_mah": 5,
+    "source": "auto_reference",
+    "comment": "같은 모델(SmartRing US12) 참조 → 5mAh"
+  },
+  "SmartRing US6 SPL|-": {
+    "capacity_mah": 17,
+    "source": "auto_reference",
+    "comment": "같은 모델(SmartRing US6) 참조 → 17mAh"
+  }
+}
