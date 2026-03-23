@@ -19411,11 +19411,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         logger = logging.getLogger("ptn_debug")
         if not logger.handlers:
             logger.setLevel(logging.DEBUG)
-            # 로그 파일 위치: mdb 파일과 같은 폴더, 없으면 앱 실행 경로
-            if mdb_path and os.path.isfile(mdb_path):
-                log_dir = os.path.dirname(os.path.abspath(mdb_path))
-            else:
-                log_dir = os.path.dirname(os.path.abspath(__file__))
+            # 로그 파일 위치: 코드 실행 경로 (Program Files 등 권한 문제 회피)
+            log_dir = os.path.dirname(os.path.abspath(__file__))
             log_path = os.path.join(log_dir, "ptn_debug.log")
             fh = logging.FileHandler(log_path, encoding="utf-8", mode="a")
             fh.setLevel(logging.DEBUG)
