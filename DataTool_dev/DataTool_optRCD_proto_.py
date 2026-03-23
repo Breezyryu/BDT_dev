@@ -19405,27 +19405,42 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # plt.show()
         plt.close()
 
-    def ptn_change_pattern_button(self):
-        # ui에서 데이터 확인
-        self.progressBar.setValue(0)
+    def _ptn_open_db(self) -> "pyodbc.Connection | None":
+        """패턴수정 탭 공통: DB 경로 확인 → 연결 반환. 실패 시 None."""
         ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_crate = float(self.ptn_crate.text())
-        ptn_capacity = float(self.ptn_capacity.text())
-        # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
+            ptn_ori_path = filedialog.askopenfilename(
+                initialdir="c:\\Program Files\\PNE CTSPro\\Database",
+                title="Choose Test files")
+            if not ptn_ori_path:
+                return None
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (len(self.ptn_df_select) == 0) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        return pyodbc.connect(conn_str, autocommit=True)
+
+    def _ptn_has_selection(self) -> bool:
+        """패턴이 선택되어 있는지 확인."""
+        if (not hasattr(self, "ptn_df_select")
+                or len(self.ptn_df_select) == 0
+                or self.ptn_df_select[0] == ""):
+            err_msg("패턴 미선택", "패턴 리스트에서 변경할 패턴을 먼저 선택해주세요.")
+            return False
+        return True
+
+    def ptn_change_pattern_button(self):
+        # ui에서 데이터 확인
+        self.progressBar.setValue(0)
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_crate = float(self.ptn_crate.text())
+            ptn_capacity = float(self.ptn_capacity.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 cursor.execute("SELECT MAX(Iref) From Step WHERE TestID = ? AND StepType = 2", str(testidcount))
                 max_value = cursor.fetchone()[0]
@@ -19442,34 +19457,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     str(base_capacity), str(real_capacity), str(testidcount))
                         cursor.execute("UPDATE Step SET EndI = -int(-EndI /? *?) WHERE TestID =?", 
                                     str(base_capacity), str(real_capacity), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("전류 일괄 변경 오류", f"전류 일괄 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_change_refi_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_refi_pre = float(self.ptn_refi_pre.text())
-        ptn_refi_after = float(self.ptn_refi_after.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_refi_pre = float(self.ptn_refi_pre.text())
+            ptn_refi_after = float(self.ptn_refi_after.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 # 문자 인식 문제를 위한 강제 변환
                 if self.chk_coincell.isChecked():
@@ -19482,133 +19489,101 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 str(1), str(1), str(testidcount))
                     cursor.execute("UPDATE Step SET Iref = ? WHERE Iref = ? AND TestID = ?",
                                 str(ptn_refi_after), str(ptn_refi_pre), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("충방전 전류 변경 오류", f"충방전 전류 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_change_chgv_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_chgv_pre = float(self.ptn_chgv_pre.text())
-        ptn_chgv_after = float(self.ptn_chgv_after.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_chgv_pre = float(self.ptn_chgv_pre.text())
+            ptn_chgv_after = float(self.ptn_chgv_after.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 cursor.execute("UPDATE Step SET Vref_Charge = int(Vref_Charge /? *?) WHERE TestID =?",
                             str(1), str(1), str(testidcount))
                 cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE Vref_Charge = ? AND TestID =?",
                             str(ptn_chgv_after), str(ptn_chgv_pre), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("충전 전압 변경 오류", f"충전 전압 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_change_dchgv_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_dchgv_pre = float(self.ptn_dchgv_pre.text())
-        ptn_dchgv_after = float(self.ptn_dchgv_after.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_dchgv_pre = float(self.ptn_dchgv_pre.text())
+            ptn_dchgv_after = float(self.ptn_dchgv_after.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 cursor.execute("UPDATE Step SET Vref_DisCharge = int(Vref_DisCharge /? *?) WHERE TestID = ?",
                             str(1), str(1), str(testidcount))
                 cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE Vref_DisCharge = ? AND TestID = ?",
                             str(ptn_dchgv_after), str(ptn_dchgv_pre), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("방전 전압 변경 오류", f"방전 전압 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_change_endv_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_endv_pre = float(self.ptn_endv_pre.text())
-        ptn_endv_after = float(self.ptn_endv_after.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_endv_pre = float(self.ptn_endv_pre.text())
+            ptn_endv_after = float(self.ptn_endv_after.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 cursor.execute("UPDATE Step SET EndV = int(EndV /? *?) WHERE TestID = ?",
                             str(1), str(1), str(testidcount))
                 cursor.execute("UPDATE Step SET EndV = ? WHERE EndV = ? AND TestID = ?",
                             str(ptn_endv_after), str(ptn_endv_pre), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("종지 전압 변경 오류", f"종지 전압 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_change_endi_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_endi_pre = float(self.ptn_endi_pre.text())
-        ptn_endi_after = float(self.ptn_endi_after.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_endi_pre = float(self.ptn_endi_pre.text())
+            ptn_endi_after = float(self.ptn_endi_after.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 # 문자 인식 문제를 위한 강제 변환
                 if self.chk_coincell.isChecked():
@@ -19621,87 +19596,83 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 str(1), str(1), str(testidcount))
                     cursor.execute("UPDATE Step SET EndI = ? WHERE EndI = ? AND TestID = ?",
                                 str(ptn_endi_after), str(ptn_endi_pre), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("종지 전류 변경 오류", f"종지 전류 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_change_step_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        ptn_step_pre = int(self.ptn_step_pre.text())
-        ptn_step_after = int(self.ptn_step_after.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행 (dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
-        df = pd.read_sql("SELECT * FROM Step", conn)
-        # 선택한 Test ID만 기준으로 dataframe에서 변경
-        df["Value2"] = df["Value2"].str.replace(str(" " + str(ptn_step_pre) + " "), str(" " + str(ptn_step_pre + ptn_step_after) + " "))
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT TestID FROM Step;")
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
+        try:
+            if not self._ptn_has_selection():
+                return
+            ptn_step_pre = int(self.ptn_step_pre.text())
+            ptn_step_after = int(self.ptn_step_after.text())
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            # 쿼리 실행 (dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
+            df = pd.read_sql("SELECT * FROM Step", conn)
+            # 선택한 Test ID만 기준으로 dataframe에서 변경
+            df["Value2"] = df["Value2"].str.replace(str(" " + str(ptn_step_pre) + " "), str(" " + str(ptn_step_pre + ptn_step_after) + " "))
+            cursor = conn.cursor()
             for testidcount in self.ptn_df_select:
                 for StepIDcount in df["StepID"]:
                     cursor.execute("UPDATE Step SET Value2 = ? WHERE StepID = ? AND TestID = ?",
                                 str(df[df["StepID"] == StepIDcount]["Value2"].values[0]) , str(StepIDcount), str(testidcount))
-        # 변경 사항 저장
-        conn.commit()
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
-        self.progressBar.setValue(100)
+            # 변경 사항 저장
+            conn.commit()
+            cursor.close()
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("Step 변경 오류", f"Step 변경 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_load_button(self):
         self.progressBar.setValue(0)
-        # ui에서 데이터 확인
-        ptn_ori_path = str(self.ptn_ori_path.text())
-        # 파일 있는지 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
-                                                      title="Choose Test files")
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
-        # 쿼리 실행 (Pattern 이름 테이블을 dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
-        pne_ptn_df = pd.read_sql("SELECT * FROM TestName", conn)
-        pne_ptn_folder_name = pd.read_sql("SELECT * FROM BatteryModel", conn)
-        self.pne_ptn_merged_df = pd.merge(pne_ptn_df, pne_ptn_folder_name, on='ModelID')
-        self.pne_ptn_merged_df = self.pne_ptn_merged_df[["ModelName", "TestName", "Description_x", "TestID", "No", "TestNo"]]
-        self.pne_ptn_merged_df = self.pne_ptn_merged_df.sort_values(by=['No','TestNo'], ascending=[True, True]).reset_index(drop=True)
-        # 패턴 list 및 선택 초기화
-        self.ptn_list.clear()
-        self.ptn_df_select = []
-        # dataframe을 기준으로 table widget 생성
-        self.ptn_list.setRowCount(len(self.pne_ptn_merged_df.index))
-        self.ptn_list.setColumnCount(len(self.pne_ptn_merged_df.columns) - 3)
-        self.ptn_list.setHorizontalHeaderLabels(["패턴폴더", "패턴이름", "비고"])
-        self.ptn_list.horizontalHeader().setVisible(True)
-        for row_index, row in enumerate(self.pne_ptn_merged_df.index):
-            for col_index, column in enumerate(self.pne_ptn_merged_df.columns):
-                value = self.pne_ptn_merged_df.loc[row][column]
-                # QTableWidget의 row_index 열, col_index 행에 들어갈 아이템을 생성
-                item = QtWidgets.QTableWidgetItem(str(value))
-                # 생성된 아이템을 위젯의 row_index, col_index (행, 열)에 배치
-                self.ptn_list.setItem(row_index, col_index, item)
-        self.ptn_list.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.ptn_list.cellClicked.connect(self.ptn_get_selected_items)
-        # 커서 및 연결 닫기
-        conn.close()
-        self.progressBar.setValue(100)
+        try:
+            conn = self._ptn_open_db()
+            if conn is None:
+                return
+            # 쿼리 실행 (Pattern 이름 테이블을 dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
+            pne_ptn_df = pd.read_sql("SELECT * FROM TestName", conn)
+            pne_ptn_folder_name = pd.read_sql("SELECT * FROM BatteryModel", conn)
+            self.pne_ptn_merged_df = pd.merge(pne_ptn_df, pne_ptn_folder_name, on='ModelID')
+            self.pne_ptn_merged_df = self.pne_ptn_merged_df[["ModelName", "TestName", "Description_x", "TestID", "No", "TestNo"]]
+            self.pne_ptn_merged_df = self.pne_ptn_merged_df.sort_values(by=['No','TestNo'], ascending=[True, True]).reset_index(drop=True)
+            # 패턴 list 및 선택 초기화
+            self.ptn_list.clear()
+            self.ptn_df_select = []
+            # dataframe을 기준으로 table widget 생성
+            self.ptn_list.setRowCount(len(self.pne_ptn_merged_df.index))
+            self.ptn_list.setColumnCount(len(self.pne_ptn_merged_df.columns) - 3)
+            self.ptn_list.setHorizontalHeaderLabels(["패턴폴더", "패턴이름", "비고"])
+            self.ptn_list.horizontalHeader().setVisible(True)
+            for row_index, row in enumerate(self.pne_ptn_merged_df.index):
+                for col_index, column in enumerate(self.pne_ptn_merged_df.columns):
+                    value = self.pne_ptn_merged_df.loc[row][column]
+                    # QTableWidget의 row_index 열, col_index 행에 들어갈 아이템을 생성
+                    item = QtWidgets.QTableWidgetItem(str(value))
+                    # 생성된 아이템을 위젯의 row_index, col_index (행, 열)에 배치
+                    self.ptn_list.setItem(row_index, col_index, item)
+            self.ptn_list.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+            # 시그널 중복 연결 방지: 기존 연결 해제 후 재연결
+            try:
+                self.ptn_list.cellClicked.disconnect(self.ptn_get_selected_items)
+            except TypeError:
+                pass
+            self.ptn_list.cellClicked.connect(self.ptn_get_selected_items)
+            # 커서 및 연결 닫기
+            conn.close()
+            self.progressBar.setValue(100)
+        except Exception as e:
+            err_msg("패턴 로드 오류", f"패턴 리스트 로드 중 오류가 발생했습니다.\n{e}")
+            self.progressBar.setValue(0)
 
     def ptn_get_selected_items(self, row, column):
         self.ptn_df_select = []

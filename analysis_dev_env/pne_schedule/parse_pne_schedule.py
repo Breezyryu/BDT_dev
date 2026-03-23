@@ -70,6 +70,28 @@ def _is_nonzero_f32(val: float) -> bool:
     return abs(val) > 1e-9
 
 
+def _parse_end_condition(block: bytes) -> dict | None:
+    """블록에서 End Condition(Other Condition) 필드 추출.
+
+    PNE .sch 바이너리 구조에서 End Condition 영역:
+      +372 : end_condition_value (float32) — 조건 값 (SOC/DOD %)
+      +500 : end_condition_type (uint32)  — 조건 유형 코드 (0이면 미설정)
+      +504 : end_condition_enabled (uint32) — 활성 플래그 (1=활성)
+
+    SOC/DOD End Condition이 설정된 스텝은 Rss(저항측정) 사이클의
+    구성요소로, 가속수명 충방전 패턴과 구별해야 한다.
+    """
+    ec_type = _u32(block, 500)
+    ec_enabled = _u32(block, 504)
+    if ec_type == 0 or ec_enabled == 0:
+        return None
+    ec_value = _f32(block, 372)
+    return {
+        "type_code": ec_type,
+        "value_pct": round(ec_value, 1),
+    }
+
+
 # ── 블록 파싱 ────────────────────────────────────────────────────
 
 def _parse_chg_cc(block: bytes) -> dict:
@@ -104,6 +126,11 @@ def _parse_chg_cc(block: bytes) -> dict:
     if _is_nonzero_f32(cv_cutoff):
         step["cv_cutoff_mA"] = cv_cutoff
 
+    # End Condition (SOC/DOD 조건)
+    ec = _parse_end_condition(block)
+    if ec:
+        step["end_condition"] = ec
+
     return step
 
 
@@ -134,6 +161,11 @@ def _parse_chg_cccv(block: bytes) -> dict:
     if _is_nonzero_f32(time_limit):
         step["time_limit_s"] = time_limit
 
+    # End Condition (SOC/DOD 조건)
+    ec = _parse_end_condition(block)
+    if ec:
+        step["end_condition"] = ec
+
     return step
 
 
@@ -160,6 +192,11 @@ def _parse_dchg_cc(block: bytes) -> dict:
 
     if _is_nonzero_f32(time_limit):
         step["time_limit_s"] = time_limit
+
+    # End Condition (SOC/DOD 조건)
+    ec = _parse_end_condition(block)
+    if ec:
+        step["end_condition"] = ec
 
     return step
 
@@ -408,8 +445,14 @@ def extract_accel_pattern_from_sch(
             break
 
     accel_region = steps[accel_start:last_loop_idx]
-    chg = [s for s in accel_region if s["type"] in ("CHG_CC", "CHG_CCCV")]
-    dchg = [s for s in accel_region if s["type"] == "DCHG_CC"]
+
+    # End Condition(SOC/DOD)이 있는 스텝 제외 — Rss(저항측정) 스텝
+    chg = [s for s in accel_region
+           if s["type"] in ("CHG_CC", "CHG_CCCV")
+           and "end_condition" not in s]
+    dchg = [s for s in accel_region
+            if s["type"] == "DCHG_CC"
+            and "end_condition" not in s]
 
     if not chg and not dchg:
         return None
@@ -489,10 +532,12 @@ _GITT_HPPC_LOOP_MIN = 10   # GITT/HPPC LOOP 최소 횟수
 
 
 def _classify_section(n_chg: int, n_dchg: int, n_rest: int,
-                      loop_count: int, has_loop: bool) -> str:
+                      loop_count: int, has_loop: bool,
+                      n_end_cond: int = 0) -> str:
     """LOOP 구간의 충/방전 구성으로 카테고리 추정.
 
     분류 규칙 (우선순위 순):
+      0) End Cond: SOC/DOD End Condition 스텝 존재 → Rss/DCIR
       1) 가속수명: LOOP ≥ 20 & (CHG ≥ 2 or DCHG ≥ 1)
       2) Rate:     LOOP ≥ 5 & CHG ≥ 2 & DCHG ≥ 2
       3) Rss/DCIR: LOOP = 1 & (CHG ≥ 5 or DCHG ≥ 5)
@@ -505,6 +550,10 @@ def _classify_section(n_chg: int, n_dchg: int, n_rest: int,
         if n_dchg >= 1 and n_chg == 0 and n_rest == 0:
             return "초기방전"
         return "구간경계"
+
+    # End Condition(SOC/DOD) 스텝이 있으면 Rss/DCIR 우선 분류
+    if n_end_cond > 0:
+        return "Rss/DCIR"
 
     # 가속수명: 대량 반복
     if loop_count >= _ACCEL_LOOP_MIN and (n_chg >= 2 or n_dchg >= 1):
@@ -556,7 +605,11 @@ def _split_sections(steps: list[dict]) -> list[dict]:
         lc = loop_items[0]["loop_count"] if loop_items else 0
         target = loop_items[0]["target_step"] if loop_items else 0
 
-        cat = _classify_section(n_chg, n_dchg, n_rest, lc, has_loop)
+        cat = _classify_section(n_chg, n_dchg, n_rest, lc, has_loop,
+                               n_end_cond=sum(
+                                   1 for x in sec
+                                   if "end_condition" in x
+                               ))
 
         # 대표 전류/전압 수집
         currents = []
