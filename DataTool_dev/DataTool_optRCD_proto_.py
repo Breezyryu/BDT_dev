@@ -11812,61 +11812,143 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     @staticmethod
     def _build_classify_info_label(classify_info: list[dict]):
-        """분류 결과 리스트 → QLabel 위젯 요약 바 생성."""
-        from PyQt6.QtWidgets import QLabel
+        """분류 결과 리스트 → 접을 수 있는 충방전 패턴 정보 위젯 생성.
+
+        단일 패턴(또는 모든 채널 동일) → 기존과 동일한 단순 QLabel.
+        여러 상이한 패턴 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 전체 패턴 표시.
+        팝업은 캔버스 위에 오버레이되므로 그래프 크기가 변하지 않는다.
+        """
+        from PyQt6.QtWidgets import (QLabel, QWidget, QHBoxLayout,
+                                      QPushButton, QFrame, QVBoxLayout)
+        from PyQt6.QtCore import Qt
+        from collections import OrderedDict
+
         if not classify_info:
             return None
 
-        # 전체 채널의 카테고리 합산
-        total_counts: dict[str, int] = {}
-        test_types: list[str] = []
-        for cr in classify_info:
-            for cat, n in cr['counts'].items():
-                total_counts[cat] = total_counts.get(cat, 0) + n
-            if cr['test_type'] not in test_types:
-                test_types.append(cr['test_type'])
-
-        total_cycles = sum(total_counts.values())
-        cat_parts = []
-        for cat in ['RPT', 'Rss', '가속수명', 'GITT', 'initial', 'unknown']:
-            n = total_counts.get(cat, 0)
-            if n > 0:
-                cat_parts.append(f'<b>{cat}</b>:{n}')
-
-        n_channels = len(classify_info)
-        test_str = ', '.join(test_types) if test_types else ''
-        # 패턴 (단일 채널인 경우에만 표시)
-        pattern_str = ''
-        if n_channels == 1 and classify_info[0].get('schedule_pattern'):
-            pattern_str = f'  |  패턴: {classify_info[0]["schedule_pattern"]}'
-            if len(pattern_str) > 80:
-                pattern_str = pattern_str[:80] + '...'
-
-        # 가속수명 충방전 패턴 (첫 번째 채널 기준) — 화면에는 이 정보만 표시
-        accel_line = ''
+        # ── 모든 채널의 accel_pattern 수집 ──
+        patterns: list[tuple[str, str]] = []  # (channel_name, pattern_line)
         for cr in classify_info:
             ap = cr.get('accel_pattern')
             if ap:
+                ch_name = cr.get('channel', '')
                 chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
                 dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
-                accel_line = (
-                    f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                    f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
-                break
+                line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
+                        f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
+                patterns.append((ch_name, line))
 
-        if not accel_line:
+        if not patterns:
             return None
 
-        html = (f'<span style="color:#3C5488; font-size:11px;">'
-                f'{accel_line}</span>')
+        # ── 동일 패턴끼리 그룹핑 ──
+        groups: OrderedDict[str, list[str]] = OrderedDict()
+        for ch_name, line in patterns:
+            groups.setdefault(line, []).append(ch_name)
 
-        label = QLabel(html)
-        label.setStyleSheet(
-            'QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
-            'border-radius: 3px; padding: 3px 8px; }')
-        label.setWordWrap(True)
-        label.setMaximumHeight(24)
-        return label
+        _BAR_QSS = ('QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
+                     'border-radius: 3px; padding: 3px 8px; }')
+
+        # ── 패턴이 모두 동일 → 단순 QLabel ──
+        if len(groups) == 1:
+            single_line = next(iter(groups))
+            ch_list = next(iter(groups.values()))
+            suffix = (f'  <span style="color:#8491B4;">({len(ch_list)}채널 동일)</span>'
+                      if len(ch_list) > 1 else '')
+            html = (f'<span style="color:#3C5488; font-size:11px;">'
+                    f'{single_line}{suffix}</span>')
+            label = QLabel(html)
+            label.setStyleSheet(_BAR_QSS)
+            label.setWordWrap(True)
+            label.setMaximumHeight(24)
+            return label
+
+        # ── 여러 상이한 패턴 → 접기/펼치기 위젯 ──
+        container = QWidget()
+        container.setFixedHeight(24)
+        h_layout = QHBoxLayout(container)
+        h_layout.setContentsMargins(0, 0, 0, 0)
+        h_layout.setSpacing(4)
+
+        # 헤더 바: 첫 번째 패턴 + "(+N개 다른 패턴)"
+        first_line = next(iter(groups))
+        first_chs = next(iter(groups.values()))
+        n_other = len(groups) - 1
+        ch_tag = f'[{first_chs[0]}] ' if first_chs[0] else ''
+        header_html = (
+            f'<span style="color:#3C5488; font-size:11px;">'
+            f'{ch_tag}{first_line}  '
+            f'<span style="color:#E64B35; font-weight:bold;">'
+            f'(+{n_other}개 다른 패턴)</span></span>')
+        header_label = QLabel(header_html)
+        header_label.setStyleSheet(_BAR_QSS)
+        header_label.setMaximumHeight(24)
+
+        toggle_btn = QPushButton("▶ 전체")
+        toggle_btn.setFixedSize(60, 20)
+        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        toggle_btn.setStyleSheet(
+            "QPushButton { font-size: 10px; font-weight: bold; "
+            "border: 1px solid #D0D8E0; border-radius: 3px; "
+            "background: #F0F4F8; color: #3C5488; padding: 2px 4px; }"
+            "QPushButton:hover { background: #E0E8F0; }")
+
+        h_layout.addWidget(header_label, stretch=1)
+        h_layout.addWidget(toggle_btn, stretch=0)
+
+        # ── 펼침 팝업 (Tool 플로팅 윈도우 — 캔버스 위 오버레이) ──
+        popup = QFrame(container)
+        popup.setWindowFlags(
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint)
+        popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        popup.setStyleSheet(
+            'QFrame { background: #F0F4F8; '
+            'border: 1px solid #B0B8C0; border-radius: 5px; }')
+        popup_layout = QVBoxLayout(popup)
+        popup_layout.setContentsMargins(10, 8, 10, 8)
+        popup_layout.setSpacing(3)
+
+        # 제목
+        title_label = QLabel(
+            '<b style="color:#3C5488; font-size:12px;">충방전 패턴 상세</b>')
+        popup_layout.addWidget(title_label)
+
+        # 각 패턴 그룹 (PALETTE 색상으로 채널 구분)
+        palette = THEME['PALETTE']
+        for idx, (pat_line, ch_names) in enumerate(groups.items()):
+            color = palette[idx % len(palette)]
+            ch_str = ', '.join(ch_names)
+            if ch_str:
+                row_html = (
+                    f'<span style="font-size:11px;">'
+                    f'<b style="color:{color};">[{ch_str}]</b> '
+                    f'<span style="color:#3C5488;">{pat_line}</span></span>')
+            else:
+                row_html = (
+                    f'<span style="color:#3C5488; font-size:11px;">'
+                    f'{pat_line}</span>')
+            row_label = QLabel(row_html)
+            row_label.setWordWrap(True)
+            popup_layout.addWidget(row_label)
+
+        popup.adjustSize()
+        popup.hide()
+
+        def _toggle():
+            if popup.isVisible():
+                popup.hide()
+                toggle_btn.setText("▶ 전체")
+            else:
+                # 헤더 바 바로 아래에 팝업 배치
+                pos = container.mapToGlobal(container.rect().bottomLeft())
+                popup.move(pos.x(), pos.y() + 2)
+                popup.adjustSize()
+                popup.show()
+                toggle_btn.setText("▼ 접기")
+
+        toggle_btn.clicked.connect(_toggle)
+        return container
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
                            channel_map=None, fig=None, axes_list=None,
