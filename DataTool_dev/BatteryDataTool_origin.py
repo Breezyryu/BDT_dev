@@ -1,203 +1,32 @@
-﻿import os
+import os
 import sys
 import re
 import bisect
-import time
-import logging
-import functools
 import warnings
 import json
-from collections import OrderedDict
-from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import pyodbc
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
 from scipy.optimize import curve_fit, root_scalar
 from scipy.stats import linregress
 from datetime import datetime
 from tkinter import filedialog, Tk
 from PyQt6 import QtCore, QtGui, QtWidgets
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from datetime import timezone
 import glob
 import xlwings as xw
-from pathlib import Path
-
-try:
-    from parse_pne_schedule import (
-        extract_accel_pattern_from_sch,
-        extract_schedule_structure_from_sch,
-    )
-    HAS_SCH_PARSER = True
-except ImportError:
-    HAS_SCH_PARSER = False
-
-# PyInstaller exe 실행 시 필요: Pybamm casadi DLL 경로 등록
-# 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
-if getattr(sys, 'frozen', False):
-    _base = sys._MEIPASS
-    _casadi_dir = os.path.join(_base, 'casadi')
-    if os.path.isdir(_casadi_dir):
-        os.add_dll_directory(_casadi_dir)
-        os.add_dll_directory(_base)
-        os.environ['PATH'] = _casadi_dir + os.pathsep + _base + os.pathsep + os.environ.get('PATH', '')
-        # 핵심 MinGW 런타임 DLL 강제 선로드
-        import ctypes
-        for _dll_name in [
-            'libwinpthread-1.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll',
-            'libgfortran-5.dll', 'libquadmath-0.dll', 'libgomp-1.dll',
-            'libcasadi.dll', 'libcasadi-tp-openblas.dll',
-        ]:
-            _dll_path = os.path.join(_casadi_dir, _dll_name)
-            if os.path.isfile(_dll_path):
-                try:
-                    ctypes.CDLL(_dll_path)
-                except OSError:
-                    pass
-
-try:
-    import pybamm
-    HAS_PYBAMM = True
-except ImportError:
-    HAS_PYBAMM = False
-
 
 # pip 추가 항목: xlsxwriter
-# Malgun gothic을 기본 글꼴로 설정
+# Malgun gothic을 기본 글꼴로 설정: %s/Malgun gothic/Malgun gothic/g
 
 # 경고 무시
 warnings.simplefilter("ignore")
-
-# ── 성능 로깅 설정 ──────────────────────────────────────────────
-_perf_logger = logging.getLogger('BDT.perf')
-_perf_logger.setLevel(logging.DEBUG)
-if not _perf_logger.handlers:
-    _ch = logging.StreamHandler(sys.stdout)
-    _ch.setFormatter(logging.Formatter(
-        '[%(asctime)s] %(message)s', datefmt='%H:%M:%S'))
-    _perf_logger.addHandler(_ch)
-    _perf_logger.propagate = False
-
-
-def calc_optimal_workers(task_count: int) -> int:
-    """PC 리소스 기반 최적 worker 수 계산
-
-    네트워크 드라이브 I/O 바운드 환경(사내 갤럭시 북) 기준:
-    - GIL 체감이 줄어들어 cpu_count // 3 까지 효과적
-    - 네트워크 경합 + 저사양 RAM(8GB) 보호를 위해 상한 8
-    - task 수보다 workers가 많으면 오버헤드만 증가
-    """
-    cpu = os.cpu_count() or 4
-    max_by_cpu = min(max(2, cpu // 3), 8)
-    workers = max(1, min(max_by_cpu, task_count))
-    _perf_logger.info(f'  workers 자동결정: cpu_count={cpu}, max_by_cpu={max_by_cpu}, '
-                      f'tasks={task_count} -> workers={workers}')
-    return workers
-
-
-def log_perf(func):
-    """함수 시작/종료 + 소요 시간을 콘솔에 기록하는 데코레이터"""
-    import inspect
-    _n_params = len(inspect.signature(func).parameters)
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        # PyQt 시그널이 보내는 여분의 인자(bool 등) 제거
-        trimmed = args[:_n_params]
-        name = func.__qualname__
-        _perf_logger.info(f'▶ {name} 시작')
-        t0 = time.perf_counter()
-        try:
-            result = func(*trimmed, **kwargs)
-            elapsed = time.perf_counter() - t0
-            _perf_logger.info(f'◀ {name} 완료  [{elapsed:.3f}s]')
-            return result
-        except Exception as e:
-            elapsed = time.perf_counter() - t0
-            _perf_logger.error(f'✖ {name} 실패  [{elapsed:.3f}s] {type(e).__name__}: {e}')
-            raise
-    return wrapper
-
-
-class PerfSection:
-    """구간별 소요 시간을 측정하는 컨텍스트 매니저
-    Usage:
-        with PerfSection('데이터 로딩', files=3):
-            ...
-    """
-    def __init__(self, label, **ctx):
-        self.label = label
-        self.ctx = ctx
-
-    def __enter__(self):
-        parts = [f'{k}={v}' for k, v in self.ctx.items()]
-        ctx_str = f'  ({", ".join(parts)})' if parts else ''
-        _perf_logger.info(f'  ┌ {self.label}{ctx_str}')
-        self._t0 = time.perf_counter()
-        return self
-
-    def __exit__(self, *exc):
-        elapsed = time.perf_counter() - self._t0
-        _perf_logger.info(f'  └ {self.label}  [{elapsed:.3f}s]')
-        return False
-
-# plot 스타일 설정
-THEME = {
-    'PALETTE': ['#3C5488', '#E64B35', '#00A087', '#F39B7F', '#4DBBD5',
-                '#8491B4', '#B09C85', '#91D1C2', '#DC0000', '#7E6148'],
-    'FIG_FACECOLOR': '#FFFFFF',
-    'AX_FACECOLOR': '#FAFBFD',
-    'TITLE_SIZE': 13,  # 기존 15에서 13으로 축소
-    'LABEL_SIZE': 12,
-    'TICK_SIZE': 10,
-    'SCATTER_SIZE': 7,
-    'SCATTER_EMPTY_SIZE': 7,
-    'SCATTER_ALPHA': 0.55,
-    'SCATTER_SET_SIZE': 4,
-    'EDGE_WIDTH': 0,
-    'EDGE_COLOR': 'none',
-    'LINE_WIDTH': 1.4,
-    'LINE_ALPHA': 0.6,
-    'MARKER_SIZE': 5,
-    'GRID_ALPHA': 0.18,
-    'GRID_STYLE': '--',
-    'GRID_WIDTH': 0.5,
-    'GRID_COLOR': '#666666',
-    'SPINE_COLOR': '#666666',
-    'SPINE_WIDTH': 0.6,
-    'CMAP': 'coolwarm',
-    'SUPTITLE_SIZE': 15,
-    'SUPTITLE_WEIGHT': 'bold',
-    'LEGEND_SIZE': 'small',
-    'LEGEND_FRAMEALPHA': 0.85,
-    'LEGEND_EDGECOLOR': '#CCCCCC',
-    'DPI': 150,
-}
-
+# 한글 설정
 plt.rcParams["font.family"] = "Malgun gothic"
 plt.rcParams["axes.unicode_minus"] = False
-plt.rcParams["figure.facecolor"] = THEME['FIG_FACECOLOR']
-plt.rcParams["axes.facecolor"] = THEME['AX_FACECOLOR']
-plt.rcParams["axes.spines.top"] = False
-plt.rcParams["axes.spines.right"] = False
-plt.rcParams["axes.edgecolor"] = THEME['SPINE_COLOR']
-plt.rcParams["axes.linewidth"] = THEME['SPINE_WIDTH']
-plt.rcParams["axes.grid"] = True
-plt.rcParams["grid.alpha"] = THEME['GRID_ALPHA']
-plt.rcParams["grid.linestyle"] = THEME['GRID_STYLE']
-plt.rcParams["grid.linewidth"] = THEME['GRID_WIDTH']
-plt.rcParams["grid.color"] = THEME['GRID_COLOR']
-plt.rcParams["xtick.direction"] = "in"
-plt.rcParams["ytick.direction"] = "in"
-plt.rcParams["xtick.labelsize"] = THEME['TICK_SIZE']
-plt.rcParams["ytick.labelsize"] = THEME['TICK_SIZE']
-plt.rcParams["lines.linewidth"] = THEME['LINE_WIDTH']
-plt.rcParams["axes.prop_cycle"] = plt.cycler(color=THEME['PALETTE'])
 
 # timestamp 변환 함수 정의
 def to_timestamp(date_str):
@@ -223,43 +52,6 @@ def progress(count1, max1, count2, max2, count3, max3):
     progressdata = ((count1 + ((count2 + (count3 / max3) - 1) / max2) - 1) / max1 * 100)
     return progressdata
 
-@dataclass
-class CycleGroup:
-    """사이클 분석의 단일 그룹 (개별 또는 연결)"""
-    name: str                          # 범례/탭 표시명
-    paths: list = field(default_factory=list)  # 데이터 경로 목록
-    path_names: list = field(default_factory=list)  # per-path cyclename (path 파일 출처)
-    is_link: bool = False              # 연결 여부 (paths 2개 이상)
-    data_type: str = 'folder'          # 'folder' | 'excel'
-    file_idx: int = 0                  # 출처 path 파일 번호
-    source_file: str = ''              # 원본 path 파일 경로 (mAh 추출용)
-    per_path_channels: list = field(default_factory=list)  # [[ch1],[ch2]] path별 채널 필터 (빈=전체)
-    channel_link_map: dict = field(default_factory=dict)  # {norm_ch: unified_sub} 위치 기반 채널 병합 매핑
-    per_path_capacities: list = field(default_factory=list)  # [float, ...] path별 테이블 입력 용량 (빈=[])
-
-
-def _normalize_ch(s):
-    """채널번호 정규화: '32' → '032', '032' → '032', 비숫자 → 원본"""
-    try:
-        return str(int(s)).zfill(3)
-    except (ValueError, TypeError):
-        return s
-
-
-def _parse_channel_str(ch_str):
-    """채널 문자열 파싱: '32,73,74' → ['032','073','074'], '105,-,-' → ['105','-','-']"""
-    if not ch_str or not ch_str.strip():
-        return []
-    result = []
-    for part in ch_str.split(','):
-        part = part.strip()
-        if part == '-' or part == '':
-            result.append('-')
-        elif part.isdigit():
-            result.append(_normalize_ch(part))
-        # 숫자가 아닌 문자열(예: processed_data)은 무시
-    return result
-
 # 여러 directory 선택하는 코드
 def multi_askopendirnames():
     directories = []
@@ -280,37 +72,10 @@ def multi_askopendirnames():
     return directories
 
 # 대괄호 안의 문자 추출
-def _is_channel_folder(name):
-    """서브폴더가 채널 폴더인지 판별: [xxx] 형식이거나 순수 숫자 폴더만 True"""
-    if re.search(r'\[.*?\]', name):
-        return True
-    stripped = name.strip()
-    return stripped.isdigit()
-
 def extract_text_in_brackets(input_string):
     # 정규 표현식으로 대괄호 안의 문자 추출
     match = re.search(r'\[(.*?)\]', input_string)
     return match.group(1) if match else str(input_string).zfill(3)
-
-def _make_channel_labels(cycnamelist, all_data_name, folder_idx):
-    """ch_label(main)과 sub_label을 통일 규칙으로 생성
-    - 직접입력: ch_label = cycnamelist[-2] (부모 폴더명)
-    - 지정Path: ch_label = all_data_name[folder_idx]
-    - sub_label: 항상 extract_text_in_brackets(cycnamelist[-1])
-    """
-    sub_label = extract_text_in_brackets(cycnamelist[-1])
-    if len(all_data_name) != 0:
-        ch_label = str(all_data_name[folder_idx]).strip()
-    else:
-        ch_label = cycnamelist[-2]
-    if not ch_label:
-        ch_label = cycnamelist[-2]
-    # "mAh_" 이후 부분만 추출 (예: "20000mAh_ATL B8 Sub 상온 RSS" → "ATL B8 Sub 상온 RSS")
-    if "mAh_" in ch_label:
-        ch_label = ch_label.split("mAh_", 1)[1]
-    if len(ch_label) > 30:
-        ch_label = ch_label[:30] + "..."
-    return ch_label, sub_label
 
 # 시리즈를 정해진 갯수의 column으로 분리하는 함수
 def separate_series(df_series, num):
@@ -393,18 +158,6 @@ def check_cycler(raw_file_path):
     cycler = os.path.isdir(raw_file_path + "\\Pattern")
     return cycler
 
-# 코인셀/PNE21·22 μA 단위 사용 여부 판별
-_coincell_mode = False
-
-def set_coincell_mode(enabled):
-    """코인셀 체크박스 상태 설정 (처리 시작 전 호출)"""
-    global _coincell_mode
-    _coincell_mode = enabled
-
-def is_micro_unit(raw_file_path):
-    """PNE21/22 또는 코인셀 모드에서 μA/μAh 단위 사용 여부 판별"""
-    return ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path) or _coincell_mode
-
 # 주어진 문자열을 리스트로 변환
 def convert_steplist(input_str):
     output_list = []
@@ -426,348 +179,94 @@ def same_add(df, column_name):
     return df
     
 # 그래프 base 기본 설정 함수 (x라벨, y라벨, 그리드 양식)
-# 범례 표시 임계값: 이 수를 초과하면 그라데이션+컬러바로 전환
-LEGEND_THRESHOLD = 15
-
 def graph_base_parameter(graph_ax, xlabel, ylabel): 
-    graph_ax.set_xlabel(xlabel, fontsize=THEME['LABEL_SIZE'], fontweight='bold')
-    graph_ax.set_ylabel(ylabel, fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
-    graph_ax.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
-    graph_ax.grid(True, which='both', linestyle=THEME['GRID_STYLE'],
-                  linewidth=THEME['GRID_WIDTH'], alpha=THEME['GRID_ALPHA'], color=THEME['GRID_COLOR'])
+    graph_ax.set_xlabel(xlabel, fontsize= 12, fontweight='bold')
+    graph_ax.set_ylabel(ylabel, fontsize= 12, fontweight='bold')
+    graph_ax.tick_params(direction='in')
+    graph_ax.grid(True, which='both', linestyle='--', linewidth=1.0)
 
 # Cycle 그래프 기본, x축, y축 min, max 및 범위 설정
 def graph_cycle_base(x_data, ax, lowlimit, highlimit, y_gap, xlabel, ylabel, xscale, overall_xlimit):
-    # xscale==0 (자동 모드): xlim/xtick은 _auto_adjust_cycle_axes에서 일괄 설정
-    if xscale != 0:
-        xrangemax = xscale
+    if xscale == 0 and len(x_data) != 0:
+        xlimit = max(x_data)
+        if xlimit < overall_xlimit:
+            xlimit = overall_xlimit
+        xrangemax = (xlimit // 100 + 2) * 100
+    else:
         xlimit = xscale
-        xrangegap = ((xlimit >= 400) + (xlimit >= 800) + (xlimit >= 1500) * 2 + (xlimit >= 3000) * 2 + (xlimit >= 6000) * 4 + 1) * 50
-        if xrangemax > 0 and xrangegap > 0:
-            while xrangemax / xrangegap > 7:
-                xrangegap += 50
-        ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
-        ax.set_xlim(-xrangemax * 0.02, xrangemax * 1.02)
+        xrangemax = xscale
+    xrangegap = ((xlimit >= 400) + (xlimit >= 800) * 2 + (xlimit >= 1200) * 4 + (xlimit >= 2000) * 2 + 1) * 50
+    ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
     if highlimit != 0:
         ax.set_yticks(np.arange(lowlimit, highlimit, y_gap))
         ax.set_ylim(lowlimit, highlimit)
     graph_base_parameter(ax, xlabel, ylabel)
 
 # Cycle 그래프 그리기 - 지정색 기준 사용
-def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0, _size=None):
+def graph_cycle(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
     # 지정색이 없으면 기본색 사용
-    _s = _size if _size is not None else THEME['SCATTER_SIZE']
     if cyc_color != 0:
-        sc = ax.scatter(x, y, label=tlabel, s=_s, color=cyc_color,
-                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
+        ax.scatter(x, y, label=tlabel, s=5, color=cyc_color)
     else:
-        sc = ax.scatter(x, y, label=tlabel, s=_s,
-                   alpha=THEME['SCATTER_ALPHA'], edgecolors=THEME['EDGE_COLOR'],
-                   linewidths=THEME['EDGE_WIDTH'], zorder=3)
-    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
-    return sc    
+        ax.scatter(x, y, label=tlabel, s=5)
+    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
 # Cycle 그래프 그리기 - 지정색 기준 사용/ scatter 채우기 없음
-def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0, _size=None):
-    _s = _size if _size is not None else THEME['SCATTER_EMPTY_SIZE']
+def graph_cycle_empty(x, y, ax, lowlimt, highlimit, ygap, xlabel, ylabel, tlabel, xscale, cyc_color, overall_xlimit = 0):
+    # 지정색이 없으면 기본색 사용
     if cyc_color != 0:
-        sc = ax.scatter(x, y, label=tlabel, s=_s, edgecolors=cyc_color,
-                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=0.6, zorder=3)
+        ax.scatter(x, y, label=tlabel, s=8, edgecolors=cyc_color, facecolors ='none')
     else:
-        sc = ax.scatter(x, y, label=tlabel, s=_s,
-                   facecolors='none', alpha=THEME['SCATTER_ALPHA'],
-                   linewidths=0.6, zorder=3)
-    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit)
-    return sc    
+        ax.scatter(x, y, label=tlabel, s=8, facecolors = 'none')
+    graph_cycle_base(x, ax, lowlimt, highlimit, ygap, xlabel, ylabel, xscale, overall_xlimit = 0)    
 
-def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, colorno, graphcolor,
+def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno, graphcolor,
                        dcir, ax1, ax2, ax3, ax4, ax5, ax6):
-    artists = []  # 이 채널의 모든 scatter artist 수집
-    color = graphcolor[colorno % len(THEME['PALETTE'])]
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
-                "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
-                "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Temp, ax3, 0, 50, 5,
-                "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
-                "Cycle", "Rest End Voltage (V)", "_nolegend_", xscale, color))
-    artists.append(graph_cycle(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
-                      "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
-    artists.append(graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
-                      "Cycle", "Average/Discharge Rest Voltage (V)", temp_lgnd, xscale, color))
-    _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
-    _dcir_es = THEME['SCATTER_EMPTY_SIZE'] * 3
+    graph_cycle(df.NewData.index, df.NewData.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
+                "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, graphcolor[colorno % 9])
+    graph_cycle(df.NewData.index, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
+                "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, graphcolor[colorno % 9])
+    graph_cycle(df.NewData.index, df.NewData.Temp, ax3, 0, 50, 5,
+                "Cycle", "Temperature (℃)", temp_lgnd, xscale, graphcolor[colorno % 9])
+    graph_cycle(df.NewData.index, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
+                "Cycle", "Rest End Voltage (V)", "", xscale, graphcolor[colorno % 9])
+    graph_cycle_empty(df.NewData.index, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
+                      "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, graphcolor[colorno % 9])
+    graph_cycle_empty(df.NewData.index, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
+                      "Cycle", "Average/Rest Voltage (V)", temp_lgnd, xscale, graphcolor[colorno % 9])
     if dcir.isChecked() and hasattr(df.NewData, "dcir2"):
-        artists.append(graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                        "Cycle", "DC-IR @Discharge (mΩ)", "_nolegend_", xscale, color, _size=_dcir_es))
-        artists.append(graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR @Discharge (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
-        # DCIR scatter 점을 잇는 라인
-        _dcir_valid = df.NewData.soc70_dcir.dropna()
-        if len(_dcir_valid) > 1:
-            _ln, = ax4.plot(_dcir_valid.index, _dcir_valid.values, linewidth=0.8, alpha=0.5, color=color, linestyle='--', zorder=2, label='_nolegend_')
-            artists.append(_ln)
-        _rss_valid = df.NewData.soc70_rss_dcir.dropna()
-        if len(_rss_valid) > 1:
-            _ln, = ax4.plot(_rss_valid.index, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
-            artists.append(_ln)
+        graph_cycle_empty(df.NewData.index, df.NewData.soc70_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
+                        "Cycle", "RSS/ 1s DC-IR (mΩ)", "", xscale, graphcolor[colorno % 9])
+        graph_cycle(df.NewData.index, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
+                    "Cycle", "RSS/ 1s DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % 9])
     else:
-        artists.append(graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
-                    "Cycle", "DC-IR @Discharge(mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
-        _dcir_only = df.NewData.dcir.dropna()
-        if len(_dcir_only) > 1:
-            _ln, = ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
-            artists.append(_ln)
-    colorno = colorno % len(THEME['PALETTE']) + 1
-    return artists, color
-
-def _opaque_legend_markers(*axes):
-    '''범례 마커 alpha를 1.0으로 설정 (scatter alpha와 독립)'''
-    for ax in axes:
-        leg = ax.get_legend()
-        if leg is None:
-            continue
-        for handle in leg.legend_handles:
-            handle.set_alpha(1.0)
-
-def place_avgrest_labels(ax6):
-    '''ax6에 그려진 모든 AvgV/RndV 데이터를 기준으로 구분선 + 텍스트 배치'''
-    # 기존 구분선/텍스트 제거
-    for line in ax6.get_lines():
-        if getattr(line, '_avgrest_sep', False):
-            line.remove()
-    for t in list(ax6.texts):
-        if getattr(t, '_avgrest_label', False):
-            t.remove()
-    # scatter collections에서 filled(RndV)와 empty(AvgV)의 y값 수집
-    avgv_ys, rndv_ys = [], []
-    for coll in ax6.collections:
-        offsets = coll.get_offsets()
-        if len(offsets) == 0:
-            continue
-        valid_mask = ~np.isnan(np.array(offsets, dtype=float)).any(axis=1)
-        valid = offsets[valid_mask]
-        if len(valid) == 0:
-            continue
-        fc = coll.get_facecolor()
-        if fc.shape[0] == 0:
-            avgv_ys.extend(valid[:, 1])  # empty = AvgV
-        else:
-            rndv_ys.extend(valid[:, 1])  # filled = RndV
-    if not avgv_ys or not rndv_ys:
-        return
-    # 중앙값의 1/2 지점 (두 중앙값의 중간)
-    _midline = (float(np.median(avgv_ys)) + float(np.median(rndv_ys))) / 2
-    sep = ax6.axhline(y=_midline, color='gray', linestyle='--',
-                      linewidth=0.8, alpha=0.5, zorder=2)
-    sep._avgrest_sep = True
-    _xlim = ax6.get_xlim()
-    _tx = _xlim[1] - (_xlim[1] - _xlim[0]) * 0.02
-    _offset = 0.015
-    t1 = ax6.text(_tx, _midline + _offset, 'Avg V', fontsize=7,
-                  color='gray', alpha=0.7, ha='right', va='bottom', zorder=4)
-    t2 = ax6.text(_tx, _midline - _offset, 'Rest V', fontsize=7,
-                  color='gray', alpha=0.7, ha='right', va='top', zorder=4)
-    t1._avgrest_label = True
-    t2._avgrest_label = True
-
-def place_dcir_labels(ax4):
-    '''ax4에 그려진 DCIR scatter의 중앙값 y위치에 Rss/DCIR1s 레이블 배치'''
-    # 기존 텍스트 제거
-    for t in [t for t in ax4.texts if t.get_text() in ("DCIR1s@SOC70%", "Rss@SOC70%")]:
-        t.remove()
-    # scatter collections에서 filled(Rss)와 empty(DCIR1s)의 중앙값 수집
-    rss_ys, dcir_ys = [], []
-    x_max = -np.inf
-    for coll in ax4.collections:
-        offsets = coll.get_offsets()
-        if len(offsets) == 0:
-            continue
-        valid_mask = ~np.isnan(np.array(offsets, dtype=float)).any(axis=1)
-        valid = offsets[valid_mask]
-        if len(valid) == 0:
-            continue
-        fc = coll.get_facecolor()
-        if fc.shape[0] == 0:
-            dcir_ys.extend(valid[:, 1])
-        else:
-            rss_ys.extend(valid[:, 1])
-        x_max = max(x_max, valid[:, 0].max())
-    if not rss_ys and not dcir_ys:
-        return
-    xlim = ax4.get_xlim()
-    ylim = ax4.get_ylim()
-    xr = xlim[1] - xlim[0]
-    yr = ylim[1] - ylim[0]
-    # x: 데이터 끝 오른쪽에 배치하되, 그래프 밖으로 넘어가면 안쪽으로
-    tx = x_max + xr * 0.03
-    ha = 'left'
-    if tx > xlim[1] - xr * 0.15:
-        tx = xlim[1] - xr * 0.02
-        ha = 'right'
-    _kw = dict(fontsize=7, color='gray', fontweight='bold',
-               va='center', ha=ha, zorder=10)
-    rss_median = float(np.median(rss_ys)) if rss_ys else None
-    dcir_median = float(np.median(dcir_ys)) if dcir_ys else None
-    # 겹침 방지
-    if rss_median is not None and dcir_median is not None:
-        min_gap = yr * 0.06
-        if abs(rss_median - dcir_median) < min_gap:
-            center = (rss_median + dcir_median) / 2
-            rss_median = center + min_gap / 2
-            dcir_median = center - min_gap / 2
-    # y를 그래프 범위 안으로 클램핑
-    y_margin = yr * 0.03
-    if rss_median is not None:
-        rss_median = max(ylim[0] + y_margin, min(ylim[1] - y_margin, rss_median))
-    if dcir_median is not None:
-        dcir_median = max(ylim[0] + y_margin, min(ylim[1] - y_margin, dcir_median))
-    # 클램핑 후 데이터와 겹치면 빈 영역으로 이동
-    all_data_ys = np.array(rss_ys + dcir_ys)
-    text_half_h = yr * 0.03  # 텍스트 높이 절반 추정
-    def _avoid_data(ty, direction):
-        '''ty 위치가 데이터 포인트와 겹치면 지정 방향으로 밀어냄
-        direction: 1=위쪽, -1=아래쪽'''
-        if ty is None:
-            return None
-        overlapping = np.abs(all_data_ys - ty) < text_half_h
-        if not np.any(overlapping):
-            return ty
-        candidate = ty
-        for _ in range(40):
-            candidate += direction * text_half_h * 0.5
-            if candidate < ylim[0] + y_margin or candidate > ylim[1] - y_margin:
-                break
-            if not np.any(np.abs(all_data_ys - candidate) < text_half_h):
-                return candidate
-        return ty  # 이동 불가 시 원래 위치
-    rss_median = _avoid_data(rss_median, 1)    # Rss: 위쪽으로 avoid
-    dcir_median = _avoid_data(dcir_median, -1)  # DCIR: 아래쪽으로 avoid
-    # 이동 후 두 레이블 간 겹침 재확인
-    if rss_median is not None and dcir_median is not None:
-        if abs(rss_median - dcir_median) < yr * 0.06:
-            center = (rss_median + dcir_median) / 2
-            rss_median = min(ylim[1] - y_margin, center + yr * 0.03)
-            dcir_median = max(ylim[0] + y_margin, center - yr * 0.03)
-    if rss_median is not None:
-        ax4.annotate("Rss@SOC70%", xy=(tx, rss_median), **_kw)
-    if dcir_median is not None:
-        ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
-
-def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
-    """사이클 그래프 축 범위 자동 조정
-    - xlim: 전체 채널 데이터 기반 x축 동기화 (마지막 채널 덮어쓰기 방지)
-    - ax1: 방전용량비 ylim 동적 확장 (데이터가 설정 범위 밖일 때)
-    - ax4: DC-IR ylim 상한 제한 (반쪽셀 등 이상치 방지)
-    - 빈 축: 기본 범위 유지
-    """
-    ax1, ax2, ax3, ax4, ax5, ax6 = axes_list
-
-    # ── 전체 채널 x축 범위 동기화 (xscale=0 자동 모드일 때) ──
-    if xscale == 0:
-        all_x = []
-        for ax in [ax1, ax2, ax3, ax4, ax5, ax6]:
-            for coll in ax.collections:
-                offsets = coll.get_offsets()
-                if len(offsets) > 0:
-                    xs = offsets[:, 0]
-                    valid = xs[~np.isnan(xs)]
-                    if len(valid) > 0:
-                        all_x.append(np.max(valid))
-        if all_x:
-            xlimit = max(all_x)
-            xrangemax = (xlimit // 100 + 2) * 100
-            xrangegap = ((xlimit >= 400) + (xlimit >= 800) + (xlimit >= 1500) * 2
-                         + (xlimit >= 3000) * 2 + (xlimit >= 6000) * 4 + 1) * 50
-            if xrangemax > 0 and xrangegap > 0:
-                while xrangemax / xrangegap > 7:
-                    xrangegap += 50
-            for ax in [ax1, ax2, ax3, ax4, ax5, ax6]:
-                ax.set_xticks(np.arange(0, xrangemax + xrangegap, xrangegap))
-                ax.set_xlim(-xrangemax * 0.02, xrangemax * 1.02)
-
-    # ── ax1 (Discharge Capacity Ratio) ylim 동적 조정 ──
-    cap_ys = []
-    for coll in ax1.collections:
-        offsets = coll.get_offsets()
-        if len(offsets) > 0:
-            ys = np.array(offsets[:, 1], dtype=float)
-            valid = ys[~np.isnan(ys)]
-            if len(valid) > 0:
-                cap_ys.extend(valid.tolist())
-    if cap_ys:
-        ymin_data = min(cap_ys)
-        ymax_data = max(cap_ys)
-        step = 0.05
-        new_low = ylimitlow
-        new_high = ylimithigh
-        # 데이터가 하한 아래로 벗어나면 확장
-        if ymin_data < ylimitlow + step:
-            new_low = np.floor(ymin_data / step) * step - step
-            new_low = round(max(new_low, 0), 2)
-        # 데이터가 상한 위로 벗어나면 확장
-        if ymax_data > ylimithigh - step:
-            new_high = np.ceil(ymax_data / step) * step + step
-            new_high = round(new_high, 2)
-        # y 범위가 넓으면 step 자동 확대 (tick 최대 ~10개 이내)
-        y_range = new_high - new_low
-        if y_range / step > 10:
-            step = round(np.ceil(y_range / 10 / 0.05) * 0.05, 2)
-        if new_low != ylimitlow or new_high != ylimithigh:
-            ax1.set_ylim(new_low, new_high)
-            ax1.set_yticks(np.arange(new_low, new_high + step / 2, step))
-
-    # ── ax4 (DC-IR) ylim 상한 제한 (500mΩ 초과 시 보정) ──
-    dcir_ylim = ax4.get_ylim()
-    if dcir_ylim[1] > 500:
-        dcir_ys = []
-        for coll in ax4.collections:
-            offsets = coll.get_offsets()
-            if len(offsets) > 0:
-                ys = np.array(offsets[:, 1], dtype=float)
-                valid = ys[(~np.isnan(ys)) & (ys > 0)]
-                if len(valid) > 0:
-                    dcir_ys.extend(valid.tolist())
-        if dcir_ys:
-            cap = max(max(dcir_ys) * 1.3, 240)
-        else:
-            cap = 240
-        cap = int(np.ceil(cap / 20) * 20)
-        gap = max(int(np.ceil(cap / 6 / 20) * 20), 20)
-        ax4.set_ylim(0, cap)
-        ax4.set_yticks(np.arange(0, cap + gap, gap))
-
+        graph_cycle(df.NewData.index, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
+                    "Cycle", "DC-IR (mΩ)", temp_lgnd, xscale, graphcolor[colorno % 9])
+    colorno = colorno % 9 + 1
 
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
-    line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+    ax.plot(x, y, label=tlabel)
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
     graph_base_parameter(ax, xlabel, ylabel)
-    return line
 
 # 연속 그래프 그리기
 def graph_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        line, = ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
     graph_base_parameter(ax, xlabel, ylabel)
-    return line
 
 # 연속 그래프 그리기
 def graph_soc_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     ax.set_xticks(np.arange(0, 110, 10))
     ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
     ax.set_ylim(lowlimit, highlimit - limitgap)
@@ -776,42 +275,38 @@ def graph_soc_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, 
 # OCV 기반 DCIR 그래프 그리기
 def graph_dcir(x, y, ax, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     graph_base_parameter(ax, xlabel, ylabel)
 
 # SOC별 DCIR 그래프 그리기
 def graph_soc_dcir(x, y, ax, xlabel, ylabel, tlabel, type = "-"):
     if type == "-":
-        ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel)
     else:
-        ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
-                linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+        ax.plot(x, y, label=tlabel, marker='o', markersize = 3)
     ax.set_xticks(np.arange(0, 110, 10))
     graph_base_parameter(ax, xlabel, ylabel)
 
 # 충방전 Profile 그래프 그리기
 def graph_profile(x, y, ax, xlowlimit, xhighlimit, xlimitgap, ylowlimit, yhighlimit, ylimitgap, xlabel, ylabel, tlabel):
-    line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
+    ax.plot(x, y, label=tlabel)
     ax.set_xticks(np.arange(xlowlimit, xhighlimit, xlimitgap))
     ax.set_xlim(xlowlimit, xhighlimit - xlimitgap)
     ax.set_yticks(np.arange(ylowlimit, yhighlimit, ylimitgap))
     ax.set_ylim(ylowlimit, yhighlimit - ylimitgap)
     graph_base_parameter(ax, xlabel, ylabel)
-    return line
 
 # set profile 그래프 그리기
 def graph_soc_set(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, xlimit):
-    _P = THEME['PALETTE']
-    colors = {3: _P[1], 4: _P[0], 5: _P[2], 6: _P[3], 7: _P[4], 8: _P[1], 9: _P[1]}
+    colors = {3: 'red', 4: 'blue', 5: 'green', 6: 'magenta', 7: 'cyan', 8: 'red', 9: 'red'}
     if xlimit == {0, 1, 2}:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1)
     elif xlimit in colors:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], color=colors[xlimit], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1, color = colors[xlimit])
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1)
     if limitgap != 0:
         ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
         ax.set_ylim(lowlimit, highlimit - limitgap)
@@ -819,8 +314,7 @@ def graph_soc_set(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabe
 
 # ECT SOC 에러 확인 그래프
 def graph_soc_err(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, xlimit):
-    _P = THEME['PALETTE']
-    colors = {3: _P[1], 4: _P[0], 5: _P[2], 6: _P[3], 7: _P[4], 8: _P[1], 9: _P[1]}
+    colors = {3: 'red', 4: 'blue', 5: 'green', 6: 'magenta', 7: 'cyan', 8: 'red', 9: 'red'}
     df = pd.DataFrame({'x': x, 'y': abs(y)})
     grouped = df.groupby(df['x']//5).mean()
     index_x = grouped.index * 5
@@ -833,12 +327,11 @@ def graph_soc_err(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabe
 
 # set profile 그래프 그리기
 def graph_set_profile(x, y, ax, y_llimit, y_hlimit, y_gap, xlabel, ylabel, tlabel, graphcolor, x_llimit, x_hlimit, x_gap):
-    _P = THEME['PALETTE']
-    colors = {1: _P[1], 2: _P[0], 3: _P[2], 4: _P[3], 5: _P[4]}
+    colors = {1: 'red', 2: 'blue', 3: 'green', 4: 'magenta', 5: 'cyan'}
     if graphcolor in colors:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], color=colors[graphcolor], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1, color=colors[graphcolor])
     else:
-        ax.scatter(x, y, label=tlabel, s=THEME['SCATTER_SET_SIZE'], alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=tlabel, s=1)
     if x_gap != 0:
         ax.set_xticks(np.arange(x_llimit, x_hlimit, x_gap))
         ax.set_xlim(x_llimit, x_hlimit - x_gap)
@@ -869,25 +362,22 @@ def graph_simulation(ax, x, y, pltcolor, pltlabel, x_limit, y_min, y_limit, xlab
 
 def graph_eu_set(ax, y_min, y_max):
     ax.set_ylim(y_min, y_max)
-    ax.set_ylabel('capacity ratio', fontsize=THEME['TITLE_SIZE'] + 3, fontweight='bold')
-    ax.set_xlabel('cycle', fontsize=THEME['TITLE_SIZE'] + 3, fontweight='bold')
+    ax.set_ylabel('capacity ratio', fontsize= 20, fontweight='bold')
+    ax.set_xlabel('cycle', fontsize= 20, fontweight='bold')
     ax.tick_params(direction='in')
-    ax.tick_params(axis='x', labelsize=THEME['TICK_SIZE'] + 4)
-    ax.tick_params(axis='y', labelsize=THEME['TICK_SIZE'] + 4)
-    ax.grid(True, which='both', linestyle=THEME['GRID_STYLE'],
-            linewidth=THEME['GRID_WIDTH'], alpha=THEME['GRID_ALPHA'])
-    ax.legend(prop={"size": THEME['TICK_SIZE'] + 4})
+    ax.tick_params(axis='x', labelsize=16)
+    ax.tick_params(axis='y', labelsize=16)
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax.legend(prop={"size": 16})
 
 def graph_default(ax, x, y, x_llimit, x_hlimit, x_gap, y_llimit, y_hlimit, y_gap,
-                  xlabel, ylabel, lgnd, size, graphcolor, facecolor, graphmarker):
-    _P = THEME['PALETTE']
-    colors = {0: _P[1], 1: _P[0], 2: _P[2], 3: _P[3], 4: _P[4]}
+                  xlabel, ylabel, lgnd, size, graphcolor,facecolor, graphmarker):
+    colors = {0: 'red', 1: 'blue', 2: 'green', 3: 'magenta', 4: 'cyan'}
     if graphcolor in colors:
         ax.scatter(x, y, label=lgnd, s=size, color=colors[graphcolor],
-                   edgecolors=colors[graphcolor], facecolors=colors[graphcolor],
-                   marker=graphmarker, alpha=THEME['SCATTER_ALPHA'])
+                   edgecolors=colors[graphcolor], facecolors=colors[graphcolor], marker = graphmarker)
     else:
-        ax.scatter(x, y, label=lgnd, s=size, alpha=THEME['SCATTER_ALPHA'])
+        ax.scatter(x, y, label=lgnd, s=size)
     if x_gap != 0:
         ax.set_xticks(np.arange(x_llimit, x_hlimit, x_gap))
         ax.set_xlim(x_llimit, x_hlimit - x_gap)
@@ -906,8 +396,7 @@ def output_para_fig(figsaveokchk, filename):
         if os.path.isfile('d:/'+ filename +'.png'):
             os.remove('d:/'+ filename +'.png')
         fig = plt.gcf()
-        fig.savefig('d:/'+ filename +'.png', dpi=THEME['DPI'],
-                    facecolor=THEME['FIG_FACECOLOR'], bbox_inches='tight')
+        fig.savefig('d:/'+ filename +'.png')
 
 # 그래프를 D드라이브에 그림 파일로 저장하는 옵션
 def output_fig(figsaveokchk, filename):
@@ -915,8 +404,7 @@ def output_fig(figsaveokchk, filename):
     if figsaveokchk.isChecked():
         if os.path.isfile('d:/'+ filename +'.png'):
             os.remove('d:/'+ filename +'.png')
-        plt.savefig('d:/'+ filename +'.png', dpi=THEME['DPI'],
-                    facecolor=THEME['FIG_FACECOLOR'], bbox_inches='tight')
+        plt.savefig('d:/'+ filename +'.png')
 
 # 랜덤한 값 생성 함수
 def generate_params(ca_mass_min, ca_mass_max, ca_slip_min, ca_slip_max, an_mass_min, an_mass_max, an_slip_min, an_slip_max):
@@ -1034,34 +522,29 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                 Cycleraw.loc[Cycleraw["Condition"] == 2, "TotlCycle"] -= 1
                 Cycleraw = Cycleraw.drop(0, axis=0)
                 Cycleraw = Cycleraw.reset_index()
-        
-        # while loop 변경 260206
-        # 연속된 동일 Condition에 그룹
-        cond_series = Cycleraw["Condition"]
-        merge_group = ((cond_series != cond_series.shift()) | (~cond_series.isin([1, 2]))).cumsum()
-        
-        def merge_rows(group):
-            # 충방전 단일 행 반환
-            if len(group) == 1: 
-                return group.iloc[0]
-            cond = group["Condition"].iloc[0]
-            result = group.iloc[-1].copy()  # 마지막 행 기준
-            if cond == 1:
-                # 충전: Cap 합산, Ocv는 첫 번째 값
-                result["Cap[mAh]"] = group["Cap[mAh]"].sum()
-                result["Ocv"] = group["Ocv"].iloc[0]
-            elif cond == 2:
-                # 방전: Cap, Pow 합산, AveVolt 재계산
-                result["Cap[mAh]"] = group["Cap[mAh]"].sum()
-                result["Pow[mWh]"] = group["Pow[mWh]"].sum()
-                result["Ocv"] = group["Ocv"].iloc[0]
-                if result["Cap[mAh]"] != 0:
-                    result["AveVolt[V]"] = result["Pow[mWh]"] / result["Cap[mAh]"]
-            return result
-        
-        # 그룹별로 병합 수행
-        Cycleraw = Cycleraw.groupby(merge_group, group_keys=False).apply(merge_rows, include_groups=False)
-        Cycleraw = Cycleraw.reset_index(drop=True)
+        # Step 충전 용량, 방전 용량, 방전 에너지 계산
+        i = 0
+        while i < len(Cycleraw) - 1:
+                current_cond = Cycleraw.loc[i, "Condition"]
+                next_cond = Cycleraw.loc[i + 1, "Condition"]
+                if current_cond in (1, 2) and current_cond == next_cond:
+                    # 충전/방전 데이터 병합
+                    if current_cond == 1:
+                        # 충전 데이터 처리
+                        Cycleraw.loc[i + 1, "Cap[mAh]"] += Cycleraw.loc[i, "Cap[mAh]"]
+                        Cycleraw.loc[i + 1, "Ocv"] = Cycleraw.loc[i, "Ocv"]
+                    else:
+                        # 방전 데이터 처리
+                        Cycleraw.loc[i + 1, "Cap[mAh]"] += Cycleraw.loc[i, "Cap[mAh]"]
+                        Cycleraw.loc[i + 1, "Pow[mWh]"] += Cycleraw.loc[i, "Pow[mWh]"]
+                        Cycleraw.loc[i + 1, "AveVolt[V]"] = Cycleraw.loc[i + 1, "Pow[mWh]"] / Cycleraw.loc[i + 1, "Cap[mAh]"]
+                    # 병합된 행의 사이클 수 감소
+                    # Cycleraw.loc[i + 1, "TotlCycle"] -= 1
+                    # 현재 행 삭제 및 인덱스 조정
+                    Cycleraw = Cycleraw.drop(i, axis=0).reset_index(drop=True)
+                    # i += 1  # 병합된 다음 행 건너뛰기
+                else:
+                    i += 1
         # 충전 용량 처리
         chgdata = Cycleraw[(Cycleraw["Condition"] == 1) & (Cycleraw["Finish"] != "                 Vol") 
                            & (Cycleraw["Finish"] != "Volt") & (Cycleraw["Cap[mAh]"] > (mincapacity/60))]
@@ -1081,6 +564,7 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         Dchg = Dchgdata["Cap[mAh]"]
         Temp= Dchgdata["PeakTemp[Deg]"]
         DchgEng = Dchgdata["Pow[mWh]"]
+        Chg2 = Chg.shift(periods=-1)
         AvgV = Dchgdata["AveVolt[V]"]
         OriCycle = Dchgdata.loc[:,"OriCycle"]
         # dcir 기본 처리
@@ -1115,29 +599,9 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                         n = n + dcirstep - 1
         dcir["Cyc"] = cyccal
         dcir = dcir.set_index(dcir["Cyc"])
-        # ── 충방전 효율 계산 (병합 후 TotlCycle 인덱스 보정) ──
-        # Toyo 병합 시 Chg 인덱스(8,13,18…)와 Dchg 인덱스(9,14,19…)가
-        # 1칸씩 어긋나므로, 순서(위치) 기반으로 재정렬하여 매칭
-        if len(Dchg) > 0 and len(Chg) > 0:
-            # 초기 부분 방전(매칭 충전 없음) 제거
-            if Dchg.index[0] < Chg.index[0]:
-                Dchg = Dchg.iloc[1:]
-                Temp = Temp.iloc[1:]
-                DchgEng = DchgEng.iloc[1:]
-                AvgV = AvgV.iloc[1:]
-                OriCycle = OriCycle.iloc[1:]
-            # Chg/Ocv를 Dchg 인덱스에 위치 기반 재정렬
-            _nmin = min(len(Chg), len(Dchg))
-            Chg = pd.Series(Chg.values[:_nmin], index=Dchg.index[:_nmin])
-            Ocv = pd.Series(Ocv.values[:_nmin], index=Dchg.index[:_nmin])
-            Dchg = Dchg.iloc[:_nmin]
-            Temp = Temp.iloc[:_nmin]
-            DchgEng = DchgEng.iloc[:_nmin]
-            AvgV = AvgV.iloc[:_nmin]
-            OriCycle = OriCycle.iloc[:_nmin]
-        Chg2 = Chg.shift(periods=-1)
-        Eff = Dchg / Chg
-        Eff2 = Chg2 / Dchg
+        # 충방전 효율 계산
+        Eff = Dchg/Chg
+        Eff2 = Chg2/Dchg
         # 용량 ratio
         Dchg = Dchg/mincapacity
         Chg = Chg/mincapacity
@@ -1155,1372 +619,6 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
     else:
         sys.exit()
     return [mincapacity, df]
-
-
-def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
-    """
-    toyo_cycle_data()와 동일한 사이클 재정의
-    """
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    tempdata = toyo_cycle_import(raw_file_path)
-    if not (hasattr(tempdata, "dataraw") and not tempdata.dataraw.empty):
-        return {}, mincapacity
-
-    Cycleraw = tempdata.dataraw.copy()
-    Cycleraw["OriCycle"] = Cycleraw["TotlCycle"].copy()
-
-    # 방전 시작 시 data 변경 (toyo_cycle_data와 동일)
-    if Cycleraw.iloc[0]["Condition"] == 2 and len(Cycleraw) > 2:
-        if Cycleraw.iloc[1]["TotlCycle"] == 1:
-            Cycleraw.loc[Cycleraw["Condition"] == 2, "TotlCycle"] -= 1
-            Cycleraw = Cycleraw.drop(0, axis=0).reset_index(drop=True)
-
-    # 연속 동일 Condition 벡터 그룹 (toyo_cycle_data와 동일)
-    cond_series = Cycleraw["Condition"]
-    merge_group = ((cond_series != cond_series.shift()) | (~cond_series.isin([1, 2]))).cumsum()
-
-    # 그룹별 OriCycle 범위 + 요약 정보 추출
-    group_info = Cycleraw.groupby(merge_group).agg(
-        TotlCycle=("TotlCycle", "last"),
-        Condition=("Condition", "first"),
-        Cap=("Cap[mAh]", "sum"),
-        OriMin=("OriCycle", "min"),
-        OriMax=("OriCycle", "max")
-    ).reset_index(drop=True)
-
-    # 방전 그룹 중 유효 사이클만 필터링 (toyo_cycle_data의 Dchgdata 조건)
-    dchg_mask = (group_info["Condition"] == 2) & (group_info["Cap"] > mincapacity / 60)
-    dchg_indices = group_info[dchg_mask].index.tolist()
-
-    # 논리 사이클 → (시작파일, 끝파일) 매핑
-    cycle_map = {}
-    for logical_num, dchg_idx in enumerate(dchg_indices, start=1):
-        dchg_ori_max = int(group_info.loc[dchg_idx, "OriMax"])
-        # 직전 그룹이 충전(Condition=1)이면, 해당 충전의 OriMin이 사이클 시작
-        if dchg_idx > 0 and group_info.loc[dchg_idx - 1, "Condition"] == 1:
-            first_file = int(group_info.loc[dchg_idx - 1, "OriMin"])
-        else:
-            first_file = int(group_info.loc[dchg_idx, "OriMin"])
-        cycle_map[logical_num] = (first_file, dchg_ori_max)
-
-    return cycle_map, mincapacity
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 사이클 카테고리 분류 (경로별 RPT / Rss / 가속수명 / GITT / initial 판별)
-# ═══════════════════════════════════════════════════════════════════
-
-CATEGORY_LABELS = {
-    'RPT': 'RPT (0.2C 충방전)',
-    'Rss': 'Rss (DCIR pulse)',
-    '가속수명': '가속수명 (멀티스텝 충전)',
-    'GITT': 'GITT (펄스 그룹)',
-    'initial': 'initial (초기 반사이클)',
-    'unknown': 'unknown (분류불가)',
-}
-
-
-def _classify_single_pne_cycle(group: pd.DataFrame) -> dict:
-    """단일 PNE raw cycle의 기본 정보 및 카테고리 분류."""
-    n_charge = int((group['StepType'] == 1).sum())
-    n_discharge = int((group['StepType'] == 2).sum())
-    n_rest = int((group['StepType'] == 3).sum())
-    has_es78 = 78 in group['EndState'].values
-    total_steps = len(group)
-
-    # 주 동작: REST 제외 후 어떤 동작인지 판별
-    active_steps = [int(s) for s in group['StepType'].values if int(s) in (1, 2)]
-    if not active_steps:
-        action = 'REST_ONLY'
-    elif all(s == 1 for s in active_steps):
-        action = 'CHG_ONLY'
-    elif all(s == 2 for s in active_steps):
-        action = 'DCHG_ONLY'
-    else:
-        action = 'MIXED'
-
-    if n_charge == 0 and n_discharge == 0:
-        cat = 'initial'
-    elif action in ('CHG_ONLY', 'DCHG_ONLY'):
-        cat = '_pulse'  # GITT 병합 대상
-    elif has_es78:
-        cat = 'Rss'
-    elif n_charge >= 2 and n_discharge >= 1:
-        cat = '가속수명'
-    elif n_charge == 1 and n_discharge >= 1:
-        cat = 'RPT'
-    else:
-        cat = 'unknown'
-
-    return {
-        'n_charge': n_charge, 'n_discharge': n_discharge, 'n_rest': n_rest,
-        'total_steps': total_steps, 'has_es78': has_es78,
-        'action': action, 'category': cat,
-    }
-
-
-def _merge_pulse_groups(raw_results: list[dict]) -> list[dict]:
-    """연속 동일 동작 펄스(_pulse)를 GITT 논리 사이클로 병합."""
-    if not raw_results:
-        return []
-
-    # 1단계: 연속 _pulse 그룹화
-    segments: list[tuple] = []
-    for r in raw_results:
-        if r['category'] == '_pulse':
-            if segments and segments[-1][0] == 'pulse' and segments[-1][2] == r['action']:
-                segments[-1][1].append(r)
-            else:
-                segments.append(('pulse', [r], r['action']))
-        else:
-            segments.append(('normal', [r], None))
-
-    # 2단계: 인접 펄스 그룹 쌍 → GITT 논리 사이클로 병합
-    merged = []
-    si = 0
-    while si < len(segments):
-        seg_type, items, action = segments[si]
-        if seg_type == 'normal':
-            for r in items:
-                merged.append(r)
-            si += 1
-            continue
-
-        paired_items = list(items)
-        has_multi_pulse = len(items) >= 2
-        if (si + 1 < len(segments)
-                and segments[si + 1][0] == 'pulse'
-                and segments[si + 1][2] != action):
-            si += 1
-            paired_items.extend(segments[si][1])
-            if len(segments[si][1]) >= 2:
-                has_multi_pulse = True
-
-        if not has_multi_pulse:
-            for r in paired_items:
-                r['category'] = 'initial'
-                merged.append(r)
-            si += 1
-            continue
-
-        raw_cycles = [r['cycle'] for r in paired_items]
-        merged.append({
-            'cycle': raw_cycles[0],
-            'category': 'GITT',
-            'n_charge': sum(r['n_charge'] for r in paired_items),
-            'n_discharge': sum(r['n_discharge'] for r in paired_items),
-            'n_rest': sum(r['n_rest'] for r in paired_items),
-            'total_steps': sum(r['total_steps'] for r in paired_items),
-            'raw_cycles': len(paired_items),
-            'raw_range': f'{min(raw_cycles)}-{max(raw_cycles)}',
-        })
-        si += 1
-
-    return merged
-
-
-def classify_pne_cycles(df: pd.DataFrame, capacity: int) -> list[dict]:
-    """PNE SaveEndData 기반 사이클별 카테고리 분류.
-
-    분류 기준 (StepType==8 루프마커 제외 후):
-      - 충전+방전 포함, n_charge >= 2  → 가속수명
-      - 충전+방전 포함, EndState==78    → Rss
-      - 충전+방전 포함, n_charge == 1   → RPT
-      - 단일 동작 펄스 반복             → GITT
-      - 방전만                          → initial
-    """
-    real = df[df['StepType'] != 8].copy()
-    raw_results = []
-    for cyc, group in real.groupby('TotlCycle'):
-        info = _classify_single_pne_cycle(group)
-        info['cycle'] = int(cyc)
-        raw_results.append(info)
-
-    merged = _merge_pulse_groups(raw_results)
-    results = []
-    for r in merged:
-        entry = {
-            'cycle': r['cycle'],
-            'category': r['category'],
-            'n_charge': r['n_charge'],
-            'n_discharge': r['n_discharge'],
-        }
-        if 'raw_cycles' in r:
-            entry['raw_cycles'] = r['raw_cycles']
-            entry['raw_range'] = r['raw_range']
-        results.append(entry)
-    return results
-
-
-def classify_toyo_cycles(df: pd.DataFrame, capacity: int) -> list[dict]:
-    """Toyo CAPACITY.LOG 기반 사이클별 카테고리 분류.
-
-    분류 기준 (충전 행 수 기반):
-      - chg_rows == 0 → initial
-      - chg_rows == 1 → RPT
-      - chg_rows >= 2 → 가속수명
-    """
-    results = []
-    if df is None or df.empty:
-        return results
-
-    conds = df['Condition'].values
-    caps = df['Cap[mAh]'].values
-
-    # 연속 동일 Condition 병합
-    groups = []
-    i = 0
-    while i < len(df):
-        start = i
-        cond = int(conds[i])
-        while i < len(df) and int(conds[i]) == cond:
-            i += 1
-        total_cap = float(caps[start:i].sum())
-        n_rows = i - start
-        groups.append((cond, n_rows, total_cap))
-
-    gi = 0
-    cycle_num = 0
-    while gi < len(groups):
-        cond, n, cap = groups[gi]
-        if cond == 1:
-            chg_rows, chg_cap = n, cap
-            if gi + 1 < len(groups) and groups[gi + 1][0] == 2:
-                dchg_rows, dchg_cap = groups[gi + 1][1], groups[gi + 1][2]
-                gi += 2
-            else:
-                dchg_rows, dchg_cap = 0, 0.0
-                gi += 1
-        elif cond == 2:
-            chg_rows, chg_cap = 0, 0.0
-            dchg_rows, dchg_cap = n, cap
-            gi += 1
-        else:
-            gi += 1
-            continue
-
-        cycle_num += 1
-        if chg_rows == 0:
-            cat = 'initial'
-        elif chg_rows == 1:
-            cat = 'RPT'
-        elif chg_rows >= 2:
-            cat = '가속수명'
-        else:
-            cat = 'unknown'
-
-        results.append({
-            'cycle': cycle_num,
-            'category': cat,
-            'chg_rows': chg_rows,
-            'dchg_rows': dchg_rows,
-            'chg_cap': round(chg_cap, 1),
-            'dchg_cap': round(dchg_cap, 1),
-        })
-    return results
-
-
-def detect_schedule_pattern(classified: list[dict]) -> str:
-    """카테고리 시퀀스의 RLE → 패턴 문자열 생성."""
-    if not classified:
-        return ''
-    categories = [c['category'] for c in classified]
-    rle = []
-    current = categories[0]
-    count = 1
-    for cat in categories[1:]:
-        if cat == current:
-            count += 1
-        else:
-            rle.append((current, count))
-            current = cat
-            count = 1
-    rle.append((current, count))
-    parts = [f'{cat}×{n}' if n > 1 else cat for cat, n in rle]
-    return ' → '.join(parts)
-
-
-def detect_test_type(counts: dict) -> str:
-    """카테고리 분포로 시험 종류 추정."""
-    total = sum(counts.values())
-    if total == 0:
-        return '데이터 없음'
-    accel = counts.get('가속수명', 0)
-    rss = counts.get('Rss', 0)
-    rpt = counts.get('RPT', 0)
-    gitt = counts.get('GITT', 0)
-    if gitt > total * 0.3:
-        return 'GITT 시험'
-    if accel > total * 0.5:
-        return '가속수명 시험'
-    if rss > total * 0.3:
-        return 'Rss/DCIR 시험'
-    if rpt > total * 0.5:
-        return 'RPT 전용'
-    if accel > 0 and rss > 0:
-        return '가속수명 + Rss 복합'
-    return '기타'
-
-
-def _extract_capacity_from_path(path: str) -> float:
-    """경로 문자열에서 용량(mAh) 추출.
-
-    폴더 명명 규칙 '_XXXXmAh_' 패턴에서 숫자 부분을 추출한다.
-    예: '1689mAh' → 1689.0, '2335mAh' → 2335.0
-    매칭 실패 시 0.0 반환.
-    """
-    import re
-    # 폴더명에서 '숫자+mAh' 패턴 검색 (대소문자 무시)
-    m = re.search(r'(\d+(?:\.\d+)?)\s*mAh', path, re.IGNORECASE)
-    return float(m.group(1)) if m else 0.0
-
-
-def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None:
-    """단일 채널 폴더의 사이클 카테고리를 분류.
-
-    Parameters
-    ----------
-    channel_path : str
-        채널 폴더 경로 (예: rawdata/dataset/[032])
-    capacity : float
-        추정 용량(mAh). 0이면 폴더명에서 자동 추출 시도.
-
-    Returns
-    -------
-    dict | None
-        {
-            'cycler': 'Toyo' | 'PNE',
-            'total_cycles': int,
-            'counts': {'RPT': n, '가속수명': n, ...},
-            'classified': [{'cycle': 1, 'category': 'RPT', ...}, ...],
-            'schedule_pattern': str,
-            'test_type': str,
-        }
-    """
-    # Pattern 폴더는 채널 서브폴더가 아닌 상위 데이터 경로에 있음
-    parent_path = os.path.dirname(channel_path)
-    is_pne = check_cycler(parent_path)
-
-    # capacity가 0이면 폴더명에서 자동 추출 시도
-    if not capacity:
-        capacity = _extract_capacity_from_path(parent_path)
-
-    if is_pne:
-        # PNE: SaveEndData.csv 로딩
-        restore_path = os.path.join(channel_path, 'Restore')
-        if not os.path.isdir(restore_path):
-            return None
-        save_end_file = None
-        try:
-            for f in os.listdir(restore_path):
-                if 'SaveEndData' in f and f.endswith('.csv'):
-                    save_end_file = f
-                    break
-        except OSError:
-            return None
-        if not save_end_file:
-            return None
-        fp = os.path.join(restore_path, save_end_file)
-        try:
-            df = pd.read_csv(fp, header=None, encoding='cp949', on_bad_lines='skip')
-        except Exception:
-            return None
-        if df.shape[1] < 28:
-            return None
-        summary = df[[27, 2, 6, 9, 10, 11, 17]].copy()
-        summary.columns = ['TotlCycle', 'StepType', 'EndState', 'Current', 'ChgCap', 'DchgCap', 'StepTime']
-        classified = classify_pne_cycles(summary, int(capacity))
-    else:
-        # Toyo: capacity.log 로딩
-        cap_log_path = os.path.join(channel_path, 'capacity.log')
-        if not os.path.isfile(cap_log_path):
-            # 대소문자 차이 허용
-            for f in os.listdir(channel_path):
-                if f.upper() == 'CAPACITY.LOG':
-                    cap_log_path = os.path.join(channel_path, f)
-                    break
-            else:
-                return None
-        try:
-            df = pd.read_csv(cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip')
-        except Exception:
-            return None
-        needed = ['Condition', 'TotlCycle', 'Cap[mAh]']
-        if not all(c in df.columns for c in needed):
-            return None
-        classified = classify_toyo_cycles(df[['Condition', 'TotlCycle', 'Cap[mAh]']].copy(), int(capacity))
-
-    if not classified:
-        return None
-
-    counts = {}
-    for c in classified:
-        cat = c['category']
-        counts[cat] = counts.get(cat, 0) + 1
-
-    # .sch 우선 전략: PNE + 파서 있으면 .sch에서 test_type, pattern 결정
-    sch_struct = None
-    if is_pne and HAS_SCH_PARSER:
-        sch_file = _find_sch_file(channel_path)
-        if sch_file:
-            sch_struct = extract_schedule_structure_from_sch(sch_file, capacity)
-
-    if sch_struct:
-        # .sch 기반 (설계 의도)
-        test_type = sch_struct['schedule_type']
-        schedule_pattern = sch_struct['pattern_string']
-    else:
-        # CSV 폴백 (Toyo 또는 .sch 없는 경우)
-        test_type = detect_test_type(counts)
-        schedule_pattern = detect_schedule_pattern(classified)
-
-    result = {
-        'cycler': 'PNE' if is_pne else 'Toyo',
-        'total_cycles': len(classified),
-        'counts': counts,
-        'classified': classified,
-        'schedule_pattern': schedule_pattern,
-        'test_type': test_type,
-    }
-
-    # .sch 구조 정보 첨부 (있는 경우)
-    if sch_struct:
-        result['sch_info'] = {
-            'has_rss': sch_struct['has_rss'],
-            'has_gitt_hppc': sch_struct['has_gitt_hppc'],
-            'pattern_string': sch_struct['pattern_string'],
-            'schedule_type': sch_struct['schedule_type'],
-        }
-
-    # 가속수명 충방전 패턴 분석 (.sch_struct 있으면 .sch 파싱 재사용)
-    accel_pattern = analyze_accel_pattern(
-        channel_path, capacity, classified, is_pne,
-    )
-    if accel_pattern:
-        result['accel_pattern'] = accel_pattern
-
-    return result
-
-
-def classify_paths_summary(path_list: list, capacity_list: list | None = None) -> dict:
-    """여러 경로의 사이클 분류를 일괄 수행하여 요약 dict 반환.
-
-    Parameters
-    ----------
-    path_list : list[str]
-        상위 데이터 경로 목록 (각 경로 안에 채널 서브폴더 탐색)
-    capacity_list : list[float] | None
-        경로별 용량 (mAh), None이면 모두 0(자동 감지)
-
-    Returns
-    -------
-    dict
-        {
-            'channels': [{'path': str, 'channel': str, ...classify result...}, ...],
-            'summary_text': str,  # 콘솔 출력용 요약 문자열
-        }
-    """
-    results = []
-    for idx, data_path in enumerate(path_list):
-        cap = capacity_list[idx] if capacity_list and idx < len(capacity_list) else 0
-        if not os.path.isdir(data_path):
-            continue
-        # 채널 서브폴더 탐색
-        try:
-            subfolders = [f.path for f in os.scandir(data_path)
-                          if f.is_dir() and _is_channel_folder(f.name)]
-        except OSError:
-            continue
-        for ch_path in subfolders:
-            if 'Pattern' in os.path.basename(ch_path):
-                continue
-            result = classify_channel_path(ch_path, cap)
-            if result:
-                result['path'] = data_path
-                result['channel'] = os.path.basename(ch_path)
-                results.append(result)
-
-    # 요약 텍스트 생성
-    lines = []
-    if results:
-        lines.append('─' * 60)
-        lines.append('  사이클 카테고리 분류 결과')
-        lines.append('─' * 60)
-        for r in results:
-            ch_name = r['channel']
-            test_type = r['test_type']
-            total = r['total_cycles']
-            counts = r['counts']
-            cat_parts = []
-            for cat in ['RPT', 'Rss', '가속수명', 'GITT', 'initial', 'unknown']:
-                n = counts.get(cat, 0)
-                if n > 0:
-                    cat_parts.append(f'{cat}:{n}')
-            lines.append(f'  [{r["cycler"]}] {ch_name}  |  {test_type}  |  총 {total}cyc  |  {", ".join(cat_parts)}')
-            if r['schedule_pattern']:
-                lines.append(f'         패턴: {r["schedule_pattern"]}')
-        lines.append('─' * 60)
-
-    return {
-        'channels': results,
-        'summary_text': '\n'.join(lines),
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════
-# 가속수명 충방전 패턴 분석 (스텝 수, C-rate, CC/CCCV cutoff)
-# ═══════════════════════════════════════════════════════════════════
-
-# 표준 C-rate 그리드 (배터리 시험에서 사용되는 대표값)
-_CRATE_GRID = [
-    0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.33, 0.4, 0.5,
-    0.6, 0.65, 0.7, 0.75, 0.8, 0.9, 1.0, 1.2, 1.4, 1.5,
-    1.65, 2.0, 2.8,
-]
-
-
-def _snap_crate(raw: float, tolerance: float = 0.05) -> float:
-    """원시 C-rate를 표준 그리드 가장 가까운 값으로 스냅.
-
-    tolerance 비율(기본 5%) 이내에 그리드 값이 있으면 스냅,
-    없으면 0.05C 단위로 반올림한다.
-    """
-    if raw <= 0:
-        return 0.0
-    best_val = raw
-    best_rel = tolerance + 1  # 초기값: 허용 범위 밖
-    for g in _CRATE_GRID:
-        rel = abs(raw - g) / g
-        if rel < best_rel:
-            best_rel = rel
-            best_val = g
-    if best_rel <= tolerance:
-        return best_val
-    # 그리드에 매칭 안 되면 0.05C 단위 반올림
-    return round(round(raw / 0.05) * 0.05, 2)
-
-
-def _snap_voltage(raw: float) -> float:
-    """원시 전압을 0.01V 단위로 반올림 (센서 미세 오차 보정).
-
-    Python round()의 부동소수점 오차 방지를 위해 Decimal 사용.
-    """
-    from decimal import Decimal, ROUND_HALF_UP
-    return float(Decimal(str(raw)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
-
-
-def _snap_accel_pattern(pattern: dict) -> dict:
-    """패턴 분석 결과의 C-rate/전압을 표준값으로 일괄 스냅."""
-    for step in pattern['charge_steps']:
-        step['crate'] = _snap_crate(step['crate'])
-        step['voltage_cutoff'] = _snap_voltage(step['voltage_cutoff'])
-        if 'current_cutoff_crate' in step:
-            step['current_cutoff_crate'] = _snap_crate(step['current_cutoff_crate'])
-    for step in pattern['discharge_steps']:
-        step['crate'] = _snap_crate(step['crate'])
-        step['voltage_cutoff'] = _snap_voltage(step['voltage_cutoff'])
-    return pattern
-
-
-def _extract_toyo_step_currents(
-    channel_path: str, totl_cycle: int, condition: int,
-) -> tuple[float, float]:
-    """Toyo 원시 사이클 파일에서 CC 전류(mA)와 CV cutoff 전류(mA) 추출."""
-    cycle_file = os.path.join(channel_path, '%06d' % totl_cycle)
-    if not os.path.isfile(cycle_file):
-        return (0.0, 0.0)
-    try:
-        raw = pd.read_csv(
-            cycle_file, sep=',', skiprows=3,
-            encoding='cp949', on_bad_lines='skip',
-        )
-    except Exception:
-        return (0.0, 0.0)
-
-    cur_col = 'Current[mA]'
-    cond_col = 'Condition'
-    if cur_col not in raw.columns or cond_col not in raw.columns:
-        return (0.0, 0.0)
-
-    active = raw[(raw[cond_col] == condition) & (raw[cur_col].abs() > 0)]
-    if active.empty:
-        return (0.0, 0.0)
-
-    currents = active[cur_col].abs().values
-    # CC 전류: 최대 전류의 95% 이상인 값의 중앙값 (CC 플래토 추출)
-    max_cur = currents.max()
-    cc_plateau = currents[currents >= max_cur * 0.95]
-    cc_current = float(np.median(cc_plateau)) if len(cc_plateau) > 0 else float(max_cur)
-    # CV cutoff 전류: 마지막 전류
-    cv_cutoff = float(currents[-1])
-    return (cc_current, cv_cutoff)
-
-
-def _analyze_accel_pattern_toyo(
-    channel_path: str, capacity: float,
-) -> dict | None:
-    """Toyo capacity.log 기반 가속수명 충방전 패턴 분석.
-
-    첫 번째 가속수명 사이클의 충전/방전 스텝별
-    C-rate, CC/CCCV 모드, voltage/current cutoff 정보를 추출한다.
-    """
-    cap_log_path = os.path.join(channel_path, 'capacity.log')
-    if not os.path.isfile(cap_log_path):
-        for f in os.listdir(channel_path):
-            if f.upper() == 'CAPACITY.LOG':
-                cap_log_path = os.path.join(channel_path, f)
-                break
-        else:
-            return None
-
-    try:
-        df = pd.read_csv(
-            cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip',
-        )
-    except Exception:
-        return None
-
-    # 컬럼명 통일
-    col_map = {
-        'Total Cycle': 'TotlCycle', 'Capacity[mAh]': 'Cap[mAh]',
-        'End Factor': 'Finish', 'Peak Volt.[V]': 'PeakVolt[V]',
-    }
-    df.rename(columns={k: v for k, v in col_map.items() if k in df.columns},
-              inplace=True)
-    for need in ('Condition', 'TotlCycle', 'Finish', 'PeakVolt[V]', 'Cap[mAh]'):
-        if need not in df.columns:
-            return None
-
-    conds = df['Condition'].values
-
-    # 첫 번째 가속수명 구간 탐색 (연속 Condition==1 행 2개 이상)
-    i = 0
-    chg_start = chg_end = dchg_start = dchg_end = None
-    while i < len(df):
-        start = i
-        cond = int(conds[i])
-        while i < len(df) and int(conds[i]) == cond:
-            i += 1
-        if cond == 1 and (i - start) >= 2 and chg_start is None:
-            chg_start, chg_end = start, i
-            # 직후 방전 그룹도 포함
-            if i < len(df) and int(conds[i]) == 2:
-                dchg_start = i
-                while i < len(df) and int(conds[i]) == 2:
-                    i += 1
-                dchg_end = i
-            break
-    if chg_start is None:
-        return None
-
-    # 충전 스텝 분석
-    charge_steps = []
-    for idx, row_idx in enumerate(range(chg_start, chg_end)):
-        row = df.iloc[row_idx]
-        tc = int(row['TotlCycle'])
-        finish = str(row['Finish']).strip()
-        peak_v = float(row['PeakVolt[V]'])
-        step_cap = float(row['Cap[mAh]'])
-        cc_cur, cv_cut = _extract_toyo_step_currents(channel_path, tc, 1)
-
-        if finish in ('Cur', 'Cur.'):
-            # CCCV: CC 충전 → 전압 도달 후 CV → 전류 cutoff
-            charge_steps.append({
-                'step': idx + 1,
-                'mode': 'CCCV',
-                'crate': round(cc_cur / capacity, 2) if capacity else 0,
-                'current_mA': round(cc_cur, 1),
-                'voltage_cutoff': round(peak_v, 3),
-                'current_cutoff_crate': round(cv_cut / capacity, 2) if capacity else 0,
-                'current_cutoff_mA': round(cv_cut, 1),
-                'capacity_mAh': round(step_cap, 1),
-            })
-        else:
-            # CC: 정전류 충전 → 전압 도달 시 종료
-            charge_steps.append({
-                'step': idx + 1,
-                'mode': 'CC',
-                'crate': round(cc_cur / capacity, 2) if capacity else 0,
-                'current_mA': round(cc_cur, 1),
-                'voltage_cutoff': round(peak_v, 3),
-                'capacity_mAh': round(step_cap, 1),
-            })
-
-    # 방전 스텝 분석
-    discharge_steps = []
-    if dchg_start is not None and dchg_end is not None:
-        for idx, row_idx in enumerate(range(dchg_start, dchg_end)):
-            row = df.iloc[row_idx]
-            tc = int(row['TotlCycle'])
-            peak_v = float(row['PeakVolt[V]'])
-            step_cap = float(row['Cap[mAh]'])
-            cc_cur, _ = _extract_toyo_step_currents(channel_path, tc, 2)
-
-            # 방전 전압 cutoff: 원시 파일의 최저 전압
-            cycle_file = os.path.join(channel_path, '%06d' % tc)
-            min_v = peak_v
-            if os.path.isfile(cycle_file):
-                try:
-                    raw = pd.read_csv(
-                        cycle_file, sep=',', skiprows=3,
-                        encoding='cp949', on_bad_lines='skip',
-                    )
-                    part = raw[raw['Condition'] == 2]
-                    if not part.empty:
-                        min_v = float(part['Voltage[V]'].min())
-                except Exception:
-                    pass
-
-            discharge_steps.append({
-                'step': idx + 1,
-                'mode': 'CC',
-                'crate': round(cc_cur / capacity, 2) if capacity else 0,
-                'current_mA': round(cc_cur, 1),
-                'voltage_cutoff': round(min_v, 3),
-                'capacity_mAh': round(step_cap, 1),
-            })
-
-    return {
-        'charge_steps': charge_steps,
-        'discharge_steps': discharge_steps,
-        'n_charge_steps': len(charge_steps),
-        'n_discharge_steps': len(discharge_steps),
-    }
-
-
-def _analyze_accel_pattern_pne(
-    channel_path: str, capacity: float,
-) -> dict | None:
-    """PNE SaveEndData 기반 가속수명 충방전 패턴 분석.
-
-    PNE SaveEndData 주요 컬럼 인덱스:
-      [2]  StepType  1=Chg, 2=Dchg, 3=Rest, 8=Loop
-      [6]  EndState  65=전압종료(CC), 66=전류종료(CCCV)
-      [8]  EndVoltage (μV)
-      [9]  EndCurrent (μA, 충전=양수, 방전=음수)
-      [27] TotlCycle
-      [32] CV구간 시간 (centisec)
-      [38] CC구간 시간 (centisec)
-      [39] CC구간 용량 (μAh)
-      [40] CV구간 용량 (μAh)
-    """
-    restore_path = os.path.join(channel_path, 'Restore')
-    if not os.path.isdir(restore_path):
-        return None
-
-    sed_file = None
-    try:
-        for f in os.listdir(restore_path):
-            if 'SaveEndData' in f and f.endswith('.csv'):
-                sed_file = f
-                break
-    except OSError:
-        return None
-    if not sed_file:
-        return None
-
-    try:
-        df = pd.read_csv(
-            os.path.join(restore_path, sed_file),
-            header=None, encoding='cp949', on_bad_lines='skip',
-        )
-    except Exception:
-        return None
-    if df.shape[1] < 41:
-        return None
-
-    # 가속수명 사이클 찾기: StepType==8 제외 후 충전 스텝 2개 이상인 첫 TotlCycle
-    real = df[df[2] != 8]
-    first_accel_cyc = None
-    for cyc, group in real.groupby(27):
-        n_chg = (group[2] == 1).sum()
-        n_dchg = (group[2] == 2).sum()
-        if n_chg >= 2 and n_dchg >= 1:
-            first_accel_cyc = cyc
-            break
-    if first_accel_cyc is None:
-        return None
-
-    cyc_data = real[real[27] == first_accel_cyc]
-
-    # 충전 스텝 분석
-    charge_steps = []
-    chg_rows = cyc_data[cyc_data[2] == 1]
-    for idx, (_, row) in enumerate(chg_rows.iterrows()):
-        end_state = int(row[6])
-        end_v = row[8] / 1e6        # μV → V
-        end_cur = row[9] / 1000     # μA → mA
-        cc_time = row[38] / 100     # centisec → sec
-        cv_time = row[32] / 100
-        cc_cap = row[39] / 1000     # μAh → mAh
-        cv_cap = row[40] / 1000
-
-        if end_state == 66 and cc_time > 0:
-            # CCCV: CC 전류를 용량/시간으로 계산
-            cc_cur = cc_cap / (cc_time / 3600)  # mA
-            cutoff_cur = abs(end_cur)            # mA
-            charge_steps.append({
-                'step': idx + 1,
-                'mode': 'CCCV',
-                'crate': round(cc_cur / capacity, 2) if capacity else 0,
-                'current_mA': round(cc_cur, 1),
-                'voltage_cutoff': round(end_v, 3),
-                'current_cutoff_crate': round(cutoff_cur / capacity, 2) if capacity else 0,
-                'current_cutoff_mA': round(cutoff_cur, 1),
-                'capacity_mAh': round(cc_cap + cv_cap, 1),
-            })
-        else:
-            # CC: 종료 전류 = CC 전류
-            charge_steps.append({
-                'step': idx + 1,
-                'mode': 'CC',
-                'crate': round(abs(end_cur) / capacity, 2) if capacity else 0,
-                'current_mA': round(abs(end_cur), 1),
-                'voltage_cutoff': round(end_v, 3),
-                'capacity_mAh': round(cc_cap, 1),
-            })
-
-    # 방전 스텝 분석
-    discharge_steps = []
-    dchg_rows = cyc_data[cyc_data[2] == 2]
-    for idx, (_, row) in enumerate(dchg_rows.iterrows()):
-        end_v = row[8] / 1e6
-        end_cur = abs(row[9] / 1000)  # mA (절대값)
-        dchg_cap = row[11] / 1000
-
-        discharge_steps.append({
-            'step': idx + 1,
-            'mode': 'CC',
-            'crate': round(end_cur / capacity, 2) if capacity else 0,
-            'current_mA': round(end_cur, 1),
-            'voltage_cutoff': round(end_v, 3),
-            'capacity_mAh': round(dchg_cap, 1),
-        })
-
-    return {
-        'charge_steps': charge_steps,
-        'discharge_steps': discharge_steps,
-        'n_charge_steps': len(charge_steps),
-        'n_discharge_steps': len(discharge_steps),
-    }
-
-
-def analyze_accel_pattern(
-    channel_path: str, capacity: float,
-    classified: list[dict], is_pne: bool,
-) -> dict | None:
-    """가속수명 사이클의 충방전 패턴(스텝 수, C-rate, cutoff) 분석.
-
-    Parameters
-    ----------
-    channel_path : str
-        채널 폴더 경로
-    capacity : float
-        공칭 용량(mAh)
-    classified : list[dict]
-        classify_*_cycles 결과
-    is_pne : bool
-        PNE 여부
-
-    Returns
-    -------
-    dict | None
-        {
-            'charge_steps': [{'step', 'mode', 'crate', ...}, ...],
-            'discharge_steps': [...],
-            'n_charge_steps': int,
-            'n_discharge_steps': int,
-        }
-    """
-    accel_exists = any(c.get('category') == '가속수명' for c in classified)
-    if not accel_exists:
-        return None
-    if is_pne:
-        # .sch 우선 → CSV 폴백 전략
-        result = None
-        if HAS_SCH_PARSER:
-            sch_file = _find_sch_file(channel_path)
-            if sch_file:
-                result = extract_accel_pattern_from_sch(sch_file, capacity)
-        if result is None:
-            result = _analyze_accel_pattern_pne(channel_path, capacity)
-    else:
-        result = _analyze_accel_pattern_toyo(channel_path, capacity)
-    # C-rate / 전압 표준값 스냅 (충방전기 미세 오차 보정)
-    if result:
-        result = _snap_accel_pattern(result)
-    return result
-
-
-def _fmt_crate(val: float) -> str:
-    """C-rate 표시: 정수면 '2.0C', 아니면 소수점 적절히."""
-    if val == int(val):
-        return f'{val:.1f}'
-    # 0.05 단위 → 소수점 2자리까지
-    return f'{val:.2f}'
-
-
-_ORDINALS = ['1st', '2nd', '3rd'] + [f'{i}th' for i in range(4, 21)]
-
-
-def _ordinal(n: int) -> str:
-    """1-based 인덱스 → 서수 문자열 (1st, 2nd, 3rd, 4th ...)."""
-    if 1 <= n <= len(_ORDINALS):
-        return _ORDINALS[n - 1]
-    return f'{n}th'
-
-
-def _find_sch_file(channel_path: str) -> str | None:
-    """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None."""
-    try:
-        for f in os.listdir(channel_path):
-            if f.endswith('.sch'):
-                return os.path.join(channel_path, f)
-    except OSError:
-        pass
-    return None
-
-
-def _fmt_step(s: dict) -> str:
-    """단일 스텝 → '[Nth] MODE C-rate/Voltage(/cutoff)' 포맷 문자열."""
-    ord_str = _ordinal(s['step'])
-    cr = _fmt_crate(s['crate'])
-    vcut = f'{s["voltage_cutoff"]:.2f}'
-    if s['mode'] == 'CCCV':
-        if 'current_cutoff_crate' in s:
-            icut = _fmt_crate(s['current_cutoff_crate'])
-            return f'[{ord_str}] CCCV {cr}C/{vcut}V/cut{icut}C'
-        return f'[{ord_str}] CCCV {cr}C/{vcut}V'
-    return f'[{ord_str}] CC {cr}C/{vcut}V'
-
-
-def format_accel_pattern(pattern: dict) -> list[str]:
-    """가속수명 패턴을 콘솔 로그용 문자열 목록으로 반환."""
-    chg = ' → '.join(_fmt_step(s) for s in pattern['charge_steps'])
-    dchg = ' → '.join(_fmt_step(s) for s in pattern['discharge_steps'])
-    return [
-        f'    ▷ 충전 {pattern["n_charge_steps"]}step: {chg}'
-        f' | 방전 {pattern["n_discharge_steps"]}step: {dchg}',
-    ]
-
-
-def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
-    """
-    Toyo 스텝 프로파일 배치 로딩: 채널당 1회 min_cap 산정 후, 사이클 반복.
-    """
-    
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        if os.path.isfile(raw_file_path + "\\%06d" % inicycle):
-            tempdata = toyo_Profile_import(raw_file_path, inicycle)
-            stepcyc = inicycle
-            lasttime = 0
-            if int(tempdata.dataraw["Condition"].max()) < 2:
-                df.stepchg = tempdata.dataraw
-                df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
-                lasttime = df.stepchg["PassTime[Sec]"].max()
-                maxcon = 1
-                while maxcon == 1:
-                    stepcyc = stepcyc + 1
-                    tempdata = toyo_Profile_import(raw_file_path, stepcyc)
-                    maxcon = int(tempdata.dataraw["Condition"].max())
-                    tempdata.dataraw = tempdata.dataraw[(tempdata.dataraw["Condition"] == 1)]
-                    tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
-                    df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
-                    lasttime = df.stepchg["PassTime[Sec]"].max()
-            else:
-                df.stepchg = tempdata.dataraw
-                df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
-            if not df.stepchg.empty:
-                df.stepchg["Cap[mAh]"] = 0
-                df.stepchg = df.stepchg[df.stepchg["Current[mA]"] >= (cutoff * mincapacity)]
-                df.stepchg = df.stepchg.reset_index()
-                initial_cap = df.stepchg["Cap[mAh]"].iloc[0]
-                df.stepchg["delta_time"] = (
-                    df.stepchg["PassTime[Sec]"].shift(-1) - df.stepchg["PassTime[Sec]"]
-                )
-                df.stepchg["next_current"] = df.stepchg["Current[mA]"].shift(-1)
-                df.stepchg["contribution"] = (df.stepchg["delta_time"] * df.stepchg["next_current"]) / 3600
-                df.stepchg["Cap[mAh]"] = initial_cap + df.stepchg["contribution"].fillna(0).cumsum().shift(1, fill_value=0)
-                df.stepchg.drop(["delta_time", "next_current", "contribution"], axis=1, inplace=True)
-                df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"]/60
-                df.stepchg["Current[mA]"] = df.stepchg["Current[mA]"]/mincapacity
-                df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"]/mincapacity
-                df.stepchg = df.stepchg[["PassTime[Sec]", "Cap[mAh]", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
-                df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
-    """
-    PNE 프로파일: 인덱스 파일/원시 데이터를 1회 loading 후, 메모리에서 사이클별 데이터 분배.
-    """
-    results = {}
-    if (raw_file_path[-4:-1]) == "ter":
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # min_cap은 1회만 계산
-    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-    
-    rawdir = raw_file_path + "\\Restore\\"
-    if not os.path.isdir(rawdir):
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # 인덱스 파일 1회 읽기 (SaveEndData, savingFileIndex_start)
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    save_end_data = None
-    file_index_list = None
-    for files in subfile:
-        if "SaveEndData" in files:
-            save_end_data = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                         header=None, encoding="cp949", on_bad_lines='skip')
-        if files == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(rawdir + files, sep=r"\s+", skiprows=0, engine="c",
-                               header=None, encoding="cp949", on_bad_lines='skip')
-            file_index_list = [int(element.replace(',', '')) for element in df2.loc[:, 3].tolist()]
-    
-    if save_end_data is None or file_index_list is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # 전체 사이클 범위에서 필요한 SaveData 파일 범위 산정 (1회)
-    min_cyc = min(cycle_list)
-    max_cyc = max(cycle_list) + 1
-    if min_cyc != 1:
-        index_min = save_end_data.loc[(save_end_data.loc[:, 27] == (min_cyc - 1)), 0].tolist()
-    else:
-        index_min = [0]
-    index_max = save_end_data.loc[(save_end_data.loc[:, 27] == max_cyc), 0].tolist()
-    if not index_max:
-        index_max = save_end_data.loc[(save_end_data.loc[:, 27] == save_end_data.loc[:, 27].max()), 0].tolist()
-    
-    if len(index_min) == 0:
-        file_start = 0
-    else:
-        file_start = binary_search(file_index_list, index_min[-1] + 1) - 1
-    file_end = binary_search(file_index_list, index_max[-1]) - 1
-    if file_start < 0:
-        file_start = 0
-    
-    # 필요한 SaveData 파일 전체를 1회 로딩
-    all_raw = None
-    for files in subfile[file_start:(file_end + 1)]:
-        if "SaveData" in files:
-            chunk = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                header=None, encoding="cp949", on_bad_lines='skip')
-            if all_raw is None:
-                all_raw = chunk
-            else:
-                all_raw = pd.concat([all_raw, chunk], ignore_index=True)
-    
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # PNE21/22/코인셀 단위 변환 계수 결정
-    is_pne21_22 = is_micro_unit(raw_file_path)
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-    
-    # 사이클별 데이터 분배 (메모리에서)
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))]
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 21, 10, 7]].copy()
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            # 단위 변환
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.stepchg = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.stepchg = pd.concat(Profiles)
-            # cut-off 및 컬럼 정리
-            if hasattr(df, "stepchg"):
-                df.stepchg = df.stepchg[(df.stepchg["Current[mA]"] >= cutoff)]
-                df.stepchg = df.stepchg[["PassTime[Sec]", "Chgcap", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
-                df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# PNE SaveData 로딩
-def _pne_load_profile_raw(raw_file_path, min_cycle, max_cycle, mincapacity, inirate):
-    """PNE SaveData 파일을 일괄 로딩하는 배치 공통 헬퍼.
-    min_cycle ~ max_cycle 범위의 원시 데이터를 1회 디스크 I/O로 취득한다.
-    Returns: (mincapacity, all_raw: pd.DataFrame|None, is_pne21_22: bool)
-    """
-    if (raw_file_path[-4:-1]) == "ter":
-        return (mincapacity, None, False)
-
-    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-
-    rawdir = raw_file_path + "\\Restore\\"
-    if not os.path.isdir(rawdir):
-        return (mincapacity, None, False)
-
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    save_end_data = None
-    file_index_list = None
-    for files in subfile:
-        if "SaveEndData" in files:
-            save_end_data = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                         header=None, encoding="cp949", on_bad_lines='skip')
-        if files == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(rawdir + files, sep=r"\s+", skiprows=0, engine="c",
-                               header=None, encoding="cp949", on_bad_lines='skip')
-            file_index_list = df2[3].str.replace(',', '').astype(int).tolist()
-
-    if save_end_data is None or file_index_list is None:
-        return (mincapacity, None, False)
-
-    # 파일 범위 결정
-    if min_cycle != 1:
-        index_min = save_end_data.loc[(save_end_data.loc[:, 27] == (min_cycle - 1)), 0].tolist()
-    else:
-        index_min = [0]
-    index_max = save_end_data.loc[(save_end_data.loc[:, 27] == max_cycle), 0].tolist()
-    if not index_max:
-        index_max = save_end_data.loc[(save_end_data.loc[:, 27] == save_end_data.loc[:, 27].max()), 0].tolist()
-
-    if len(index_min) == 0:
-        file_start = 0
-    else:
-        file_start = binary_search(file_index_list, index_min[-1] + 1) - 1
-    file_end = binary_search(file_index_list, index_max[-1]) - 1
-    if file_start < 0:
-        file_start = 0
-
-    # SaveData 일괄 로딩
-    all_raw = None
-    for files in subfile[file_start:(file_end + 1)]:
-        if "SaveData" in files:
-            chunk = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                header=None, encoding="cp949", on_bad_lines='skip')
-            if all_raw is None:
-                all_raw = chunk
-            else:
-                all_raw = pd.concat([all_raw, chunk], ignore_index=True)
-
-    is_pne21_22 = is_micro_unit(raw_file_path)
-    return (mincapacity, all_raw, is_pne21_22)
-
-
-def toyo_rate_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
-    """Toyo Rate 프로파일 배치 로딩: min_cap 1회 산정 후 사이클 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        results[inicycle] = toyo_rate_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
-    return results
-
-
-def pne_rate_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
-    """PNE Rate 프로파일 배치 로딩: SaveData 1회 로딩 후 사이클별 분배."""
-    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
-        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
-    results = {}
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))].copy()
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 21, 10, 7]]
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            cycle_raw = cycle_raw[(cycle_raw["Current[mA]"] >= cutoff)]
-            df.rateProfile = cycle_raw[["PassTime[Sec]", "Chgcap", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
-            df.rateProfile.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# ─── Chg Profile 배치 함수 ───
-def toyo_chg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """Toyo Chg 프로파일 배치 로딩: min_cap 1회 산정 후 사이클 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        results[inicycle] = toyo_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, smoothdegree)
-    return results
-
-
-def pne_chg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """PNE Chg 프로파일 배치 로딩: SaveData 1회 로딩 후 사이클별 분배."""
-    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
-        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
-    results = {}
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))].copy()
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 10, 14, 21, 7]]
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Chgcap", "Chgwh", "Temp1[Deg]", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.Profile = pd.concat(Profiles)
-            if hasattr(df, "Profile"):
-                df.Profile = df.Profile.reset_index()
-                df.Profile = df.Profile[(df.Profile["Current[mA]"] >= cutoff)]
-                sd = smoothdegree if smoothdegree != 0 else max(int(len(df.Profile) / 30), 1)
-                df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=sd)
-                df.Profile["delcap"] = df.Profile["Chgcap"].diff(periods=sd)
-                df.Profile["dQdV"] = df.Profile["delcap"] / df.Profile["delvol"]
-                df.Profile["dVdQ"] = df.Profile["delvol"] / df.Profile["delcap"]
-                df.Profile = df.Profile[["PassTime[Sec]", "Chgcap", "Chgwh", "Voltage[V]", "Current[mA]",
-                                         "dQdV", "dVdQ", "Temp1[Deg]"]]
-                df.Profile.columns = ["TimeMin", "SOC", "Energy", "Vol", "Crate", "dQdV", "dVdQ", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# ─── Dchg Profile 배치 함수 ───
-def toyo_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """Toyo Dchg 프로파일 배치 로딩: min_cap 1회 산정 후 사이클 반복."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for inicycle in cycle_list:
-        results[inicycle] = toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, smoothdegree)
-    return results
-
-
-def pne_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree):
-    """PNE Dchg 프로파일 배치 로딩: SaveData 1회 로딩 후 사이클별 분배."""
-    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
-        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
-    results = {}
-    if all_raw is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
-    for inicycle in cycle_list:
-        df = pd.DataFrame()
-        cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 2]))].copy()
-        if len(cycle_raw) > 0:
-            cycle_raw = cycle_raw[[17, 8, 9, 11, 15, 21, 7]]
-            cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Dchgcap", "Dchgwh", "Temp1[Deg]", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor * (-1)
-            cycle_raw["Dchgcap"] = cycle_raw["Dchgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Dchgcap"] += Profiles[-2]["Dchgcap"].max()
-                    df.Profile = pd.concat(Profiles)
-            if hasattr(df, 'Profile'):
-                df.Profile = df.Profile.reset_index()
-                df.Profile = df.Profile[(df.Profile["Voltage[V]"] >= cutoff)]
-                sd = smoothdegree if smoothdegree != 0 else max(int(len(df.Profile) / 30), 1)
-                df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=sd)
-                df.Profile["delcap"] = df.Profile["Dchgcap"].diff(periods=sd)
-                df.Profile["dQdV"] = df.Profile["delcap"] / df.Profile["delvol"]
-                df.Profile["dVdQ"] = df.Profile["delvol"] / df.Profile["delcap"]
-                df.Profile = df.Profile[["PassTime[Sec]", "Dchgcap", "Dchgwh", "Voltage[V]", "Current[mA]",
-                                         "dQdV", "dVdQ", "Temp1[Deg]"]]
-                df.Profile.columns = ["TimeMin", "SOC", "Energy", "Vol", "Crate", "dQdV", "dVdQ", "Temp"]
-        results[inicycle] = [mincapacity, df]
-    return results
-
-
-# ─── Continue Profile 배치 함수 ───
-def toyo_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate):
-    """Toyo Continue 프로파일 배치 로딩: 논리 사이클 → 파일 번호 자동 변환 후 로딩."""
-    mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    # 논리 사이클 → 파일 번호 매핑 자동 생성
-    cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
-    results = {}
-    for (start, end) in step_ranges:
-        # 논리 사이클 번호 → 원본 파일 번호 범위 변환
-        if cycle_map:
-            file_start = cycle_map.get(start, (start, start))[0]
-            file_end = cycle_map.get(end, (end, end))[1]
-        else:
-            file_start, file_end = start, end
-        results[(start, end)] = toyo_Profile_continue_data(raw_file_path, file_start, file_end, mincapacity, inirate)
-    return results
-
-
-def pne_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate, CDstate):
-    """PNE Continue 프로파일 배치 로딩: min_cap 1회 산정 후 step_range 반복."""
-    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-    results = {}
-    for (start, end) in step_ranges:
-        results[(start, end)] = pne_Profile_continue_data(raw_file_path, start, end, mincapacity, inirate, CDstate)
-    return results
-
 
 # Toyo Step charge Profile data 처리
 def toyo_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate):
@@ -2544,7 +642,7 @@ def toyo_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
                 maxcon = int(tempdata.dataraw["Condition"].max())
                 tempdata.dataraw = tempdata.dataraw[(tempdata.dataraw["Condition"] == 1)]
                 tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
-                df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
+                df.stepchg = df.stepchg._append(tempdata.dataraw)
                 lasttime = df.stepchg["PassTime[Sec]"].max()
         else:
             df.stepchg = tempdata.dataraw
@@ -2655,7 +753,7 @@ def toyo_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate,
             df.Profile["Cap[mAh]"] = df.Profile["delcap"].cumsum()
             df.Profile["Chgwh"] = df.Profile["delwh"].cumsum()
             if smoothdegree == 0:
-                smoothdegree = int(len(df.Profile) / 30) # 정수 처리
+                smoothdegree = len(df.Profile) / 30
             df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=smoothdegree)
             df.Profile["delcap"] = df.Profile["Cap[mAh]"].diff(periods=smoothdegree)
             df.Profile["dQdV"] = df.Profile["delcap"]/df.Profile["delvol"]
@@ -2689,7 +787,7 @@ def toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
                 lasttime = df.Profile["PassTime[Sec]"].max()
                 df.Profile2 = df.Profile2[(df.Profile2["Condition"] == 2)]
                 df.Profile2["PassTime[Sec]"] = df.Profile2["PassTime[Sec]"] + lasttime
-                df.Profile = pd.concat([df.Profile, df.Profile2])
+                df.Profile = df.Profile._append(df.Profile2)
         # cut-off
         df.Profile = df.Profile[df.Profile["Voltage[V]"] >= cutoff]
         if not df.Profile.empty:
@@ -2703,7 +801,7 @@ def toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
             df.Profile["Cap[mAh]"] = df.Profile["delcap"].cumsum()
             df.Profile["Dchgwh"] = df.Profile["delwh"].cumsum()
             if smoothdegree == 0:
-                smoothdegree = int(len(df.Profile) / 30) # 정수 처리
+                smoothdegree = len(df.Profile) / 30
             df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=smoothdegree)
             df.Profile["delcap"] = df.Profile["Cap[mAh]"].diff(periods=smoothdegree)
             df.Profile["dQdV"] = df.Profile["delcap"]/df.Profile["delvol"]
@@ -2719,100 +817,51 @@ def toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
 # Toyo Step charge Profile data 처리
 def toyo_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, inirate):
     df = pd.DataFrame()
-    CycfileSOC = pd.DataFrame()
     # 용량 산정
     tempmincap = toyo_min_cap(raw_file_path, mincapacity, inirate)
     mincapacity = tempmincap
     # data 기본 처리
     if os.path.isfile(raw_file_path + "\\%06d" % inicycle):
         tempdata = toyo_Profile_import(raw_file_path, inicycle)
-        df.stepchg = tempdata.dataraw
-        file_boundaries = [(0, inicycle)]
-        if endcycle > inicycle:
-            # 명시적 범위: inicycle+1 ~ endcycle까지 raw 데이터 연결
-            for stepcyc in range(inicycle + 1, endcycle + 1):
-                if not os.path.isfile(raw_file_path + "\\%06d" % stepcyc):
-                    break
+        stepcyc = inicycle
+        lasttime = 0
+        if int(tempdata.dataraw["Condition"].max()) < 2:
+            df.stepchg = tempdata.dataraw
+            lasttime = df.stepchg["PassTime[Sec]"].max()
+            maxcon = 1
+            while maxcon == 1:
+                stepcyc = stepcyc + 1
                 tempdata = toyo_Profile_import(raw_file_path, stepcyc)
-                if hasattr(tempdata, 'dataraw') and not tempdata.dataraw.empty:
-                    file_boundaries.append((len(df.stepchg), stepcyc))
-                    df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
+                maxcon = int(tempdata.dataraw["Condition"].max())
+                tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
+                df.stepchg = df.stepchg._append(tempdata.dataraw)
+                lasttime = df.stepchg["PassTime[Sec]"].max()
         else:
-            # 단일 사이클: Condition < 2이면 후속 파일까지 확장 (기존 로직)
-            if int(tempdata.dataraw["Condition"].max()) < 2:
-                stepcyc = inicycle
-                maxcon = 1
-                while maxcon == 1:
-                    stepcyc = stepcyc + 1
-                    tempdata = toyo_Profile_import(raw_file_path, stepcyc)
-                    maxcon = int(tempdata.dataraw["Condition"].max())
-                    file_boundaries.append((len(df.stepchg), stepcyc))
-                    df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
+            df.stepchg = tempdata.dataraw
         if not df.stepchg.empty:
-            # PassTime 리셋 보정: 구간 전환 시 음수 diff를 0으로 클리핑 후 누적합
-            df.stepchg = df.stepchg.reset_index(drop=True)
-            time_diffs = df.stepchg["PassTime[Sec]"].diff().clip(lower=0).fillna(0)
-            df.stepchg["PassTime[Sec]"] = time_diffs.cumsum()
-            # SOC 산정: 방전(Condition==2) 시 전류 부호 반전
-            signed_current = df.stepchg["Current[mA]"].copy()
-            signed_current.loc[df.stepchg["Condition"] == 2] *= -1
-            df.stepchg["Cap[mAh]"] = 0.0
+            df.stepchg["Cap[mAh]"] = 0
+            # 충전 용량 산정
+            df.stepchg = df.stepchg.reset_index()
+            # for i in range(len(df.stepchg) - 1):
+            #     df.stepchg.loc[i + 1, "Cap[mAh]"] = (df.stepchg.loc[i + 1, "PassTime[Sec]"] - df.stepchg.loc[i, "PassTime[Sec]"])/3600 * (df.stepchg.loc[i + 1, "Current[mA]"]) + df.stepchg.loc[i, "Cap[mAh]"]
             if len(df.stepchg) > 1:
-                increments = (time_diffs / 3600) * signed_current
-                df.stepchg["Cap[mAh]"] = increments.cumsum().fillna(0.0)
-            # OCV/CCV: 프로파일 데이터의 Condition 전환점에서 직접 추출
-            # OCV = rest 종료 전압 (rest→charge/discharge 전환, rest 후)
-            # CCV = 부하 종료 전압 (charge/discharge→rest 전환, rest 전)
-            cond = df.stepchg["Condition"]
-            next_cond = cond.shift(-1)
-            df.stepchg["OCV"] = float('nan')
-            df.stepchg["CCV"] = float('nan')
-            # rest(0)→load(1,2): OCV = rest 마지막 행 전압
-            ocv_mask = (cond == 0) & (next_cond.isin([1, 2]))
-            df.stepchg.loc[ocv_mask, "OCV"] = df.stepchg.loc[ocv_mask, "Voltage[V]"]
-            # load(1,2)→rest(0): CCV = load 마지막 행 전압
-            ccv_mask = (cond.isin([1, 2])) & (next_cond == 0)
-            df.stepchg.loc[ccv_mask, "CCV"] = df.stepchg.loc[ccv_mask, "Voltage[V]"]
-            # 첫 행이 charge/discharge인 경우: 시작 전압을 OCV로
-            if len(cond) > 0 and cond.iloc[0] in [1, 2]:
-                df.stepchg.loc[df.stepchg.index[0], "OCV"] = df.stepchg.iloc[0]["Voltage[V]"]
-            # CycfileSOC: capacity.log AccCap + 프로파일 OCV/CCV
-            cycdata = toyo_cycle_import(raw_file_path)
-            has_caplog = hasattr(cycdata, "dataraw") and not cycdata.dataraw.empty
-            if has_caplog:
-                cap_log = cycdata.dataraw
-                relevant = cap_log[(cap_log["TotlCycle"] >= inicycle) & (cap_log["TotlCycle"] <= endcycle)]
-                chg_dchg = relevant[relevant["Condition"].isin([1, 2])].copy()
-                if not chg_dchg.empty:
-                    chg_dchg = chg_dchg.reset_index(drop=True)
-                    chg_cap = chg_dchg["Cap[mAh]"].where(chg_dchg["Condition"] == 1, 0.0)
-                    dchg_cap = chg_dchg["Cap[mAh]"].where(chg_dchg["Condition"] == 2, 0.0)
-                    chg_dchg["AccCap"] = chg_cap.cumsum() - dchg_cap.cumsum()
-                    if len(chg_dchg) > 0:
-                        chg_dchg["AccCap"] = chg_dchg["AccCap"] - chg_dchg["AccCap"].iloc[0]
-                    Cap = (chg_dchg["AccCap"].abs() / mincapacity).tolist()
-                    # OCV/CCV 목록: 프로파일 전환점에서 추출
-                    ocv_list = df.stepchg.loc[ocv_mask, "Voltage[V]"].tolist()
-                    if len(cond) > 0 and cond.iloc[0] in [1, 2]:
-                        ocv_list.insert(0, df.stepchg.iloc[0]["Voltage[V]"])
-                    ccv_list = df.stepchg.loc[ccv_mask, "Voltage[V]"].tolist()
-                    min_length = min(len(Cap), len(ocv_list), len(ccv_list))
-                    if min_length > 0:
-                        CycfileSOC = pd.DataFrame({
-                            "AccCap": Cap[:min_length],
-                            "OCV": ocv_list[:min_length],
-                            "CCV": ccv_list[:min_length]
-                        })
-            # 단위 변환 (PNE 호환 출력)
-            df.stepchg["TimeSec"] = df.stepchg["PassTime[Sec]"].round(1)
-            df.stepchg["Curr"] = (signed_current / 1000.0).round(4)
-            df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"] / 60
-            df.stepchg["Current[mA]"] = signed_current / mincapacity
-            df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"] / mincapacity
-            df.stepchg = df.stepchg[["TimeSec", "PassTime[Sec]", "Cap[mAh]", "Voltage[V]",
-                                     "Curr", "Current[mA]", "Temp1[Deg]", "OCV", "CCV"]]
-            df.stepchg.columns = ["TimeSec", "TimeMin", "SOC", "Vol", "Curr", "Crate", "Temp", "OCV", "CCV"]
-    return [mincapacity, df, CycfileSOC]
+                # PassTime[Sec]의 차이 계산 (첫 행은 NaN)
+                time_diffs = df.stepchg["PassTime[Sec]"].diff().iloc[1:]
+                # (시간 차이 / 3600) * Current[mA] 계산
+                increments = (time_diffs / 3600) * df.stepchg["Current[mA]"].iloc[1:]
+                # 누적 합 계산
+                cum_increments = increments.cumsum()
+                # 첫 행의 Cap[mAh] 값 가져오기
+                initial_cap = df.stepchg["Cap[mAh]"].iloc[0]
+                # 두 번째 행부터 Cap[mAh] 업데이트
+                df.stepchg.iloc[1:, df.stepchg.columns.get_loc("Cap[mAh]")] = initial_cap + cum_increments.values
+            # 충전 단위 변환
+            df.stepchg["PassTime[Sec]"] = df.stepchg["PassTime[Sec]"]/60
+            df.stepchg["Current[mA]"] = df.stepchg["Current[mA]"]/mincapacity
+            df.stepchg["Cap[mAh]"] = df.stepchg["Cap[mAh]"]/mincapacity
+            df.stepchg = df.stepchg[["PassTime[Sec]", "Cap[mAh]", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
+            df.stepchg.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
+    return [mincapacity, df]
 
 # PNE Profile data 기본 input 처리
 def pne_data(raw_file_path, inicycle):
@@ -2822,63 +871,49 @@ def pne_data(raw_file_path, inicycle):
         # Profile에 사용할 파일 선정
         filepos = pne_search_cycle(rawdir, inicycle, inicycle + 1)
         # for files in subfile:
-        if os.path.isdir(rawdir):
-            if (filepos[0] == -1):
-                filepos[0] = 0
+        if os.path.isdir(rawdir) and (filepos[0] != -1):
             subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-            dfs = []
             for files in subfile[(filepos[0]):(filepos[1] + 1)]:
                 # SaveData가 있는 파일을 순서대로 확인하면 Profile 작성
                 if "SaveData" in files:
-                    dfs.append(pd.read_csv( (rawdir + files), sep=",", skiprows=0, engine="c", header=None,
-                                           encoding="cp949", on_bad_lines='skip'))
-            if dfs:
-                df.Profileraw = pd.concat(dfs, ignore_index=True)
+                    df.Profilerawtemp = pd.read_csv( (rawdir + files), sep=",", skiprows=0, engine="c", header=None,
+                                                    encoding="cp949", on_bad_lines='skip')
+                    if hasattr(df, "Profileraw"):
+                        df.Profileraw = pd.concat([df.Profileraw, df.Profilerawtemp], ignore_index=True)
+                    else:
+                        df.Profileraw = df.Profilerawtemp 
     return df
 
 # PNE에서 원하는 사이클이 들어있는 파일명을 찾는 코드
 def pne_search_cycle(rawdir, start, end):
-    if not os.path.isdir(rawdir):
-        return [-1, -1]
-    
-    save_end = None
-    file_index = None
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    for fname in subfile:
-        if "SaveEndData" in fname:
-            save_end = pd.read_csv(
-                rawdir + fname, sep=",", skiprows=0, engine="c",
-                header=None, encoding="cp949", on_bad_lines='skip'
-            )
-        if fname == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(
-                rawdir + fname, sep=r"\s+", skiprows=0, engine="c",
-                header=None, encoding="cp949", on_bad_lines='skip'
-            )
-            file_index = df2[3].str.replace(',', '').astype(int).tolist()
-    
-    if save_end is None or file_index is None:
-        return [-1, -1]
-    
-    # start에 해당하는 인덱스 검색
-    if start != 1:
-        index_min = save_end.loc[save_end[27] == (start - 1), 0].tolist()
-    else:
-        index_min = [0]
-    
-    # end에 해당하는 인덱스 검색
-    index_max = save_end.loc[save_end[27] == end, 0].tolist()
-    if not index_max:
-        index_max = save_end.loc[save_end[27] == save_end[27].max(), 0].tolist()
-    
-    # 파일 위치 산정
-    if len(index_min) != 0:
-        file_start = binary_search(file_index, index_min[-1] + 1) - 1
-        file_end = binary_search(file_index, index_max[-1]) - 1
-    else:
-        file_start = -1
-        file_end = -1
-    
+    # Profile에 사용할 파일 선정
+    if os.path.isdir(rawdir):
+        subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
+        for files in subfile:
+            # SaveEndData가 있는 파일 확인
+            if "SaveEndData" in files:
+                df = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c", header=None, encoding="cp949",
+                                 on_bad_lines='skip')
+                if start != 1:
+                    index_min = df.loc[(df.loc[:,27] == (start - 1)), 0].tolist()
+                else:
+                    index_min = [0]
+                index_max = df.loc[(df.loc[:,27] == end), 0].tolist()
+                if not index_max:
+                    index_max = df.loc[(df.loc[:,27] == df.loc[:,27].max()), 0].tolist()
+                df2 = pd.read_csv(rawdir + "savingFileIndex_start.csv", delim_whitespace=True, skiprows=0, engine="c",
+                                  header=None, encoding="cp949", on_bad_lines='skip')
+                df2 = df2.loc[:,3].tolist()
+                index2 = []
+                for element in df2:
+                    new_element = int(element.replace(',', ''))
+                    index2.append(new_element)
+                if len(index_min) != 0:
+                    file_start = binary_search(index2, index_min[-1] + 1) - 1
+                    file_end = binary_search(index2, index_max[-1]) - 1
+                else:
+                    file_start = -1
+                    file_end = -1
     return [file_start, file_end]
 
 # 연속된 데이터의 Profile을 찾아서 확인
@@ -2892,19 +927,25 @@ def pne_continue_data(raw_file_path, inicycle, endcycle):
             filepos = pne_search_cycle(rawdir, inicycle, endcycle)
             # for files in subfile:
             if filepos[0] != -1:
-                file_slice = subfile[(filepos[0]):(filepos[1] + 1)]
+                for files in subfile[(filepos[0]):(filepos[1] + 1)]:
+                    # SaveData가 있는 파일을 순서대로 확인하면 Profile 작성
+                    if "SaveData" in files:
+                        df.Profilerawtemp = pd.read_csv( (rawdir + files), sep=",", skiprows=0, engine="c",
+                                                        header=None, encoding="cp949", on_bad_lines='skip')
+                        if hasattr(df, "Profileraw"):
+                            df.Profileraw = pd.concat([df.Profileraw, df.Profilerawtemp], ignore_index=True)
+                        else:
+                            df.Profileraw = df.Profilerawtemp 
             elif filepos[0] == -1 and inicycle == 1:
-                file_slice = subfile[0:(filepos[1] + 1)]
-            else:
-                file_slice = []
-            dfs = []
-            for files in file_slice:
-                # SaveData가 있는 파일을 순서대로 확인하면 Profile 작성
-                if "SaveData" in files:
-                    dfs.append(pd.read_csv( (rawdir + files), sep=",", skiprows=0, engine="c",
-                                           header=None, encoding="cp949", on_bad_lines='skip'))
-            if dfs:
-                df.Profileraw = pd.concat(dfs, ignore_index=True)
+                for files in subfile[0:(filepos[1] + 1)]:
+                    # SaveData가 있는 파일을 순서대로 확인하면 Profile 작성
+                    if "SaveData" in files:
+                        df.Profilerawtemp = pd.read_csv( (rawdir + files), sep=",", skiprows=0, engine="c",
+                                                        header=None, encoding="cp949", on_bad_lines='skip')
+                        if hasattr(df, "Profileraw"):
+                            df.Profileraw = pd.concat([df.Profileraw, df.Profilerawtemp], ignore_index=True)
+                        else:
+                            df.Profileraw = df.Profilerawtemp 
     return df
 
 def pne_cyc_continue_data(raw_file_path):
@@ -2936,7 +977,7 @@ def pne_min_cap(raw_file_path, mincapacity, ini_crate):
                         inicapraw = pd.read_csv(raw_file_path + "\\Restore\\" + files, sep=",", skiprows=0, engine="c",
                                                 header=None, encoding="cp949", on_bad_lines='skip')
                         if len(inicapraw) > 2:
-                            mincapacity = int(round(abs(inicapraw.iloc[1, 9]/1000))/ini_crate)
+                            mincapacity = int(round(abs(inicapraw.iloc[2, 9]/1000))/ini_crate)
     return mincapacity
 
 # PNE Cycle data 처리
@@ -2985,13 +1026,9 @@ def pne_simul_cycle_data(raw_file_path, min_capacity, ini_crate):
         df_all = pd.DataFrame({"Temp": avg_temp.iloc[:,0], "Curr": min_crate.iloc[:,0], "Dchg": max_cap.iloc[:, 0],
                                "max_vol": max_vol.iloc[:, 0], "min_vol": min_vol.iloc[:, 0]})
         df_all["Temp"] = df_all["Temp"]/1000
-        if is_micro_unit(raw_file_path):
-            df_all["Curr"] = - 1 * df_all["Curr"]/mincapacity/1000000
-            df_all["Dchg"] = df_all["Dchg"]/mincapacity/1000000
-        else:
-            df_all["Curr"] = - 1 * df_all["Curr"]/mincapacity/1000
-            df_all["Dchg"] = df_all["Dchg"]/mincapacity/1000
+        df_all["Curr"] = - 1 * df_all["Curr"]/mincapacity/1000
         df_all["max_vol"] = df_all["max_vol"]/1000
+        df_all["Dchg"] = df_all["Dchg"]/mincapacity/1000
         df_all["min_vol"] = df_all["min_vol"]/1000
         df05 = df_all.query('0.490 < Curr < 0.510')
         j = 0
@@ -3099,7 +1136,7 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                         Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp", "volmax",
                                             "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
                         # PNE 기본 DCIR (연속 기준 10s pulse, 10s 이내 시간의 경우 단순 pulse 기준 끝나는 시간 기준)
-                        if is_micro_unit(raw_file_path):
+                        if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                             Cycleraw.DchgCap = Cycleraw.DchgCap/1000
                             Cycleraw.chgCap = Cycleraw.chgCap/1000
                             Cycleraw.Curr = Cycleraw.Curr/1000
@@ -3123,15 +1160,9 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                                                      & (Cycleraw['Condition'] == 3)]
                             # dcri 계산 - dcirtemp2.imp - 1s pulse, dcirtemp1.imp - RSS
                             min_dcir_count = min(len(dcirtemp1), len(dcirtemp2), len(dcirtemp3))
-                            dcirtemp1 = dcirtemp1.iloc[:min_dcir_count].copy()
-                            dcirtemp2 = dcirtemp2.iloc[:min_dcir_count].copy()
-                            dcirtemp3 = dcirtemp3.iloc[:min_dcir_count].copy()
-
-                            # [수정] int64 컬럼에 float 할당 오류 방지 - 컬럼명으로 접근하여 타입 변환
-                            dcirtemp1[dcirtemp1.columns[5]] = dcirtemp1.iloc[:, 5].astype(float)
-                            dcirtemp2[dcirtemp2.columns[5]] = dcirtemp2.iloc[:, 5].astype(float)
-                            dcirtemp3[dcirtemp3.columns[5]] = dcirtemp3.iloc[:, 5].astype(float)
-
+                            dcirtemp1 = dcirtemp1.iloc[:min_dcir_count]
+                            dcirtemp2 = dcirtemp2.iloc[:min_dcir_count]
+                            dcirtemp3 = dcirtemp3.iloc[:min_dcir_count]
                             if (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
                                 for i in range(0, min_dcir_count):
                                     current1 = dcirtemp1.iloc[i, 9]
@@ -3211,9 +1242,8 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                                     df.NewData.loc[0, "rssccv"] = 0
                                 soc70_dcir = df.NewData.dcir2.dropna(axis=0)
                                 soc70_rss_dcir = df.NewData.dcir.dropna(axis=0)
-                                # 사이클당 실제 SOC 포인트 수로 판별
-                                soc_count = dcirtemp2.groupby("TotlCycle").size().mode().iloc[0]
-                                if soc_count >= 6:
+                                # SOC70의 데이터만 그래프 표기
+                                if (len(soc70_dcir) // 6)  > (len(df.NewData.index) // 100):
                                     # 6개 중에 4번째 것만 추출
                                     soc70_dcir = soc70_dcir[3:][::6]
                                     soc70_rss_dcir = soc70_rss_dcir[3:][::6]
@@ -3250,10 +1280,6 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                                 df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
                                 df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
                                 df.NewData.loc[0, "dcir"] = 0
-                        # 충·방전 쌍이 없는 사이클 제거 (출하상태 방전 등)
-                        if hasattr(df, 'NewData'):
-                            df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
-                            df.NewData = df.NewData.reset_index(drop=True)
     return [mincapacity, df]
 
 # PNE Step charge Profile data 처리 class
@@ -3274,7 +1300,7 @@ def pne_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
             # 충전 단위 변환
             profile_raw.Profileraw["PassTime[Sec]"] = profile_raw.Profileraw["PassTime[Sec]"]/100/60
             profile_raw.Profileraw["Voltage[V]"] = profile_raw.Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
+            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                 profile_raw.Profileraw["Current[mA]"] = profile_raw.Profileraw["Current[mA]"]/mincapacity/1000000
                 profile_raw.Profileraw["Chgcap"] = profile_raw.Profileraw["Chgcap"]/mincapacity/1000000
             else:
@@ -3319,7 +1345,7 @@ def pne_rate_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
             # 충전 단위 변환
             Profileraw["PassTime[Sec]"] = Profileraw["PassTime[Sec]"]/100/60
             Profileraw["Voltage[V]"] = Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
+            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                 Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000000
                 Profileraw["Chgcap"] = Profileraw["Chgcap"]/mincapacity/1000000
             else:
@@ -3350,7 +1376,7 @@ def pne_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, 
             # 충전 단위 변환
             df.Profileraw["PassTime[Sec]"] = df.Profileraw["PassTime[Sec]"]/100/60
             df.Profileraw["Voltage[V]"] = df.Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
+            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                 df.Profileraw["Current[mA]"] = df.Profileraw["Current[mA]"]/mincapacity/1000000
                 df.Profileraw["Chgcap"] = df.Profileraw["Chgcap"]/mincapacity/1000000
             else:
@@ -3380,7 +1406,7 @@ def pne_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, 
             df.Profile["delvol"] = 0
             # 충전 용량 산정, dQdV 산정
             if smoothdegree == 0:
-                smoothdegree = int(len(df.Profile) / 30) # 정수 처리
+                smoothdegree = len(df.Profile) / 30
             df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=smoothdegree)
             df.Profile["delcap"] = df.Profile["Chgcap"].diff(periods=smoothdegree)
             df.Profile["dQdV"] = df.Profile["delcap"]/df.Profile["delvol"]
@@ -3407,7 +1433,7 @@ def pne_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate,
             # 충전 단위 변환
             Profileraw["PassTime[Sec]"] = Profileraw["PassTime[Sec]"]/100/60
             Profileraw["Voltage[V]"] = Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
+            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                 Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000000 * (-1)
                 Profileraw["Dchgcap"] = Profileraw["Dchgcap"]/mincapacity/1000000
             else:
@@ -3438,7 +1464,7 @@ def pne_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate,
             df.Profile["delvol"] = 0
             # 충전 용량 산정, dQdV 산정
             if smoothdegree == 0:
-                smoothdegree = int(len(df.Profile) / 30) # 정수 처리
+                smoothdegree = len(df.Profile) / 30
             df.Profile["delvol"] = df.Profile["Voltage[V]"].diff(periods=smoothdegree)
             df.Profile["delcap"] = df.Profile["Dchgcap"].diff(periods=smoothdegree)
             df.Profile["dQdV"] = df.Profile["delcap"]/df.Profile["delvol"]
@@ -3458,7 +1484,7 @@ def pne_continue_profile_scale_change(raw_file_path, df, mincapacity):
     df["TotTime[Sec]"] = (df["TotTime[Sec]"] - df.loc[0, "TotTime[Sec]"])
     df["TotTime[Min]"] = (df["TotTime[Sec]"]/60)
     df["Voltage[V]"] = df["Voltage[V]"]/1000000
-    if is_micro_unit(raw_file_path):
+    if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
         df["Crate"] = (df["Current[mA]"]/mincapacity/1000000).round(2)
         df["Current[mA]"] = (df["Current[mA]"]/1000000000)
         df["ChgCap"] = df["ChgCap"]/mincapacity/1000000
@@ -3484,7 +1510,6 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
     31: 32: 33:date 34:time 35: 36: 37: 38: 39: 40: 
     41: 42: 43: 44:누적step(Loop, 완료 제외) 45:voltage max 46: '''
     df = pd.DataFrame()
-    CycfileSOC = pd.DataFrame()
     if (raw_file_path[-4:-1]) != "ter":
         if CDstate != "":
             # PNE 채널, 용량 산정
@@ -3521,10 +1546,9 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
                 # cycle 데이터를 기준으로 OCV, CCV 데이터 확인
                 pnecyc.Cycrawtemp = pnecyc.Cycrawtemp.loc[(pnecyc.Cycrawtemp[27] >= inicycle) & (pnecyc.Cycrawtemp[27] <= endcycle)]
                 CycfileCap =  pnecyc.Cycrawtemp.loc[((pnecyc.Cycrawtemp[2] == 1) | (pnecyc.Cycrawtemp[2] == 2)), [0, 8, 10, 11]]
-                CycfileCap["AccCap"] = (CycfileCap[10].cumsum() - CycfileCap[11].cumsum())
-                CycfileCap = CycfileCap.reset_index(drop=True)
-                if not CycfileCap.empty:
-                    CycfileCap["AccCap"] = (CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000
+                CycfileCap.loc[:,"AccCap"] = (CycfileCap.loc[:,10].cumsum() - CycfileCap[11].cumsum())
+                CycfileCap = CycfileCap.reset_index()
+                CycfileCap.loc[:,"AccCap"] = (CycfileCap.loc[:,"AccCap"] - CycfileCap.loc[0,"AccCap"])/1000
                 CycfileOCV =  pnecyc.Cycrawtemp.loc[(pnecyc.Cycrawtemp[2] == 3), [0, 8]]
                 CycfileCCV =  pnecyc.Cycrawtemp.loc[((pnecyc.Cycrawtemp[2] == 1) | (pnecyc.Cycrawtemp[2] == 2)), [0, 8]]
                 Cycfileraw = pd.merge(CycfileOCV, CycfileCCV, on = 0, how='outer')
@@ -3618,7 +1642,7 @@ def pne_dcir_Profile_data(raw_file_path, inicycle, endcycle, mincapacity, inirat
             dcir_base.reset_index(drop=True, inplace=True)
             dcir_step = list(set(dcir_base["step"].tolist()))
             # 율별 pulse C-rate 확인
-            if is_micro_unit(raw_file_path):
+            if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                 dcir_crate = [((dcir_base.loc[i, "Current[mA]"] / 1000000)/mincapacity).round(2) for i in range(0,4)]
             else:
                 dcir_crate = [((dcir_base.loc[i, "Current[mA]"] / 1000)/mincapacity).round(2) for i in range(0,4)]
@@ -3649,10 +1673,9 @@ def pne_dcir_Profile_data(raw_file_path, inicycle, endcycle, mincapacity, inirat
                 ]
                 real_ocv = real_ocv.reset_index()
                 CycfileCap["AccCap"] = (CycfileCap.loc[:,10].cumsum() - CycfileCap[11].cumsum())
-                CycfileCap = CycfileCap.reset_index(drop=True)
-                if not CycfileCap.empty:
-                    CycfileCap["AccCap"] = abs((CycfileCap["AccCap"] - CycfileCap["AccCap"].iloc[0])/1000)
-                if is_micro_unit(raw_file_path):
+                CycfileCap = CycfileCap.reset_index()
+                CycfileCap["AccCap"] = abs((CycfileCap.loc[:,"AccCap"] - CycfileCap.loc[0,"AccCap"])/1000)
+                if ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path):
                     CycfileCap["AccCap"] = CycfileCap["AccCap"]/1000
                 if dcir_crate[-2] < 0:
                     CycfileCap["SOC"] = (1 - CycfileCap["AccCap"]/mincapacity) * 100
@@ -3992,229 +2015,32 @@ def set_battery_status_log_Profile(rawdatafile, mincapacity, selectcyc, setcond)
             df.ChgProfile.SOC2 = df.ChgProfile.delCap.cumsum() * 100
     return df
 
-# ===== PyBaMM 시뮬레이션 엔진 =====
-def run_pybamm_simulation(model_name, params_dict, experiment_config):
-    """PyBaMM 전기화학 시뮬레이션 실행
-
-    Parameters
-    ----------
-    model_name : str
-        "SPM", "SPMe", "DFN" 중 하나
-    params_dict : dict
-        테이블에서 읽은 파라미터 값 (키: 한글 파라미터명, 값: float/str)
-    experiment_config : dict
-        mode: "ccv" | "custom" | "gitt"
-        ccv 모드 → chg_crate, dchg_crate, v_max, v_min, cv_cutoff, cycles
-        custom 모드 → steps (list[str])
-        gitt 모드 → pattern_type, pulse_current, pulse_time, rest_time, repeats, v_min
-
-    Returns
-    -------
-    pybamm.Solution
-    """
-    # 1) 모델 생성
-    model_map = {
-        "SPM": pybamm.lithium_ion.SPM,
-        "SPMe": pybamm.lithium_ion.SPMe,
-        "DFN": pybamm.lithium_ion.DFN,
-    }
-    if model_name not in model_map:
-        raise ValueError(f"지원하지 않는 모델: {model_name}")
-    model = model_map[model_name]()
-
-    # 2) 파라미터 적용
-    param = model.default_parameter_values
-    # 테이블 값 → PyBaMM 파라미터 매핑
-    _key_map = {
-        "양극 두께":              ("Positive electrode thickness [m]", 1e-6),
-        "양극 입자 반경":          ("Positive particle radius [m]", 1e-6),
-        "양극 활물질 비율":        ("Positive electrode active material volume fraction", 1),
-        "양극 Bruggeman":         ("Positive electrode Bruggeman coefficient (electrolyte)", 1),
-        "음극 두께":              ("Negative electrode thickness [m]", 1e-6),
-        "음극 입자 반경":          ("Negative particle radius [m]", 1e-6),
-        "음극 활물질 비율":        ("Negative electrode active material volume fraction", 1),
-        "음극 Bruggeman":         ("Negative electrode Bruggeman coefficient (electrolyte)", 1),
-        "분리막 두께":             ("Separator thickness [m]", 1e-6),
-        "분리막 Bruggeman":       ("Separator Bruggeman coefficient (electrolyte)", 1),
-        "전해질 농도":             ("Initial concentration in electrolyte [mol.m-3]", 1),
-        "전극 면적":              ("Electrode width [m]", 1),
-        "셀 용량":                ("Nominal cell capacity [A.h]", 1),
-        "온도":                   ("Ambient temperature [K]", 1),  # 별도 변환
-    }
-    for kr_name, val_str in params_dict.items():
-        if kr_name in _key_map:
-            pybamm_key, scale = _key_map[kr_name]
-            val = float(val_str)
-            if kr_name == "온도":
-                val = val + 273.15  # °C → K
-            else:
-                val = val * scale
-            # 상수값만 덮어씀 (함수형 파라미터는 건너뜀)
-            try:
-                param[pybamm_key] = val
-            except Exception:
-                pass
-
-    # 초기 SOC 설정 (셀 레벨, 0=방전 1=만충)
-    # 충전 모드 → 낮은 SOC에서 시작, 방전 모드 → 높은 SOC에서 시작
-    mode = experiment_config.get("mode", "ccv")
-    _user_soc = experiment_config.get("init_soc", "auto")
-    if _user_soc and _user_soc != "auto":
-        try:
-            init_soc = float(_user_soc)
-        except ValueError:
-            init_soc = None
-    else:
-        init_soc = None
-
-    if init_soc is None:
-        if mode in ("charge",):
-            init_soc = 0.0   # 충전: 완전 방전 상태에서 시작
-        elif mode in ("discharge", "gitt"):
-            init_soc = 1.0   # 방전/GITT: 만충 상태에서 시작
-        elif mode == "ccv":
-            init_soc = 0.0   # CC-CV 풀사이클: 빈 상태에서 시작
-        else:
-            init_soc = 0.5   # 커스텀: 중간값
-
-    if mode == "ccv":
-        chg_c = experiment_config.get("chg_crate", 1.0)
-        dchg_c = experiment_config.get("dchg_crate", 1.0)
-        v_max = experiment_config.get("v_max", 4.2)
-        v_min = experiment_config.get("v_min", 2.5)
-        cv_cutoff = experiment_config.get("cv_cutoff", 0.05)
-        cycles = int(experiment_config.get("cycles", 1))
-        exp_steps = [
-            f"Charge at {chg_c}C until {v_max}V",
-            f"Hold at {v_max}V until {cv_cutoff}C",
-            f"Discharge at {dchg_c}C until {v_min}V",
-        ]
-        experiment = pybamm.Experiment(exp_steps * cycles)
-
-    elif mode in ("charge", "discharge"):
-        steps = experiment_config.get("steps", [])
-        if not steps:
-            raise ValueError("충방전 스텝이 비어있습니다. 스텝을 추가해주세요.")
-        cycles = int(experiment_config.get("cycles", 1))
-        experiment = pybamm.Experiment(steps * cycles)
-
-    elif mode == "custom":
-        steps = experiment_config.get("steps", [])
-        if not steps:
-            raise ValueError("커스텀 모드: 실험 단계가 비어있습니다.")
-        experiment = pybamm.Experiment(steps)
-
-    elif mode == "gitt":
-        pattern_type = experiment_config.get("pattern_type", "GITT")
-        pulse_c = experiment_config.get("pulse_current", 0.5)
-        pulse_t = experiment_config.get("pulse_time", 600)
-        rest_t = experiment_config.get("rest_time", 3600)
-        repeats = int(experiment_config.get("repeats", 20))
-        v_min = experiment_config.get("v_min", 2.5)
-
-        if pattern_type == "GITT":
-            step_pair = [
-                f"Discharge at {pulse_c}C for {pulse_t}s or until {v_min}V",
-                f"Rest for {rest_t}s",
-            ]
-        else:  # HPPC
-            step_pair = [
-                f"Discharge at {pulse_c}C for {pulse_t}s or until {v_min}V",
-                f"Rest for {rest_t}s",
-                f"Charge at {pulse_c}C for {pulse_t}s or until 4.2V",
-                f"Rest for {rest_t}s",
-            ]
-        experiment = pybamm.Experiment(step_pair * repeats)
-    else:
-        raise ValueError(f"지원하지 않는 모드: {mode}")
-
-    # period(출력 간격) 적용
-    _period_str = experiment_config.get("period", "auto")
-    if _period_str and _period_str != "auto":
-        try:
-            _period_sec = float(_period_str)
-            if _period_sec > 0:
-                _new_steps = []
-                for _step in experiment.steps:
-                    _raw = str(_step)
-                    # 이미 period가 포함되어 있으면 건너뜀
-                    if "period" not in _raw.lower():
-                        _raw += f" ({_period_sec:g} second period)"
-                    _new_steps.append(_raw)
-                experiment = pybamm.Experiment(_new_steps)
-        except (ValueError, TypeError):
-            pass  # 잘못된 입력은 무시 → 기본 period 사용
-
-    # 4) 시뮬레이션 실행
-    sim = pybamm.Simulation(model, experiment=experiment, parameter_values=param)
-    solution = sim.solve(initial_soc=init_soc)
-    return solution, param
-
-
-class BorderDelegate(QtWidgets.QStyledItemDelegate):
-    """셀 테두리를 그리는 커스텀 delegate. UserRole+100에 QColor가 설정되면 테두리 표시."""
-    BORDER_ROLE = QtCore.Qt.ItemDataRole.UserRole + 100
-
-    def paint(self, painter, option, index):
-        super().paint(painter, option, index)
-        border_color = index.data(self.BORDER_ROLE)
-        if border_color and isinstance(border_color, QtGui.QColor):
-            painter.save()
-            pen = QtGui.QPen(border_color, 0.5) # 0.5pt 두께 테두리
-            painter.setPen(pen)
-            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
-            painter.restore()
-
-
-class PathElideDelegate(QtWidgets.QStyledItemDelegate):
-    """경로 텍스트를 ElideMiddle로 표시하는 delegate.
-    전체 경로가 셀에 다 들어가지 않으면 중간을 ...으로 줄여 표시."""
-
-    def paint(self, painter, option, index):
-        # 기본 배경/선택 상태 그리기
-        self.initStyleOption(option, index)
-        painter.save()
-        # 배경
-        style = option.widget.style() if option.widget else QtWidgets.QApplication.style()
-        style.drawPrimitive(QtWidgets.QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget)
-        # 텍스트 ElideMiddle 처리
-        text = index.data(QtCore.Qt.ItemDataRole.DisplayRole) or ""
-        rect = style.subElementRect(QtWidgets.QStyle.SubElement.SE_ItemViewItemText, option, option.widget)
-        rect.adjust(2, 0, -2, 0)
-        fm = painter.fontMetrics()
-        elided = fm.elidedText(text, QtCore.Qt.TextElideMode.ElideMiddle, rect.width())
-        painter.setPen(option.palette.color(
-            QtGui.QPalette.ColorGroup.Normal if option.state & QtWidgets.QStyle.StateFlag.State_Enabled
-            else QtGui.QPalette.ColorGroup.Disabled,
-            QtGui.QPalette.ColorRole.Text))
-        painter.drawText(rect, QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft, elided)
-        painter.restore()
-
-
 class Ui_sitool(object):
     def setupUi(self, sitool):
         sitool.setObjectName("sitool")
         sitool.resize(1913, 1005)
         font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
+        font.setFamily("malgun gothic")
         font.setPointSize(10)
         sitool.setFont(font)
         self.layoutWidget = QtWidgets.QWidget(parent=sitool)
-        sitool.setCentralWidget(self.layoutWidget)
+        self.layoutWidget.setGeometry(QtCore.QRect(12, 12, 1894, 984))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.layoutWidget.setFont(font)
         self.layoutWidget.setObjectName("layoutWidget")
         self.verticalLayout_39 = QtWidgets.QVBoxLayout(self.layoutWidget)
-        self.verticalLayout_39.setContentsMargins(6, 6, 6, 6)
+        self.verticalLayout_39.setContentsMargins(0, 0, 0, 0)
         self.verticalLayout_39.setObjectName("verticalLayout_39")
         self.verticalLayout_38 = QtWidgets.QVBoxLayout()
         self.verticalLayout_38.setObjectName("verticalLayout_38")
         self.tabWidget = QtWidgets.QTabWidget(parent=self.layoutWidget)
+        self.tabWidget.setMinimumSize(QtCore.QSize(1890, 885))
+        self.tabWidget.setMaximumSize(QtCore.QSize(1890, 885))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tabWidget.setFont(font)
         self.tabWidget.setTabPosition(QtWidgets.QTabWidget.TabPosition.North)
         self.tabWidget.setTabShape(QtWidgets.QTabWidget.TabShape.Rounded)
@@ -4233,7 +2059,7 @@ class Ui_sitool(object):
         self.tb_room.setBaseSize(QtCore.QSize(10, 0))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tb_room.setFont(font)
         self.tb_room.setObjectName("tb_room")
         self.tb_room.addItem("")
@@ -4248,7 +2074,7 @@ class Ui_sitool(object):
         self.tb_cycler.setBaseSize(QtCore.QSize(10, 0))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tb_cycler.setFont(font)
         self.tb_cycler.setMaxVisibleItems(35)
         self.tb_cycler.setObjectName("tb_cycler")
@@ -4269,7 +2095,7 @@ class Ui_sitool(object):
         self.tb_info.setBaseSize(QtCore.QSize(10, 0))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tb_info.setFont(font)
         self.tb_info.setObjectName("tb_info")
         self.tb_info.addItem("")
@@ -4288,11 +2114,11 @@ class Ui_sitool(object):
         spacerItem = QtWidgets.QSpacerItem(342, 40, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
         self.horizontalLayout_10.addItem(spacerItem)
         self.label_9 = QtWidgets.QLabel(parent=self.tab)
-        self.label_9.setMinimumSize(QtCore.QSize(80, 40))
-        self.label_9.setMaximumSize(QtCore.QSize(80, 40))
+        self.label_9.setMinimumSize(QtCore.QSize(58, 40))
+        self.label_9.setMaximumSize(QtCore.QSize(58, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.label_9.setFont(font)
         self.label_9.setObjectName("label_9")
         self.horizontalLayout_10.addWidget(self.label_9)
@@ -4301,23 +2127,11 @@ class Ui_sitool(object):
         self.FindText.setMaximumSize(QtCore.QSize(480, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FindText.setFont(font)
         self.FindText.setInputMask("")
-        self.FindText.setPlaceholderText("스페이스=OR, 쉼표=AND (예: 4879mAh,Rss)")
         self.FindText.setObjectName("FindText")
         self.horizontalLayout_10.addWidget(self.FindText)
-        self.tb_modified_time = QtWidgets.QLabel(parent=self.tab)
-        self.tb_modified_time.setMinimumSize(QtCore.QSize(250, 40))
-        self.tb_modified_time.setMaximumSize(QtCore.QSize(250, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(9)
-        self.tb_modified_time.setFont(font)
-        self.tb_modified_time.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-        self.tb_modified_time.setObjectName("tb_modified_time")
-        self.tb_modified_time.setText("")
-        self.horizontalLayout_10.addWidget(self.tb_modified_time)
         self.horizontalLayout_11.addLayout(self.horizontalLayout_10)
         self.verticalLayout_5.addLayout(self.horizontalLayout_11)
         self.horizontalLayout_8 = QtWidgets.QHBoxLayout()
@@ -4327,7 +2141,7 @@ class Ui_sitool(object):
         self.tb_summary.setMaximumSize(QtCore.QSize(220, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tb_summary.setFont(font)
         self.tb_summary.setLayoutDirection(QtCore.Qt.LayoutDirection.LeftToRight)
         self.tb_summary.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -4355,10 +2169,10 @@ class Ui_sitool(object):
         self.tb_summary.verticalHeader().setMinimumSectionSize(33)
         self.horizontalLayout_8.addWidget(self.tb_summary)
         self.tableWidget = QtWidgets.QTableWidget(parent=self.tab)
-        self.tableWidget.setMinimumSize(QtCore.QSize(400, 80))
-        self.tableWidget.setMaximumSize(QtCore.QSize(16777215, 80))
+        self.tableWidget.setMinimumSize(QtCore.QSize(1630, 80))
+        self.tableWidget.setMaximumSize(QtCore.QSize(1630, 80))
         font = QtGui.QFont()
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tableWidget.setFont(font)
         self.tableWidget.setRowCount(3)
         self.tableWidget.setColumnCount(6)
@@ -4366,43 +2180,52 @@ class Ui_sitool(object):
         item = QtWidgets.QTableWidgetItem()
         self.tableWidget.setItem(0, 0, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(18, 21, 23))
-        brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
+        brush = QtGui.QBrush(QtGui.QColor(0, 0, 0))
+        brush.setStyle(QtCore.Qt.BrushStyle.NoBrush)
         item.setForeground(brush)
         self.tableWidget.setItem(0, 1, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(0, 73, 245))
+        brush = QtGui.QBrush(QtGui.QColor(0, 0, 0))
+        brush.setStyle(QtCore.Qt.BrushStyle.NoBrush)
+        item.setBackground(brush)
+        brush = QtGui.QBrush(QtGui.QColor(0, 0, 255))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setForeground(brush)
         self.tableWidget.setItem(0, 2, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(18, 21, 23))
-        brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
+        brush = QtGui.QBrush(QtGui.QColor(0, 0, 0))
+        brush.setStyle(QtCore.Qt.BrushStyle.NoBrush)
         item.setForeground(brush)
         self.tableWidget.setItem(0, 3, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(195, 47, 39))
+        brush = QtGui.QBrush(QtGui.QColor(0, 255, 0))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setForeground(brush)
         self.tableWidget.setItem(0, 4, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(208, 0, 0))
+        brush = QtGui.QBrush(QtGui.QColor(0, 0, 0))
+        brush.setStyle(QtCore.Qt.BrushStyle.NoBrush)
+        item.setBackground(brush)
+        brush = QtGui.QBrush(QtGui.QColor(255, 0, 0))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setForeground(brush)
         self.tableWidget.setItem(0, 5, item)
         item = QtWidgets.QTableWidgetItem()
         self.tableWidget.setItem(1, 0, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(176, 203, 176))
+        brush = QtGui.QBrush(QtGui.QColor(200, 255, 255))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(1, 1, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(234, 239, 230))
+        brush = QtGui.QBrush(QtGui.QColor(255, 127, 0))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(1, 2, item)
         item = QtWidgets.QTableWidgetItem()
+        brush = QtGui.QBrush(QtGui.QColor(200, 255, 255))
+        brush.setStyle(QtCore.Qt.BrushStyle.NoBrush)
+        item.setBackground(brush)
         self.tableWidget.setItem(1, 3, item)
         item = QtWidgets.QTableWidgetItem()
         self.tableWidget.setItem(1, 4, item)
@@ -4411,52 +2234,50 @@ class Ui_sitool(object):
         item = QtWidgets.QTableWidgetItem()
         self.tableWidget.setItem(2, 0, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(176, 203, 176))
+        brush = QtGui.QBrush(QtGui.QColor(200, 255, 255))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(2, 1, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(234, 239, 230))
+        brush = QtGui.QBrush(QtGui.QColor(255, 127, 0))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(2, 2, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(214, 155, 154))
+        brush = QtGui.QBrush(QtGui.QColor(255, 200, 229))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setBackground(brush)
         self.tableWidget.setItem(2, 3, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(173, 181, 189))
+        brush = QtGui.QBrush(QtGui.QColor(200, 200, 200))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
-        item.setForeground(brush)
+        item.setBackground(brush)
         self.tableWidget.setItem(2, 5, item)
         self.tableWidget.horizontalHeader().setVisible(False)
         self.tableWidget.horizontalHeader().setDefaultSectionSize(270)
         self.tableWidget.horizontalHeader().setHighlightSections(False)
-        self.tableWidget.horizontalHeader().setMinimumSectionSize(100)
-        self.tableWidget.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tableWidget.horizontalHeader().setMinimumSectionSize(270)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.verticalHeader().setDefaultSectionSize(25)
         self.tableWidget.verticalHeader().setMinimumSectionSize(25)
         self.horizontalLayout_8.addWidget(self.tableWidget)
         self.verticalLayout_5.addLayout(self.horizontalLayout_8)
         self.tb_channel = QtWidgets.QTableWidget(parent=self.tab)
-        self.tb_channel.setMinimumSize(QtCore.QSize(400, 200))
+        self.tb_channel.setMinimumSize(QtCore.QSize(1860, 692))
+        self.tb_channel.setMaximumSize(QtCore.QSize(1860, 692))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.tb_channel.setFont(font)
         self.tb_channel.setRowCount(16)
         self.tb_channel.setColumnCount(8)
         self.tb_channel.setObjectName("tb_channel")
         self.tb_channel.horizontalHeader().setVisible(False)
         self.tb_channel.horizontalHeader().setDefaultSectionSize(232)
-        self.tb_channel.horizontalHeader().setMinimumSectionSize(100)
-        self.tb_channel.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tb_channel.horizontalHeader().setMinimumSectionSize(232)
         self.tb_channel.verticalHeader().setVisible(False)
         self.tb_channel.verticalHeader().setDefaultSectionSize(43)
         self.tb_channel.verticalHeader().setMinimumSectionSize(43)
-        self.tb_channel.setItemDelegate(BorderDelegate(self.tb_channel))
         self.verticalLayout_5.addWidget(self.tb_channel)
         self.horizontalLayout_123.addLayout(self.verticalLayout_5)
         self.tabWidget.addTab(self.tab, "")
@@ -4466,184 +2287,141 @@ class Ui_sitool(object):
         self.horizontalLayout_172.setObjectName("horizontalLayout_172")
         self.horizontalLayout_112 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_112.setObjectName("horizontalLayout_112")
-        # ── 왼쪽 패널: 스크롤 가능하도록 QScrollArea 래핑 ──
-        self._left_panel_widget = QtWidgets.QWidget()
-        # 탭 pane 배경색(Button 역할)으로 통일
-        _lp_pal = self._left_panel_widget.palette()
-        _lp_pal.setColor(_lp_pal.ColorRole.Window,
-                         _lp_pal.color(_lp_pal.ColorRole.Button))
-        self._left_panel_widget.setPalette(_lp_pal)
-        self._left_panel_widget.setAutoFillBackground(True)
-        self.verticalLayout_6 = QtWidgets.QVBoxLayout(self._left_panel_widget)
-        self.verticalLayout_6.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_6 = QtWidgets.QVBoxLayout()
         self.verticalLayout_6.setObjectName("verticalLayout_6")
-        # ── 경로 입력 GroupBox ──
-        self._path_groupbox = QtWidgets.QGroupBox("1. 경로 입력", parent=self.CycTab)
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self._path_groupbox.setFont(font)
-        self._path_groupbox.setObjectName("_path_groupbox")
-        self._path_groupbox_vlayout = QtWidgets.QVBoxLayout(self._path_groupbox)
-        self._path_groupbox_vlayout.setContentsMargins(6, 4, 6, 4)
-        self._path_groupbox_vlayout.setSpacing(4)
-        # 체크박스 행 (경로 테이블 위)
         self.horizontalLayout_108 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_108.setObjectName("horizontalLayout_108")
-        self.chk_cyclepath = QtWidgets.QCheckBox(parent=self._path_groupbox)
-        self.chk_cyclepath.setMinimumSize(QtCore.QSize(120, 30))
-        self.chk_cyclepath.setMaximumSize(QtCore.QSize(240, 30))
+        self.chk_cyclepath = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_cyclepath.setMinimumSize(QtCore.QSize(240, 30))
+        self.chk_cyclepath.setMaximumSize(QtCore.QSize(100, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.chk_cyclepath.setFont(font)
         self.chk_cyclepath.setChecked(True)
         self.chk_cyclepath.setObjectName("chk_cyclepath")
         self.horizontalLayout_108.addWidget(self.chk_cyclepath)
-        self.chk_link_cycle = QtWidgets.QCheckBox(parent=self._path_groupbox)
-        self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
-        self.chk_link_cycle.setMaximumSize(QtCore.QSize(160, 30))
+        self.chk_ectpath = QtWidgets.QCheckBox(parent=self.CycTab)
+        self.chk_ectpath.setMinimumSize(QtCore.QSize(240, 30))
+        self.chk_ectpath.setMaximumSize(QtCore.QSize(100, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        self.chk_link_cycle.setFont(font)
-        self.chk_link_cycle.setObjectName("chk_link_cycle")
-        self.horizontalLayout_108.addWidget(self.chk_link_cycle)
-        self.chk_ectpath = QtWidgets.QCheckBox(parent=self._path_groupbox)
-        self.chk_ectpath.setMinimumSize(QtCore.QSize(120, 30))
-        self.chk_ectpath.setMaximumSize(QtCore.QSize(240, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.chk_ectpath.setFont(font)
         self.chk_ectpath.setChecked(False)
         self.chk_ectpath.setObjectName("chk_ectpath")
         self.horizontalLayout_108.addWidget(self.chk_ectpath)
-        self.horizontalLayout_108.addStretch(1)
-        self._path_groupbox_vlayout.addLayout(self.horizontalLayout_108)
-        # 경로 테이블 + 버튼 행
+        self.verticalLayout_6.addLayout(self.horizontalLayout_108)
         self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_119.setSpacing(4)
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
-        # ── 경로 테이블 (엑셀 시트형) ──
-        self.cycle_path_table = QtWidgets.QTableWidget(5, 4, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["경로명", "경로", "채널", "용량"])
-        self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
-        _hdr = self.cycle_path_table.horizontalHeader()
-        _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        _hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        _hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        self.cycle_path_table.setColumnWidth(0, 55)
-        self.cycle_path_table.setColumnWidth(2, 70)
-        self.cycle_path_table.setColumnWidth(3, 55)
-        self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
-        self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
-        _table_font = QtGui.QFont()
-        _table_font.setFamily("맑은 고딕")
-        _table_font.setPointSize(9)
-        self.cycle_path_table.setFont(_table_font)
-        self.cycle_path_table.setStyleSheet(
-            "QTableWidget::item:selected { color: #000000; }\n"
-            "QTableWidget::item:focus { outline: 1px solid #3C5488; border: none; }\n"
-            "QHeaderView::section:checked { background-color: #D6EAF8; font-weight: bold; }")
-        self.cycle_path_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.cycle_path_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectItems)
-        self.cycle_path_table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self.cycle_path_table.setObjectName("cycle_path_table")
-        self.horizontalLayout_119.addWidget(self.cycle_path_table)
-        # 하위 호환용 숨김 위젯 (stepnum_2 참조 유지)
-        self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self._path_groupbox)
-        self.stepnum_2.setVisible(False)
-        self.stepnum_2.setObjectName("stepnum_2")
-        # 경로 박스 버튼 레이아웃
-        _path_btn_qss = ("QPushButton { border: 1px solid #B0B0B0; border-radius: 3px;"
-                         " background: #F5F5F5; font-size: 10px; }"
-                         " QPushButton:hover { background: #E0E0E0; }"
-                         " QPushButton:pressed { background: #D0D0D0; }")
-        self._path_btn_layout = QtWidgets.QVBoxLayout()
-        self._path_btn_layout.setSpacing(4)
-        self._table_undo_stack = []          # 테이블 Undo 스택
-        self._table_undo_restoring = False   # Undo 복원 중 플래그
-        self.btn_load_path = QtWidgets.QPushButton(parent=self._path_groupbox)
-        self.btn_load_path.setFixedSize(QtCore.QSize(24, 24))
-        self.btn_load_path.setText("📂")
-        self.btn_load_path.setToolTip("Path 파일 불러오기")
-        self.btn_load_path.setStyleSheet(_path_btn_qss)
-        self.btn_load_path.setObjectName("btn_load_path")
-        self._path_btn_layout.addWidget(self.btn_load_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        self.btn_save_path = QtWidgets.QPushButton(parent=self._path_groupbox)
-        self.btn_save_path.setFixedSize(QtCore.QSize(24, 24))
-        self.btn_save_path.setText("💾")
-        self.btn_save_path.setToolTip("Path 파일 저장")
-        self.btn_save_path.setStyleSheet(_path_btn_qss)
-        self.btn_save_path.setObjectName("btn_save_path")
-        self._path_btn_layout.addWidget(self.btn_save_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        self._path_btn_layout.addStretch(1)
-        self.horizontalLayout_119.addLayout(self._path_btn_layout)
-        self._path_groupbox_vlayout.addLayout(self.horizontalLayout_119)
-        self.verticalLayout_6.addWidget(self._path_groupbox, stretch=0)
-        self.capacitygroup = QtWidgets.QGroupBox(parent=self.CycTab)
-        self.capacitygroup.setMinimumSize(QtCore.QSize(400, 60))
-        self.capacitygroup.setMaximumSize(QtCore.QSize(16777215, 80))
+        self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self.CycTab)
+        self.stepnum_2.setMinimumSize(QtCore.QSize(240, 70))
+        self.stepnum_2.setMaximumSize(QtCore.QSize(240, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.stepnum_2.setFont(font)
+        self.stepnum_2.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhNone)
+        self.stepnum_2.setPlainText("")
+        self.stepnum_2.setObjectName("stepnum_2")
+        self.horizontalLayout_119.addWidget(self.stepnum_2)
+        self.cycle_tab_reset = QtWidgets.QPushButton(parent=self.CycTab)
+        self.cycle_tab_reset.setMinimumSize(QtCore.QSize(240, 70))
+        self.cycle_tab_reset.setMaximumSize(QtCore.QSize(240, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setUnderline(True)
+        font.setWeight(75)
+        self.cycle_tab_reset.setFont(font)
+        self.cycle_tab_reset.setObjectName("cycle_tab_reset")
+        self.horizontalLayout_119.addWidget(self.cycle_tab_reset)
+        self.verticalLayout_6.addLayout(self.horizontalLayout_119)
+        self.capacitygroup = QtWidgets.QGroupBox(parent=self.CycTab)
+        self.capacitygroup.setMinimumSize(QtCore.QSize(502, 120))
+        self.capacitygroup.setMaximumSize(QtCore.QSize(502, 120))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.capacitygroup.setFont(font)
         self.capacitygroup.setObjectName("capacitygroup")
         self.horizontalLayout_122 = QtWidgets.QHBoxLayout(self.capacitygroup)
         self.horizontalLayout_122.setObjectName("horizontalLayout_122")
-        # 용량 안내 라벨
-        self._cap_info_label = QtWidgets.QLabel(parent=self.capacitygroup)
-        self._cap_info_label.setFont(font)
-        self._cap_info_label.setText("용량: 테이블 입력 또는 자동파싱(빈칸)")
-        self.horizontalLayout_122.addWidget(self._cap_info_label)
-        self.horizontalLayout_122.addStretch(1)
-        # C-rate 입력
-        self._crate_label = QtWidgets.QLabel("C-rate:", parent=self.capacitygroup)
-        self._crate_label.setFont(font)
-        self.horizontalLayout_122.addWidget(self._crate_label)
+        self.verticalLayout_18 = QtWidgets.QVBoxLayout()
+        self.verticalLayout_18.setObjectName("verticalLayout_18")
+        self.horizontalLayout_120 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_120.setObjectName("horizontalLayout_120")
+        self.inicaprate = QtWidgets.QRadioButton(parent=self.capacitygroup)
+        self.inicaprate.setMinimumSize(QtCore.QSize(352, 50))
+        self.inicaprate.setMaximumSize(QtCore.QSize(352, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.inicaprate.setFont(font)
+        self.inicaprate.setChecked(True)
+        self.inicaprate.setObjectName("inicaprate")
+        self.horizontalLayout_120.addWidget(self.inicaprate)
         self.ratetext = QtWidgets.QLineEdit(parent=self.capacitygroup)
         self.ratetext.setMinimumSize(QtCore.QSize(120, 25))
         self.ratetext.setMaximumSize(QtCore.QSize(120, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ratetext.setFont(font)
         self.ratetext.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.ratetext.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ratetext.setObjectName("ratetext")
-        self.horizontalLayout_122.addWidget(self.ratetext)
-        self._rate_unit_label = QtWidgets.QLabel("C", parent=self.capacitygroup)
-        self._rate_unit_label.setFont(font)
-        self.horizontalLayout_122.addWidget(self._rate_unit_label)
-        # 하위 호환용 숨김 위젯 (inicaprate, inicaptype, capacitytext 참조 유지)
-        self.inicaprate = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaprate.setChecked(True)
-        self.inicaprate.setVisible(False)
+        self.horizontalLayout_120.addWidget(self.ratetext)
+        self.verticalLayout_18.addLayout(self.horizontalLayout_120)
+        self.horizontalLayout_121 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_121.setObjectName("horizontalLayout_121")
         self.inicaptype = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaptype.setChecked(False)
-        self.inicaptype.setVisible(False)
-        self.capacitytext = QtWidgets.QLineEdit(parent=self.capacitygroup)
-        self.capacitytext.setVisible(False)
-        self.capacitytext.setObjectName("capacitytext")
-        self.verticalLayout_6.addWidget(self.capacitygroup, stretch=0)
-        self.tabWidget_2 = QtWidgets.QTabWidget(parent=self.CycTab)
-        self.tabWidget_2.setMinimumSize(QtCore.QSize(400, 400))
-        self.tabWidget_2.setMaximumSize(QtCore.QSize(16777215, 16777215))
+        self.inicaptype.setMinimumSize(QtCore.QSize(352, 20))
+        self.inicaptype.setMaximumSize(QtCore.QSize(352, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.inicaptype.setFont(font)
+        self.inicaptype.setChecked(False)
+        self.inicaptype.setObjectName("inicaptype")
+        self.horizontalLayout_121.addWidget(self.inicaptype)
+        self.capacitytext = QtWidgets.QLineEdit(parent=self.capacitygroup)
+        self.capacitytext.setMinimumSize(QtCore.QSize(120, 25))
+        self.capacitytext.setMaximumSize(QtCore.QSize(120, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.capacitytext.setFont(font)
+        self.capacitytext.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.capacitytext.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.capacitytext.setObjectName("capacitytext")
+        self.horizontalLayout_121.addWidget(self.capacitytext)
+        self.verticalLayout_18.addLayout(self.horizontalLayout_121)
+        self.horizontalLayout_122.addLayout(self.verticalLayout_18)
+        self.verticalLayout_6.addWidget(self.capacitygroup)
+        self.tabWidget_2 = QtWidgets.QTabWidget(parent=self.CycTab)
+        self.tabWidget_2.setMinimumSize(QtCore.QSize(502, 594))
+        self.tabWidget_2.setMaximumSize(QtCore.QSize(502, 594))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
         self.tabWidget_2.setFont(font)
         self.tabWidget_2.setObjectName("tabWidget_2")
         self.tab_5 = QtWidgets.QWidget()
@@ -4652,176 +2430,233 @@ class Ui_sitool(object):
         self.horizontalLayout_107.setObjectName("horizontalLayout_107")
         self.verticalLayout_17 = QtWidgets.QVBoxLayout()
         self.verticalLayout_17.setObjectName("verticalLayout_17")
-        # ── DCIR 옵션 선택 GroupBox ──
-        self._dcir_groupbox = QtWidgets.QGroupBox("3. DCIR 옵션 선택", parent=self.tab_5)
-        _dcir_layout = QtWidgets.QVBoxLayout(self._dcir_groupbox)
-        _dcir_layout.setContentsMargins(6, 4, 6, 4)
-        _dcir_layout.setSpacing(2)
-        self.dcirchk = QtWidgets.QRadioButton(parent=self._dcir_groupbox)
-        self.dcirchk.setMinimumSize(QtCore.QSize(300, 26))
-        self.dcirchk.setMaximumSize(QtCore.QSize(16777215, 26))
+        self.verticalLayout_14 = QtWidgets.QVBoxLayout()
+        self.verticalLayout_14.setObjectName("verticalLayout_14")
+        self.dcirchk = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.dcirchk.setMinimumSize(QtCore.QSize(450, 30))
+        self.dcirchk.setMaximumSize(QtCore.QSize(450, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
+        font.setPointSize(9)
         self.dcirchk.setFont(font)
         self.dcirchk.setObjectName("dcirchk")
-        _dcir_layout.addWidget(self.dcirchk)
-        self.pulsedcir = QtWidgets.QRadioButton(parent=self._dcir_groupbox)
-        self.pulsedcir.setMinimumSize(QtCore.QSize(300, 26))
-        self.pulsedcir.setMaximumSize(QtCore.QSize(16777215, 26))
+        self.verticalLayout_14.addWidget(self.dcirchk)
+        self.pulsedcir = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.pulsedcir.setMinimumSize(QtCore.QSize(450, 30))
+        self.pulsedcir.setMaximumSize(QtCore.QSize(450, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
+        font.setPointSize(9)
         self.pulsedcir.setFont(font)
         self.pulsedcir.setChecked(False)
         self.pulsedcir.setObjectName("pulsedcir")
-        _dcir_layout.addWidget(self.pulsedcir)
-        self.mkdcir = QtWidgets.QRadioButton(parent=self._dcir_groupbox)
-        self.mkdcir.setMinimumSize(QtCore.QSize(300, 44))
+        self.verticalLayout_14.addWidget(self.pulsedcir)
+        self.mkdcir = QtWidgets.QRadioButton(parent=self.tab_5)
+        self.mkdcir.setMinimumSize(QtCore.QSize(450, 30))
+        self.mkdcir.setMaximumSize(QtCore.QSize(450, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
+        font.setPointSize(9)
         self.mkdcir.setFont(font)
         self.mkdcir.setCheckable(True)
         self.mkdcir.setChecked(True)
         self.mkdcir.setObjectName("mkdcir")
-        _dcir_layout.addWidget(self.mkdcir)
-        # DCIR 라디오를 전용 ButtonGroup으로 묶어 개별/통합 라디오와 분리
-        self.dcir_mode_group = QtWidgets.QButtonGroup(self.tab_5)
-        self.dcir_mode_group.addButton(self.dcirchk)
-        self.dcir_mode_group.addButton(self.pulsedcir)
-        self.dcir_mode_group.addButton(self.mkdcir)
-        # 하위 호환: 기존 verticalLayout_14 참조 유지
-        self.verticalLayout_14 = _dcir_layout
-        self.verticalLayout_17.addWidget(self._dcir_groupbox)
-        # ── 그래프 옵션 GroupBox ──
-        self._graph_opt_groupbox = QtWidgets.QGroupBox("4. 그래프 옵션", parent=self.tab_5)
-        self._graph_opt_layout = QtWidgets.QVBoxLayout(self._graph_opt_groupbox)
-        self._graph_opt_layout.setContentsMargins(6, 4, 6, 4)
-        self._graph_opt_layout.setSpacing(4)
-        self.dcirchk_2 = QtWidgets.QCheckBox(parent=self._graph_opt_groupbox)
-        self.dcirchk_2.setMinimumSize(QtCore.QSize(150, 26))
-        self.dcirchk_2.setMaximumSize(QtCore.QSize(16777215, 26))
+        self.verticalLayout_14.addWidget(self.mkdcir)
+        self.dcirchk_2 = QtWidgets.QCheckBox(parent=self.tab_5)
+        self.dcirchk_2.setMinimumSize(QtCore.QSize(234, 30))
+        self.dcirchk_2.setMaximumSize(QtCore.QSize(234, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dcirchk_2.setFont(font)
         self.dcirchk_2.setObjectName("dcirchk_2")
-        self._graph_opt_layout.addWidget(self.dcirchk_2)
-        # ── 입력필드 2×2 그리드 배치 (Y축 최대/최소, X축 최대, DCIR scale) ──
-        _input_font = QtGui.QFont("맑은 고딕", 10)
-        self._cycle_input_grid = QtWidgets.QGridLayout()
-        self._cycle_input_grid.setSpacing(4)
-        self._cycle_input_grid.setContentsMargins(0, 4, 0, 4)
+        self.verticalLayout_14.addWidget(self.dcirchk_2)
+        self.verticalLayout_17.addLayout(self.verticalLayout_14)
+        self.horizontalLayout_86 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_86.setObjectName("horizontalLayout_86")
         self.cycxlabel_2 = QtWidgets.QLabel(parent=self.tab_5)
-        self.cycxlabel_2.setFont(_input_font)
+        self.cycxlabel_2.setMinimumSize(QtCore.QSize(215, 30))
+        self.cycxlabel_2.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_2.setFont(font)
         self.cycxlabel_2.setObjectName("cycxlabel_2")
-        self._cycle_input_grid.addWidget(self.cycxlabel_2, 0, 0)
+        self.horizontalLayout_86.addWidget(self.cycxlabel_2)
         self.tcyclerngyhl = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.tcyclerngyhl.setMinimumSize(QtCore.QSize(80, 28))
-        self.tcyclerngyhl.setMaximumSize(QtCore.QSize(16777215, 28))
-        self.tcyclerngyhl.setFont(_input_font)
+        self.tcyclerngyhl.setMinimumSize(QtCore.QSize(215, 30))
+        self.tcyclerngyhl.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.tcyclerngyhl.setFont(font)
         self.tcyclerngyhl.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.tcyclerngyhl.setClearButtonEnabled(False)
         self.tcyclerngyhl.setObjectName("tcyclerngyhl")
-        self._cycle_input_grid.addWidget(self.tcyclerngyhl, 0, 1)
+        self.horizontalLayout_86.addWidget(self.tcyclerngyhl)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_86)
+        self.horizontalLayout_87 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_87.setObjectName("horizontalLayout_87")
         self.cycxlabel_3 = QtWidgets.QLabel(parent=self.tab_5)
-        self.cycxlabel_3.setFont(_input_font)
-        self.cycxlabel_3.setObjectName("cycxlabel_3")
-        self._cycle_input_grid.addWidget(self.cycxlabel_3, 0, 2)
-        self.tcyclerngyll = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.tcyclerngyll.setMinimumSize(QtCore.QSize(80, 28))
-        self.tcyclerngyll.setMaximumSize(QtCore.QSize(16777215, 28))
-        self.tcyclerngyll.setFont(_input_font)
-        self.tcyclerngyll.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
-        self.tcyclerngyll.setObjectName("tcyclerngyll")
-        self._cycle_input_grid.addWidget(self.tcyclerngyll, 0, 3)
-        self.cycxlabel = QtWidgets.QLabel(parent=self.tab_5)
-        self.cycxlabel.setFont(_input_font)
-        self.cycxlabel.setObjectName("cycxlabel")
-        self._cycle_input_grid.addWidget(self.cycxlabel, 1, 0)
-        self.tcyclerng = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.tcyclerng.setMinimumSize(QtCore.QSize(80, 28))
-        self.tcyclerng.setMaximumSize(QtCore.QSize(16777215, 28))
-        self.tcyclerng.setFont(_input_font)
-        self.tcyclerng.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
-        self.tcyclerng.setObjectName("tcyclerng")
-        self._cycle_input_grid.addWidget(self.tcyclerng, 1, 1)
-        self.dcirscalelb = QtWidgets.QLabel(parent=self.tab_5)
-        self.dcirscalelb.setFont(_input_font)
-        self.dcirscalelb.setObjectName("dcirscalelb")
-        self._cycle_input_grid.addWidget(self.dcirscalelb, 1, 2)
-        self.dcirscale = QtWidgets.QLineEdit(parent=self.tab_5)
-        self.dcirscale.setMinimumSize(QtCore.QSize(80, 28))
-        self.dcirscale.setMaximumSize(QtCore.QSize(16777215, 28))
-        self.dcirscale.setFont(_input_font)
-        self.dcirscale.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
-        self.dcirscale.setObjectName("dcirscale")
-        self._cycle_input_grid.addWidget(self.dcirscale, 1, 3)
-        self._cycle_input_grid.setColumnStretch(1, 1)
-        self._cycle_input_grid.setColumnStretch(3, 1)
-        self._graph_opt_layout.addLayout(self._cycle_input_grid)
-        self.verticalLayout_17.addWidget(self._graph_opt_groupbox)
-        # 하위 호환: 기존 레이아웃 참조 유지
-        self.horizontalLayout_86 = self._cycle_input_grid
-        self.horizontalLayout_87 = self._cycle_input_grid
-        self.horizontalLayout_88 = self._cycle_input_grid
-        self.horizontalLayout_89 = self._cycle_input_grid
-        # ── 사이클 분석 GroupBox (개별/통합 라디오 + 분석 버튼) ──
-        self._cycle_analysis_groupbox = QtWidgets.QGroupBox("5. 사이클 분석", parent=self.tab_5)
+        self.cycxlabel_3.setMinimumSize(QtCore.QSize(215, 30))
+        self.cycxlabel_3.setMaximumSize(QtCore.QSize(215, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
-        self._cycle_analysis_groupbox.setFont(font)
-        self.horizontalLayout_90 = QtWidgets.QHBoxLayout(self._cycle_analysis_groupbox)
-        self.horizontalLayout_90.setContentsMargins(6, 4, 6, 4)
-        self.horizontalLayout_90.setSpacing(4)
+        self.cycxlabel_3.setFont(font)
+        self.cycxlabel_3.setObjectName("cycxlabel_3")
+        self.horizontalLayout_87.addWidget(self.cycxlabel_3)
+        self.tcyclerngyll = QtWidgets.QLineEdit(parent=self.tab_5)
+        self.tcyclerngyll.setMinimumSize(QtCore.QSize(215, 30))
+        self.tcyclerngyll.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.tcyclerngyll.setFont(font)
+        self.tcyclerngyll.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.tcyclerngyll.setObjectName("tcyclerngyll")
+        self.horizontalLayout_87.addWidget(self.tcyclerngyll)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_87)
+        self.horizontalLayout_88 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_88.setObjectName("horizontalLayout_88")
+        self.cycxlabel = QtWidgets.QLabel(parent=self.tab_5)
+        self.cycxlabel.setMinimumSize(QtCore.QSize(215, 30))
+        self.cycxlabel.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel.setFont(font)
+        self.cycxlabel.setObjectName("cycxlabel")
+        self.horizontalLayout_88.addWidget(self.cycxlabel)
+        self.tcyclerng = QtWidgets.QLineEdit(parent=self.tab_5)
+        self.tcyclerng.setMinimumSize(QtCore.QSize(215, 30))
+        self.tcyclerng.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.tcyclerng.setFont(font)
+        self.tcyclerng.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
+        self.tcyclerng.setObjectName("tcyclerng")
+        self.horizontalLayout_88.addWidget(self.tcyclerng)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_88)
+        self.horizontalLayout_89 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_89.setObjectName("horizontalLayout_89")
+        self.dcirscalelb = QtWidgets.QLabel(parent=self.tab_5)
+        self.dcirscalelb.setMinimumSize(QtCore.QSize(215, 30))
+        self.dcirscalelb.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.dcirscalelb.setFont(font)
+        self.dcirscalelb.setObjectName("dcirscalelb")
+        self.horizontalLayout_89.addWidget(self.dcirscalelb)
+        self.dcirscale = QtWidgets.QLineEdit(parent=self.tab_5)
+        self.dcirscale.setMinimumSize(QtCore.QSize(215, 30))
+        self.dcirscale.setMaximumSize(QtCore.QSize(215, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.dcirscale.setFont(font)
+        self.dcirscale.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
+        self.dcirscale.setObjectName("dcirscale")
+        self.horizontalLayout_89.addWidget(self.dcirscale)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_89)
+        self.horizontalLayout_90 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_90.setObjectName("horizontalLayout_90")
-        self.radio_indiv = QtWidgets.QRadioButton(parent=self._cycle_analysis_groupbox)
-        self.radio_indiv.setMinimumSize(QtCore.QSize(60, 28))
-        self.radio_indiv.setFont(font)
-        self.radio_indiv.setObjectName("radio_indiv")
-        self.horizontalLayout_90.addWidget(self.radio_indiv)
-        self.radio_overall = QtWidgets.QRadioButton(parent=self._cycle_analysis_groupbox)
-        self.radio_overall.setMinimumSize(QtCore.QSize(60, 28))
-        self.radio_overall.setFont(font)
-        self.radio_overall.setObjectName("radio_overall")
-        self.horizontalLayout_90.addWidget(self.radio_overall)
-        # DCIR 라디오와 분리하기 위한 ButtonGroup (같은 parent 내 자동 배타 방지)
-        self.cycle_mode_group = QtWidgets.QButtonGroup(self.tab_5)
-        self.cycle_mode_group.addButton(self.radio_indiv)
-        self.cycle_mode_group.addButton(self.radio_overall)
-        self.radio_indiv.setChecked(True)
-        self.horizontalLayout_90.addStretch(1)
-        self.cycle_confirm = QtWidgets.QPushButton(parent=self._cycle_analysis_groupbox)
-        self.cycle_confirm.setMinimumSize(QtCore.QSize(144, 45))
-        self.cycle_confirm.setMaximumSize(QtCore.QSize(16777215, 45))
-        font = QtGui.QFont("맑은 고딕", 11, QtGui.QFont.Weight.Bold)
-        self.cycle_confirm.setFont(font)
-        self.cycle_confirm.setObjectName("cycle_confirm")
-        self.horizontalLayout_90.addWidget(self.cycle_confirm)
-        self.cycle_tab_reset = QtWidgets.QPushButton(parent=self._cycle_analysis_groupbox)
-        self.cycle_tab_reset.setMinimumSize(QtCore.QSize(144, 45))
-        self.cycle_tab_reset.setMaximumSize(QtCore.QSize(16777215, 45))
-        font = QtGui.QFont("맑은 고딕", 11, QtGui.QFont.Weight.Bold)
-        self.cycle_tab_reset.setFont(font)
-        self.cycle_tab_reset.setEnabled(False)
-        self.cycle_tab_reset.setObjectName("cycle_tab_reset")
-        self.horizontalLayout_90.addWidget(self.cycle_tab_reset)
-        self.verticalLayout_17.addWidget(self._cycle_analysis_groupbox)
-        self.verticalLayout_17.addStretch(1)
-        # 하위 호환: 기존 레이아웃 참조 유지
-        self.horizontalLayout_91 = self.horizontalLayout_90
+        self.indiv_cycle = QtWidgets.QPushButton(parent=self.tab_5)
+        self.indiv_cycle.setMinimumSize(QtCore.QSize(215, 70))
+        self.indiv_cycle.setMaximumSize(QtCore.QSize(215, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.indiv_cycle.setFont(font)
+        self.indiv_cycle.setObjectName("indiv_cycle")
+        self.horizontalLayout_90.addWidget(self.indiv_cycle)
+        self.overall_cycle = QtWidgets.QPushButton(parent=self.tab_5)
+        self.overall_cycle.setMinimumSize(QtCore.QSize(215, 70))
+        self.overall_cycle.setMaximumSize(QtCore.QSize(215, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.overall_cycle.setFont(font)
+        self.overall_cycle.setObjectName("overall_cycle")
+        self.horizontalLayout_90.addWidget(self.overall_cycle)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_90)
+        self.horizontalLayout_91 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_91.setObjectName("horizontalLayout_91")
+        self.link_cycle = QtWidgets.QPushButton(parent=self.tab_5)
+        self.link_cycle.setMinimumSize(QtCore.QSize(215, 70))
+        self.link_cycle.setMaximumSize(QtCore.QSize(215, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        font.setKerning(True)
+        self.link_cycle.setFont(font)
+        self.link_cycle.setObjectName("link_cycle")
+        self.horizontalLayout_91.addWidget(self.link_cycle)
+        self.AppCycConfirm = QtWidgets.QPushButton(parent=self.tab_5)
+        self.AppCycConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.AppCycConfirm.setMaximumSize(QtCore.QSize(215, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.AppCycConfirm.setFont(font)
+        self.AppCycConfirm.setObjectName("AppCycConfirm")
+        self.horizontalLayout_91.addWidget(self.AppCycConfirm)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_91)
+        self.horizontalLayout_92 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_92.setObjectName("horizontalLayout_92")
+        self.link_cycle_indiv = QtWidgets.QPushButton(parent=self.tab_5)
+        self.link_cycle_indiv.setMinimumSize(QtCore.QSize(215, 70))
+        self.link_cycle_indiv.setMaximumSize(QtCore.QSize(215, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        font.setKerning(True)
+        self.link_cycle_indiv.setFont(font)
+        self.link_cycle_indiv.setObjectName("link_cycle_indiv")
+        self.horizontalLayout_92.addWidget(self.link_cycle_indiv)
+        self.link_cycle_overall = QtWidgets.QPushButton(parent=self.tab_5)
+        self.link_cycle_overall.setMinimumSize(QtCore.QSize(215, 70))
+        self.link_cycle_overall.setMaximumSize(QtCore.QSize(215, 70))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        font.setKerning(True)
+        self.link_cycle_overall.setFont(font)
+        self.link_cycle_overall.setObjectName("link_cycle_overall")
+        self.horizontalLayout_92.addWidget(self.link_cycle_overall)
+        self.verticalLayout_17.addLayout(self.horizontalLayout_92)
         self.horizontalLayout_107.addLayout(self.verticalLayout_17)
         self.tabWidget_2.addTab(self.tab_5, "")
         self.tab_6 = QtWidgets.QWidget()
@@ -4837,7 +2672,7 @@ class Ui_sitool(object):
         self.CycProfile.setMaximumSize(QtCore.QSize(300, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.CycProfile.setFont(font)
@@ -4849,56 +2684,33 @@ class Ui_sitool(object):
         self.CellProfile.setMaximumSize(QtCore.QSize(300, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.CellProfile.setFont(font)
         self.CellProfile.setObjectName("CellProfile")
         self.horizontalLayout_15.addWidget(self.CellProfile)
-        self.AllProfile = QtWidgets.QRadioButton(parent=self.tab_6)
-        self.AllProfile.setMinimumSize(QtCore.QSize(0, 30))
-        self.AllProfile.setMaximumSize(QtCore.QSize(300, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.AllProfile.setFont(font)
-        self.AllProfile.setObjectName("AllProfile")
-        self.horizontalLayout_15.addWidget(self.AllProfile)
         self.chk_dqdv = QtWidgets.QCheckBox(parent=self.tab_6)
-        self.chk_dqdv.setMinimumSize(QtCore.QSize(145, 30))
-        self.chk_dqdv.setMaximumSize(QtCore.QSize(145, 30))
+        self.chk_dqdv.setMinimumSize(QtCore.QSize(120, 30))
+        self.chk_dqdv.setMaximumSize(QtCore.QSize(120, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.chk_dqdv.setFont(font)
         self.chk_dqdv.setChecked(False)
         self.chk_dqdv.setObjectName("chk_dqdv")
         self.horizontalLayout_15.addWidget(self.chk_dqdv)
-        self.chk_coincell_cyc = QtWidgets.QCheckBox(parent=self.tab_6)
-        self.chk_coincell_cyc.setMinimumSize(QtCore.QSize(80, 30))
-        self.chk_coincell_cyc.setMaximumSize(QtCore.QSize(100, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.chk_coincell_cyc.setFont(font)
-        self.chk_coincell_cyc.setChecked(False)
-        self.chk_coincell_cyc.setObjectName("chk_coincell_cyc")
-        self.horizontalLayout_15.addWidget(self.chk_coincell_cyc)
         self.verticalLayout_4.addLayout(self.horizontalLayout_15)
         self.horizontalLayout_111 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_111.setObjectName("horizontalLayout_111")
         self.stepnumlb = QtWidgets.QLabel(parent=self.tab_6)
         self.stepnumlb.setMinimumSize(QtCore.QSize(0, 60))
-        self.stepnumlb.setMaximumSize(QtCore.QSize(260, 60))
+        self.stepnumlb.setMaximumSize(QtCore.QSize(215, 60))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.stepnumlb.setFont(font)
@@ -4906,10 +2718,10 @@ class Ui_sitool(object):
         self.horizontalLayout_111.addWidget(self.stepnumlb)
         self.stepnum = QtWidgets.QPlainTextEdit(parent=self.tab_6)
         self.stepnum.setMinimumSize(QtCore.QSize(0, 60))
-        self.stepnum.setMaximumSize(QtCore.QSize(170, 60))
+        self.stepnum.setMaximumSize(QtCore.QSize(215, 60))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.stepnum.setFont(font)
@@ -4917,108 +2729,181 @@ class Ui_sitool(object):
         self.stepnum.setObjectName("stepnum")
         self.horizontalLayout_111.addWidget(self.stepnum)
         self.verticalLayout_4.addLayout(self.horizontalLayout_111)
-        # ── 전압 Y축 하한~dQ/dV 스케일: 3행 2열 그리드 배치 ──
-        _pf_font = QtGui.QFont("맑은 고딕", 10)
-        self._profile_input_grid = QtWidgets.QGridLayout()
-        self._profile_input_grid.setSpacing(4)
-        self._profile_input_grid.setContentsMargins(0, 2, 0, 2)
-        # row 0: Y축 하한 | Y축 상한
+        self.horizontalLayout_85 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_85.setObjectName("horizontalLayout_85")
         self.smoothlb_3 = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb_3.setFont(_pf_font)
+        self.smoothlb_3.setMinimumSize(QtCore.QSize(215, 25))
+        self.smoothlb_3.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.smoothlb_3.setFont(font)
         self.smoothlb_3.setObjectName("smoothlb_3")
-        self._profile_input_grid.addWidget(self.smoothlb_3, 0, 0)
+        self.horizontalLayout_85.addWidget(self.smoothlb_3)
         self.volrngyhl = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.volrngyhl.setMinimumSize(QtCore.QSize(60, 25))
-        self.volrngyhl.setMaximumHeight(25)
-        self.volrngyhl.setFont(_pf_font)
+        self.volrngyhl.setMinimumSize(QtCore.QSize(215, 25))
+        self.volrngyhl.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.volrngyhl.setFont(font)
         self.volrngyhl.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.volrngyhl.setObjectName("volrngyhl")
-        self._profile_input_grid.addWidget(self.volrngyhl, 0, 1)
+        self.horizontalLayout_85.addWidget(self.volrngyhl)
+        self.verticalLayout_4.addLayout(self.horizontalLayout_85)
+        self.horizontalLayout_110 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_110.setObjectName("horizontalLayout_110")
         self.smoothlb_2 = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb_2.setFont(_pf_font)
+        self.smoothlb_2.setMinimumSize(QtCore.QSize(215, 25))
+        self.smoothlb_2.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.smoothlb_2.setFont(font)
         self.smoothlb_2.setObjectName("smoothlb_2")
-        self._profile_input_grid.addWidget(self.smoothlb_2, 0, 2)
+        self.horizontalLayout_110.addWidget(self.smoothlb_2)
         self.volrngyll = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.volrngyll.setMinimumSize(QtCore.QSize(60, 25))
-        self.volrngyll.setMaximumHeight(25)
-        self.volrngyll.setFont(_pf_font)
+        self.volrngyll.setMinimumSize(QtCore.QSize(215, 25))
+        self.volrngyll.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.volrngyll.setFont(font)
         self.volrngyll.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.volrngyll.setObjectName("volrngyll")
-        self._profile_input_grid.addWidget(self.volrngyll, 0, 3)
-        # row 1: Y축 간격 | Smooth
+        self.horizontalLayout_110.addWidget(self.volrngyll)
+        self.verticalLayout_4.addLayout(self.horizontalLayout_110)
+        self.horizontalLayout_109 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_109.setObjectName("horizontalLayout_109")
         self.smoothlb_4 = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb_4.setFont(_pf_font)
+        self.smoothlb_4.setMinimumSize(QtCore.QSize(215, 25))
+        self.smoothlb_4.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.smoothlb_4.setFont(font)
         self.smoothlb_4.setObjectName("smoothlb_4")
-        self._profile_input_grid.addWidget(self.smoothlb_4, 1, 0)
+        self.horizontalLayout_109.addWidget(self.smoothlb_4)
         self.volrnggap = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.volrnggap.setMinimumSize(QtCore.QSize(60, 25))
-        self.volrnggap.setMaximumHeight(25)
-        self.volrnggap.setFont(_pf_font)
+        self.volrnggap.setMinimumSize(QtCore.QSize(215, 25))
+        self.volrnggap.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.volrnggap.setFont(font)
         self.volrnggap.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.volrnggap.setObjectName("volrnggap")
-        self._profile_input_grid.addWidget(self.volrnggap, 1, 1)
+        self.horizontalLayout_109.addWidget(self.volrnggap)
+        self.verticalLayout_4.addLayout(self.horizontalLayout_109)
+        self.horizontalLayout_113 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_113.setObjectName("horizontalLayout_113")
         self.smoothlb = QtWidgets.QLabel(parent=self.tab_6)
-        self.smoothlb.setFont(_pf_font)
+        self.smoothlb.setMinimumSize(QtCore.QSize(215, 25))
+        self.smoothlb.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.smoothlb.setFont(font)
         self.smoothlb.setObjectName("smoothlb")
-        self._profile_input_grid.addWidget(self.smoothlb, 1, 2)
+        self.horizontalLayout_113.addWidget(self.smoothlb)
         self.smooth = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.smooth.setMinimumSize(QtCore.QSize(60, 25))
-        self.smooth.setMaximumHeight(25)
-        self.smooth.setFont(_pf_font)
+        self.smooth.setMinimumSize(QtCore.QSize(215, 25))
+        self.smooth.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.smooth.setFont(font)
         self.smooth.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.smooth.setObjectName("smooth")
-        self._profile_input_grid.addWidget(self.smooth, 1, 3)
-        # row 2: 컷오프 | dQ/dV 스케일
+        self.horizontalLayout_113.addWidget(self.smooth)
+        self.verticalLayout_4.addLayout(self.horizontalLayout_113)
+        self.horizontalLayout_114 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_114.setObjectName("horizontalLayout_114")
         self.cutofflb = QtWidgets.QLabel(parent=self.tab_6)
-        self.cutofflb.setFont(_pf_font)
+        self.cutofflb.setMinimumSize(QtCore.QSize(215, 25))
+        self.cutofflb.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cutofflb.setFont(font)
         self.cutofflb.setObjectName("cutofflb")
-        self._profile_input_grid.addWidget(self.cutofflb, 2, 0)
+        self.horizontalLayout_114.addWidget(self.cutofflb)
         self.cutoff = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.cutoff.setMinimumSize(QtCore.QSize(60, 25))
-        self.cutoff.setMaximumHeight(25)
-        self.cutoff.setFont(_pf_font)
+        self.cutoff.setMinimumSize(QtCore.QSize(215, 25))
+        self.cutoff.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cutoff.setFont(font)
         self.cutoff.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
         self.cutoff.setObjectName("cutoff")
-        self._profile_input_grid.addWidget(self.cutoff, 2, 1)
+        self.horizontalLayout_114.addWidget(self.cutoff)
+        self.verticalLayout_4.addLayout(self.horizontalLayout_114)
+        self.horizontalLayout_115 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_115.setObjectName("horizontalLayout_115")
         self.dqdvscalelb = QtWidgets.QLabel(parent=self.tab_6)
-        self.dqdvscalelb.setFont(_pf_font)
+        self.dqdvscalelb.setMinimumSize(QtCore.QSize(215, 25))
+        self.dqdvscalelb.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.dqdvscalelb.setFont(font)
         self.dqdvscalelb.setObjectName("dqdvscalelb")
-        self._profile_input_grid.addWidget(self.dqdvscalelb, 2, 2)
+        self.horizontalLayout_115.addWidget(self.dqdvscalelb)
         self.dqdvscale = QtWidgets.QLineEdit(parent=self.tab_6)
-        self.dqdvscale.setMinimumSize(QtCore.QSize(60, 25))
-        self.dqdvscale.setMaximumHeight(25)
-        self.dqdvscale.setFont(_pf_font)
+        self.dqdvscale.setMinimumSize(QtCore.QSize(215, 25))
+        self.dqdvscale.setMaximumSize(QtCore.QSize(215, 25))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.dqdvscale.setFont(font)
         self.dqdvscale.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhDigitsOnly)
         self.dqdvscale.setObjectName("dqdvscale")
-        self._profile_input_grid.addWidget(self.dqdvscale, 2, 3)
-        self._profile_input_grid.setColumnStretch(1, 1)
-        self._profile_input_grid.setColumnStretch(3, 1)
-        self.verticalLayout_4.addLayout(self._profile_input_grid)
-        # 하위 호환: 기존 레이아웃 참조 유지
-        self.horizontalLayout_110 = self._profile_input_grid
-        self.horizontalLayout_109 = self._profile_input_grid
-        self.horizontalLayout_113 = self._profile_input_grid
-        self.horizontalLayout_114 = self._profile_input_grid
-        self.horizontalLayout_115 = self._profile_input_grid
+        self.horizontalLayout_115.addWidget(self.dqdvscale)
+        self.verticalLayout_4.addLayout(self.horizontalLayout_115)
         self.horizontalLayout_116 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_116.setObjectName("horizontalLayout_116")
         self.StepConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.StepConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.StepConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.StepConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.StepConfirm.setMaximumSize(QtCore.QSize(215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.StepConfirm.setFont(font)
         self.StepConfirm.setObjectName("StepConfirm")
         self.horizontalLayout_116.addWidget(self.StepConfirm)
         self.ChgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ChgConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.ChgConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.ChgConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.ChgConfirm.setMaximumSize(QtCore.QSize(215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ChgConfirm.setFont(font)
@@ -5028,22 +2913,22 @@ class Ui_sitool(object):
         self.horizontalLayout_117 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_117.setObjectName("horizontalLayout_117")
         self.RateConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.RateConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.RateConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.RateConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.RateConfirm.setMaximumSize(QtCore.QSize(215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.RateConfirm.setFont(font)
         self.RateConfirm.setObjectName("RateConfirm")
         self.horizontalLayout_117.addWidget(self.RateConfirm)
         self.DchgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.DchgConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.DchgConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.DchgConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.DchgConfirm.setMaximumSize(QtCore.QSize(215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.DchgConfirm.setFont(font)
@@ -5053,22 +2938,22 @@ class Ui_sitool(object):
         self.horizontalLayout_118 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_118.setObjectName("horizontalLayout_118")
         self.ContinueConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ContinueConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.ContinueConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.ContinueConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.ContinueConfirm.setMaximumSize(QtCore.QSize(215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ContinueConfirm.setFont(font)
         self.ContinueConfirm.setObjectName("ContinueConfirm")
         self.horizontalLayout_118.addWidget(self.ContinueConfirm)
         self.DCIRConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.DCIRConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.DCIRConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.DCIRConfirm.setMinimumSize(QtCore.QSize(215, 70))
+        self.DCIRConfirm.setMaximumSize(QtCore.QSize(215, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.DCIRConfirm.setFont(font)
@@ -5077,388 +2962,667 @@ class Ui_sitool(object):
         self.verticalLayout_4.addLayout(self.horizontalLayout_118)
         self.horizontalLayout_17.addLayout(self.verticalLayout_4)
         self.tabWidget_2.addTab(self.tab_6, "")
-        self.verticalLayout_6.addWidget(self.tabWidget_2, stretch=0)
-        # 왼쪽 패널을 스크롤 영역으로 래핑
-        self._left_scroll = QtWidgets.QScrollArea(parent=self.CycTab)
-        self._left_scroll.setWidget(self._left_panel_widget)
-        self._left_scroll.setWidgetResizable(True)
-        self._left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        self.horizontalLayout_112.addWidget(self._left_scroll, 1)
+        self.verticalLayout_6.addWidget(self.tabWidget_2)
+        self.horizontalLayout_112.addLayout(self.verticalLayout_6)
         self.cycle_tab = QtWidgets.QTabWidget(parent=self.CycTab)
-        self.cycle_tab.setFixedSize(QtCore.QSize(1350, 830))
+        self.cycle_tab.setMinimumSize(QtCore.QSize(1350, 830))
+        self.cycle_tab.setMaximumSize(QtCore.QSize(1350, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cycle_tab.setFont(font)
         self.cycle_tab.setObjectName("cycle_tab")
-        self.horizontalLayout_112.addWidget(self.cycle_tab, 0)
+        self.horizontalLayout_112.addWidget(self.cycle_tab)
         self.horizontalLayout_172.addLayout(self.horizontalLayout_112)
         self.tabWidget.addTab(self.CycTab, "")
         self.tab_2 = QtWidgets.QWidget()
         self.tab_2.setObjectName("tab_2")
-        # 탭 전체 공통 폰트 설정
-        _ptn_font = QtGui.QFont("맑은 고딕", 10)
-        self.tab_2.setFont(_ptn_font)
         self.horizontalLayout_135 = QtWidgets.QHBoxLayout(self.tab_2)
-        self.horizontalLayout_135.setContentsMargins(6, 6, 6, 6)
         self.horizontalLayout_135.setObjectName("horizontalLayout_135")
         self.horizontalLayout_134 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_134.setObjectName("horizontalLayout_134")
         self.verticalLayout_9 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_9.setSpacing(4)
         self.verticalLayout_9.setObjectName("verticalLayout_9")
-        self.verticalLayout_9.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
         self.verticalLayout_8 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_8.setSpacing(2)
         self.verticalLayout_8.setObjectName("verticalLayout_8")
         self.horizontalLayout_129 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_129.setObjectName("horizontalLayout_129")
         self.label_10 = QtWidgets.QLabel(parent=self.tab_2)
-        self.label_10.setFixedHeight(28)
+        self.label_10.setMinimumSize(QtCore.QSize(369, 30))
+        self.label_10.setMaximumSize(QtCore.QSize(369, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.label_10.setFont(font)
         self.label_10.setObjectName("label_10")
         self.horizontalLayout_129.addWidget(self.label_10)
-        spacerItem1 = QtWidgets.QSpacerItem(40, 28, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
+        spacerItem1 = QtWidgets.QSpacerItem(201, 30, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
         self.horizontalLayout_129.addItem(spacerItem1)
         self.chk_coincell = QtWidgets.QCheckBox(parent=self.tab_2)
-        self.chk_coincell.setFixedSize(QtCore.QSize(80, 24))
+        self.chk_coincell.setMinimumSize(QtCore.QSize(70, 18))
+        self.chk_coincell.setMaximumSize(QtCore.QSize(70, 18))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        self.chk_coincell.setFont(font)
         self.chk_coincell.setObjectName("chk_coincell")
         self.horizontalLayout_129.addWidget(self.chk_coincell)
         self.verticalLayout_8.addLayout(self.horizontalLayout_129)
         self.horizontalLayout_14 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_14.setObjectName("horizontalLayout_14")
         self.cycxlabel_7 = QtWidgets.QLabel(parent=self.tab_2)
-        self.cycxlabel_7.setFixedHeight(28)
+        self.cycxlabel_7.setMinimumSize(QtCore.QSize(526, 30))
+        self.cycxlabel_7.setMaximumSize(QtCore.QSize(526, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_7.setFont(font)
         self.cycxlabel_7.setObjectName("cycxlabel_7")
         self.horizontalLayout_14.addWidget(self.cycxlabel_7)
-        _ptn_btn_font = QtGui.QFont("맑은 고딕", 10)
-        _ptn_btn_font.setBold(True)
         self.ptn_load = QtWidgets.QPushButton(parent=self.tab_2)
-        self.ptn_load.setFixedSize(QtCore.QSize(120, 40))
-        self.ptn_load.setFont(_ptn_btn_font)
+        self.ptn_load.setMinimumSize(QtCore.QSize(120, 50))
+        self.ptn_load.setMaximumSize(QtCore.QSize(120, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.ptn_load.setFont(font)
         self.ptn_load.setObjectName("ptn_load")
         self.horizontalLayout_14.addWidget(self.ptn_load)
         self.verticalLayout_8.addLayout(self.horizontalLayout_14)
         self.ptn_ori_path = QtWidgets.QLineEdit(parent=self.tab_2)
-        self.ptn_ori_path.setMinimumWidth(640)
-        self.ptn_ori_path.setFixedHeight(28)
+        self.ptn_ori_path.setMinimumSize(QtCore.QSize(640, 30))
+        self.ptn_ori_path.setMaximumSize(QtCore.QSize(640, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_ori_path.setFont(font)
         self.ptn_ori_path.setObjectName("ptn_ori_path")
         self.verticalLayout_8.addWidget(self.ptn_ori_path)
         self.line_16 = QtWidgets.QFrame(parent=self.tab_2)
-        self.line_16.setFixedHeight(3)
+        self.line_16.setMinimumSize(QtCore.QSize(654, 3))
+        self.line_16.setMaximumSize(QtCore.QSize(654, 3))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        self.line_16.setFont(font)
         self.line_16.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         self.line_16.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         self.line_16.setObjectName("line_16")
         self.verticalLayout_8.addWidget(self.line_16)
         self.verticalLayout_9.addLayout(self.verticalLayout_8)
-        _gb_grid = QtWidgets.QGridLayout()
-        _gb_grid.setHorizontalSpacing(8)
-        _gb_grid.setVerticalSpacing(6)
-        # 공통 GroupBox 크기/스타일 상수
-        _GB_W, _GB_H = 140, 280
-        _LBL_SZ = QtCore.QSize(115, 20)
-        _INP_SZ = QtCore.QSize(115, 28)
-        _BTN_SZ = QtCore.QSize(115, 40)
-        _input_hints = QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly
-        _align_c = QtCore.Qt.AlignmentFlag.AlignCenter
+        self.horizontalLayout_133 = QtWidgets.QHBoxLayout()
+        self.horizontalLayout_133.setObjectName("horizontalLayout_133")
+        self.verticalLayout_69 = QtWidgets.QVBoxLayout()
+        self.verticalLayout_69.setObjectName("verticalLayout_69")
         self.groupBox_8 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_8.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_8.setAlignment(_align_c)
+        self.groupBox_8.setMinimumSize(QtCore.QSize(140, 300))
+        self.groupBox_8.setMaximumSize(QtCore.QSize(140, 300))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_8.setFont(font)
         self.groupBox_8.setObjectName("groupBox_8")
         self.gridLayout = QtWidgets.QGridLayout(self.groupBox_8)
-        self.gridLayout.setContentsMargins(6, 12, 6, 6)
         self.gridLayout.setObjectName("gridLayout")
         self.verticalLayout_34 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_34.setSpacing(4)
         self.verticalLayout_34.setObjectName("verticalLayout_34")
         self.cycxlabel_5 = QtWidgets.QLabel(parent=self.groupBox_8)
-        self.cycxlabel_5.setFixedSize(_LBL_SZ)
+        self.cycxlabel_5.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_5.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_5.setFont(font)
         self.cycxlabel_5.setObjectName("cycxlabel_5")
-        self.cycxlabel_5.setAlignment(_align_c)
         self.verticalLayout_34.addWidget(self.cycxlabel_5)
         self.ptn_crate = QtWidgets.QLineEdit(parent=self.groupBox_8)
-        self.ptn_crate.setFixedSize(_INP_SZ)
-        self.ptn_crate.setInputMethodHints(_input_hints)
-        self.ptn_crate.setAlignment(_align_c)
+        self.ptn_crate.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_crate.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_crate.setFont(font)
+        self.ptn_crate.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_crate.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_crate.setObjectName("ptn_crate")
         self.verticalLayout_34.addWidget(self.ptn_crate)
         self.cycxlabel_6 = QtWidgets.QLabel(parent=self.groupBox_8)
-        self.cycxlabel_6.setFixedSize(_LBL_SZ)
+        self.cycxlabel_6.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_6.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_6.setFont(font)
         self.cycxlabel_6.setObjectName("cycxlabel_6")
-        self.cycxlabel_6.setAlignment(_align_c)
         self.verticalLayout_34.addWidget(self.cycxlabel_6)
         self.ptn_capacity = QtWidgets.QLineEdit(parent=self.groupBox_8)
-        self.ptn_capacity.setFixedSize(_INP_SZ)
-        self.ptn_capacity.setInputMethodHints(_input_hints)
-        self.ptn_capacity.setAlignment(_align_c)
+        self.ptn_capacity.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_capacity.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_capacity.setFont(font)
+        self.ptn_capacity.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_capacity.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_capacity.setObjectName("ptn_capacity")
         self.verticalLayout_34.addWidget(self.ptn_capacity)
-        self.verticalLayout_34.addStretch()
+        spacerItem2 = QtWidgets.QSpacerItem(118, 50, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_34.addItem(spacerItem2)
         self.chg_ptn = QtWidgets.QPushButton(parent=self.groupBox_8)
-        self.chg_ptn.setFixedSize(_BTN_SZ)
-        self.chg_ptn.setFont(_ptn_btn_font)
+        self.chg_ptn.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn.setFont(font)
         self.chg_ptn.setObjectName("chg_ptn")
         self.verticalLayout_34.addWidget(self.chg_ptn)
-        self.gridLayout.addLayout(self.verticalLayout_34, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_8, 0, 0)
+        self.gridLayout.addLayout(self.verticalLayout_34, 0, 0, 1, 1)
+        self.verticalLayout_69.addWidget(self.groupBox_8)
         self.groupBox_5 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_5.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_5.setAlignment(_align_c)
+        self.groupBox_5.setMinimumSize(QtCore.QSize(140, 300))
+        self.groupBox_5.setMaximumSize(QtCore.QSize(140, 300))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_5.setFont(font)
         self.groupBox_5.setObjectName("groupBox_5")
         self.gridLayout_17 = QtWidgets.QGridLayout(self.groupBox_5)
-        self.gridLayout_17.setContentsMargins(6, 12, 6, 6)
         self.gridLayout_17.setObjectName("gridLayout_17")
         self.verticalLayout_31 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_31.setSpacing(4)
         self.verticalLayout_31.setObjectName("verticalLayout_31")
         self.cycxlabel_19 = QtWidgets.QLabel(parent=self.groupBox_5)
-        self.cycxlabel_19.setFixedSize(_LBL_SZ)
+        self.cycxlabel_19.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_19.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_19.setFont(font)
         self.cycxlabel_19.setObjectName("cycxlabel_19")
-        self.cycxlabel_19.setAlignment(_align_c)
         self.verticalLayout_31.addWidget(self.cycxlabel_19)
         self.ptn_chgv_pre = QtWidgets.QLineEdit(parent=self.groupBox_5)
-        self.ptn_chgv_pre.setFixedSize(_INP_SZ)
-        self.ptn_chgv_pre.setInputMethodHints(_input_hints)
-        self.ptn_chgv_pre.setAlignment(_align_c)
+        self.ptn_chgv_pre.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_chgv_pre.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_chgv_pre.setFont(font)
+        self.ptn_chgv_pre.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_chgv_pre.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_chgv_pre.setObjectName("ptn_chgv_pre")
         self.verticalLayout_31.addWidget(self.ptn_chgv_pre)
         self.cycxlabel_20 = QtWidgets.QLabel(parent=self.groupBox_5)
-        self.cycxlabel_20.setFixedSize(_LBL_SZ)
+        self.cycxlabel_20.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_20.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_20.setFont(font)
         self.cycxlabel_20.setObjectName("cycxlabel_20")
-        self.cycxlabel_20.setAlignment(_align_c)
         self.verticalLayout_31.addWidget(self.cycxlabel_20)
         self.ptn_chgv_after = QtWidgets.QLineEdit(parent=self.groupBox_5)
-        self.ptn_chgv_after.setFixedSize(_INP_SZ)
-        self.ptn_chgv_after.setInputMethodHints(_input_hints)
-        self.ptn_chgv_after.setAlignment(_align_c)
+        self.ptn_chgv_after.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_chgv_after.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_chgv_after.setFont(font)
+        self.ptn_chgv_after.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_chgv_after.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_chgv_after.setObjectName("ptn_chgv_after")
         self.verticalLayout_31.addWidget(self.ptn_chgv_after)
-        self.verticalLayout_31.addStretch()
+        spacerItem3 = QtWidgets.QSpacerItem(118, 50, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_31.addItem(spacerItem3)
         self.chg_ptn_chgv = QtWidgets.QPushButton(parent=self.groupBox_5)
-        self.chg_ptn_chgv.setFixedSize(_BTN_SZ)
-        self.chg_ptn_chgv.setFont(_ptn_btn_font)
+        self.chg_ptn_chgv.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn_chgv.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn_chgv.setFont(font)
         self.chg_ptn_chgv.setObjectName("chg_ptn_chgv")
         self.verticalLayout_31.addWidget(self.chg_ptn_chgv)
-        self.gridLayout_17.addLayout(self.verticalLayout_31, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_5, 1, 0)
+        self.gridLayout_17.addLayout(self.verticalLayout_31, 0, 0, 1, 1)
+        self.verticalLayout_69.addWidget(self.groupBox_5)
+        self.horizontalLayout_133.addLayout(self.verticalLayout_69)
+        spacerItem4 = QtWidgets.QSpacerItem(17, 608, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
+        self.horizontalLayout_133.addItem(spacerItem4)
+        self.verticalLayout_70 = QtWidgets.QVBoxLayout()
+        self.verticalLayout_70.setObjectName("verticalLayout_70")
         self.groupBox_2 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_2.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_2.setAlignment(_align_c)
+        self.groupBox_2.setMinimumSize(QtCore.QSize(140, 300))
+        self.groupBox_2.setMaximumSize(QtCore.QSize(140, 300))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_2.setFont(font)
         self.groupBox_2.setObjectName("groupBox_2")
         self.gridLayout_12 = QtWidgets.QGridLayout(self.groupBox_2)
-        self.gridLayout_12.setContentsMargins(6, 12, 6, 6)
         self.gridLayout_12.setObjectName("gridLayout_12")
         self.verticalLayout_21 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_21.setSpacing(4)
         self.verticalLayout_21.setObjectName("verticalLayout_21")
         self.cycxlabel_9 = QtWidgets.QLabel(parent=self.groupBox_2)
-        self.cycxlabel_9.setFixedSize(_LBL_SZ)
+        self.cycxlabel_9.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_9.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_9.setFont(font)
         self.cycxlabel_9.setObjectName("cycxlabel_9")
-        self.cycxlabel_9.setAlignment(_align_c)
         self.verticalLayout_21.addWidget(self.cycxlabel_9)
         self.ptn_refi_pre = QtWidgets.QLineEdit(parent=self.groupBox_2)
-        self.ptn_refi_pre.setFixedSize(_INP_SZ)
-        self.ptn_refi_pre.setInputMethodHints(_input_hints)
-        self.ptn_refi_pre.setAlignment(_align_c)
+        self.ptn_refi_pre.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_refi_pre.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_refi_pre.setFont(font)
+        self.ptn_refi_pre.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_refi_pre.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_refi_pre.setObjectName("ptn_refi_pre")
         self.verticalLayout_21.addWidget(self.ptn_refi_pre)
         self.cycxlabel_10 = QtWidgets.QLabel(parent=self.groupBox_2)
-        self.cycxlabel_10.setFixedSize(_LBL_SZ)
+        self.cycxlabel_10.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_10.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_10.setFont(font)
         self.cycxlabel_10.setObjectName("cycxlabel_10")
-        self.cycxlabel_10.setAlignment(_align_c)
         self.verticalLayout_21.addWidget(self.cycxlabel_10)
         self.ptn_refi_after = QtWidgets.QLineEdit(parent=self.groupBox_2)
-        self.ptn_refi_after.setFixedSize(_INP_SZ)
-        self.ptn_refi_after.setInputMethodHints(_input_hints)
-        self.ptn_refi_after.setAlignment(_align_c)
+        self.ptn_refi_after.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_refi_after.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_refi_after.setFont(font)
+        self.ptn_refi_after.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_refi_after.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_refi_after.setObjectName("ptn_refi_after")
         self.verticalLayout_21.addWidget(self.ptn_refi_after)
-        self.verticalLayout_21.addStretch()
+        spacerItem5 = QtWidgets.QSpacerItem(118, 50, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_21.addItem(spacerItem5)
         self.chg_ptn_refi = QtWidgets.QPushButton(parent=self.groupBox_2)
-        self.chg_ptn_refi.setFixedSize(_BTN_SZ)
-        self.chg_ptn_refi.setFont(_ptn_btn_font)
+        self.chg_ptn_refi.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn_refi.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn_refi.setFont(font)
         self.chg_ptn_refi.setObjectName("chg_ptn_refi")
         self.verticalLayout_21.addWidget(self.chg_ptn_refi)
-        self.gridLayout_12.addLayout(self.verticalLayout_21, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_2, 0, 1)
+        self.gridLayout_12.addLayout(self.verticalLayout_21, 0, 0, 1, 1)
+        self.verticalLayout_70.addWidget(self.groupBox_2)
         self.groupBox_7 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_7.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_7.setAlignment(_align_c)
+        self.groupBox_7.setMinimumSize(QtCore.QSize(140, 300))
+        self.groupBox_7.setMaximumSize(QtCore.QSize(140, 300))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_7.setFont(font)
         self.groupBox_7.setObjectName("groupBox_7")
         self.gridLayout_21 = QtWidgets.QGridLayout(self.groupBox_7)
-        self.gridLayout_21.setContentsMargins(6, 12, 6, 6)
         self.gridLayout_21.setObjectName("gridLayout_21")
         self.verticalLayout_35 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_35.setSpacing(4)
         self.verticalLayout_35.setObjectName("verticalLayout_35")
         self.cycxlabel_27 = QtWidgets.QLabel(parent=self.groupBox_7)
-        self.cycxlabel_27.setFixedSize(_LBL_SZ)
+        self.cycxlabel_27.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_27.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_27.setFont(font)
         self.cycxlabel_27.setObjectName("cycxlabel_27")
-        self.cycxlabel_27.setAlignment(_align_c)
         self.verticalLayout_35.addWidget(self.cycxlabel_27)
         self.ptn_dchgv_pre = QtWidgets.QLineEdit(parent=self.groupBox_7)
-        self.ptn_dchgv_pre.setFixedSize(_INP_SZ)
-        self.ptn_dchgv_pre.setInputMethodHints(_input_hints)
-        self.ptn_dchgv_pre.setAlignment(_align_c)
+        self.ptn_dchgv_pre.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_dchgv_pre.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_dchgv_pre.setFont(font)
+        self.ptn_dchgv_pre.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_dchgv_pre.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_dchgv_pre.setObjectName("ptn_dchgv_pre")
         self.verticalLayout_35.addWidget(self.ptn_dchgv_pre)
         self.cycxlabel_28 = QtWidgets.QLabel(parent=self.groupBox_7)
-        self.cycxlabel_28.setFixedSize(_LBL_SZ)
+        self.cycxlabel_28.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_28.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_28.setFont(font)
         self.cycxlabel_28.setObjectName("cycxlabel_28")
-        self.cycxlabel_28.setAlignment(_align_c)
         self.verticalLayout_35.addWidget(self.cycxlabel_28)
         self.ptn_dchgv_after = QtWidgets.QLineEdit(parent=self.groupBox_7)
-        self.ptn_dchgv_after.setFixedSize(_INP_SZ)
-        self.ptn_dchgv_after.setInputMethodHints(_input_hints)
-        self.ptn_dchgv_after.setAlignment(_align_c)
+        self.ptn_dchgv_after.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_dchgv_after.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_dchgv_after.setFont(font)
+        self.ptn_dchgv_after.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_dchgv_after.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_dchgv_after.setObjectName("ptn_dchgv_after")
         self.verticalLayout_35.addWidget(self.ptn_dchgv_after)
-        self.verticalLayout_35.addStretch()
+        spacerItem6 = QtWidgets.QSpacerItem(118, 50, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_35.addItem(spacerItem6)
         self.chg_ptn_dchgv = QtWidgets.QPushButton(parent=self.groupBox_7)
-        self.chg_ptn_dchgv.setFixedSize(_BTN_SZ)
-        self.chg_ptn_dchgv.setFont(_ptn_btn_font)
+        self.chg_ptn_dchgv.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn_dchgv.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn_dchgv.setFont(font)
         self.chg_ptn_dchgv.setObjectName("chg_ptn_dchgv")
         self.verticalLayout_35.addWidget(self.chg_ptn_dchgv)
-        self.gridLayout_21.addLayout(self.verticalLayout_35, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_7, 1, 1)
+        self.gridLayout_21.addLayout(self.verticalLayout_35, 0, 0, 1, 1)
+        self.verticalLayout_70.addWidget(self.groupBox_7)
+        self.horizontalLayout_133.addLayout(self.verticalLayout_70)
+        spacerItem7 = QtWidgets.QSpacerItem(18, 608, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
+        self.horizontalLayout_133.addItem(spacerItem7)
+        self.verticalLayout_71 = QtWidgets.QVBoxLayout()
+        self.verticalLayout_71.setObjectName("verticalLayout_71")
         self.groupBox_3 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_3.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_3.setAlignment(_align_c)
+        self.groupBox_3.setMinimumSize(QtCore.QSize(140, 300))
+        self.groupBox_3.setMaximumSize(QtCore.QSize(140, 300))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_3.setFont(font)
         self.groupBox_3.setObjectName("groupBox_3")
         self.gridLayout_13 = QtWidgets.QGridLayout(self.groupBox_3)
-        self.gridLayout_13.setContentsMargins(6, 12, 6, 6)
         self.gridLayout_13.setObjectName("gridLayout_13")
         self.verticalLayout_23 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_23.setSpacing(4)
         self.verticalLayout_23.setObjectName("verticalLayout_23")
         self.cycxlabel_11 = QtWidgets.QLabel(parent=self.groupBox_3)
-        self.cycxlabel_11.setFixedSize(_LBL_SZ)
+        self.cycxlabel_11.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_11.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_11.setFont(font)
         self.cycxlabel_11.setObjectName("cycxlabel_11")
-        self.cycxlabel_11.setAlignment(_align_c)
         self.verticalLayout_23.addWidget(self.cycxlabel_11)
         self.ptn_endi_pre = QtWidgets.QLineEdit(parent=self.groupBox_3)
-        self.ptn_endi_pre.setFixedSize(_INP_SZ)
-        self.ptn_endi_pre.setInputMethodHints(_input_hints)
-        self.ptn_endi_pre.setAlignment(_align_c)
+        self.ptn_endi_pre.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_endi_pre.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_endi_pre.setFont(font)
+        self.ptn_endi_pre.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_endi_pre.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_endi_pre.setObjectName("ptn_endi_pre")
         self.verticalLayout_23.addWidget(self.ptn_endi_pre)
         self.cycxlabel_13 = QtWidgets.QLabel(parent=self.groupBox_3)
-        self.cycxlabel_13.setFixedSize(_LBL_SZ)
+        self.cycxlabel_13.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_13.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_13.setFont(font)
         self.cycxlabel_13.setObjectName("cycxlabel_13")
-        self.cycxlabel_13.setAlignment(_align_c)
         self.verticalLayout_23.addWidget(self.cycxlabel_13)
         self.ptn_endi_after = QtWidgets.QLineEdit(parent=self.groupBox_3)
-        self.ptn_endi_after.setFixedSize(_INP_SZ)
-        self.ptn_endi_after.setInputMethodHints(_input_hints)
-        self.ptn_endi_after.setAlignment(_align_c)
+        self.ptn_endi_after.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_endi_after.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_endi_after.setFont(font)
+        self.ptn_endi_after.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_endi_after.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_endi_after.setObjectName("ptn_endi_after")
         self.verticalLayout_23.addWidget(self.ptn_endi_after)
-        self.verticalLayout_23.addStretch()
+        spacerItem8 = QtWidgets.QSpacerItem(118, 50, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_23.addItem(spacerItem8)
         self.chg_ptn_endi = QtWidgets.QPushButton(parent=self.groupBox_3)
-        self.chg_ptn_endi.setFixedSize(_BTN_SZ)
-        self.chg_ptn_endi.setFont(_ptn_btn_font)
+        self.chg_ptn_endi.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn_endi.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn_endi.setFont(font)
         self.chg_ptn_endi.setObjectName("chg_ptn_endi")
         self.verticalLayout_23.addWidget(self.chg_ptn_endi)
-        self.gridLayout_13.addLayout(self.verticalLayout_23, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_3, 0, 2)
+        self.gridLayout_13.addLayout(self.verticalLayout_23, 0, 0, 1, 1)
+        self.verticalLayout_71.addWidget(self.groupBox_3)
         self.groupBox_6 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_6.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_6.setAlignment(_align_c)
+        self.groupBox_6.setMinimumSize(QtCore.QSize(140, 300))
+        self.groupBox_6.setMaximumSize(QtCore.QSize(140, 300))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_6.setFont(font)
         self.groupBox_6.setObjectName("groupBox_6")
         self.gridLayout_18 = QtWidgets.QGridLayout(self.groupBox_6)
-        self.gridLayout_18.setContentsMargins(6, 12, 6, 6)
         self.gridLayout_18.setObjectName("gridLayout_18")
         self.verticalLayout_32 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_32.setSpacing(4)
         self.verticalLayout_32.setObjectName("verticalLayout_32")
         self.cycxlabel_21 = QtWidgets.QLabel(parent=self.groupBox_6)
-        self.cycxlabel_21.setFixedSize(_LBL_SZ)
+        self.cycxlabel_21.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_21.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_21.setFont(font)
         self.cycxlabel_21.setObjectName("cycxlabel_21")
-        self.cycxlabel_21.setAlignment(_align_c)
         self.verticalLayout_32.addWidget(self.cycxlabel_21)
         self.ptn_endv_pre = QtWidgets.QLineEdit(parent=self.groupBox_6)
-        self.ptn_endv_pre.setFixedSize(_INP_SZ)
-        self.ptn_endv_pre.setInputMethodHints(_input_hints)
-        self.ptn_endv_pre.setAlignment(_align_c)
+        self.ptn_endv_pre.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_endv_pre.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_endv_pre.setFont(font)
+        self.ptn_endv_pre.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_endv_pre.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_endv_pre.setObjectName("ptn_endv_pre")
         self.verticalLayout_32.addWidget(self.ptn_endv_pre)
         self.cycxlabel_22 = QtWidgets.QLabel(parent=self.groupBox_6)
-        self.cycxlabel_22.setFixedSize(_LBL_SZ)
+        self.cycxlabel_22.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_22.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_22.setFont(font)
         self.cycxlabel_22.setObjectName("cycxlabel_22")
-        self.cycxlabel_22.setAlignment(_align_c)
         self.verticalLayout_32.addWidget(self.cycxlabel_22)
         self.ptn_endv_after = QtWidgets.QLineEdit(parent=self.groupBox_6)
-        self.ptn_endv_after.setFixedSize(_INP_SZ)
-        self.ptn_endv_after.setInputMethodHints(_input_hints)
-        self.ptn_endv_after.setAlignment(_align_c)
+        self.ptn_endv_after.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_endv_after.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_endv_after.setFont(font)
+        self.ptn_endv_after.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_endv_after.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_endv_after.setObjectName("ptn_endv_after")
         self.verticalLayout_32.addWidget(self.ptn_endv_after)
-        self.verticalLayout_32.addStretch()
+        spacerItem9 = QtWidgets.QSpacerItem(118, 50, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_32.addItem(spacerItem9)
         self.chg_ptn_endv = QtWidgets.QPushButton(parent=self.groupBox_6)
-        self.chg_ptn_endv.setFixedSize(_BTN_SZ)
-        self.chg_ptn_endv.setFont(_ptn_btn_font)
+        self.chg_ptn_endv.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn_endv.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn_endv.setFont(font)
         self.chg_ptn_endv.setObjectName("chg_ptn_endv")
         self.verticalLayout_32.addWidget(self.chg_ptn_endv)
-        self.gridLayout_18.addLayout(self.verticalLayout_32, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_6, 1, 2)
-        # Step 변경 + Toyo 패턴 변환 열
+        self.gridLayout_18.addLayout(self.verticalLayout_32, 0, 0, 1, 1)
+        self.verticalLayout_71.addWidget(self.groupBox_6)
+        self.horizontalLayout_133.addLayout(self.verticalLayout_71)
+        spacerItem10 = QtWidgets.QSpacerItem(17, 608, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
+        self.horizontalLayout_133.addItem(spacerItem10)
         self.groupBox_4 = QtWidgets.QGroupBox(parent=self.tab_2)
-        self.groupBox_4.setFixedSize(QtCore.QSize(_GB_W, _GB_H))
-        self.groupBox_4.setAlignment(_align_c)
+        self.groupBox_4.setMinimumSize(QtCore.QSize(140, 400))
+        self.groupBox_4.setMaximumSize(QtCore.QSize(140, 400))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.groupBox_4.setFont(font)
         self.groupBox_4.setObjectName("groupBox_4")
         self.gridLayout_14 = QtWidgets.QGridLayout(self.groupBox_4)
-        self.gridLayout_14.setContentsMargins(6, 12, 6, 6)
         self.gridLayout_14.setObjectName("gridLayout_14")
         self.verticalLayout_30 = QtWidgets.QVBoxLayout()
-        self.verticalLayout_30.setSpacing(4)
         self.verticalLayout_30.setObjectName("verticalLayout_30")
         self.cycxlabel_16 = QtWidgets.QLabel(parent=self.groupBox_4)
-        self.cycxlabel_16.setFixedSize(_LBL_SZ)
+        self.cycxlabel_16.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_16.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_16.setFont(font)
         self.cycxlabel_16.setObjectName("cycxlabel_16")
-        self.cycxlabel_16.setAlignment(_align_c)
         self.verticalLayout_30.addWidget(self.cycxlabel_16)
         self.ptn_step_pre = QtWidgets.QLineEdit(parent=self.groupBox_4)
-        self.ptn_step_pre.setFixedSize(_INP_SZ)
-        self.ptn_step_pre.setInputMethodHints(_input_hints)
-        self.ptn_step_pre.setAlignment(_align_c)
+        self.ptn_step_pre.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_step_pre.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_step_pre.setFont(font)
+        self.ptn_step_pre.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_step_pre.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_step_pre.setObjectName("ptn_step_pre")
         self.verticalLayout_30.addWidget(self.ptn_step_pre)
         self.cycxlabel_14 = QtWidgets.QLabel(parent=self.groupBox_4)
-        self.cycxlabel_14.setFixedSize(_LBL_SZ)
+        self.cycxlabel_14.setMinimumSize(QtCore.QSize(125, 20))
+        self.cycxlabel_14.setMaximumSize(QtCore.QSize(125, 20))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.cycxlabel_14.setFont(font)
         self.cycxlabel_14.setObjectName("cycxlabel_14")
-        self.cycxlabel_14.setAlignment(_align_c)
         self.verticalLayout_30.addWidget(self.cycxlabel_14)
         self.ptn_step_after = QtWidgets.QLineEdit(parent=self.groupBox_4)
-        self.ptn_step_after.setFixedSize(_INP_SZ)
-        self.ptn_step_after.setInputMethodHints(_input_hints)
-        self.ptn_step_after.setAlignment(_align_c)
+        self.ptn_step_after.setMinimumSize(QtCore.QSize(125, 30))
+        self.ptn_step_after.setMaximumSize(QtCore.QSize(125, 30))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(False)
+        font.setWeight(50)
+        self.ptn_step_after.setFont(font)
+        self.ptn_step_after.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
+        self.ptn_step_after.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.ptn_step_after.setObjectName("ptn_step_after")
         self.verticalLayout_30.addWidget(self.ptn_step_after)
-        self.verticalLayout_30.addStretch()
+        spacerItem11 = QtWidgets.QSpacerItem(118, 80, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.verticalLayout_30.addItem(spacerItem11)
         self.chg_ptn_step = QtWidgets.QPushButton(parent=self.groupBox_4)
-        self.chg_ptn_step.setFixedSize(_BTN_SZ)
-        self.chg_ptn_step.setFont(_ptn_btn_font)
+        self.chg_ptn_step.setMinimumSize(QtCore.QSize(125, 50))
+        self.chg_ptn_step.setMaximumSize(QtCore.QSize(125, 50))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        font.setBold(True)
+        font.setWeight(75)
+        self.chg_ptn_step.setFont(font)
         self.chg_ptn_step.setObjectName("chg_ptn_step")
         self.verticalLayout_30.addWidget(self.chg_ptn_step)
-        self.gridLayout_14.addLayout(self.verticalLayout_30, 0, 0, 1, 1, _align_c)
-        _gb_grid.addWidget(self.groupBox_4, 0, 3)
-        self.verticalLayout_9.addLayout(_gb_grid)
+        self.gridLayout_14.addLayout(self.verticalLayout_30, 0, 0, 1, 1)
+        self.horizontalLayout_133.addWidget(self.groupBox_4)
+        self.verticalLayout_9.addLayout(self.horizontalLayout_133)
         self.horizontalLayout_134.addLayout(self.verticalLayout_9)
-        # --- ptn_list 영역: Toyo 버튼(우상단) + 테이블 ---
-        _ptn_list_vbox = QtWidgets.QVBoxLayout()
-        _ptn_list_vbox.setSpacing(4)
-        _toyo_row = QtWidgets.QHBoxLayout()
-        _toyo_row.addStretch()
-        self.ptn_toyo_convert = QtWidgets.QPushButton(parent=self.tab_2)
-        self.ptn_toyo_convert.setFixedSize(QtCore.QSize(140, 36))
-        self.ptn_toyo_convert.setFont(_ptn_btn_font)
-        self.ptn_toyo_convert.setObjectName("ptn_toyo_convert")
-        self.ptn_toyo_convert.setText("Toyo 패턴 변환")
-        _toyo_row.addWidget(self.ptn_toyo_convert)
-        _ptn_list_vbox.addLayout(_toyo_row)
         self.ptn_list = QtWidgets.QTableWidget(parent=self.tab_2)
         self.ptn_list.setMinimumSize(QtCore.QSize(1200, 830))
         self.ptn_list.setMaximumSize(QtCore.QSize(1200, 830))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(9)
+        self.ptn_list.setFont(font)
         self.ptn_list.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
         self.ptn_list.setAlternatingRowColors(True)
         self.ptn_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -5466,17 +3630,35 @@ class Ui_sitool(object):
         self.ptn_list.setObjectName("ptn_list")
         self.ptn_list.setColumnCount(4)
         self.ptn_list.setRowCount(0)
-        _hdr_font = QtGui.QFont("맑은 고딕", 9)
-        for _hi in range(4):
-            item = QtWidgets.QTableWidgetItem()
-            item.setFont(_hdr_font)
-            self.ptn_list.setHorizontalHeaderItem(_hi, item)
+        item = QtWidgets.QTableWidgetItem()
+        font = QtGui.QFont()
+        font.setFamily("malgun gothic")
+        font.setPointSize(8)
+        item.setFont(font)
+        self.ptn_list.setHorizontalHeaderItem(0, item)
+        item = QtWidgets.QTableWidgetItem()
+        font = QtGui.QFont()
+        font.setFamily("malgun gothic")
+        font.setPointSize(8)
+        item.setFont(font)
+        self.ptn_list.setHorizontalHeaderItem(1, item)
+        item = QtWidgets.QTableWidgetItem()
+        font = QtGui.QFont()
+        font.setFamily("malgun gothic")
+        font.setPointSize(8)
+        item.setFont(font)
+        self.ptn_list.setHorizontalHeaderItem(2, item)
+        item = QtWidgets.QTableWidgetItem()
+        font = QtGui.QFont()
+        font.setFamily("malgun gothic")
+        font.setPointSize(8)
+        item.setFont(font)
+        self.ptn_list.setHorizontalHeaderItem(3, item)
         self.ptn_list.horizontalHeader().setVisible(False)
         self.ptn_list.horizontalHeader().setDefaultSectionSize(198)
         self.ptn_list.horizontalHeader().setMinimumSectionSize(50)
         self.ptn_list.verticalHeader().setVisible(False)
-        _ptn_list_vbox.addWidget(self.ptn_list)
-        self.horizontalLayout_134.addLayout(_ptn_list_vbox)
+        self.horizontalLayout_134.addWidget(self.ptn_list)
         self.horizontalLayout_135.addLayout(self.horizontalLayout_134)
         self.tabWidget.addTab(self.tab_2, "")
         self.SetTab = QtWidgets.QWidget()
@@ -5496,7 +3678,7 @@ class Ui_sitool(object):
         self.Capacitynum.setMaximumSize(QtCore.QSize(320, 100))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.Capacitynum.setFont(font)
@@ -5508,7 +3690,7 @@ class Ui_sitool(object):
         self.SetMincapacity.setMaximumSize(QtCore.QSize(300, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.SetMincapacity.setFont(font)
@@ -5520,7 +3702,7 @@ class Ui_sitool(object):
         self.Capacitynum_2.setMaximumSize(QtCore.QSize(320, 100))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.Capacitynum_2.setFont(font)
@@ -5532,7 +3714,7 @@ class Ui_sitool(object):
         self.SetMaxCycle.setMaximumSize(QtCore.QSize(300, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.SetMaxCycle.setFont(font)
@@ -5544,7 +3726,7 @@ class Ui_sitool(object):
         self.gCyclesetting.setMaximumSize(QtCore.QSize(320, 256))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.gCyclesetting.setFont(font)
@@ -5558,7 +3740,7 @@ class Ui_sitool(object):
         self.realcyc.setMaximumSize(QtCore.QSize(87, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.realcyc.setFont(font)
@@ -5569,7 +3751,7 @@ class Ui_sitool(object):
         self.resetcycle.setMaximumSize(QtCore.QSize(83, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.resetcycle.setFont(font)
@@ -5581,7 +3763,7 @@ class Ui_sitool(object):
         self.line_4.setMaximumSize(QtCore.QSize(298, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_4.setFont(font)
         self.line_4.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         self.line_4.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -5594,7 +3776,7 @@ class Ui_sitool(object):
         self.cycxlabel_4.setMaximumSize(QtCore.QSize(190, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_4.setFont(font)
@@ -5605,7 +3787,7 @@ class Ui_sitool(object):
         self.setcyclexscale.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.setcyclexscale.setFont(font)
         self.setcyclexscale.setObjectName("setcyclexscale")
         self.horizontalLayout_9.addWidget(self.setcyclexscale)
@@ -5615,7 +3797,7 @@ class Ui_sitool(object):
         self.allcycle.setMaximumSize(QtCore.QSize(297, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.allcycle.setFont(font)
@@ -5628,7 +3810,7 @@ class Ui_sitool(object):
         self.recentcycle.setMaximumSize(QtCore.QSize(190, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.recentcycle.setFont(font)
@@ -5640,7 +3822,7 @@ class Ui_sitool(object):
         self.recentcycleno.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.recentcycleno.setFont(font)
@@ -5654,7 +3836,7 @@ class Ui_sitool(object):
         self.manualcycle.setMaximumSize(QtCore.QSize(190, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.manualcycle.setFont(font)
@@ -5666,7 +3848,7 @@ class Ui_sitool(object):
         self.manualcycleno.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.manualcycleno.setFont(font)
@@ -5681,7 +3863,7 @@ class Ui_sitool(object):
         self.groupBox.setMaximumSize(QtCore.QSize(320, 364))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.groupBox.setFont(font)
@@ -5695,7 +3877,7 @@ class Ui_sitool(object):
         self.label_3.setMaximumSize(QtCore.QSize(298, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_3.setFont(font)
@@ -5706,7 +3888,7 @@ class Ui_sitool(object):
         self.socmaxcapacity.setMaximumSize(QtCore.QSize(298, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.socmaxcapacity.setFont(font)
         self.socmaxcapacity.setText("")
         self.socmaxcapacity.setObjectName("socmaxcapacity")
@@ -5716,7 +3898,7 @@ class Ui_sitool(object):
         self.label_11.setMaximumSize(QtCore.QSize(298, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_11.setFont(font)
@@ -5727,7 +3909,7 @@ class Ui_sitool(object):
         self.setoffvoltage.setMaximumSize(QtCore.QSize(298, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.setoffvoltage.setFont(font)
         self.setoffvoltage.setText("")
         self.setoffvoltage.setObjectName("setoffvoltage")
@@ -5741,7 +3923,7 @@ class Ui_sitool(object):
         self.label_12.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_12.setFont(font)
@@ -5752,7 +3934,7 @@ class Ui_sitool(object):
         self.label_14.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_14.setFont(font)
@@ -5766,7 +3948,7 @@ class Ui_sitool(object):
         self.socerrormax.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.socerrormax.setFont(font)
         self.socerrormax.setText("")
         self.socerrormax.setObjectName("socerrormax")
@@ -5776,7 +3958,7 @@ class Ui_sitool(object):
         self.socerroravg.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.socerroravg.setFont(font)
         self.socerroravg.setText("")
         self.socerroravg.setObjectName("socerroravg")
@@ -5789,7 +3971,7 @@ class Ui_sitool(object):
         self.label_13.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_13.setFont(font)
@@ -5800,7 +3982,7 @@ class Ui_sitool(object):
         self.label_15.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_15.setFont(font)
@@ -5814,7 +3996,7 @@ class Ui_sitool(object):
         self.ectsocerrormax.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.ectsocerrormax.setFont(font)
         self.ectsocerrormax.setText("")
         self.ectsocerrormax.setObjectName("ectsocerrormax")
@@ -5824,7 +4006,7 @@ class Ui_sitool(object):
         self.ectsocerroravg.setMaximumSize(QtCore.QSize(100, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.ectsocerroravg.setFont(font)
         self.ectsocerroravg.setText("")
         self.ectsocerroravg.setObjectName("ectsocerroravg")
@@ -5842,7 +4024,7 @@ class Ui_sitool(object):
         self.label_4.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_4.setFont(font)
@@ -5854,7 +4036,7 @@ class Ui_sitool(object):
         self.label_7.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.label_7.setFont(font)
@@ -5869,7 +4051,7 @@ class Ui_sitool(object):
         self.SETTabReset.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setItalic(False)
         font.setUnderline(True)
@@ -5884,7 +4066,7 @@ class Ui_sitool(object):
         self.ECTSOC.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ECTSOC.setFont(font)
@@ -5898,7 +4080,7 @@ class Ui_sitool(object):
         self.SetlogConfirm.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.SetlogConfirm.setFont(font)
@@ -5909,7 +4091,7 @@ class Ui_sitool(object):
         self.ECTShort.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ECTShort.setFont(font)
@@ -5923,7 +4105,7 @@ class Ui_sitool(object):
         self.SetConfirm.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.SetConfirm.setFont(font)
@@ -5934,7 +4116,7 @@ class Ui_sitool(object):
         self.ECTSetProfile.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ECTSetProfile.setFont(font)
@@ -5948,7 +4130,7 @@ class Ui_sitool(object):
         self.SetCycle.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.SetCycle.setFont(font)
@@ -5959,7 +4141,7 @@ class Ui_sitool(object):
         self.ECTSetCycle.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ECTSetCycle.setFont(font)
@@ -5973,7 +4155,7 @@ class Ui_sitool(object):
         self.ECTSetlog2.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ECTSetlog2.setFont(font)
@@ -5984,7 +4166,7 @@ class Ui_sitool(object):
         self.ECTSetlog.setMaximumSize(QtCore.QSize(320, 70))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ECTSetlog.setFont(font)
@@ -5998,7 +4180,7 @@ class Ui_sitool(object):
         self.set_tab.setMaximumSize(QtCore.QSize(1200, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.set_tab.setFont(font)
         self.set_tab.setObjectName("set_tab")
         self.horizontalLayout_155.addWidget(self.set_tab)
@@ -6022,7 +4204,7 @@ class Ui_sitool(object):
         self.cycxlabel_29.setMaximumSize(QtCore.QSize(150, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_29.setFont(font)
@@ -6033,7 +4215,7 @@ class Ui_sitool(object):
         self.ca_mat_dvdq_path.setMaximumSize(QtCore.QSize(498, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.ca_mat_dvdq_path.setFont(font)
@@ -6048,7 +4230,7 @@ class Ui_sitool(object):
         self.cycxlabel_8.setMaximumSize(QtCore.QSize(150, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_8.setFont(font)
@@ -6059,7 +4241,7 @@ class Ui_sitool(object):
         self.an_mat_dvdq_path.setMaximumSize(QtCore.QSize(498, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.an_mat_dvdq_path.setFont(font)
@@ -6074,7 +4256,7 @@ class Ui_sitool(object):
         self.cycxlabel_12.setMaximumSize(QtCore.QSize(150, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_12.setFont(font)
@@ -6085,7 +4267,7 @@ class Ui_sitool(object):
         self.pro_dvdq_path.setMaximumSize(QtCore.QSize(498, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.pro_dvdq_path.setFont(font)
@@ -6098,7 +4280,7 @@ class Ui_sitool(object):
         self.line_10.setMaximumSize(QtCore.QSize(656, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.line_10.setFont(font)
@@ -6113,7 +4295,7 @@ class Ui_sitool(object):
         self.cycxlabel_62.setMaximumSize(QtCore.QSize(338, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_62.setFont(font)
@@ -6124,7 +4306,7 @@ class Ui_sitool(object):
         self.dvdq_start_soc.setMaximumSize(QtCore.QSize(310, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dvdq_start_soc.setFont(font)
@@ -6139,7 +4321,7 @@ class Ui_sitool(object):
         self.cycxlabel_61.setMaximumSize(QtCore.QSize(338, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_61.setFont(font)
@@ -6150,7 +4332,7 @@ class Ui_sitool(object):
         self.dvdq_end_soc.setMaximumSize(QtCore.QSize(310, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dvdq_end_soc.setFont(font)
@@ -6165,7 +4347,7 @@ class Ui_sitool(object):
         self.cycxlabel_60.setMaximumSize(QtCore.QSize(338, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_60.setFont(font)
@@ -6176,7 +4358,7 @@ class Ui_sitool(object):
         self.dvdq_full_smoothing_no.setMaximumSize(QtCore.QSize(310, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dvdq_full_smoothing_no.setFont(font)
@@ -6189,7 +4371,7 @@ class Ui_sitool(object):
         self.line_11.setMaximumSize(QtCore.QSize(656, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.line_11.setFont(font)
@@ -6204,7 +4386,7 @@ class Ui_sitool(object):
         self.cycxlabel_32.setMaximumSize(QtCore.QSize(338, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_32.setFont(font)
@@ -6215,7 +4397,7 @@ class Ui_sitool(object):
         self.full_cell_max_cap_txt.setMaximumSize(QtCore.QSize(310, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.full_cell_max_cap_txt.setFont(font)
@@ -6231,7 +4413,7 @@ class Ui_sitool(object):
         self.cycxlabel_30.setMaximumSize(QtCore.QSize(338, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_30.setFont(font)
@@ -6242,7 +4424,7 @@ class Ui_sitool(object):
         self.ca_max_cap_txt.setMaximumSize(QtCore.QSize(310, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.ca_max_cap_txt.setFont(font)
@@ -6258,7 +4440,7 @@ class Ui_sitool(object):
         self.cycxlabel_31.setMaximumSize(QtCore.QSize(338, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_31.setFont(font)
@@ -6269,7 +4451,7 @@ class Ui_sitool(object):
         self.an_max_cap_txt.setMaximumSize(QtCore.QSize(310, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.an_max_cap_txt.setFont(font)
@@ -6283,7 +4465,7 @@ class Ui_sitool(object):
         self.line_13.setMaximumSize(QtCore.QSize(656, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.line_13.setFont(font)
@@ -6298,7 +4480,7 @@ class Ui_sitool(object):
         self.cycxlabel_18.setMaximumSize(QtCore.QSize(317, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_18.setFont(font)
@@ -6309,7 +4491,7 @@ class Ui_sitool(object):
         self.ca_mass_ini_fix.setMaximumSize(QtCore.QSize(15, 13))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.ca_mass_ini_fix.setFont(font)
@@ -6321,7 +4503,7 @@ class Ui_sitool(object):
         self.ca_mass_ini.setMaximumSize(QtCore.QSize(310, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.ca_mass_ini.setFont(font)
@@ -6337,7 +4519,7 @@ class Ui_sitool(object):
         self.cycxlabel_23.setMaximumSize(QtCore.QSize(317, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_23.setFont(font)
@@ -6348,7 +4530,7 @@ class Ui_sitool(object):
         self.ca_slip_ini_fix.setMaximumSize(QtCore.QSize(15, 13))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.ca_slip_ini_fix.setFont(font)
@@ -6360,7 +4542,7 @@ class Ui_sitool(object):
         self.ca_slip_ini.setMaximumSize(QtCore.QSize(310, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.ca_slip_ini.setFont(font)
@@ -6376,7 +4558,7 @@ class Ui_sitool(object):
         self.cycxlabel_24.setMaximumSize(QtCore.QSize(317, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_24.setFont(font)
@@ -6387,7 +4569,7 @@ class Ui_sitool(object):
         self.an_mass_ini_fix.setMaximumSize(QtCore.QSize(15, 13))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.an_mass_ini_fix.setFont(font)
@@ -6399,7 +4581,7 @@ class Ui_sitool(object):
         self.an_mass_ini.setMaximumSize(QtCore.QSize(310, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.an_mass_ini.setFont(font)
@@ -6415,7 +4597,7 @@ class Ui_sitool(object):
         self.cycxlabel_25.setMaximumSize(QtCore.QSize(317, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_25.setFont(font)
@@ -6426,7 +4608,7 @@ class Ui_sitool(object):
         self.an_slip_ini_fix.setMaximumSize(QtCore.QSize(15, 13))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.an_slip_ini_fix.setFont(font)
@@ -6438,7 +4620,7 @@ class Ui_sitool(object):
         self.an_slip_ini.setMaximumSize(QtCore.QSize(310, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.an_slip_ini.setFont(font)
@@ -6452,7 +4634,7 @@ class Ui_sitool(object):
         self.line_14.setMaximumSize(QtCore.QSize(656, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.line_14.setFont(font)
@@ -6467,7 +4649,7 @@ class Ui_sitool(object):
         self.cycxlabel_15.setMaximumSize(QtCore.QSize(338, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_15.setFont(font)
@@ -6478,7 +4660,7 @@ class Ui_sitool(object):
         self.dvdq_test_no.setMaximumSize(QtCore.QSize(310, 33))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dvdq_test_no.setFont(font)
@@ -6493,7 +4675,7 @@ class Ui_sitool(object):
         self.cycxlabel_26.setMaximumSize(QtCore.QSize(338, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_26.setFont(font)
@@ -6504,7 +4686,7 @@ class Ui_sitool(object):
         self.dvdq_rms.setMaximumSize(QtCore.QSize(310, 34))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dvdq_rms.setFont(font)
@@ -6518,7 +4700,7 @@ class Ui_sitool(object):
         self.line_15.setMaximumSize(QtCore.QSize(656, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.line_15.setFont(font)
@@ -6535,7 +4717,7 @@ class Ui_sitool(object):
         self.dvdq_ini_reset.setMaximumSize(QtCore.QSize(310, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.dvdq_ini_reset.setFont(font)
@@ -6546,7 +4728,7 @@ class Ui_sitool(object):
         self.mat_dvdq_btn.setMaximumSize(QtCore.QSize(310, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.mat_dvdq_btn.setFont(font)
@@ -6557,7 +4739,7 @@ class Ui_sitool(object):
         self.pro_dvdq_btn.setMaximumSize(QtCore.QSize(310, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.pro_dvdq_btn.setFont(font)
@@ -6571,7 +4753,7 @@ class Ui_sitool(object):
         self.dvdq_tab_reset.setMaximumSize(QtCore.QSize(310, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.dvdq_tab_reset.setFont(font)
@@ -6582,7 +4764,7 @@ class Ui_sitool(object):
         self.dvdq_fitting.setMaximumSize(QtCore.QSize(310, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.dvdq_fitting.setFont(font)
@@ -6593,7 +4775,7 @@ class Ui_sitool(object):
         self.dvdq_fitting_2.setMaximumSize(QtCore.QSize(310, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.dvdq_fitting_2.setFont(font)
@@ -6607,7 +4789,7 @@ class Ui_sitool(object):
         self.dvdq_simul_tab.setMaximumSize(QtCore.QSize(1200, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dvdq_simul_tab.setFont(font)
@@ -6630,7 +4812,7 @@ class Ui_sitool(object):
         self.cycxlabel_54.setMaximumSize(QtCore.QSize(300, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_54.setFont(font)
@@ -6641,7 +4823,7 @@ class Ui_sitool(object):
         self.TabReset_eu.setMaximumSize(QtCore.QSize(300, 50))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setItalic(False)
         font.setUnderline(True)
@@ -6655,7 +4837,7 @@ class Ui_sitool(object):
         self.cycparameter_eu.setMaximumSize(QtCore.QSize(656, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycparameter_eu.setFont(font)
@@ -6667,7 +4849,7 @@ class Ui_sitool(object):
         self.line_3.setMaximumSize(QtCore.QSize(656, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.line_3.setFont(font)
@@ -6682,7 +4864,7 @@ class Ui_sitool(object):
         self.aLabel_4.setMaximumSize(QtCore.QSize(200, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aLabel_4.setFont(font)
@@ -6693,7 +4875,7 @@ class Ui_sitool(object):
         self.fix_swelling_eu.setMaximumSize(QtCore.QSize(448, 18))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fix_swelling_eu.setFont(font)
         self.fix_swelling_eu.setObjectName("fix_swelling_eu")
         self.horizontalLayout_156.addWidget(self.fix_swelling_eu)
@@ -6703,7 +4885,7 @@ class Ui_sitool(object):
         self.cycxlabel_38.setMaximumSize(QtCore.QSize(656, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_38.setFont(font)
@@ -6716,7 +4898,7 @@ class Ui_sitool(object):
         self.aLabel_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aLabel_3.setFont(font)
@@ -6727,7 +4909,7 @@ class Ui_sitool(object):
         self.aTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aTextEdit_eu.setFont(font)
@@ -6743,7 +4925,7 @@ class Ui_sitool(object):
         self.bLabel_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.bLabel_3.setFont(font)
@@ -6754,7 +4936,7 @@ class Ui_sitool(object):
         self.bTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.bTextEdit_eu.setFont(font)
@@ -6770,7 +4952,7 @@ class Ui_sitool(object):
         self.b1Label_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.b1Label_3.setFont(font)
@@ -6781,7 +4963,7 @@ class Ui_sitool(object):
         self.b1TextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.b1TextEdit_eu.setFont(font)
@@ -6797,7 +4979,7 @@ class Ui_sitool(object):
         self.cLabel_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cLabel_3.setFont(font)
@@ -6808,7 +4990,7 @@ class Ui_sitool(object):
         self.cTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cTextEdit_eu.setFont(font)
@@ -6824,7 +5006,7 @@ class Ui_sitool(object):
         self.dLabel_3.setMaximumSize(QtCore.QSize(150, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dLabel_3.setFont(font)
@@ -6835,7 +5017,7 @@ class Ui_sitool(object):
         self.dTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dTextEdit_eu.setFont(font)
@@ -6851,7 +5033,7 @@ class Ui_sitool(object):
         self.eLabel_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.eLabel_3.setFont(font)
@@ -6862,7 +5044,7 @@ class Ui_sitool(object):
         self.eTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.eTextEdit_eu.setFont(font)
@@ -6878,7 +5060,7 @@ class Ui_sitool(object):
         self.fLabel_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fLabel_3.setFont(font)
@@ -6889,7 +5071,7 @@ class Ui_sitool(object):
         self.fTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fTextEdit_eu.setFont(font)
@@ -6905,7 +5087,7 @@ class Ui_sitool(object):
         self.fdLabel_3.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdLabel_3.setFont(font)
@@ -6916,7 +5098,7 @@ class Ui_sitool(object):
         self.fdTextEdit_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdTextEdit_eu.setFont(font)
@@ -6932,7 +5114,7 @@ class Ui_sitool(object):
         self.fdLabel_4.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdLabel_4.setFont(font)
@@ -6943,7 +5125,7 @@ class Ui_sitool(object):
         self.fdTextEdit_eu_2.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdTextEdit_eu_2.setFont(font)
@@ -6959,7 +5141,7 @@ class Ui_sitool(object):
         self.cycxlabel_36.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_36.setFont(font)
@@ -6970,7 +5152,7 @@ class Ui_sitool(object):
         self.simul_y_max_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_y_max_eu.setFont(font)
@@ -6985,7 +5167,7 @@ class Ui_sitool(object):
         self.cycxlabel_35.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_35.setFont(font)
@@ -6996,7 +5178,7 @@ class Ui_sitool(object):
         self.simul_y_min_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_y_min_eu.setFont(font)
@@ -7011,7 +5193,7 @@ class Ui_sitool(object):
         self.cycxlabel_37.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_37.setFont(font)
@@ -7022,7 +5204,7 @@ class Ui_sitool(object):
         self.simul_x_max_eu.setMaximumSize(QtCore.QSize(400, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_x_max_eu.setFont(font)
@@ -7037,7 +5219,7 @@ class Ui_sitool(object):
         self.ParameterReset_eu.setMaximumSize(QtCore.QSize(205, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ParameterReset_eu.setFont(font)
@@ -7048,7 +5230,7 @@ class Ui_sitool(object):
         self.load_cycparameter_eu.setMaximumSize(QtCore.QSize(205, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.load_cycparameter_eu.setFont(font)
@@ -7059,7 +5241,7 @@ class Ui_sitool(object):
         self.save_cycparameter_eu.setMaximumSize(QtCore.QSize(205, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.save_cycparameter_eu.setFont(font)
@@ -7073,7 +5255,7 @@ class Ui_sitool(object):
         self.FitConfirm_eu.setMaximumSize(QtCore.QSize(205, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.FitConfirm_eu.setFont(font)
@@ -7084,7 +5266,7 @@ class Ui_sitool(object):
         self.ConstFitConfirm_eu.setMaximumSize(QtCore.QSize(205, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.ConstFitConfirm_eu.setFont(font)
@@ -7095,7 +5277,7 @@ class Ui_sitool(object):
         self.indivConstFitConfirm_eu.setMaximumSize(QtCore.QSize(205, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.indivConstFitConfirm_eu.setFont(font)
@@ -7108,7 +5290,7 @@ class Ui_sitool(object):
         self.cycle_simul_tab_eu.setMaximumSize(QtCore.QSize(1200, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycle_simul_tab_eu.setFont(font)
@@ -7131,7 +5313,7 @@ class Ui_sitool(object):
         self.cycxlabel_52.setMaximumSize(QtCore.QSize(150, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_52.setFont(font)
@@ -7142,7 +5324,7 @@ class Ui_sitool(object):
         self.cycparameter.setMaximumSize(QtCore.QSize(450, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycparameter.setFont(font)
@@ -7157,7 +5339,7 @@ class Ui_sitool(object):
         self.cycxlabel_55.setMaximumSize(QtCore.QSize(150, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_55.setFont(font)
@@ -7168,7 +5350,7 @@ class Ui_sitool(object):
         self.cycparameter2.setMaximumSize(QtCore.QSize(450, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycparameter2.setFont(font)
@@ -7183,7 +5365,7 @@ class Ui_sitool(object):
         self.FitGroupConst_5.setMaximumSize(QtCore.QSize(315, 400))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.FitGroupConst_5.setFont(font)
@@ -7197,7 +5379,7 @@ class Ui_sitool(object):
         self.aLabel_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aLabel_2.setFont(font)
@@ -7208,7 +5390,7 @@ class Ui_sitool(object):
         self.aTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aTextEdit_02c.setFont(font)
@@ -7224,7 +5406,7 @@ class Ui_sitool(object):
         self.bLabel_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.bLabel_2.setFont(font)
@@ -7235,7 +5417,7 @@ class Ui_sitool(object):
         self.bTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.bTextEdit_02c.setFont(font)
@@ -7251,7 +5433,7 @@ class Ui_sitool(object):
         self.b1Label_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.b1Label_2.setFont(font)
@@ -7262,7 +5444,7 @@ class Ui_sitool(object):
         self.b1TextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.b1TextEdit_02c.setFont(font)
@@ -7278,7 +5460,7 @@ class Ui_sitool(object):
         self.cLabel_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cLabel_2.setFont(font)
@@ -7289,7 +5471,7 @@ class Ui_sitool(object):
         self.cTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cTextEdit_02c.setFont(font)
@@ -7305,7 +5487,7 @@ class Ui_sitool(object):
         self.dLabel_2.setMaximumSize(QtCore.QSize(50, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dLabel_2.setFont(font)
@@ -7316,7 +5498,7 @@ class Ui_sitool(object):
         self.dTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dTextEdit_02c.setFont(font)
@@ -7332,7 +5514,7 @@ class Ui_sitool(object):
         self.eLabel_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.eLabel_2.setFont(font)
@@ -7343,7 +5525,7 @@ class Ui_sitool(object):
         self.eTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.eTextEdit_02c.setFont(font)
@@ -7359,7 +5541,7 @@ class Ui_sitool(object):
         self.fLabel_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fLabel_2.setFont(font)
@@ -7370,7 +5552,7 @@ class Ui_sitool(object):
         self.fTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fTextEdit_02c.setFont(font)
@@ -7386,7 +5568,7 @@ class Ui_sitool(object):
         self.fdLabel_2.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdLabel_2.setFont(font)
@@ -7397,7 +5579,7 @@ class Ui_sitool(object):
         self.fdTextEdit_02c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdTextEdit_02c.setFont(font)
@@ -7412,7 +5594,7 @@ class Ui_sitool(object):
         self.FitGroupConst_6.setMaximumSize(QtCore.QSize(315, 400))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.FitGroupConst_6.setFont(font)
@@ -7426,7 +5608,7 @@ class Ui_sitool(object):
         self.aLabel_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aLabel_8.setFont(font)
@@ -7437,7 +5619,7 @@ class Ui_sitool(object):
         self.aTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.aTextEdit_05c.setFont(font)
@@ -7453,7 +5635,7 @@ class Ui_sitool(object):
         self.bLabel_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.bLabel_8.setFont(font)
@@ -7464,7 +5646,7 @@ class Ui_sitool(object):
         self.bTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.bTextEdit_05c.setFont(font)
@@ -7480,7 +5662,7 @@ class Ui_sitool(object):
         self.b1Label_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.b1Label_8.setFont(font)
@@ -7491,7 +5673,7 @@ class Ui_sitool(object):
         self.b1TextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.b1TextEdit_05c.setFont(font)
@@ -7507,7 +5689,7 @@ class Ui_sitool(object):
         self.cLabel_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cLabel_8.setFont(font)
@@ -7518,7 +5700,7 @@ class Ui_sitool(object):
         self.cTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cTextEdit_05c.setFont(font)
@@ -7534,7 +5716,7 @@ class Ui_sitool(object):
         self.dLabel_8.setMaximumSize(QtCore.QSize(50, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dLabel_8.setFont(font)
@@ -7545,7 +5727,7 @@ class Ui_sitool(object):
         self.dTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.dTextEdit_05c.setFont(font)
@@ -7561,7 +5743,7 @@ class Ui_sitool(object):
         self.eLabel_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.eLabel_8.setFont(font)
@@ -7572,7 +5754,7 @@ class Ui_sitool(object):
         self.eTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.eTextEdit_05c.setFont(font)
@@ -7588,7 +5770,7 @@ class Ui_sitool(object):
         self.fLabel_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fLabel_8.setFont(font)
@@ -7599,7 +5781,7 @@ class Ui_sitool(object):
         self.fTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fTextEdit_05c.setFont(font)
@@ -7615,7 +5797,7 @@ class Ui_sitool(object):
         self.fdLabel_8.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdLabel_8.setFont(font)
@@ -7626,7 +5808,7 @@ class Ui_sitool(object):
         self.fdTextEdit_05c.setMaximumSize(QtCore.QSize(200, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.fdTextEdit_05c.setFont(font)
@@ -7644,7 +5826,7 @@ class Ui_sitool(object):
         self.cyc_long_life.setMaximumSize(QtCore.QSize(200, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cyc_long_life.setFont(font)
@@ -7656,7 +5838,7 @@ class Ui_sitool(object):
         self.simul_long_life.setMaximumSize(QtCore.QSize(200, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_long_life.setFont(font)
@@ -7671,7 +5853,7 @@ class Ui_sitool(object):
         self.cycxlabel_33.setMaximumSize(QtCore.QSize(200, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_33.setFont(font)
@@ -7682,7 +5864,7 @@ class Ui_sitool(object):
         self.simul_y_max.setMaximumSize(QtCore.QSize(300, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_y_max.setFont(font)
@@ -7697,7 +5879,7 @@ class Ui_sitool(object):
         self.cycxlabel_17.setMaximumSize(QtCore.QSize(200, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_17.setFont(font)
@@ -7708,7 +5890,7 @@ class Ui_sitool(object):
         self.simul_y_min.setMaximumSize(QtCore.QSize(300, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_y_min.setFont(font)
@@ -7723,7 +5905,7 @@ class Ui_sitool(object):
         self.cycxlabel_34.setMaximumSize(QtCore.QSize(200, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_34.setFont(font)
@@ -7734,7 +5916,7 @@ class Ui_sitool(object):
         self.simul_x_max.setMaximumSize(QtCore.QSize(300, 25))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.simul_x_max.setFont(font)
@@ -7749,7 +5931,7 @@ class Ui_sitool(object):
         self.load_cycparameter.setMaximumSize(QtCore.QSize(315, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.load_cycparameter.setFont(font)
@@ -7760,7 +5942,7 @@ class Ui_sitool(object):
         self.AppCycleTabReset.setMaximumSize(QtCore.QSize(315, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setItalic(False)
         font.setUnderline(True)
@@ -7776,7 +5958,7 @@ class Ui_sitool(object):
         self.pathappcycestimation.setMaximumSize(QtCore.QSize(315, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.pathappcycestimation.setFont(font)
@@ -7787,7 +5969,7 @@ class Ui_sitool(object):
         self.folderappcycestimation.setMaximumSize(QtCore.QSize(315, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.folderappcycestimation.setFont(font)
@@ -7800,7 +5982,7 @@ class Ui_sitool(object):
         self.cycle_simul_tab.setMaximumSize(QtCore.QSize(1200, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycle_simul_tab.setFont(font)
@@ -7823,7 +6005,7 @@ class Ui_sitool(object):
         self.selectcycle.setMaximumSize(QtCore.QSize(125, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.selectcycle.setFont(font)
@@ -7835,7 +6017,7 @@ class Ui_sitool(object):
         self.chkcapacity.setMaximumSize(QtCore.QSize(100, 21))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chkcapacity.setFont(font)
         self.chkcapacity.setChecked(True)
         self.chkcapacity.setObjectName("chkcapacity")
@@ -7845,7 +6027,7 @@ class Ui_sitool(object):
         self.chkdcir.setMaximumSize(QtCore.QSize(100, 21))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chkdcir.setFont(font)
         self.chkdcir.setObjectName("chkdcir")
         self.verticalLayout.addWidget(self.chkdcir)
@@ -7855,7 +6037,7 @@ class Ui_sitool(object):
         self.selectcapacity.setMaximumSize(QtCore.QSize(125, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.selectcapacity.setFont(font)
         self.selectcapacity.setObjectName("selectcapacity")
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(self.selectcapacity)
@@ -7865,7 +6047,7 @@ class Ui_sitool(object):
         self.chkcycle.setMaximumSize(QtCore.QSize(100, 21))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chkcycle.setFont(font)
         self.chkcycle.setChecked(True)
         self.chkcycle.setObjectName("chkcycle")
@@ -7875,7 +6057,7 @@ class Ui_sitool(object):
         self.chkstorage.setMaximumSize(QtCore.QSize(100, 21))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chkstorage.setFont(font)
         self.chkstorage.setObjectName("chkstorage")
         self.verticalLayout_2.addWidget(self.chkstorage)
@@ -7885,7 +6067,7 @@ class Ui_sitool(object):
         self.selectlonglifecyc.setMaximumSize(QtCore.QSize(124, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.selectlonglifecyc.setFont(font)
         self.selectlonglifecyc.setObjectName("selectlonglifecyc")
         self.verticalLayout_3 = QtWidgets.QVBoxLayout(self.selectlonglifecyc)
@@ -7895,7 +6077,7 @@ class Ui_sitool(object):
         self.nolonglife.setMaximumSize(QtCore.QSize(100, 21))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.nolonglife.setFont(font)
         self.nolonglife.setChecked(True)
         self.nolonglife.setObjectName("nolonglife")
@@ -7905,7 +6087,7 @@ class Ui_sitool(object):
         self.hhp_longlife.setMaximumSize(QtCore.QSize(100, 21))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.hhp_longlife.setFont(font)
         self.hhp_longlife.setObjectName("hhp_longlife")
         self.verticalLayout_3.addWidget(self.hhp_longlife)
@@ -7915,7 +6097,7 @@ class Ui_sitool(object):
         self.SimulTabResetConfirm.setMaximumSize(QtCore.QSize(125, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setUnderline(True)
         font.setWeight(75)
@@ -7929,7 +6111,7 @@ class Ui_sitool(object):
         self.SimulConfirm.setMaximumSize(QtCore.QSize(125, 80))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(True)
         font.setWeight(75)
         self.SimulConfirm.setFont(font)
@@ -7943,7 +6125,7 @@ class Ui_sitool(object):
         self.label.setMaximumSize(QtCore.QSize(60, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.label.setFont(font)
         self.label.setObjectName("label")
         self.horizontalLayout_80.addWidget(self.label)
@@ -7952,7 +6134,7 @@ class Ui_sitool(object):
         self.txt_longcycleno.setMaximumSize(QtCore.QSize(135, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.txt_longcycleno.setFont(font)
         self.txt_longcycleno.setObjectName("txt_longcycleno")
         self.horizontalLayout_80.addWidget(self.txt_longcycleno)
@@ -7961,7 +6143,7 @@ class Ui_sitool(object):
         self.txt_longcyclevol.setMaximumSize(QtCore.QSize(135, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.txt_longcyclevol.setFont(font)
         self.txt_longcyclevol.setObjectName("txt_longcyclevol")
         self.horizontalLayout_80.addWidget(self.txt_longcyclevol)
@@ -7970,7 +6152,7 @@ class Ui_sitool(object):
         self.txt_relcap.setMaximumSize(QtCore.QSize(135, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.txt_relcap.setFont(font)
         self.txt_relcap.setObjectName("txt_relcap")
         self.horizontalLayout_80.addWidget(self.txt_relcap)
@@ -7982,7 +6164,7 @@ class Ui_sitool(object):
         self.label_8.setMaximumSize(QtCore.QSize(200, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.label_8.setFont(font)
         self.label_8.setObjectName("label_8")
         self.horizontalLayout_62.addWidget(self.label_8)
@@ -7991,7 +6173,7 @@ class Ui_sitool(object):
         self.txt_storageratio.setMaximumSize(QtCore.QSize(30, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.txt_storageratio.setFont(font)
         self.txt_storageratio.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.txt_storageratio.setObjectName("txt_storageratio")
@@ -8001,7 +6183,7 @@ class Ui_sitool(object):
         self.label_16.setMaximumSize(QtCore.QSize(200, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.label_16.setFont(font)
         self.label_16.setObjectName("label_16")
         self.horizontalLayout_62.addWidget(self.label_16)
@@ -8010,7 +6192,7 @@ class Ui_sitool(object):
         self.txt_storageratio2.setMaximumSize(QtCore.QSize(30, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.txt_storageratio2.setFont(font)
         self.txt_storageratio2.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.txt_storageratio2.setObjectName("txt_storageratio2")
@@ -8023,7 +6205,7 @@ class Ui_sitool(object):
         self.cycxlabel_53.setMaximumSize(QtCore.QSize(140, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.cycxlabel_53.setFont(font)
@@ -8034,7 +6216,7 @@ class Ui_sitool(object):
         self.chk_cell_cycle.setMaximumSize(QtCore.QSize(163, 18))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chk_cell_cycle.setFont(font)
         self.chk_cell_cycle.setChecked(True)
         self.chk_cell_cycle.setObjectName("chk_cell_cycle")
@@ -8044,7 +6226,7 @@ class Ui_sitool(object):
         self.chk_set_cycle.setMaximumSize(QtCore.QSize(164, 18))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chk_set_cycle.setFont(font)
         self.chk_set_cycle.setChecked(True)
         self.chk_set_cycle.setObjectName("chk_set_cycle")
@@ -8054,7 +6236,7 @@ class Ui_sitool(object):
         self.chk_detail_cycle.setMaximumSize(QtCore.QSize(163, 18))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.chk_detail_cycle.setFont(font)
         self.chk_detail_cycle.setChecked(True)
         self.chk_detail_cycle.setObjectName("chk_detail_cycle")
@@ -8065,7 +6247,7 @@ class Ui_sitool(object):
         self.capparameterload_path.setMaximumSize(QtCore.QSize(642, 20))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         font.setBold(False)
         font.setWeight(50)
         self.capparameterload_path.setFont(font)
@@ -8079,7 +6261,7 @@ class Ui_sitool(object):
         self.FitGroupConst.setMaximumSize(QtCore.QSize(150, 334))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FitGroupConst.setFont(font)
         self.FitGroupConst.setObjectName("FitGroupConst")
         self.gridLayout_4 = QtWidgets.QGridLayout(self.FitGroupConst)
@@ -8091,7 +6273,7 @@ class Ui_sitool(object):
         self.aLabel.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aLabel.setFont(font)
         self.aLabel.setObjectName("aLabel")
         self.horizontalLayout_26.addWidget(self.aLabel)
@@ -8100,7 +6282,7 @@ class Ui_sitool(object):
         self.aTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aTextEdit.setFont(font)
         self.aTextEdit.setText("")
         self.aTextEdit.setObjectName("aTextEdit")
@@ -8113,7 +6295,7 @@ class Ui_sitool(object):
         self.bLabel.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bLabel.setFont(font)
         self.bLabel.setObjectName("bLabel")
         self.horizontalLayout_27.addWidget(self.bLabel)
@@ -8122,7 +6304,7 @@ class Ui_sitool(object):
         self.bTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bTextEdit.setFont(font)
         self.bTextEdit.setText("")
         self.bTextEdit.setObjectName("bTextEdit")
@@ -8135,7 +6317,7 @@ class Ui_sitool(object):
         self.b1Label.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1Label.setFont(font)
         self.b1Label.setObjectName("b1Label")
         self.horizontalLayout_28.addWidget(self.b1Label)
@@ -8144,7 +6326,7 @@ class Ui_sitool(object):
         self.b1TextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1TextEdit.setFont(font)
         self.b1TextEdit.setText("")
         self.b1TextEdit.setObjectName("b1TextEdit")
@@ -8157,7 +6339,7 @@ class Ui_sitool(object):
         self.cLabel.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cLabel.setFont(font)
         self.cLabel.setObjectName("cLabel")
         self.horizontalLayout_29.addWidget(self.cLabel)
@@ -8166,7 +6348,7 @@ class Ui_sitool(object):
         self.cTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cTextEdit.setFont(font)
         self.cTextEdit.setText("")
         self.cTextEdit.setObjectName("cTextEdit")
@@ -8179,7 +6361,7 @@ class Ui_sitool(object):
         self.dLabel.setMaximumSize(QtCore.QSize(50, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dLabel.setFont(font)
         self.dLabel.setObjectName("dLabel")
         self.horizontalLayout_30.addWidget(self.dLabel)
@@ -8188,7 +6370,7 @@ class Ui_sitool(object):
         self.dTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dTextEdit.setFont(font)
         self.dTextEdit.setText("")
         self.dTextEdit.setObjectName("dTextEdit")
@@ -8201,7 +6383,7 @@ class Ui_sitool(object):
         self.eLabel.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eLabel.setFont(font)
         self.eLabel.setObjectName("eLabel")
         self.horizontalLayout_31.addWidget(self.eLabel)
@@ -8210,7 +6392,7 @@ class Ui_sitool(object):
         self.eTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eTextEdit.setFont(font)
         self.eTextEdit.setText("")
         self.eTextEdit.setObjectName("eTextEdit")
@@ -8223,7 +6405,7 @@ class Ui_sitool(object):
         self.fLabel.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fLabel.setFont(font)
         self.fLabel.setObjectName("fLabel")
         self.horizontalLayout_34.addWidget(self.fLabel)
@@ -8232,7 +6414,7 @@ class Ui_sitool(object):
         self.fTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fTextEdit.setFont(font)
         self.fTextEdit.setText("")
         self.fTextEdit.setObjectName("fTextEdit")
@@ -8245,7 +6427,7 @@ class Ui_sitool(object):
         self.fdLabel.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdLabel.setFont(font)
         self.fdLabel.setObjectName("fdLabel")
         self.horizontalLayout_36.addWidget(self.fdLabel)
@@ -8254,7 +6436,7 @@ class Ui_sitool(object):
         self.fdTextEdit.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdTextEdit.setFont(font)
         self.fdTextEdit.setText("")
         self.fdTextEdit.setObjectName("fdTextEdit")
@@ -8266,7 +6448,7 @@ class Ui_sitool(object):
         self.FitGroupConst_3.setMaximumSize(QtCore.QSize(150, 334))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FitGroupConst_3.setFont(font)
         self.FitGroupConst_3.setObjectName("FitGroupConst_3")
         self.gridLayout_5 = QtWidgets.QGridLayout(self.FitGroupConst_3)
@@ -8278,7 +6460,7 @@ class Ui_sitool(object):
         self.aLabel_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aLabel_5.setFont(font)
         self.aLabel_5.setObjectName("aLabel_5")
         self.horizontalLayout_37.addWidget(self.aLabel_5)
@@ -8287,7 +6469,7 @@ class Ui_sitool(object):
         self.aTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aTextEdit_3.setFont(font)
         self.aTextEdit_3.setText("")
         self.aTextEdit_3.setObjectName("aTextEdit_3")
@@ -8300,7 +6482,7 @@ class Ui_sitool(object):
         self.bLabel_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bLabel_5.setFont(font)
         self.bLabel_5.setObjectName("bLabel_5")
         self.horizontalLayout_38.addWidget(self.bLabel_5)
@@ -8309,7 +6491,7 @@ class Ui_sitool(object):
         self.bTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bTextEdit_3.setFont(font)
         self.bTextEdit_3.setText("")
         self.bTextEdit_3.setObjectName("bTextEdit_3")
@@ -8322,7 +6504,7 @@ class Ui_sitool(object):
         self.b1Label_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1Label_5.setFont(font)
         self.b1Label_5.setObjectName("b1Label_5")
         self.horizontalLayout_39.addWidget(self.b1Label_5)
@@ -8331,7 +6513,7 @@ class Ui_sitool(object):
         self.b1TextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1TextEdit_3.setFont(font)
         self.b1TextEdit_3.setText("")
         self.b1TextEdit_3.setObjectName("b1TextEdit_3")
@@ -8344,7 +6526,7 @@ class Ui_sitool(object):
         self.cLabel_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cLabel_5.setFont(font)
         self.cLabel_5.setObjectName("cLabel_5")
         self.horizontalLayout_40.addWidget(self.cLabel_5)
@@ -8353,7 +6535,7 @@ class Ui_sitool(object):
         self.cTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cTextEdit_3.setFont(font)
         self.cTextEdit_3.setText("")
         self.cTextEdit_3.setObjectName("cTextEdit_3")
@@ -8366,7 +6548,7 @@ class Ui_sitool(object):
         self.dLabel_5.setMaximumSize(QtCore.QSize(50, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dLabel_5.setFont(font)
         self.dLabel_5.setObjectName("dLabel_5")
         self.horizontalLayout_41.addWidget(self.dLabel_5)
@@ -8375,7 +6557,7 @@ class Ui_sitool(object):
         self.dTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dTextEdit_3.setFont(font)
         self.dTextEdit_3.setText("")
         self.dTextEdit_3.setObjectName("dTextEdit_3")
@@ -8388,7 +6570,7 @@ class Ui_sitool(object):
         self.eLabel_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eLabel_5.setFont(font)
         self.eLabel_5.setObjectName("eLabel_5")
         self.horizontalLayout_42.addWidget(self.eLabel_5)
@@ -8397,7 +6579,7 @@ class Ui_sitool(object):
         self.eTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eTextEdit_3.setFont(font)
         self.eTextEdit_3.setText("")
         self.eTextEdit_3.setObjectName("eTextEdit_3")
@@ -8410,7 +6592,7 @@ class Ui_sitool(object):
         self.fLabel_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fLabel_5.setFont(font)
         self.fLabel_5.setObjectName("fLabel_5")
         self.horizontalLayout_43.addWidget(self.fLabel_5)
@@ -8419,7 +6601,7 @@ class Ui_sitool(object):
         self.fTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fTextEdit_3.setFont(font)
         self.fTextEdit_3.setText("")
         self.fTextEdit_3.setObjectName("fTextEdit_3")
@@ -8432,7 +6614,7 @@ class Ui_sitool(object):
         self.fdLabel_5.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdLabel_5.setFont(font)
         self.fdLabel_5.setObjectName("fdLabel_5")
         self.horizontalLayout_44.addWidget(self.fdLabel_5)
@@ -8441,7 +6623,7 @@ class Ui_sitool(object):
         self.fdTextEdit_3.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdTextEdit_3.setFont(font)
         self.fdTextEdit_3.setText("")
         self.fdTextEdit_3.setObjectName("fdTextEdit_3")
@@ -8453,7 +6635,7 @@ class Ui_sitool(object):
         self.FitGroupConst_2.setMaximumSize(QtCore.QSize(150, 334))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FitGroupConst_2.setFont(font)
         self.FitGroupConst_2.setObjectName("FitGroupConst_2")
         self.gridLayout_6 = QtWidgets.QGridLayout(self.FitGroupConst_2)
@@ -8465,7 +6647,7 @@ class Ui_sitool(object):
         self.aLabel_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aLabel_6.setFont(font)
         self.aLabel_6.setObjectName("aLabel_6")
         self.horizontalLayout_45.addWidget(self.aLabel_6)
@@ -8474,7 +6656,7 @@ class Ui_sitool(object):
         self.aTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aTextEdit_2.setFont(font)
         self.aTextEdit_2.setText("")
         self.aTextEdit_2.setObjectName("aTextEdit_2")
@@ -8487,7 +6669,7 @@ class Ui_sitool(object):
         self.bLabel_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bLabel_6.setFont(font)
         self.bLabel_6.setObjectName("bLabel_6")
         self.horizontalLayout_46.addWidget(self.bLabel_6)
@@ -8496,7 +6678,7 @@ class Ui_sitool(object):
         self.bTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bTextEdit_2.setFont(font)
         self.bTextEdit_2.setText("")
         self.bTextEdit_2.setObjectName("bTextEdit_2")
@@ -8509,7 +6691,7 @@ class Ui_sitool(object):
         self.b1Label_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1Label_6.setFont(font)
         self.b1Label_6.setObjectName("b1Label_6")
         self.horizontalLayout_47.addWidget(self.b1Label_6)
@@ -8518,7 +6700,7 @@ class Ui_sitool(object):
         self.b1TextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1TextEdit_2.setFont(font)
         self.b1TextEdit_2.setText("")
         self.b1TextEdit_2.setObjectName("b1TextEdit_2")
@@ -8531,7 +6713,7 @@ class Ui_sitool(object):
         self.cLabel_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cLabel_6.setFont(font)
         self.cLabel_6.setObjectName("cLabel_6")
         self.horizontalLayout_48.addWidget(self.cLabel_6)
@@ -8540,7 +6722,7 @@ class Ui_sitool(object):
         self.cTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cTextEdit_2.setFont(font)
         self.cTextEdit_2.setText("")
         self.cTextEdit_2.setObjectName("cTextEdit_2")
@@ -8553,7 +6735,7 @@ class Ui_sitool(object):
         self.dLabel_6.setMaximumSize(QtCore.QSize(50, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dLabel_6.setFont(font)
         self.dLabel_6.setObjectName("dLabel_6")
         self.horizontalLayout_49.addWidget(self.dLabel_6)
@@ -8562,7 +6744,7 @@ class Ui_sitool(object):
         self.dTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dTextEdit_2.setFont(font)
         self.dTextEdit_2.setText("")
         self.dTextEdit_2.setObjectName("dTextEdit_2")
@@ -8575,7 +6757,7 @@ class Ui_sitool(object):
         self.eLabel_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eLabel_6.setFont(font)
         self.eLabel_6.setObjectName("eLabel_6")
         self.horizontalLayout_50.addWidget(self.eLabel_6)
@@ -8584,7 +6766,7 @@ class Ui_sitool(object):
         self.eTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eTextEdit_2.setFont(font)
         self.eTextEdit_2.setText("")
         self.eTextEdit_2.setObjectName("eTextEdit_2")
@@ -8597,7 +6779,7 @@ class Ui_sitool(object):
         self.fLabel_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fLabel_6.setFont(font)
         self.fLabel_6.setObjectName("fLabel_6")
         self.horizontalLayout_51.addWidget(self.fLabel_6)
@@ -8606,7 +6788,7 @@ class Ui_sitool(object):
         self.fTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fTextEdit_2.setFont(font)
         self.fTextEdit_2.setText("")
         self.fTextEdit_2.setObjectName("fTextEdit_2")
@@ -8619,7 +6801,7 @@ class Ui_sitool(object):
         self.fdLabel_6.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdLabel_6.setFont(font)
         self.fdLabel_6.setObjectName("fdLabel_6")
         self.horizontalLayout_52.addWidget(self.fdLabel_6)
@@ -8628,7 +6810,7 @@ class Ui_sitool(object):
         self.fdTextEdit_2.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdTextEdit_2.setFont(font)
         self.fdTextEdit_2.setText("")
         self.fdTextEdit_2.setObjectName("fdTextEdit_2")
@@ -8640,7 +6822,7 @@ class Ui_sitool(object):
         self.FitGroupConst_4.setMaximumSize(QtCore.QSize(150, 334))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FitGroupConst_4.setFont(font)
         self.FitGroupConst_4.setObjectName("FitGroupConst_4")
         self.gridLayout_7 = QtWidgets.QGridLayout(self.FitGroupConst_4)
@@ -8652,7 +6834,7 @@ class Ui_sitool(object):
         self.aLabel_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aLabel_7.setFont(font)
         self.aLabel_7.setObjectName("aLabel_7")
         self.horizontalLayout_53.addWidget(self.aLabel_7)
@@ -8661,7 +6843,7 @@ class Ui_sitool(object):
         self.aTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.aTextEdit_4.setFont(font)
         self.aTextEdit_4.setText("")
         self.aTextEdit_4.setObjectName("aTextEdit_4")
@@ -8674,7 +6856,7 @@ class Ui_sitool(object):
         self.bLabel_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bLabel_7.setFont(font)
         self.bLabel_7.setObjectName("bLabel_7")
         self.horizontalLayout_54.addWidget(self.bLabel_7)
@@ -8683,7 +6865,7 @@ class Ui_sitool(object):
         self.bTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.bTextEdit_4.setFont(font)
         self.bTextEdit_4.setText("")
         self.bTextEdit_4.setObjectName("bTextEdit_4")
@@ -8696,7 +6878,7 @@ class Ui_sitool(object):
         self.b1Label_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1Label_7.setFont(font)
         self.b1Label_7.setObjectName("b1Label_7")
         self.horizontalLayout_55.addWidget(self.b1Label_7)
@@ -8705,7 +6887,7 @@ class Ui_sitool(object):
         self.b1TextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.b1TextEdit_4.setFont(font)
         self.b1TextEdit_4.setText("")
         self.b1TextEdit_4.setObjectName("b1TextEdit_4")
@@ -8718,7 +6900,7 @@ class Ui_sitool(object):
         self.cLabel_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cLabel_7.setFont(font)
         self.cLabel_7.setObjectName("cLabel_7")
         self.horizontalLayout_56.addWidget(self.cLabel_7)
@@ -8727,7 +6909,7 @@ class Ui_sitool(object):
         self.cTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cTextEdit_4.setFont(font)
         self.cTextEdit_4.setText("")
         self.cTextEdit_4.setObjectName("cTextEdit_4")
@@ -8740,7 +6922,7 @@ class Ui_sitool(object):
         self.dLabel_7.setMaximumSize(QtCore.QSize(50, 29))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dLabel_7.setFont(font)
         self.dLabel_7.setObjectName("dLabel_7")
         self.horizontalLayout_57.addWidget(self.dLabel_7)
@@ -8749,7 +6931,7 @@ class Ui_sitool(object):
         self.dTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.dTextEdit_4.setFont(font)
         self.dTextEdit_4.setText("")
         self.dTextEdit_4.setObjectName("dTextEdit_4")
@@ -8762,7 +6944,7 @@ class Ui_sitool(object):
         self.eLabel_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eLabel_7.setFont(font)
         self.eLabel_7.setObjectName("eLabel_7")
         self.horizontalLayout_58.addWidget(self.eLabel_7)
@@ -8771,7 +6953,7 @@ class Ui_sitool(object):
         self.eTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.eTextEdit_4.setFont(font)
         self.eTextEdit_4.setText("")
         self.eTextEdit_4.setObjectName("eTextEdit_4")
@@ -8784,7 +6966,7 @@ class Ui_sitool(object):
         self.fLabel_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fLabel_7.setFont(font)
         self.fLabel_7.setObjectName("fLabel_7")
         self.horizontalLayout_59.addWidget(self.fLabel_7)
@@ -8793,7 +6975,7 @@ class Ui_sitool(object):
         self.fTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fTextEdit_4.setFont(font)
         self.fTextEdit_4.setText("")
         self.fTextEdit_4.setObjectName("fTextEdit_4")
@@ -8806,7 +6988,7 @@ class Ui_sitool(object):
         self.fdLabel_7.setMaximumSize(QtCore.QSize(50, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdLabel_7.setFont(font)
         self.fdLabel_7.setObjectName("fdLabel_7")
         self.horizontalLayout_60.addWidget(self.fdLabel_7)
@@ -8815,7 +6997,7 @@ class Ui_sitool(object):
         self.fdTextEdit_4.setMaximumSize(QtCore.QSize(72, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.fdTextEdit_4.setFont(font)
         self.fdTextEdit_4.setText("")
         self.fdTextEdit_4.setObjectName("fdTextEdit_4")
@@ -8828,7 +7010,7 @@ class Ui_sitool(object):
         self.SimGroupConst.setMaximumSize(QtCore.QSize(620, 240))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SimGroupConst.setFont(font)
         self.SimGroupConst.setObjectName("SimGroupConst")
         self.verticalLayout_11 = QtWidgets.QVBoxLayout(self.SimGroupConst)
@@ -8846,7 +7028,7 @@ class Ui_sitool(object):
         self.xaxixLabel.setMaximumSize(QtCore.QSize(85, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.xaxixLabel.setFont(font)
         self.xaxixLabel.setObjectName("xaxixLabel")
         self.horizontalLayout.addWidget(self.xaxixLabel)
@@ -8855,7 +7037,7 @@ class Ui_sitool(object):
         self.xaxixTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.xaxixTextEdit.setFont(font)
         self.xaxixTextEdit.setObjectName("xaxixTextEdit")
         self.horizontalLayout.addWidget(self.xaxixTextEdit)
@@ -8867,7 +7049,7 @@ class Ui_sitool(object):
         self.xaxixLabel_2.setMaximumSize(QtCore.QSize(85, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.xaxixLabel_2.setFont(font)
         self.xaxixLabel_2.setObjectName("xaxixLabel_2")
         self.horizontalLayout_2.addWidget(self.xaxixLabel_2)
@@ -8876,7 +7058,7 @@ class Ui_sitool(object):
         self.UsedCapTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.UsedCapTextEdit.setFont(font)
         self.UsedCapTextEdit.setObjectName("UsedCapTextEdit")
         self.horizontalLayout_2.addWidget(self.UsedCapTextEdit)
@@ -8888,7 +7070,7 @@ class Ui_sitool(object):
         self.DODLabel.setMaximumSize(QtCore.QSize(85, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.DODLabel.setFont(font)
         self.DODLabel.setObjectName("DODLabel")
         self.horizontalLayout_20.addWidget(self.DODLabel)
@@ -8897,7 +7079,7 @@ class Ui_sitool(object):
         self.DODTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.DODTextEdit.setFont(font)
         self.DODTextEdit.setObjectName("DODTextEdit")
         self.horizontalLayout_20.addWidget(self.DODTextEdit)
@@ -8914,7 +7096,7 @@ class Ui_sitool(object):
         self.CrateLabel.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.CrateLabel.setFont(font)
         self.CrateLabel.setObjectName("CrateLabel")
         self.horizontalLayout_3.addWidget(self.CrateLabel)
@@ -8923,7 +7105,7 @@ class Ui_sitool(object):
         self.CrateTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.CrateTextEdit.setFont(font)
         self.CrateTextEdit.setObjectName("CrateTextEdit")
         self.horizontalLayout_3.addWidget(self.CrateTextEdit)
@@ -8935,7 +7117,7 @@ class Ui_sitool(object):
         self.SOCLabel.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SOCLabel.setFont(font)
         self.SOCLabel.setObjectName("SOCLabel")
         self.horizontalLayout_4.addWidget(self.SOCLabel)
@@ -8944,7 +7126,7 @@ class Ui_sitool(object):
         self.SOCTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SOCTextEdit.setFont(font)
         self.SOCTextEdit.setObjectName("SOCTextEdit")
         self.horizontalLayout_4.addWidget(self.SOCTextEdit)
@@ -8956,7 +7138,7 @@ class Ui_sitool(object):
         self.CrateLabel_2.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.CrateLabel_2.setFont(font)
         self.CrateLabel_2.setObjectName("CrateLabel_2")
         self.horizontalLayout_5.addWidget(self.CrateLabel_2)
@@ -8965,7 +7147,7 @@ class Ui_sitool(object):
         self.DcrateTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.DcrateTextEdit.setFont(font)
         self.DcrateTextEdit.setObjectName("DcrateTextEdit")
         self.horizontalLayout_5.addWidget(self.DcrateTextEdit)
@@ -8977,7 +7159,7 @@ class Ui_sitool(object):
         self.TempLabel.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.TempLabel.setFont(font)
         self.TempLabel.setObjectName("TempLabel")
         self.horizontalLayout_6.addWidget(self.TempLabel)
@@ -8986,7 +7168,7 @@ class Ui_sitool(object):
         self.TempTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.TempTextEdit.setFont(font)
         self.TempTextEdit.setObjectName("TempTextEdit")
         self.horizontalLayout_6.addWidget(self.TempTextEdit)
@@ -9001,7 +7183,7 @@ class Ui_sitool(object):
         self.SOCLabel_3.setMaximumSize(QtCore.QSize(85, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SOCLabel_3.setFont(font)
         self.SOCLabel_3.setObjectName("SOCLabel_3")
         self.horizontalLayout_7.addWidget(self.SOCLabel_3)
@@ -9010,7 +7192,7 @@ class Ui_sitool(object):
         self.SOCTextEdit_3.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SOCTextEdit_3.setFont(font)
         self.SOCTextEdit_3.setObjectName("SOCTextEdit_3")
         self.horizontalLayout_7.addWidget(self.SOCTextEdit_3)
@@ -9022,7 +7204,7 @@ class Ui_sitool(object):
         self.TempLabel_3.setMaximumSize(QtCore.QSize(85, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.TempLabel_3.setFont(font)
         self.TempLabel_3.setObjectName("TempLabel_3")
         self.horizontalLayout_12.addWidget(self.TempLabel_3)
@@ -9031,7 +7213,7 @@ class Ui_sitool(object):
         self.TempTextEdit_3.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.TempTextEdit_3.setFont(font)
         self.TempTextEdit_3.setObjectName("TempTextEdit_3")
         self.horizontalLayout_12.addWidget(self.TempTextEdit_3)
@@ -9043,7 +7225,7 @@ class Ui_sitool(object):
         self.RestLabel_2.setMaximumSize(QtCore.QSize(85, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.RestLabel_2.setFont(font)
         self.RestLabel_2.setObjectName("RestLabel_2")
         self.horizontalLayout_22.addWidget(self.RestLabel_2)
@@ -9052,7 +7234,7 @@ class Ui_sitool(object):
         self.RestTextEdit_2.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.RestTextEdit_2.setFont(font)
         self.RestTextEdit_2.setObjectName("RestTextEdit_2")
         self.horizontalLayout_22.addWidget(self.RestTextEdit_2)
@@ -9069,7 +7251,7 @@ class Ui_sitool(object):
         self.SOCLabel_2.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SOCLabel_2.setFont(font)
         self.SOCLabel_2.setObjectName("SOCLabel_2")
         self.horizontalLayout_18.addWidget(self.SOCLabel_2)
@@ -9078,7 +7260,7 @@ class Ui_sitool(object):
         self.SOCTextEdit_2.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.SOCTextEdit_2.setFont(font)
         self.SOCTextEdit_2.setObjectName("SOCTextEdit_2")
         self.horizontalLayout_18.addWidget(self.SOCTextEdit_2)
@@ -9090,7 +7272,7 @@ class Ui_sitool(object):
         self.TempLabel_2.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.TempLabel_2.setFont(font)
         self.TempLabel_2.setObjectName("TempLabel_2")
         self.horizontalLayout_19.addWidget(self.TempLabel_2)
@@ -9099,7 +7281,7 @@ class Ui_sitool(object):
         self.TempTextEdit_2.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.TempTextEdit_2.setFont(font)
         self.TempTextEdit_2.setObjectName("TempTextEdit_2")
         self.horizontalLayout_19.addWidget(self.TempTextEdit_2)
@@ -9111,7 +7293,7 @@ class Ui_sitool(object):
         self.RestLabel.setMaximumSize(QtCore.QSize(84, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.RestLabel.setFont(font)
         self.RestLabel.setObjectName("RestLabel")
         self.horizontalLayout_24.addWidget(self.RestLabel)
@@ -9120,7 +7302,7 @@ class Ui_sitool(object):
         self.RestTextEdit.setMaximumSize(QtCore.QSize(50, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.RestTextEdit.setFont(font)
         self.RestTextEdit.setObjectName("RestTextEdit")
         self.horizontalLayout_24.addWidget(self.RestTextEdit)
@@ -9134,7 +7316,7 @@ class Ui_sitool(object):
         self.line_2.setMaximumSize(QtCore.QSize(598, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_2.setFont(font)
         self.line_2.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         self.line_2.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -9147,7 +7329,7 @@ class Ui_sitool(object):
         self.FdLabel.setMaximumSize(QtCore.QSize(80, 17))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdLabel.setFont(font)
         self.FdLabel.setObjectName("FdLabel")
         self.gridLayout_2.addWidget(self.FdLabel, 0, 0, 1, 1)
@@ -9156,7 +7338,7 @@ class Ui_sitool(object):
         self.FdLabel_2.setMaximumSize(QtCore.QSize(80, 17))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdLabel_2.setFont(font)
         self.FdLabel_2.setObjectName("FdLabel_2")
         self.gridLayout_2.addWidget(self.FdLabel_2, 0, 1, 1, 1)
@@ -9165,7 +7347,7 @@ class Ui_sitool(object):
         self.FdLabel_5.setMaximumSize(QtCore.QSize(80, 17))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdLabel_5.setFont(font)
         self.FdLabel_5.setObjectName("FdLabel_5")
         self.gridLayout_2.addWidget(self.FdLabel_5, 0, 2, 1, 1)
@@ -9174,7 +7356,7 @@ class Ui_sitool(object):
         self.FdLabel_6.setMaximumSize(QtCore.QSize(80, 17))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdLabel_6.setFont(font)
         self.FdLabel_6.setObjectName("FdLabel_6")
         self.gridLayout_2.addWidget(self.FdLabel_6, 0, 3, 1, 1)
@@ -9183,7 +7365,7 @@ class Ui_sitool(object):
         self.FdTextEdit_6.setMaximumSize(QtCore.QSize(80, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdTextEdit_6.setFont(font)
         self.FdTextEdit_6.setObjectName("FdTextEdit_6")
         self.gridLayout_2.addWidget(self.FdTextEdit_6, 1, 3, 1, 1)
@@ -9192,7 +7374,7 @@ class Ui_sitool(object):
         self.FdTextEdit_3.setMaximumSize(QtCore.QSize(80, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdTextEdit_3.setFont(font)
         self.FdTextEdit_3.setObjectName("FdTextEdit_3")
         self.gridLayout_2.addWidget(self.FdTextEdit_3, 1, 1, 1, 1)
@@ -9201,7 +7383,7 @@ class Ui_sitool(object):
         self.FdTextEdit.setMaximumSize(QtCore.QSize(80, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdTextEdit.setFont(font)
         self.FdTextEdit.setObjectName("FdTextEdit")
         self.gridLayout_2.addWidget(self.FdTextEdit, 1, 0, 1, 1)
@@ -9210,7 +7392,7 @@ class Ui_sitool(object):
         self.FdLabel_3.setMaximumSize(QtCore.QSize(80, 17))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdLabel_3.setFont(font)
         self.FdLabel_3.setObjectName("FdLabel_3")
         self.gridLayout_2.addWidget(self.FdLabel_3, 0, 5, 1, 1)
@@ -9219,7 +7401,7 @@ class Ui_sitool(object):
         self.FdLabel_4.setMaximumSize(QtCore.QSize(80, 17))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdLabel_4.setFont(font)
         self.FdLabel_4.setObjectName("FdLabel_4")
         self.gridLayout_2.addWidget(self.FdLabel_4, 0, 4, 1, 1)
@@ -9228,7 +7410,7 @@ class Ui_sitool(object):
         self.FdTextEdit_5.setMaximumSize(QtCore.QSize(80, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdTextEdit_5.setFont(font)
         self.FdTextEdit_5.setObjectName("FdTextEdit_5")
         self.gridLayout_2.addWidget(self.FdTextEdit_5, 1, 2, 1, 1)
@@ -9237,7 +7419,7 @@ class Ui_sitool(object):
         self.FdTextEdit_2.setMaximumSize(QtCore.QSize(80, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdTextEdit_2.setFont(font)
         self.FdTextEdit_2.setObjectName("FdTextEdit_2")
         self.gridLayout_2.addWidget(self.FdTextEdit_2, 1, 4, 1, 1)
@@ -9246,7 +7428,7 @@ class Ui_sitool(object):
         self.FdTextEdit_4.setMaximumSize(QtCore.QSize(80, 23))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.FdTextEdit_4.setFont(font)
         self.FdTextEdit_4.setObjectName("FdTextEdit_4")
         self.gridLayout_2.addWidget(self.FdTextEdit_4, 1, 5, 1, 1)
@@ -9259,7 +7441,7 @@ class Ui_sitool(object):
         self.real_cycle_simul_tab.setMaximumSize(QtCore.QSize(1200, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.real_cycle_simul_tab.setFont(font)
         self.real_cycle_simul_tab.setObjectName("real_cycle_simul_tab")
         self.horizontalLayout_170.addWidget(self.real_cycle_simul_tab)
@@ -9269,545 +7451,14 @@ class Ui_sitool(object):
         self.line_6.setMaximumSize(QtCore.QSize(0, 3))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_6.setFont(font)
         self.line_6.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         self.line_6.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         self.line_6.setObjectName("line_6")
         self.horizontalLayout_171.addWidget(self.line_6)
         self.tabWidget.addTab(self.FitTab, "")
-        # ===== PyBaMM 전기화학 시뮬레이션 탭 =====
-        self.PyBaMMTab = QtWidgets.QWidget()
-        self.PyBaMMTab.setObjectName("PyBaMMTab")
-        self.pybamm_main_layout = QtWidgets.QHBoxLayout(self.PyBaMMTab)
-        self.pybamm_main_layout.setObjectName("pybamm_main_layout")
-        # --- 좌측 입력 패널 (QScrollArea 래핑) ---
-        self.pybamm_left_scroll = QtWidgets.QScrollArea(parent=self.PyBaMMTab)
-        self.pybamm_left_scroll.setWidgetResizable(True)
-        self.pybamm_left_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.pybamm_left_scroll.setMinimumWidth(360)
-        self.pybamm_left_scroll.setMaximumWidth(360)
-        self.pybamm_left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        self.pybamm_left_container = QtWidgets.QWidget()
-        # 탭 pane 배경색(Button 역할)으로 통일
-        _pb_pal = self.pybamm_left_container.palette()
-        _pb_pal.setColor(_pb_pal.ColorRole.Window,
-                         _pb_pal.color(_pb_pal.ColorRole.Button))
-        self.pybamm_left_container.setPalette(_pb_pal)
-        self.pybamm_left_container.setAutoFillBackground(True)
-        self.pybamm_left_panel = QtWidgets.QVBoxLayout(self.pybamm_left_container)
-        self.pybamm_left_panel.setObjectName("pybamm_left_panel")
-        # [1] 모델 선택 GroupBox
-        self.pybamm_model_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
-        self.pybamm_model_group.setMinimumSize(QtCore.QSize(340, 60))
-        self.pybamm_model_group.setMaximumSize(QtCore.QSize(340, 60))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        self.pybamm_model_group.setFont(font)
-        self.pybamm_model_group.setObjectName("pybamm_model_group")
-        self.pybamm_model_group.setTitle("모델 선택")
-        self.pybamm_model_hlayout = QtWidgets.QHBoxLayout(self.pybamm_model_group)
-        self.pybamm_model_hlayout.setObjectName("pybamm_model_hlayout")
-        self.pybamm_model_label = QtWidgets.QLabel(parent=self.pybamm_model_group)
-        self.pybamm_model_label.setText("모델:")
-        self.pybamm_model_label.setFont(font)
-        self.pybamm_model_hlayout.addWidget(self.pybamm_model_label)
-        self.pybamm_model_combo = QtWidgets.QComboBox(parent=self.pybamm_model_group)
-        self.pybamm_model_combo.setMinimumSize(QtCore.QSize(200, 25))
-        self.pybamm_model_combo.setFont(font)
-        self.pybamm_model_combo.addItems(["DFN", "SPMe", "SPM"])
-        self.pybamm_model_combo.setObjectName("pybamm_model_combo")
-        self.pybamm_model_hlayout.addWidget(self.pybamm_model_combo)
-        self.pybamm_left_panel.addWidget(self.pybamm_model_group)
-        # [2] 파라미터 세트 GroupBox
-        self.pybamm_param_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
-        self.pybamm_param_group.setMinimumSize(QtCore.QSize(340, 70))
-        self.pybamm_param_group.setMaximumSize(QtCore.QSize(340, 16777215))
-        self.pybamm_param_group.setFont(font)
-        self.pybamm_param_group.setObjectName("pybamm_param_group")
-        self.pybamm_param_group.setTitle("전극 물성 파라미터")
-        self.pybamm_param_vlayout = QtWidgets.QVBoxLayout(self.pybamm_param_group)
-        self.pybamm_param_vlayout.setObjectName("pybamm_param_vlayout")
-        self.pybamm_preset_hlayout = QtWidgets.QHBoxLayout()
-        self.pybamm_preset_label = QtWidgets.QLabel(parent=self.pybamm_param_group)
-        self.pybamm_preset_label.setText("프리셋:")
-        self.pybamm_preset_label.setFont(font)
-        self.pybamm_preset_hlayout.addWidget(self.pybamm_preset_label)
-        self.pybamm_param_combo = QtWidgets.QComboBox(parent=self.pybamm_param_group)
-        self.pybamm_param_combo.setMinimumSize(QtCore.QSize(220, 25))
-        self.pybamm_param_combo.setFont(font)
-        self.pybamm_param_combo.addItems([
-            "Chen2020 - Gr(Si)/NMC811",
-            "Ecker2015 - Gr/NMC111",
-            "Marquis2019 - Gr/NMC",
-            "Mohtat2020 - Gr/NMC111",
-            "NCA_Kim2011 - Gr/NCA",
-            "OKane2022 - Gr(Si)/NMC811",
-            "ORegan2022 - Gr(Si)/NMC811",
-            "사용자 정의",
-        ])
-        self.pybamm_param_combo.setObjectName("pybamm_param_combo")
-        self.pybamm_preset_hlayout.addWidget(self.pybamm_param_combo)
-        self.pybamm_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_param_group)
-        self.pybamm_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_edit_btn.setFont(font)
-        self.pybamm_edit_btn.setText("파라미터 편집")
-        self.pybamm_edit_btn.setCheckable(True)
-        self.pybamm_edit_btn.setChecked(False)
-        self.pybamm_edit_btn.setObjectName("pybamm_edit_btn")
-        self.pybamm_preset_hlayout.addWidget(self.pybamm_edit_btn)
-        self.pybamm_param_vlayout.addLayout(self.pybamm_preset_hlayout)
-        self.pybamm_param_table = QtWidgets.QTableWidget(parent=self.pybamm_param_group)
-        self.pybamm_param_table.setMinimumSize(QtCore.QSize(320, 460))
-        self.pybamm_param_table.setMaximumSize(QtCore.QSize(320, 460))
-        self.pybamm_param_table.setFont(font)
-        self.pybamm_param_table.setColumnCount(3)
-        self.pybamm_param_table.setHorizontalHeaderLabels(["파라미터", "값", "단위"])
-        self.pybamm_param_table.setColumnWidth(0, 150)
-        self.pybamm_param_table.setColumnWidth(1, 80)
-        self.pybamm_param_table.setColumnWidth(2, 60)
-        self.pybamm_param_table.setRowCount(14)
-        _pybamm_param_rows = [
-            ("양극 두께", "75.6", "μm"), ("양극 입자 반경", "5.22", "μm"),
-            ("양극 활물질 비율", "0.665", "-"),
-            ("양극 Bruggeman", "1.5", "-"),
-            ("음극 두께", "85.2", "μm"), ("음극 입자 반경", "5.86", "μm"),
-            ("음극 활물질 비율", "0.75", "-"),
-            ("음극 Bruggeman", "1.5", "-"),
-            ("분리막 두께", "12.0", "μm"), ("분리막 Bruggeman", "1.5", "-"),
-            ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "1.58", "m²"),
-            ("셀 용량", "5.0", "Ah"), ("온도", "25", "°C"),
-        ]
-        for _row, (_name, _val, _unit) in enumerate(_pybamm_param_rows):
-            self.pybamm_param_table.setItem(_row, 0, QtWidgets.QTableWidgetItem(_name))
-            self.pybamm_param_table.setItem(_row, 1, QtWidgets.QTableWidgetItem(_val))
-            self.pybamm_param_table.setItem(_row, 2, QtWidgets.QTableWidgetItem(_unit))
-            self.pybamm_param_table.item(_row, 0).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
-            self.pybamm_param_table.item(_row, 2).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
-        self.pybamm_param_table.setObjectName("pybamm_param_table")
-        self.pybamm_param_table.setVisible(False)
-        self.pybamm_param_vlayout.addWidget(self.pybamm_param_table)
-        self.pybamm_left_panel.addWidget(self.pybamm_param_group)
-        # [3] 충방전 패턴 GroupBox
-        self.pybamm_exp_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
-        self.pybamm_exp_group.setMinimumSize(QtCore.QSize(340, 400))
-        self.pybamm_exp_group.setMaximumSize(QtCore.QSize(340, 16777215))
-        self.pybamm_exp_group.setFont(font)
-        self.pybamm_exp_group.setObjectName("pybamm_exp_group")
-        self.pybamm_exp_group.setTitle("충방전 패턴")
-        self.pybamm_exp_vlayout = QtWidgets.QVBoxLayout(self.pybamm_exp_group)
-        self.pybamm_exp_vlayout.setObjectName("pybamm_exp_vlayout")
-        # 모드 선택 라디오버튼 (4개)
-        self.pybamm_mode_hlayout1 = QtWidgets.QHBoxLayout()
-        _radio_font = QtGui.QFont()
-        _radio_font.setFamily("맑은 고딕")
-        _radio_font.setPointSize(10)
-        _radio_font.setBold(False)
-        _radio_font.setWeight(50)
-        self.pybamm_mode_charge = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
-        self.pybamm_mode_charge.setText("충전")
-        self.pybamm_mode_charge.setFont(_radio_font)
-        self.pybamm_mode_charge.setChecked(True)
-        self.pybamm_mode_charge.setObjectName("pybamm_mode_charge")
-        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_charge)
-        self.pybamm_mode_discharge = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
-        self.pybamm_mode_discharge.setText("방전")
-        self.pybamm_mode_discharge.setFont(_radio_font)
-        self.pybamm_mode_discharge.setObjectName("pybamm_mode_discharge")
-        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_discharge)
-        self.pybamm_mode_gitt = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
-        self.pybamm_mode_gitt.setText("GITT/HPPC")
-        self.pybamm_mode_gitt.setFont(_radio_font)
-        self.pybamm_mode_gitt.setObjectName("pybamm_mode_gitt")
-        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_gitt)
-        self.pybamm_mode_custom = QtWidgets.QRadioButton(parent=self.pybamm_exp_group)
-        self.pybamm_mode_custom.setText("커스텀")
-        self.pybamm_mode_custom.setFont(_radio_font)
-        self.pybamm_mode_custom.setObjectName("pybamm_mode_custom")
-        self.pybamm_mode_hlayout1.addWidget(self.pybamm_mode_custom)
-        self.pybamm_exp_vlayout.addLayout(self.pybamm_mode_hlayout1)
-        # QStackedWidget: 패턴 모드별 입력 전환
-        self.pybamm_exp_stack = QtWidgets.QStackedWidget(parent=self.pybamm_exp_group)
-        self.pybamm_exp_stack.setObjectName("pybamm_exp_stack")
-
-        # --- Stack Page 0: 충전 (스텝 리스트) ---
-        self.pybamm_chg_page = QtWidgets.QWidget()
-        self.pybamm_chg_page.setObjectName("pybamm_chg_page")
-        self.pybamm_chg_vlayout = QtWidgets.QVBoxLayout(self.pybamm_chg_page)
-        # 제목 행
-        self.pybamm_chg_hdr_hlayout = QtWidgets.QHBoxLayout()
-        _chg_hdr_font = QtGui.QFont()
-        _chg_hdr_font.setFamily("맑은 고딕")
-        _chg_hdr_font.setPointSize(8)
-        _chg_hdr_font.setBold(True)
-        self._pybamm_chg_hdr_labels = []
-        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff", 55), ("", 30)]:
-            _hdr = QtWidgets.QLabel(parent=self.pybamm_chg_page)
-            _hdr.setText(_txt)
-            _hdr.setFont(_chg_hdr_font)
-            _hdr.setMinimumSize(QtCore.QSize(_w, 15))
-            _hdr.setMaximumSize(QtCore.QSize(_w, 15))
-            _hdr.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self.pybamm_chg_hdr_hlayout.addWidget(_hdr)
-            self._pybamm_chg_hdr_labels.append(_hdr)
-        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_hdr_hlayout)
-        # 스텝 추가 입력바
-        self.pybamm_chg_add_hlayout = QtWidgets.QHBoxLayout()
-        self.pybamm_chg_step_type = QtWidgets.QComboBox(parent=self.pybamm_chg_page)
-        self.pybamm_chg_step_type.setFont(font)
-        self.pybamm_chg_step_type.addItems(["CC", "CV", "CCCV", "Rest"])
-        self.pybamm_chg_step_type.setMinimumSize(QtCore.QSize(65, 25))
-        self.pybamm_chg_step_type.setObjectName("pybamm_chg_step_type")
-        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_step_type)
-        self.pybamm_chg_crate = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
-        self.pybamm_chg_crate.setFont(font)
-        self.pybamm_chg_crate.setPlaceholderText("C-rate")
-        self.pybamm_chg_crate.setText("1.0")
-        self.pybamm_chg_crate.setMinimumSize(QtCore.QSize(45, 25))
-        self.pybamm_chg_crate.setMaximumSize(QtCore.QSize(50, 25))
-        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_crate)
-        self.pybamm_chg_vcut = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
-        self.pybamm_chg_vcut.setFont(font)
-        self.pybamm_chg_vcut.setPlaceholderText("전압/시간")
-        self.pybamm_chg_vcut.setText("4.2")
-        self.pybamm_chg_vcut.setMinimumSize(QtCore.QSize(45, 25))
-        self.pybamm_chg_vcut.setMaximumSize(QtCore.QSize(55, 25))
-        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_vcut)
-        self.pybamm_chg_cutoff = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
-        self.pybamm_chg_cutoff.setFont(font)
-        self.pybamm_chg_cutoff.setPlaceholderText("C/s/m/h")
-        self.pybamm_chg_cutoff.setText("0.05C")
-        self.pybamm_chg_cutoff.setToolTip("CV: 0.05C, C/50  |  Rest: 600s, 10m, 1h")
-        self.pybamm_chg_cutoff.setMinimumSize(QtCore.QSize(45, 25))
-        self.pybamm_chg_cutoff.setMaximumSize(QtCore.QSize(55, 25))
-        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_cutoff)
-        self.pybamm_chg_add_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
-        self.pybamm_chg_add_btn.setFont(font)
-        self.pybamm_chg_add_btn.setText("+")
-        self.pybamm_chg_add_btn.setMinimumSize(QtCore.QSize(30, 25))
-        self.pybamm_chg_add_btn.setMaximumSize(QtCore.QSize(30, 25))
-        self.pybamm_chg_add_btn.setObjectName("pybamm_chg_add_btn")
-        self.pybamm_chg_add_hlayout.addWidget(self.pybamm_chg_add_btn)
-        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_add_hlayout)
-        # 충전 스텝 리스트
-        self.pybamm_chg_list = QtWidgets.QListWidget(parent=self.pybamm_chg_page)
-        self.pybamm_chg_list.setFont(font)
-        self.pybamm_chg_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.pybamm_chg_list.setMinimumSize(QtCore.QSize(310, 180))
-        self.pybamm_chg_list.setObjectName("pybamm_chg_list")
-        self.pybamm_chg_list.addItems([
-            "[1] CC  |  Charge at 2.0C until 3.9V",
-            "[2] CC  |  Charge at 1.6C until 4.0V",
-            "[3] CC  |  Charge at 1.3C until 4.1V",
-            "    └ CV  |  Hold at 4.1V until 1.0C",
-            "[4] CC  |  Charge at 1.0C until 4.2V",
-            "    └ CV  |  Hold at 4.2V until 0.1C",
-        ])
-        self.pybamm_chg_vlayout.addWidget(self.pybamm_chg_list)
-        # 수정/삭제 버튼
-        self.pybamm_chg_del_hlayout = QtWidgets.QHBoxLayout()
-        self.pybamm_chg_del_hlayout.addItem(QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
-        self.pybamm_chg_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
-        self.pybamm_chg_edit_btn.setFont(font)
-        self.pybamm_chg_edit_btn.setText("선택 수정")
-        self.pybamm_chg_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_chg_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_chg_edit_btn.setObjectName("pybamm_chg_edit_btn")
-        self.pybamm_chg_del_hlayout.addWidget(self.pybamm_chg_edit_btn)
-        self.pybamm_chg_del_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
-        self.pybamm_chg_del_btn.setFont(font)
-        self.pybamm_chg_del_btn.setText("선택 삭제")
-        self.pybamm_chg_del_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_chg_del_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_chg_del_btn.setObjectName("pybamm_chg_del_btn")
-        self.pybamm_chg_del_hlayout.addWidget(self.pybamm_chg_del_btn)
-        self.pybamm_chg_clear_btn = QtWidgets.QPushButton(parent=self.pybamm_chg_page)
-        self.pybamm_chg_clear_btn.setFont(font)
-        self.pybamm_chg_clear_btn.setText("전체 삭제")
-        self.pybamm_chg_clear_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_chg_clear_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_chg_clear_btn.setObjectName("pybamm_chg_clear_btn")
-        self.pybamm_chg_del_hlayout.addWidget(self.pybamm_chg_clear_btn)
-        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_del_hlayout)
-        # 사이클 수
-        self.pybamm_chg_cyc_hlayout = QtWidgets.QHBoxLayout()
-        _chg_cyc_lbl = QtWidgets.QLabel(parent=self.pybamm_chg_page)
-        _chg_cyc_lbl.setText("사이클 수:")
-        _chg_cyc_lbl.setFont(font)
-        self.pybamm_chg_cyc_hlayout.addWidget(_chg_cyc_lbl)
-        self.pybamm_chg_cycles = QtWidgets.QLineEdit(parent=self.pybamm_chg_page)
-        self.pybamm_chg_cycles.setFont(font)
-        self.pybamm_chg_cycles.setText("1")
-        self.pybamm_chg_cycles.setMinimumSize(QtCore.QSize(50, 25))
-        self.pybamm_chg_cycles.setMaximumSize(QtCore.QSize(60, 25))
-        self.pybamm_chg_cyc_hlayout.addWidget(self.pybamm_chg_cycles)
-        self.pybamm_chg_cyc_hlayout.addItem(QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
-        self.pybamm_chg_vlayout.addLayout(self.pybamm_chg_cyc_hlayout)
-        self.pybamm_exp_stack.addWidget(self.pybamm_chg_page)
-
-        # --- Stack Page 1: 방전 (스텝 리스트) ---
-        self.pybamm_dchg_page = QtWidgets.QWidget()
-        self.pybamm_dchg_page.setObjectName("pybamm_dchg_page")
-        self.pybamm_dchg_vlayout = QtWidgets.QVBoxLayout(self.pybamm_dchg_page)
-        # 제목 행
-        self.pybamm_dchg_hdr_hlayout = QtWidgets.QHBoxLayout()
-        _dchg_hdr_font = QtGui.QFont()
-        _dchg_hdr_font.setFamily("맑은 고딕")
-        _dchg_hdr_font.setPointSize(8)
-        _dchg_hdr_font.setBold(True)
-        self._pybamm_dchg_hdr_labels = []
-        for _txt, _w in [("유형", 65), ("C-rate", 50), ("전압(V)", 55), ("Cutoff", 55), ("", 30)]:
-            _hdr = QtWidgets.QLabel(parent=self.pybamm_dchg_page)
-            _hdr.setText(_txt)
-            _hdr.setFont(_dchg_hdr_font)
-            _hdr.setMinimumSize(QtCore.QSize(_w, 15))
-            _hdr.setMaximumSize(QtCore.QSize(_w, 15))
-            _hdr.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self.pybamm_dchg_hdr_hlayout.addWidget(_hdr)
-            self._pybamm_dchg_hdr_labels.append(_hdr)
-        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_hdr_hlayout)
-        # 스텝 추가 입력바
-        self.pybamm_dchg_add_hlayout = QtWidgets.QHBoxLayout()
-        self.pybamm_dchg_step_type = QtWidgets.QComboBox(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_step_type.setFont(font)
-        self.pybamm_dchg_step_type.addItems(["CC", "CV", "CCCV", "Rest"])
-        self.pybamm_dchg_step_type.setMinimumSize(QtCore.QSize(65, 25))
-        self.pybamm_dchg_step_type.setObjectName("pybamm_dchg_step_type")
-        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_step_type)
-        self.pybamm_dchg_crate = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_crate.setFont(font)
-        self.pybamm_dchg_crate.setPlaceholderText("C-rate")
-        self.pybamm_dchg_crate.setText("1.0")
-        self.pybamm_dchg_crate.setMinimumSize(QtCore.QSize(45, 25))
-        self.pybamm_dchg_crate.setMaximumSize(QtCore.QSize(50, 25))
-        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_crate)
-        self.pybamm_dchg_vcut = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_vcut.setFont(font)
-        self.pybamm_dchg_vcut.setPlaceholderText("전압/시간")
-        self.pybamm_dchg_vcut.setText("2.5")
-        self.pybamm_dchg_vcut.setMinimumSize(QtCore.QSize(45, 25))
-        self.pybamm_dchg_vcut.setMaximumSize(QtCore.QSize(55, 25))
-        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_vcut)
-        self.pybamm_dchg_cutoff = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_cutoff.setFont(font)
-        self.pybamm_dchg_cutoff.setPlaceholderText("C/s/m/h")
-        self.pybamm_dchg_cutoff.setText("0.05C")
-        self.pybamm_dchg_cutoff.setToolTip("CV: 0.05C, C/50  |  Rest: 600s, 10m, 1h")
-        self.pybamm_dchg_cutoff.setMinimumSize(QtCore.QSize(45, 25))
-        self.pybamm_dchg_cutoff.setMaximumSize(QtCore.QSize(55, 25))
-        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_cutoff)
-        self.pybamm_dchg_add_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_add_btn.setFont(font)
-        self.pybamm_dchg_add_btn.setText("+")
-        self.pybamm_dchg_add_btn.setMinimumSize(QtCore.QSize(30, 25))
-        self.pybamm_dchg_add_btn.setMaximumSize(QtCore.QSize(30, 25))
-        self.pybamm_dchg_add_btn.setObjectName("pybamm_dchg_add_btn")
-        self.pybamm_dchg_add_hlayout.addWidget(self.pybamm_dchg_add_btn)
-        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_add_hlayout)
-        # 방전 스텝 리스트
-        self.pybamm_dchg_list = QtWidgets.QListWidget(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_list.setFont(font)
-        self.pybamm_dchg_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.pybamm_dchg_list.setMinimumSize(QtCore.QSize(310, 180))
-        self.pybamm_dchg_list.setObjectName("pybamm_dchg_list")
-        self.pybamm_dchg_list.addItems([
-            "[1] CC  |  Discharge at 1C until 2.5V",
-        ])
-        self.pybamm_dchg_vlayout.addWidget(self.pybamm_dchg_list)
-        # 수정/삭제 버튼
-        self.pybamm_dchg_del_hlayout = QtWidgets.QHBoxLayout()
-        self.pybamm_dchg_del_hlayout.addItem(QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
-        self.pybamm_dchg_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_edit_btn.setFont(font)
-        self.pybamm_dchg_edit_btn.setText("선택 수정")
-        self.pybamm_dchg_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_dchg_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_dchg_edit_btn.setObjectName("pybamm_dchg_edit_btn")
-        self.pybamm_dchg_del_hlayout.addWidget(self.pybamm_dchg_edit_btn)
-        self.pybamm_dchg_del_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_del_btn.setFont(font)
-        self.pybamm_dchg_del_btn.setText("선택 삭제")
-        self.pybamm_dchg_del_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_dchg_del_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_dchg_del_btn.setObjectName("pybamm_dchg_del_btn")
-        self.pybamm_dchg_del_hlayout.addWidget(self.pybamm_dchg_del_btn)
-        self.pybamm_dchg_clear_btn = QtWidgets.QPushButton(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_clear_btn.setFont(font)
-        self.pybamm_dchg_clear_btn.setText("전체 삭제")
-        self.pybamm_dchg_clear_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_dchg_clear_btn.setMaximumSize(QtCore.QSize(80, 25))
-        self.pybamm_dchg_clear_btn.setObjectName("pybamm_dchg_clear_btn")
-        self.pybamm_dchg_del_hlayout.addWidget(self.pybamm_dchg_clear_btn)
-        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_del_hlayout)
-        # 사이클 수
-        self.pybamm_dchg_cyc_hlayout = QtWidgets.QHBoxLayout()
-        _dchg_cyc_lbl = QtWidgets.QLabel(parent=self.pybamm_dchg_page)
-        _dchg_cyc_lbl.setText("사이클 수:")
-        _dchg_cyc_lbl.setFont(font)
-        self.pybamm_dchg_cyc_hlayout.addWidget(_dchg_cyc_lbl)
-        self.pybamm_dchg_cycles = QtWidgets.QLineEdit(parent=self.pybamm_dchg_page)
-        self.pybamm_dchg_cycles.setFont(font)
-        self.pybamm_dchg_cycles.setText("1")
-        self.pybamm_dchg_cycles.setMinimumSize(QtCore.QSize(50, 25))
-        self.pybamm_dchg_cycles.setMaximumSize(QtCore.QSize(60, 25))
-        self.pybamm_dchg_cyc_hlayout.addWidget(self.pybamm_dchg_cycles)
-        self.pybamm_dchg_cyc_hlayout.addItem(QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
-        self.pybamm_dchg_vlayout.addLayout(self.pybamm_dchg_cyc_hlayout)
-        self.pybamm_exp_stack.addWidget(self.pybamm_dchg_page)
-
-        # --- Stack Page 2: GITT/HPPC ---
-        self.pybamm_gitt_page = QtWidgets.QWidget()
-        self.pybamm_gitt_page.setObjectName("pybamm_gitt_page")
-        self.pybamm_gitt_grid = QtWidgets.QGridLayout(self.pybamm_gitt_page)
-        _gitt_labels = ["패턴 유형:", "펄스 전류 (C):", "펄스 시간 (s):", "휴지 시간 (s):", "반복 횟수:", "전압 하한 (V):"]
-        _gitt_defaults = ["", "0.5", "600", "3600", "20", "2.5"]
-        self.pybamm_gitt_inputs = {}
-        for _i, (_lbl_text, _default) in enumerate(zip(_gitt_labels, _gitt_defaults)):
-            _lbl = QtWidgets.QLabel(parent=self.pybamm_gitt_page)
-            _lbl.setText(_lbl_text)
-            _lbl.setFont(font)
-            self.pybamm_gitt_grid.addWidget(_lbl, _i, 0)
-            if _i == 0:
-                self.pybamm_gitt_type = QtWidgets.QComboBox(parent=self.pybamm_gitt_page)
-                self.pybamm_gitt_type.addItems(["GITT", "HPPC"])
-                self.pybamm_gitt_type.setFont(font)
-                self.pybamm_gitt_type.setMinimumSize(QtCore.QSize(80, 25))
-                self.pybamm_gitt_type.setObjectName("pybamm_gitt_type")
-                self.pybamm_gitt_grid.addWidget(self.pybamm_gitt_type, _i, 1)
-            else:
-                _le = QtWidgets.QLineEdit(parent=self.pybamm_gitt_page)
-                _le.setText(_default)
-                _le.setMinimumSize(QtCore.QSize(80, 25))
-                _le.setMaximumSize(QtCore.QSize(120, 25))
-                _le.setFont(font)
-                _le.setObjectName(f"pybamm_gitt_{_i}")
-                self.pybamm_gitt_grid.addWidget(_le, _i, 1)
-                self.pybamm_gitt_inputs[_lbl_text] = _le
-        self.pybamm_exp_stack.addWidget(self.pybamm_gitt_page)
-
-        # --- Stack Page 3: 커스텀 프로토콜 ---
-        self.pybamm_custom_page = QtWidgets.QWidget()
-        self.pybamm_custom_page.setObjectName("pybamm_custom_page")
-        self.pybamm_custom_layout = QtWidgets.QVBoxLayout(self.pybamm_custom_page)
-        self.pybamm_custom_hint = QtWidgets.QLabel(parent=self.pybamm_custom_page)
-        self.pybamm_custom_hint.setText('PyBaMM Experiment 문법 입력\n예: "Charge at 1C until 4.2V",\n    "Hold at 4.2V until C/50"')
-        self.pybamm_custom_hint.setFont(font)
-        self.pybamm_custom_hint.setWordWrap(True)
-        self.pybamm_custom_layout.addWidget(self.pybamm_custom_hint)
-        self.pybamm_custom_text = QtWidgets.QPlainTextEdit(parent=self.pybamm_custom_page)
-        self.pybamm_custom_text.setMinimumSize(QtCore.QSize(300, 120))
-        self.pybamm_custom_text.setMaximumSize(QtCore.QSize(320, 150))
-        self.pybamm_custom_text.setFont(font)
-        self.pybamm_custom_text.setPlainText('"Charge at 1C until 4.2V",\n"Hold at 4.2V until C/50",\n"Discharge at 1C until 2.5V"')
-        self.pybamm_custom_text.setObjectName("pybamm_custom_text")
-        self.pybamm_custom_layout.addWidget(self.pybamm_custom_text)
-        self.pybamm_exp_stack.addWidget(self.pybamm_custom_page)
-
-        self.pybamm_exp_stack.setCurrentIndex(0)
-        self.pybamm_exp_vlayout.addWidget(self.pybamm_exp_stack)
-        # 시작 SOC 입력 (모든 모드 공용)
-        self.pybamm_soc_hlayout = QtWidgets.QHBoxLayout()
-        _soc_lbl = QtWidgets.QLabel(parent=self.pybamm_exp_group)
-        _soc_lbl.setText("시작 SOC:")
-        _soc_lbl.setFont(font)
-        self.pybamm_soc_hlayout.addWidget(_soc_lbl)
-        self.pybamm_init_soc = QtWidgets.QLineEdit(parent=self.pybamm_exp_group)
-        self.pybamm_init_soc.setFont(font)
-        self.pybamm_init_soc.setText("auto")
-        self.pybamm_init_soc.setPlaceholderText("0~1 또는 auto")
-        self.pybamm_init_soc.setToolTip("auto: 모드별 자동 설정 (충전=0.0, 방전=1.0)\n직접 입력: 0~1 사이 값")
-        self.pybamm_init_soc.setMinimumSize(QtCore.QSize(50, 25))
-        self.pybamm_init_soc.setMaximumSize(QtCore.QSize(60, 25))
-        self.pybamm_init_soc.setObjectName("pybamm_init_soc")
-        self.pybamm_soc_hlayout.addWidget(self.pybamm_init_soc)
-        _soc_hint = QtWidgets.QLabel(parent=self.pybamm_exp_group)
-        _soc_hint.setText("(0=방전, 1=만충, auto=자동)")
-        _soc_hint.setFont(font)
-        _soc_hint.setStyleSheet("color: #888888;")
-        self.pybamm_soc_hlayout.addWidget(_soc_hint)
-        self.pybamm_soc_hlayout.addItem(QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
-        self.pybamm_exp_vlayout.addLayout(self.pybamm_soc_hlayout)
-        # 출력 간격 (period) 입력
-        self.pybamm_period_hlayout = QtWidgets.QHBoxLayout()
-        _period_lbl = QtWidgets.QLabel(parent=self.pybamm_exp_group)
-        _period_lbl.setText("출력 간격:")
-        _period_lbl.setFont(font)
-        self.pybamm_period_hlayout.addWidget(_period_lbl)
-        self.pybamm_period = QtWidgets.QLineEdit(parent=self.pybamm_exp_group)
-        self.pybamm_period.setFont(font)
-        self.pybamm_period.setText("10")
-        self.pybamm_period.setPlaceholderText("초 단위 또는 auto")
-        self.pybamm_period.setToolTip("auto: PyBaMM 기본값 (~60초)\n직접 입력: 출력 데이터 시간 간격 (초)\n예: 10 → 10초마다 데이터 출력")
-        self.pybamm_period.setMinimumSize(QtCore.QSize(50, 25))
-        self.pybamm_period.setMaximumSize(QtCore.QSize(60, 25))
-        self.pybamm_period.setObjectName("pybamm_period")
-        self.pybamm_period_hlayout.addWidget(self.pybamm_period)
-        _period_hint = QtWidgets.QLabel(parent=self.pybamm_exp_group)
-        _period_hint.setText("초  (auto=기본 ~60s)")
-        _period_hint.setFont(font)
-        _period_hint.setStyleSheet("color: #888888;")
-        self.pybamm_period_hlayout.addWidget(_period_hint)
-        self.pybamm_period_hlayout.addItem(QtWidgets.QSpacerItem(
-            40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum))
-        self.pybamm_exp_vlayout.addLayout(self.pybamm_period_hlayout)
-        self.pybamm_left_panel.addWidget(self.pybamm_exp_group)
-        # [4] 실행 버튼 + 프로그레스바
-        self.pybamm_run_hlayout = QtWidgets.QHBoxLayout()
-        self.pybamm_run_btn = QtWidgets.QPushButton(parent=self.PyBaMMTab)
-        self.pybamm_run_btn.setMinimumSize(QtCore.QSize(160, 40))
-        self.pybamm_run_btn.setMaximumSize(QtCore.QSize(160, 40))
-        font_bold = QtGui.QFont()
-        font_bold.setFamily("맑은 고딕")
-        font_bold.setPointSize(10)
-        font_bold.setBold(True)
-        self.pybamm_run_btn.setFont(font_bold)
-        self.pybamm_run_btn.setText("시뮬레이션 실행")
-        self.pybamm_run_btn.setObjectName("pybamm_run_btn")
-        self.pybamm_run_hlayout.addWidget(self.pybamm_run_btn)
-        self.pybamm_reset_btn = QtWidgets.QPushButton(parent=self.PyBaMMTab)
-        self.pybamm_reset_btn.setMinimumSize(QtCore.QSize(100, 40))
-        self.pybamm_reset_btn.setMaximumSize(QtCore.QSize(100, 40))
-        self.pybamm_reset_btn.setFont(font)
-        self.pybamm_reset_btn.setText("탭 초기화")
-        self.pybamm_reset_btn.setObjectName("pybamm_reset_btn")
-        self.pybamm_run_hlayout.addWidget(self.pybamm_reset_btn)
-        self.pybamm_left_panel.addLayout(self.pybamm_run_hlayout)
-        # 좌측 하단 여백
-        self.pybamm_left_panel.addItem(QtWidgets.QSpacerItem(
-            20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding))
-        self.pybamm_left_scroll.setWidget(self.pybamm_left_container)
-        self.pybamm_main_layout.addWidget(self.pybamm_left_scroll)
-        # --- 우측 결과 영역 (GroupBox) ---
-        self.pybamm_result_group = QtWidgets.QGroupBox(parent=self.PyBaMMTab)
-        self.pybamm_result_group.setFont(font)
-        self.pybamm_result_group.setObjectName("pybamm_result_group")
-        self.pybamm_result_group.setTitle("시뮬레이션 결과")
-        self.pybamm_result_vlayout = QtWidgets.QVBoxLayout(self.pybamm_result_group)
-        self.pybamm_result_vlayout.setObjectName("pybamm_result_vlayout")
-        self.pybamm_plot_tab = QtWidgets.QTabWidget(parent=self.pybamm_result_group)
-        self.pybamm_plot_tab.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding,
-            QtWidgets.QSizePolicy.Policy.Expanding)
-        self.pybamm_plot_tab.setFont(font)
-        self.pybamm_plot_tab.setTabsClosable(True)
-        self.pybamm_plot_tab.tabCloseRequested.connect(self._pybamm_close_run_tab)
-        self.pybamm_plot_tab.setObjectName("pybamm_plot_tab")
-        self._pybamm_run_counter = 0  # 누적 실행 카운터
-        self.pybamm_result_vlayout.addWidget(self.pybamm_plot_tab)
-        self.pybamm_result_group.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding,
-            QtWidgets.QSizePolicy.Policy.Expanding)
-        self.pybamm_main_layout.addWidget(self.pybamm_result_group, 1)  # stretch=1
-        self.tabWidget.addTab(self.PyBaMMTab, "")
-        # ===== PyBaMM 탭 끝 =====
-        self.verticalLayout_38.addWidget(self.tabWidget, 1)
+        self.verticalLayout_38.addWidget(self.tabWidget)
         self.horizontalLayout_23 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_23.setObjectName("horizontalLayout_23")
         self.mount_toyo = QtWidgets.QPushButton(parent=self.layoutWidget)
@@ -9815,7 +7466,7 @@ class Ui_sitool(object):
         self.mount_toyo.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_toyo.setFont(font)
         self.mount_toyo.setObjectName("mount_toyo")
         self.horizontalLayout_23.addWidget(self.mount_toyo)
@@ -9824,7 +7475,7 @@ class Ui_sitool(object):
         self.mount_pne_1.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_pne_1.setFont(font)
         self.mount_pne_1.setObjectName("mount_pne_1")
         self.horizontalLayout_23.addWidget(self.mount_pne_1)
@@ -9833,7 +7484,7 @@ class Ui_sitool(object):
         self.line.setMaximumSize(QtCore.QSize(3, 35))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line.setFont(font)
         self.line.setFrameShape(QtWidgets.QFrame.Shape.VLine)
         self.line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -9844,7 +7495,7 @@ class Ui_sitool(object):
         self.mount_pne_2.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_pne_2.setFont(font)
         self.mount_pne_2.setObjectName("mount_pne_2")
         self.horizontalLayout_23.addWidget(self.mount_pne_2)
@@ -9853,7 +7504,7 @@ class Ui_sitool(object):
         self.mount_pne_3.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_pne_3.setFont(font)
         self.mount_pne_3.setObjectName("mount_pne_3")
         self.horizontalLayout_23.addWidget(self.mount_pne_3)
@@ -9862,7 +7513,7 @@ class Ui_sitool(object):
         self.mount_pne_4.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_pne_4.setFont(font)
         self.mount_pne_4.setObjectName("mount_pne_4")
         self.horizontalLayout_23.addWidget(self.mount_pne_4)
@@ -9871,7 +7522,7 @@ class Ui_sitool(object):
         self.line_12.setMaximumSize(QtCore.QSize(3, 35))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_12.setFont(font)
         self.line_12.setFrameShape(QtWidgets.QFrame.Shape.VLine)
         self.line_12.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -9882,7 +7533,7 @@ class Ui_sitool(object):
         self.mount_pne_5.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_pne_5.setFont(font)
         self.mount_pne_5.setObjectName("mount_pne_5")
         self.horizontalLayout_23.addWidget(self.mount_pne_5)
@@ -9891,7 +7542,7 @@ class Ui_sitool(object):
         self.line_9.setMaximumSize(QtCore.QSize(3, 35))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_9.setFont(font)
         self.line_9.setFrameShape(QtWidgets.QFrame.Shape.VLine)
         self.line_9.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -9902,7 +7553,7 @@ class Ui_sitool(object):
         self.mount_all.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.mount_all.setFont(font)
         self.mount_all.setObjectName("mount_all")
         self.horizontalLayout_23.addWidget(self.mount_all)
@@ -9911,7 +7562,7 @@ class Ui_sitool(object):
         self.line_5.setMaximumSize(QtCore.QSize(3, 35))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_5.setFont(font)
         self.line_5.setFrameShape(QtWidgets.QFrame.Shape.VLine)
         self.line_5.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -9922,17 +7573,16 @@ class Ui_sitool(object):
         self.unmount_all.setMaximumSize(QtCore.QSize(200, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.unmount_all.setFont(font)
         self.unmount_all.setObjectName("unmount_all")
         self.horizontalLayout_23.addWidget(self.unmount_all)
-        self.horizontalLayout_23.addStretch(1)
         self.verticalLayout_38.addLayout(self.horizontalLayout_23)
         self.verticalLayout_39.addLayout(self.verticalLayout_38)
         self.line_7 = QtWidgets.QFrame(parent=self.layoutWidget)
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.line_7.setFont(font)
         self.line_7.setFrameShape(QtWidgets.QFrame.Shape.HLine)
         self.line_7.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
@@ -9945,7 +7595,7 @@ class Ui_sitool(object):
         self.saveok.setMaximumSize(QtCore.QSize(100, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.saveok.setFont(font)
         self.saveok.setObjectName("saveok")
         self.horizontalLayout_13.addWidget(self.saveok)
@@ -9954,7 +7604,7 @@ class Ui_sitool(object):
         self.ect_saveok.setMaximumSize(QtCore.QSize(150, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.ect_saveok.setFont(font)
         self.ect_saveok.setObjectName("ect_saveok")
         self.horizontalLayout_13.addWidget(self.ect_saveok)
@@ -9963,16 +7613,16 @@ class Ui_sitool(object):
         self.figsaveok.setMaximumSize(QtCore.QSize(100, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.figsaveok.setFont(font)
         self.figsaveok.setObjectName("figsaveok")
         self.horizontalLayout_13.addWidget(self.figsaveok)
         self.progressBar = QtWidgets.QProgressBar(parent=self.layoutWidget)
-        self.progressBar.setMinimumSize(QtCore.QSize(200, 30))
-        self.progressBar.setMaximumSize(QtCore.QSize(16777215, 30))
+        self.progressBar.setMinimumSize(QtCore.QSize(1400, 30))
+        self.progressBar.setMaximumSize(QtCore.QSize(1400, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.progressBar.setFont(font)
         self.progressBar.setProperty("value", 0)
         self.progressBar.setObjectName("progressBar")
@@ -9992,7 +7642,7 @@ class Ui_sitool(object):
 
     def retranslateUi(self, sitool):
         _translate = QtCore.QCoreApplication.translate
-        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v260316"))
+        sitool.setWindowTitle(_translate("sitool", "BatteryDataTool v251103"))
         self.tb_room.setItemText(0, _translate("sitool", "R5 15F"))
         self.tb_room.setItemText(1, _translate("sitool", "R5 3F B-1"))
         self.tb_room.setItemText(2, _translate("sitool", "R5 3F B-2"))
@@ -10060,11 +7710,14 @@ class Ui_sitool(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("sitool", "현황"))
         self.chk_cyclepath.setText(_translate("sitool", "지정Path사용"))
         self.chk_ectpath.setText(_translate("sitool", "ECT path 사용"))
-        self.chk_coincell_cyc.setText(_translate("sitool", "코인셀"))
-        self.cycle_tab_reset.setText(_translate("sitool", "초기화"))
-        self.capacitygroup.setTitle(_translate("sitool", "2. 용량 · C-rate 설정"))
+        self.cycle_tab_reset.setText(_translate("sitool", "Tab Reset"))
+        self.capacitygroup.setTitle(_translate("sitool", "용량 선택"))
+        self.inicaprate.setText(_translate("sitool", "1) Cyclepath 이름 용량 기준\n"
+"2) 테스트 이름 용량 기준\n"
+"3) 첫 Cycle의 Crate 기준"))
         self.ratetext.setText(_translate("sitool", "0.2"))
-        self.capacitytext.setText(_translate("sitool", "0"))
+        self.inicaptype.setText(_translate("sitool", "용량값 직접 입력"))
+        self.capacitytext.setText(_translate("sitool", "58"))
         self.dcirchk.setText(_translate("sitool", "PNE 설비 DCIR (SOC100 10s 방전 Pulse)"))
         self.pulsedcir.setText(_translate("sitool", "PNE 10s DCIR (SOC5, 50 10s 방전 Pulse)"))
         self.mkdcir.setText(_translate("sitool", "PNE DCIR (SOC 30/50/70 충전, SOC 70/50/30 방전, 1s Pulse/RSS)\n"
@@ -10078,18 +7731,21 @@ class Ui_sitool(object):
         self.tcyclerng.setText(_translate("sitool", "0"))
         self.dcirscalelb.setText(_translate("sitool", "  DCIR scale 늘리기 (x ?배)"))
         self.dcirscale.setText(_translate("sitool", "0"))
-        self.radio_indiv.setText(_translate("sitool", "개별 탭"))
-        self.radio_overall.setText(_translate("sitool", "통합 탭"))
-        self.chk_link_cycle.setText(_translate("sitool", "연결처리"))
-        self.cycle_confirm.setText(_translate("sitool", "Cycle 분석"))
+        self.indiv_cycle.setText(_translate("sitool", "개별 Cycle"))
+        self.overall_cycle.setText(_translate("sitool", "통합 Cycle"))
+        self.link_cycle.setText(_translate("sitool", "연결 Cycle"))
+        self.AppCycConfirm.setText(_translate("sitool", "신뢰성 Cycle"))
+        self.link_cycle_indiv.setText(_translate("sitool", "연결 Cycle  \n"
+" 여러개 개별"))
+        self.link_cycle_overall.setText(_translate("sitool", "연결 Cycle \n"
+" 여러개 통합"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
         self.CycProfile.setText(_translate("sitool", "사이클 통합"))
         self.CellProfile.setText(_translate("sitool", "셀별 통합"))
-        self.AllProfile.setText(_translate("sitool", "전체 통합"))
         self.chk_dqdv.setText(_translate("sitool", "dQdV X/Y축 변환"))
         self.stepnumlb.setText(_translate("sitool", "Cycle\n"
 "(원하는 스텝들을 띄어쓰기나 -로 표기)\n"
-"예) 2 3-5 8-9"))
+"예) 3 4 5 8-9"))
         self.stepnum.setPlainText(_translate("sitool", "2"))
         self.smoothlb_3.setText(_translate("sitool", "전압 Y축 하한"))
         self.volrngyhl.setText(_translate("sitool", "2.5"))
@@ -10388,13 +8044,12 @@ class Ui_sitool(object):
         self.FdTextEdit_2.setText(_translate("sitool", "1"))
         self.FdTextEdit_4.setText(_translate("sitool", "1"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.FitTab), _translate("sitool", "실수명 예측"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.PyBaMMTab), _translate("sitool", "전기화학 시뮬레이션"))
         self.mount_toyo.setText(_translate("sitool", "Z: 15F B Toyo"))
         self.mount_pne_1.setText(_translate("sitool", "Y: 15F B PNE1~2"))
         self.mount_pne_2.setText(_translate("sitool", "X: 15F B PNE3~5"))
         self.mount_pne_3.setText(_translate("sitool", "W: 3F B PNE1~8"))
         self.mount_pne_4.setText(_translate("sitool", "V: 3F B PNE9~16"))
-        self.mount_pne_5.setText(_translate("sitool", "U: 3F A PNE17~25"))
+        self.mount_pne_5.setText(_translate("sitool", "U: 3F A PNE17~21"))
         self.mount_all.setText(_translate("sitool", "All mount"))
         self.unmount_all.setText(_translate("sitool", "All unmount"))
         self.saveok.setText(_translate("sitool", "데이터 저장"))
@@ -10445,7 +8100,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycparameter2.setText("d:/!cyc_parameter_trend/para_data_Gen4 SDI MP1 업체 05C 수명 241212.txt")
         # UI 기준 초기치 설정 set-up
         self.firstCrate = float(self.ratetext.text())
-        self.mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
+        if self.inicaprate.isChecked():
+            self.mincapacity = 0
+        elif self.inicaptype.isChecked():
+            self.mincapacity = float(self.capacitytext.text())
         self.xscale = int(self.tcyclerng.text())
         self.setxscale = int(self.setcyclexscale.text())
         self.ylimithigh = float(self.tcyclerngyhl.text())
@@ -10469,7 +8127,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_info.currentIndexChanged.connect(self.tb_info_combobox)
         self.tb_cycler.currentIndexChanged.connect(self.tb_cycler_combobox)
         self.tb_room.currentIndexChanged.connect(self.tb_room_combobox)
-        self.FindText.returnPressed.connect(self.tb_cycler_combobox)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -10483,38 +8140,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.unmount_all.clicked.connect(self.unmount_all_button)
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
-        self.btn_load_path.clicked.connect(self._load_path_file_to_table)
-        self.btn_save_path.clicked.connect(self._save_table_to_path_file)
-        # 셀 편집 시 툴팁 자동 갱신
-        self.cycle_path_table.cellChanged.connect(self._update_cell_tooltip)
-        # cycle_path_table Ctrl+C / Ctrl+V / Delete 단축키
-        _tbl = self.cycle_path_table
-        _tbl_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, _tbl)
-        _tbl_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _tbl_copy.activated.connect(self._cycle_table_copy)
-        _tbl_paste = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Paste, _tbl)
-        _tbl_paste.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _tbl_paste.activated.connect(self._cycle_table_paste)
-        _tbl_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, _tbl)
-        _tbl_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _tbl_del.activated.connect(self._cycle_table_delete)
-        # Ctrl+Z Undo
-        _tbl_undo = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, _tbl)
-        _tbl_undo.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _tbl_undo.activated.connect(self._undo_table)
-        # Ctrl+A 전체 선택
-        _tbl_selall = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.SelectAll, _tbl)
-        _tbl_selall.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _tbl_selall.activated.connect(self.cycle_path_table.selectAll)
-        # Enter 키로 마지막 행에서 새 행 자동 추가
-        self.cycle_path_table.installEventFilter(self)
-        # 우클릭 컨텍스트 메뉴
-        self.cycle_path_table.customContextMenuRequested.connect(self._cycle_table_context_menu)
-        # 연결처리 토글 시 그룹 구분선 갱신
-        self.chk_link_cycle.toggled.connect(self._update_group_separators)
-        self.chk_cyclepath.toggled.connect(self._on_cyclepath_toggled)
-        self._on_cyclepath_toggled(self.chk_cyclepath.isChecked())  # 초기 상태 반영
-        self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
+        self.indiv_cycle.clicked.connect(self.indiv_cyc_confirm_button)
+        self.overall_cycle.clicked.connect(self.overall_cyc_confirm_button)
+        self.link_cycle.clicked.connect(self.link_cyc_confirm_button)
+        self.link_cycle_indiv.clicked.connect(self.link_cyc_indiv_confirm_button)
+        self.link_cycle_overall.clicked.connect(self.link_cyc_overall_confirm_button)
+        self.AppCycConfirm.clicked.connect(self.app_cyc_confirm_button)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
         self.RateConfirm.clicked.connect(self.rate_confirm_button)
         self.ChgConfirm.clicked.connect(self.chg_confirm_button)
@@ -10553,74 +8184,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 필드 수명 예측 관련 버튼
         self.SimulConfirm.clicked.connect(self.simulation_confirm_button)
         self.SimulTabResetConfirm.clicked.connect(self.simulation_tab_reset_confirm_button)
-        # PyBaMM 시뮬레이션 탭 시그널
-        self.pybamm_mode_charge.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(0), self._pybamm_refresh_scroll()) if checked else None)
-        self.pybamm_mode_discharge.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(1), self._pybamm_refresh_scroll()) if checked else None)
-        self.pybamm_mode_gitt.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(2), self._pybamm_refresh_scroll()) if checked else None)
-        self.pybamm_mode_custom.toggled.connect(lambda checked: (self.pybamm_exp_stack.setCurrentIndex(3), self._pybamm_refresh_scroll()) if checked else None)
-        self.pybamm_run_btn.clicked.connect(self.pybamm_run_button)
-        self.pybamm_reset_btn.clicked.connect(self.pybamm_tab_reset_button)
-        self.pybamm_param_combo.activated.connect(self._pybamm_load_preset)
-        self.pybamm_edit_btn.toggled.connect(self._pybamm_toggle_param_table)
-        self._pybamm_setup_model_tooltips()
-        # 충/방전 스텝 리스트 버튼
-        self.pybamm_chg_add_btn.clicked.connect(self._pybamm_chg_add_step)
-        self.pybamm_chg_edit_btn.clicked.connect(
-            lambda: self._pybamm_edit_step(
-                self.pybamm_chg_list, self.pybamm_chg_step_type,
-                self.pybamm_chg_crate, self.pybamm_chg_vcut, self.pybamm_chg_cutoff, "chg"))
-        self.pybamm_chg_del_btn.clicked.connect(lambda: self._pybamm_del_step(self.pybamm_chg_list))
-        self.pybamm_chg_clear_btn.clicked.connect(self.pybamm_chg_list.clear)
-        self.pybamm_chg_list.itemDoubleClicked.connect(
-            lambda item: self._pybamm_load_step_to_fields(
-                item, self.pybamm_chg_step_type,
-                self.pybamm_chg_crate, self.pybamm_chg_vcut, self.pybamm_chg_cutoff, "chg"))
-        self.pybamm_dchg_add_btn.clicked.connect(self._pybamm_dchg_add_step)
-        self.pybamm_dchg_edit_btn.clicked.connect(
-            lambda: self._pybamm_edit_step(
-                self.pybamm_dchg_list, self.pybamm_dchg_step_type,
-                self.pybamm_dchg_crate, self.pybamm_dchg_vcut, self.pybamm_dchg_cutoff, "dchg"))
-        self.pybamm_dchg_del_btn.clicked.connect(lambda: self._pybamm_del_step(self.pybamm_dchg_list))
-        self.pybamm_dchg_clear_btn.clicked.connect(self.pybamm_dchg_list.clear)
-        # Ctrl+C / Ctrl+V 단축키
-        _chg_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.pybamm_chg_list)
-        _chg_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _chg_copy.activated.connect(lambda: self._pybamm_copy_steps(self.pybamm_chg_list))
-        _chg_paste = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Paste, self.pybamm_chg_list)
-        _chg_paste.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _chg_paste.activated.connect(lambda: self._pybamm_paste_steps(self.pybamm_chg_list))
-        _dchg_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.pybamm_dchg_list)
-        _dchg_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _dchg_copy.activated.connect(lambda: self._pybamm_copy_steps(self.pybamm_dchg_list))
-        _dchg_paste = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Paste, self.pybamm_dchg_list)
-        _dchg_paste.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _dchg_paste.activated.connect(lambda: self._pybamm_paste_steps(self.pybamm_dchg_list))
-        _chg_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, self.pybamm_chg_list)
-        _chg_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _chg_del.activated.connect(lambda: self._pybamm_del_step(self.pybamm_chg_list))
-        _dchg_del = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Delete, self.pybamm_dchg_list)
-        _dchg_del.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        _dchg_del.activated.connect(lambda: self._pybamm_del_step(self.pybamm_dchg_list))
-        # 유형 변경 시 입력 필드 동적 전환
-        self.pybamm_chg_step_type.currentTextChanged.connect(
-            lambda t: self._pybamm_update_step_fields(
-                t, self.pybamm_chg_crate, self.pybamm_chg_vcut, self.pybamm_chg_cutoff, "chg"))
-        self.pybamm_dchg_step_type.currentTextChanged.connect(
-            lambda t: self._pybamm_update_step_fields(
-                t, self.pybamm_dchg_crate, self.pybamm_dchg_vcut, self.pybamm_dchg_cutoff, "dchg"))
-        # PyBaMM 미설치 시 탭 비활성화
-        if not HAS_PYBAMM:
-            self.pybamm_run_btn.setDisabled(True)
-            self.pybamm_run_btn.setText("PyBaMM 미설치")
-            _pybamm_warn = QtWidgets.QLabel("\u26a0 PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치 후 재시작하세요.")
-            _pybamm_warn.setStyleSheet("color: #CC0000; font-size: 11px; padding: 8px;")
-            _pybamm_warn.setWordWrap(True)
-            self.pybamm_plot_tab.addTab(QtWidgets.QWidget(), "")
-            self.pybamm_plot_tab.setTabText(0, "안내")
-            _warn_layout = QtWidgets.QVBoxLayout(self.pybamm_plot_tab.widget(0))
-            _warn_layout.addWidget(_pybamm_warn)
-            _warn_layout.addItem(QtWidgets.QSpacerItem(
-                20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding))
         # 패턴 수정 버튼
         self.chg_ptn.clicked.connect(self.ptn_change_pattern_button)
         self.chg_ptn_refi.clicked.connect(self.ptn_change_refi_button)
@@ -10630,7 +8193,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.chg_ptn_endv.clicked.connect(self.ptn_change_endv_button)
         self.chg_ptn_step.clicked.connect(self.ptn_change_step_button)
         self.ptn_load.clicked.connect(self.ptn_load_button)
-        self.ptn_toyo_convert.clicked.connect(self.ptn_toyo_convert_button)
         # dVdQ fitting
         self.min_rms = np.inf
         self.mat_dvdq_btn.clicked.connect(self.dvdq_material_button)
@@ -10679,2559 +8241,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             disconnect_change(self.mount_pne_5)
 
-   
-    def _init_confirm_button(self, button_widget):
-        """
-        초기화
-        - 버튼 비활성화/재활성화
-        - 설정 로드
-        - 경로 설정
-        """
-        button_widget.setDisabled(True)
-        set_coincell_mode(self.chk_coincell_cyc.isChecked())
-        
-        config = self.Profile_ini_set()
-        pne_path = self.pne_path_setting()
-        
-        button_widget.setEnabled(True)
-        
-        return {
-            'config': config,
-            'folders': pne_path[0],
-            'names': pne_path[1],
-            'firstCrate': config[0],
-            'mincapacity': config[1],
-            'CycleNo': config[2],
-            'smoothdegree': config[3],
-            'mincrate': config[4],
-            'dqscale': config[5],
-            'dvscale': config[6]
-        }
-    
-    def _setup_file_writer(self, file_extension=".xlsx"):
-        """
-        파일 저장 설정
-        """
-        save_file_name = None
-        writer = None
-        
-        if self.saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(
-                initialdir="D://", 
-                title="Save File Name", 
-                defaultextension=file_extension
-            )
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        
-        if self.ect_saveok.isChecked():
-            save_file_name = filedialog.asksaveasfilename(
-                initialdir="D://", 
-                title="Save File Name"
-            )
-        
-        return writer, save_file_name
-    
-    def _create_plot_tab(self, fig, tab_no):
-        """
-        탭 생성
-        """
-        tab = QtWidgets.QWidget()
-        tab_layout = QtWidgets.QVBoxLayout(tab)
-        canvas = FigureCanvas(fig)
-        toolbar = NavigationToolbar(canvas, None)
-        
-        return tab, tab_layout, canvas, toolbar
-
-    def _create_cycle_channel_control(self, channel_map, canvas, fig, axes_list, args_parent_tab=None, sub_channel_map=None, sub2_channel_map=None, save_context=None):
-        """
-        Cycle 그래프 채널 제어 위젯 생성 (Lazy Init: 첫 클릭 시 초기화)
-        """
-        from PyQt6.QtWidgets import QPushButton
-        from PyQt6.QtCore import Qt
-        
-        # ── 다크/라이트 테마 자동 감지 (버튼 스타일용, 가벼움) ──
-        from PyQt6.QtWidgets import QApplication
-        _palette = QApplication.instance().palette()
-        _bg = _palette.color(_palette.ColorRole.Window)
-        _is_dark = _bg.lightness() < 128
-        _btn_bg = "#3c3c3c" if _is_dark else "#f5f5f5"
-        _btn_hover = "#505050" if _is_dark else "#e0e0e0"
-        _btn_border = "#666" if _is_dark else "#ccc"
-        
-        # ── 토글 버튼 (컴팩트, toolbar 옆에 배치) ──
-        toggle_btn = QPushButton("▶ CH")
-        toggle_btn.setFixedSize(50, 22)
-        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        toggle_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 10px; font-weight: bold; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; padding: 2px 4px; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        
-        # ── Lazy Init 상태 ──
-        _lazy = {'dialog': None}
-        
-        def _ensure_dialog():
-            """첫 호출 시에만 QDialog + 채널 리스트 + 스냅샷 등 초기화"""
-            if _lazy['dialog'] is not None:
-                return _lazy['dialog']
-            _lazy['dialog'] = self._build_channel_dialog(
-                channel_map, canvas, fig, axes_list,
-                toggle_btn, _is_dark, sub_channel_map, sub2_channel_map)
-            return _lazy['dialog']
-        
-        def _toggle_panel():
-            dlg = _ensure_dialog()
-            if dlg.isVisible():
-                dlg.hide()
-                toggle_btn.setText("▶ CH")
-            else:
-                dlg.show()
-                toggle_btn.setText("▼ CH")
-        
-        toggle_btn.clicked.connect(_toggle_panel)
-        # GC 방지
-        toggle_btn._lazy_state = _lazy
-        
-        return toggle_btn
-    
-    def _build_channel_dialog(self, channel_map, canvas, fig, axes_list,
-                              toggle_btn, _is_dark, sub_channel_map=None,
-                              sub2_channel_map=None):
-        """
-        CH 채널 제어 QDialog 실제 생성 (Lazy Init에서 호출)
-        """
-        from PyQt6.QtWidgets import (QVBoxLayout, QHBoxLayout,
-                                      QListWidget, QListWidgetItem, QLabel,
-                                      QCheckBox, QPushButton, QDialog, QLineEdit,
-                                      QSlider, QMenu)
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QColor, QPixmap, QPainter, QBrush, QIcon
-        
-        if _is_dark:
-            _btn_bg = "#3c3c3c"
-            _btn_hover = "#505050"
-            _btn_border = "#666"
-            _list_style = "QListWidget { font-size: 12px; color: #ddd; background: #2d2d30; }"
-        else:
-            _btn_bg = "#f5f5f5"
-            _btn_hover = "#e0e0e0"
-            _btn_border = "#ccc"
-            _list_style = "QListWidget { font-size: 12px; }"
-        
-        # ── 팝업 다이얼로그 (독립 창으로 실시간 제어) ──
-        overlay = QDialog(self)
-        overlay.setWindowTitle("CH 채널 제어")
-        overlay.setWindowFlags(
-            Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint
-        )
-        overlay_layout = QHBoxLayout(overlay)
-        overlay_layout.setContentsMargins(6, 4, 6, 4)
-        overlay_layout.setSpacing(4)
-        overlay.resize(560, 350)
-        
-        # 다이얼로그 X 버튼으로 닫을 때 토글 버튼 텍스트 동기화
-        def _on_dialog_close(event):
-            toggle_btn.setText("▶ CH")
-            event.accept()
-        overlay.closeEvent = _on_dialog_close
-        
-        # --- 1) 채널 리스트: 모든 채널 개별 표시 ---
-        import re as _re
-        ch_list = QListWidget()
-        ch_list.setMinimumWidth(280)
-        ch_list.setMaximumWidth(400)
-        ch_list.setStyleSheet(_list_style)
-        # 드래그로 채널 순서 변경 (#8)
-        ch_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        ch_list.setDefaultDropAction(Qt.DropAction.MoveAction)
-        
-        # 색상 아이콘 생성 헬퍼
-        def _make_color_icon(hex_color, size=12):
-            pm = QPixmap(size, size)
-            pm.fill(QColor('transparent'))
-            p = QPainter(pm)
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setBrush(QBrush(QColor(hex_color)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(0, 0, size, size)
-            p.end()
-            return QIcon(pm)
-        
-        # 모든 채널 개별 리스트 (넘버링 추가, 0-padded)
-        _ch_total = len(channel_map)
-        _nw = len(str(_ch_total))  # 자릿수
-        for idx, label in enumerate(channel_map, 1):
-            _display = label.split("_")[-1] if "_" in label else label
-            item = QListWidgetItem(f"{idx:0{_nw}d}. {_display}")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            item.setIcon(_make_color_icon(channel_map[label]['color']))
-            item.setForeground(QColor(channel_map[label]['color']))
-            item.setToolTip(label)
-            item.setData(Qt.ItemDataRole.UserRole, label)  # 원본 키 보존
-            ch_list.addItem(item)
-        
-        # 우클릭 컨텍스트 메뉴: 라인 스타일/두께 변경 (#11, #12)
-        _line_styles = [('-', '실선'), ('--', '파선'), ('-.', '점선'), (':', '점')]
-        _line_widths = [0.5, 1.0, 1.5, 2.0, 3.0]
-        ch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        def _on_ch_context_menu(pos):
-            item = ch_list.itemAt(pos)
-            if not item:
-                return
-            orig_key = item.data(Qt.ItemDataRole.UserRole)
-            if orig_key not in channel_map:
-                return
-            menu = QMenu(ch_list)
-            # 라인 스타일 서브메뉴
-            style_menu = menu.addMenu("라인 스타일")
-            for ls, ls_name in _line_styles:
-                act = style_menu.addAction(ls_name)
-                act.setData(('style', ls))
-            # 라인 두께 서브메뉴
-            width_menu = menu.addMenu("라인 두께")
-            for lw in _line_widths:
-                act = width_menu.addAction(f"{lw}")
-                act.setData(('width', lw))
-            action = menu.exec(ch_list.mapToGlobal(pos))
-            if action and action.data():
-                kind, val = action.data()
-                for art in channel_map[orig_key]['artists']:
-                    if kind == 'style':
-                        if hasattr(art, 'set_linestyle'):
-                            art.set_linestyle(val)
-                    elif kind == 'width':
-                        if hasattr(art, 'set_linewidth'):
-                            art.set_linewidth(val)
-                        elif hasattr(art, 'set_linewidths'):
-                            art.set_linewidths([val])
-                canvas.draw_idle()
-        ch_list.customContextMenuRequested.connect(_on_ch_context_menu)
-        
-        # 하이라이트 상태 추적 (다중 선택)
-        highlight_state = {'active': set(), 'enabled': False}
-        
-        DIM_COLOR = '#CCCCCC'
-        DIM_ALPHA = 0.15
-        NORMAL_ALPHA = THEME['SCATTER_ALPHA']
-        
-        # ── artist별 원래 색상 스냅샷 저장 (복원용) ──
-        _orig_colors = {}  # id(art) → {'fc': array, 'ec': array} or {'color': str, 'alpha': float}
-        from matplotlib.lines import Line2D as _Line2D
-        for lbl, info in channel_map.items():
-            for art in info['artists']:
-                if isinstance(art, _Line2D):
-                    _orig_colors[id(art)] = {
-                        'color': art.get_color(),
-                        'alpha': art.get_alpha(),
-                        '_line': True,
-                    }
-                else:
-                    _orig_colors[id(art)] = {
-                        'fc': art.get_facecolors().copy(),
-                        'ec': art.get_edgecolors().copy(),
-                    }
-        
-        def _restore_all():
-            """모든 채널을 원래 색상/알파로 복원 (artist별)"""
-            for lbl, info in channel_map.items():
-                for art in info['artists']:
-                    orig = _orig_colors.get(id(art))
-                    if orig is not None and orig.get('_line'):
-                        art.set_color(orig['color'])
-                        art.set_alpha(orig['alpha'])
-                    else:
-                        art.set_alpha(NORMAL_ALPHA)
-                        if orig is not None:
-                            art.set_facecolors(orig['fc'].copy())
-                            art.set_edgecolors(orig['ec'].copy())
-                    art.set_zorder(3)
-            highlight_state['active'] = set()
-        
-        def _dim_artist(art):
-            """artist를 dim 처리 (scatter/line 모두 지원)"""
-            orig = _orig_colors.get(id(art))
-            if orig is not None and orig.get('_line'):
-                art.set_color(DIM_COLOR)
-            else:
-                is_filled = True
-                if orig is not None:
-                    is_filled = len(orig['fc']) > 0 and orig['fc'][0][3] > 0.01
-                if is_filled:
-                    art.set_facecolors(DIM_COLOR)
-                art.set_edgecolors(DIM_COLOR)
-            art.set_alpha(DIM_ALPHA)
-            art.set_zorder(1)
-
-        def _highlight_artist(art):
-            """artist를 하이라이트 복원 (scatter/line 모두 지원)"""
-            orig = _orig_colors.get(id(art))
-            if orig is not None and orig.get('_line'):
-                art.set_color(orig['color'])
-            elif orig is not None:
-                art.set_facecolors(orig['fc'].copy())
-                art.set_edgecolors(orig['ec'].copy())
-            art.set_alpha(1.0)
-            art.set_zorder(10)
-
-        def _apply_highlight():
-            """현재 active set 기준으로 하이라이트/딤 적용"""
-            selected = highlight_state['active']
-            if not selected:
-                # 선택 없음 → 모두 dim 유지
-                for lbl, info in channel_map.items():
-                    for art in info['artists']:
-                        _dim_artist(art)
-                canvas.draw_idle()
-                return
-            for lbl, info in channel_map.items():
-                if lbl in selected:
-                    for art in info['artists']:
-                        _highlight_artist(art)
-                else:
-                    for art in info['artists']:
-                        _dim_artist(art)
-            canvas.draw_idle()
-        
-        def _highlight_channel(selected_label):
-            """채널 토글: 전체 하이라이트 ON이면 해제 후 클릭 채널만 dim"""
-            if not highlight_state['enabled']:
-                # 전체 하이라이트 ON → 체크박스 해제, 클릭한 채널만 dim
-                chk_hl_all.setChecked(False)  # _on_hl_all → 전체 dim + enabled=True
-                highlight_state['active'] = set(channel_map.keys()) - {selected_label}
-                _apply_highlight()
-                return
-            active = highlight_state['active']
-            if selected_label in active:
-                active.discard(selected_label)
-            else:
-                active.add(selected_label)
-            _apply_highlight()
-        
-        def _strip_numbering(text):
-            """'1. label' → 'label' (넘버링 접두사 제거)"""
-            return _re.sub(r'^\d+\.\s*', '', text)
-        
-        def on_item_clicked(item):
-            """개별 채널 하이라이트 토글"""
-            orig_key = item.data(Qt.ItemDataRole.UserRole)
-            _highlight_channel(orig_key)
-        
-        def _rebuild_legend():
-            """범례 재생성 + 슬라이더 폰트/드래그 상태 보존"""
-            _cur_fs = font_slider.value()
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    _loc = legend._loc
-                    # 보이는 artist + 비어있지 않은 라벨만 수집 (중복 제거)
-                    handles, labels = [], []
-                    _seen = set()
-                    for h, l in zip(*ax.get_legend_handles_labels()):
-                        if h.get_visible() and l and not l.startswith('_') and l not in _seen:
-                            handles.append(h)
-                            labels.append(l)
-                            _seen.add(l)
-                    if handles:
-                        new_leg = ax.legend(handles, labels,
-                            fontsize=_cur_fs,
-                            framealpha=THEME['LEGEND_FRAMEALPHA'],
-                            edgecolor=THEME['LEGEND_EDGECOLOR'],
-                            fancybox=True, loc=_loc)
-                        new_leg.set_draggable(True)
-                        for h in new_leg.legend_handles:
-                            h.set_alpha(1.0)
-                    else:
-                        legend.remove()
-
-        def on_item_changed(item):
-            """개별 채널 표시/숨김 처리"""
-            if _chk_guard['updating']:
-                return
-            orig_key = item.data(Qt.ItemDataRole.UserRole)
-            # 체크 상태 변경 → 표시/숨김
-            visible = item.checkState() == Qt.CheckState.Checked
-            if orig_key in channel_map:
-                for art in channel_map[orig_key]['artists']:
-                    art.set_visible(visible)
-            _update_ch_count()
-            _rebuild_legend()
-            canvas.draw_idle()
-        
-        ch_list.itemClicked.connect(on_item_clicked)
-        ch_list.itemChanged.connect(on_item_changed)
-        
-        # --- 선택 채널 수 실시간 표시 (#6) ---
-        def _update_ch_count():
-            checked = sum(1 for i in range(ch_list.count())
-                         if ch_list.item(i).checkState() == Qt.CheckState.Checked)
-            list_lbl.setText(f"채널 그룹 ({checked}/{_ch_total})")
-        
-        # --- 전체 표시 / 전체 하이라이트 체크박스 ---
-        _chk_guard = {'updating': False}
-        
-        _compact_chk = "font-size: 12px; padding: 0; margin: 0;"
-        chk_show_all = QCheckBox("전체 표시")
-        chk_show_all.setChecked(True)
-        chk_show_all.setStyleSheet(_compact_chk + " font-weight: bold;")
-        chk_hl_all = QCheckBox("전체 하이라이트")
-        chk_hl_all.setChecked(True)
-        chk_hl_all.setStyleSheet(_compact_chk)
-        
-        def _on_show_all(state):
-            if _chk_guard['updating']: return
-            _chk_guard['updating'] = True
-            checked = state == Qt.CheckState.Checked.value
-            new_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-            ch_list.blockSignals(True)
-            for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                it.setCheckState(new_state)
-                orig_key = it.data(Qt.ItemDataRole.UserRole)
-                if orig_key in channel_map:
-                    for art in channel_map[orig_key]['artists']:
-                        art.set_visible(checked)
-            ch_list.blockSignals(False)
-            _update_ch_count()
-            _rebuild_legend()
-            canvas.draw_idle()
-            _chk_guard['updating'] = False
-        
-        def _on_hl_all(state):
-            checked = state == Qt.CheckState.Checked.value
-            highlight_state['enabled'] = not checked  # OFF일 때 개별 선택 활성화
-            if checked:
-                # 체크 ON: 모든 채널 원래 색상 복원
-                _restore_all()
-                canvas.draw_idle()
-            else:
-                # 체크 OFF: 모든 채널 회색(dim), 클릭으로 개별 선택
-                highlight_state['active'] = set()
-                # 모두 dim 처리
-                for lbl, info in channel_map.items():
-                    for art in info['artists']:
-                        _dim_artist(art)
-                        art.set_zorder(1)
-                canvas.draw_idle()
-        
-        chk_show_all.stateChanged.connect(_on_show_all)
-        chk_hl_all.stateChanged.connect(_on_hl_all)
-        
-        # --- 레전드 ON/OFF ---
-        legend_checkbox = QCheckBox("Legend")
-        legend_checkbox.setChecked(True)
-        legend_checkbox.setStyleSheet(_compact_chk)
-        
-        def toggle_legend(state):
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    legend.set_visible(state == Qt.CheckState.Checked.value)
-            canvas.draw_idle()
-        
-        legend_checkbox.stateChanged.connect(toggle_legend)
-        
-        # --- 채널 검색 필터 ---
-        search_box = QLineEdit()
-        search_box.setPlaceholderText("🔍 채널 검색...")
-        search_box.setClearButtonEnabled(True)
-        search_box.setFixedHeight(22)
-        search_box.setStyleSheet(
-            f"QLineEdit {{ font-size: 11px; padding: 1px 4px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-        )
-        def _filter_channels(text):
-            keyword = text.strip().lower()
-            for i in range(ch_list.count()):
-                item = ch_list.item(i)
-                label = _strip_numbering(item.text()).lower()
-                item.setHidden(keyword != '' and keyword not in label)
-        search_box.textChanged.connect(_filter_channels)
-        
-        # --- 전체 레이아웃: legend + 채널 그룹 ---
-        list_col = QVBoxLayout()
-        list_col.setSpacing(1)
-        list_lbl = QLabel(f"채널 그룹 ({_ch_total})")
-        list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
-        
-        lbl_row = QHBoxLayout()
-        lbl_row.setSpacing(4)
-        lbl_row.addWidget(list_lbl)
-        # --- 채널 리스트 접기/펼치기 (#7) ---
-        _ch_collapsed = {'state': False}
-        collapse_btn = QPushButton("▲")
-        collapse_btn.setFixedSize(22, 18)
-        collapse_btn.setToolTip("채널 리스트 접기/펼치기")
-        collapse_btn.setStyleSheet(
-            f"QPushButton {{ font-size: 10px; padding: 0; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}"
-        )
-        def _toggle_ch_collapse():
-            _ch_collapsed['state'] = not _ch_collapsed['state']
-            collapsed = _ch_collapsed['state']
-            collapse_btn.setText("▼" if collapsed else "▲")
-            ch_list.setVisible(not collapsed)
-            search_box.setVisible(not collapsed)
-            chk_show_all.setVisible(not collapsed)
-            chk_hl_all.setVisible(not collapsed)
-        collapse_btn.clicked.connect(_toggle_ch_collapse)
-        lbl_row.addWidget(collapse_btn)
-        lbl_row.addStretch()
-        list_col.addLayout(lbl_row)
-        list_col.addWidget(chk_show_all)
-        list_col.addWidget(chk_hl_all)
-        list_col.addWidget(search_box)
-        list_col.addWidget(ch_list)
-        
-        # legend 체크박스 + 폰트 크기 슬라이더
-        ctrl_col = QVBoxLayout()
-        ctrl_col.setSpacing(1)
-        ctrl_col.addWidget(legend_checkbox)
-        
-        # --- 범례 폰트 크기 슬라이더 (#10) ---
-        _mpl_font_map = {'xx-small': 6, 'x-small': 7, 'small': 8, 'medium': 10,
-                         'large': 12, 'x-large': 14, 'xx-large': 16}
-        _raw = THEME['LEGEND_SIZE']
-        _legend_font_size = _mpl_font_map[_raw] if _raw in _mpl_font_map else int(_raw)
-        _font_lbl = QLabel(f"범례 {_legend_font_size}pt")
-        _font_lbl.setStyleSheet("font-size: 10px; padding: 0; margin: 0;")
-        font_slider = QSlider(Qt.Orientation.Horizontal)
-        font_slider.setRange(6, 18)
-        font_slider.setValue(_legend_font_size)
-        font_slider.setFixedWidth(80)
-        font_slider.setStyleSheet("QSlider { max-height: 16px; }")
-        def _on_font_size(val):
-            _font_lbl.setText(f"범례 {val}pt")
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    for txt in legend.get_texts():
-                        txt.set_fontsize(val)
-            canvas.draw_idle()
-        font_slider.valueChanged.connect(_on_font_size)
-        ctrl_col.addWidget(_font_lbl)
-        ctrl_col.addWidget(font_slider)
-        
-        # --- 범례 드래그 이동 (디폴트 활성화) ---
-        for ax in axes_list:
-            legend = ax.get_legend()
-            if legend:
-                legend.set_draggable(True)
-        # DCIR 텍스트 레이블 드래그 활성화
-        from matplotlib.text import Annotation
-        for child in axes_list[3].get_children():
-            if isinstance(child, Annotation) and child.get_text() in ("Rss@SOC70%", "DCIR1s@SOC70%"):
-                child.draggable()
-        
-        # --- 설정 저장/불러오기 (#15) ---
-        import json as _json
-        from pathlib import Path as _Path
-        import numpy as _np
-        _settings_dir = _Path(__file__).resolve().parent / '.ch_settings'
-        
-        def _extract_artist_data(art):
-            """matplotlib artist → 직렬화 가능한 dict 변환."""
-            from matplotlib.collections import PathCollection
-            from matplotlib.lines import Line2D
-            info = {}
-            if isinstance(art, Line2D):
-                xd, yd = art.get_xdata(), art.get_ydata()
-                info['type'] = 'line'
-                info['x'] = [float(v) for v in xd] if hasattr(xd, '__iter__') else []
-                info['y'] = [float(v) for v in yd] if hasattr(yd, '__iter__') else []
-                info['label'] = art.get_label()
-                info['color'] = art.get_color()
-                info['alpha'] = art.get_alpha()
-                info['linestyle'] = art.get_linestyle()
-                info['linewidth'] = art.get_linewidth()
-                info['visible'] = art.get_visible()
-            elif isinstance(art, PathCollection):
-                offsets = art.get_offsets()
-                info['type'] = 'scatter'
-                info['x'] = [float(v) for v in offsets[:, 0]] if len(offsets) > 0 else []
-                info['y'] = [float(v) for v in offsets[:, 1]] if len(offsets) > 0 else []
-                info['label'] = art.get_label()
-                fc = art.get_facecolors()
-                if len(fc) > 0:
-                    info['facecolor'] = [float(c) for c in fc[0]]
-                ec = art.get_edgecolors()
-                if len(ec) > 0:
-                    info['edgecolor'] = [float(c) for c in ec[0]]
-                info['alpha'] = art.get_alpha()
-                sizes = art.get_sizes()
-                info['size'] = float(sizes[0]) if len(sizes) > 0 else THEME['SCATTER_SIZE']
-                lw = art.get_linewidths()
-                info['linewidth'] = float(lw[0]) if len(lw) > 0 else 0
-                info['visible'] = art.get_visible()
-            return info
-
-        def _extract_ax_settings(ax):
-            """ax의 축 설정(label, limit, tick 등) 추출."""
-            return {
-                'xlabel': ax.get_xlabel(),
-                'ylabel': ax.get_ylabel(),
-                'xlim': [float(v) for v in ax.get_xlim()],
-                'ylim': [float(v) for v in ax.get_ylim()],
-                'title': ax.get_title(),
-            }
-
-        def _save_figure_data():
-            """데이터 + figure 설정 + 스타일을 JSON으로 저장."""
-            from PyQt6.QtWidgets import QFileDialog
-            default_name = ''
-            if fig._suptitle:
-                default_name = fig._suptitle.get_text()
-            fp, _ = QFileDialog.getSaveFileName(
-                ch_list, '사이클 Figure 저장',
-                str(_settings_dir / f'{default_name}.bdt.json') if default_name
-                else str(_settings_dir / 'figure.bdt.json'),
-                'BDT Figure (*.bdt.json)')
-            if not fp:
-                return
-            fp = _Path(fp)
-            fp.parent.mkdir(parents=True, exist_ok=True)
-
-            # 메타데이터
-            import datetime as _dt
-            meta = {
-                'version': '1.0',
-                'created': _dt.datetime.now().isoformat(),
-                'tool': 'BDT DataTool',
-                'suptitle': fig._suptitle.get_text() if fig._suptitle else '',
-            }
-
-            # 데이터 소스 및 분석 파라미터 (save_context에서 추출)
-            _ctx = save_context or {}
-            source = {
-                'source_file': _ctx.get('source_file', ''),
-                'data_paths': _ctx.get('data_paths', []),
-                'is_link': _ctx.get('is_link', False),
-                'per_path_capacities': _ctx.get('per_path_capacities', []),
-                'channel_link_map': _ctx.get('channel_link_map', {}),
-                'per_path_channels': _ctx.get('per_path_channels', []),
-            }
-            params = {
-                'firstCrate': _ctx.get('firstCrate', 0),
-                'mincapacity': _ctx.get('mincapacity', 0),
-                'xscale': _ctx.get('xscale', 0),
-                'ylimitlow': _ctx.get('ylimitlow', 0.65),
-                'ylimithigh': _ctx.get('ylimithigh', 1.05),
-                'irscale': _ctx.get('irscale', 1.0),
-                'dcirchk': _ctx.get('dcirchk', False),
-                'dcirchk_2': _ctx.get('dcirchk_2', False),
-                'mkdcir': _ctx.get('mkdcir', False),
-                'tab_mode': _ctx.get('tab_mode', 'individual'),
-            }
-            # 채널별 마지막 사이클 번호 (증분 업데이트용)
-            last_cycles = {}
-            for ch_key, ch_info in channel_map.items():
-                max_x = 0
-                for art in ch_info['artists']:
-                    art_info = _extract_artist_data(art)
-                    if art_info and art_info.get('x'):
-                        _xmax = max(art_info['x'])
-                        if _xmax > max_x:
-                            max_x = _xmax
-                last_cycles[ch_key] = int(max_x)
-            # 분류 결과
-            classify = _ctx.get('classify_info', [])
-
-            # 축 설정
-            axes_settings = []
-            for ax in axes_list:
-                axes_settings.append(_extract_ax_settings(ax))
-
-            # 채널별 데이터 + 스타일
-            channels = {}
-            for ch_key, ch_info in channel_map.items():
-                ch_data = {
-                    'color': ch_info['color'],
-                    'artists': [],
-                }
-                for art in ch_info['artists']:
-                    art_info = _extract_artist_data(art)
-                    if art_info:
-                        ch_data['artists'].append(art_info)
-                channels[ch_key] = ch_data
-
-            # 서브 채널
-            sub_channels = {}
-            if sub_channel_map:
-                for sk, si in sub_channel_map.items():
-                    sub_data = {
-                        'color': si['color'],
-                        'parent': si.get('parent', ''),
-                        'artists': [],
-                    }
-                    for art in si['artists']:
-                        art_info = _extract_artist_data(art)
-                        if art_info:
-                            sub_data['artists'].append(art_info)
-                    sub_channels[sk] = sub_data
-
-            # CH 제어 상태 (스타일 정보)
-            style = {
-                'font_size': font_slider.value(),
-                'checked': {},
-            }
-            for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                key = it.data(Qt.ItemDataRole.UserRole)
-                style['checked'][key] = it.checkState() == Qt.CheckState.Checked
-
-            data = {
-                'meta': meta,
-                'source': source,
-                'params': params,
-                'last_cycles': last_cycles,
-                'classify_info': classify,
-                'axes': axes_settings,
-                'channels': channels,
-                'sub_channels': sub_channels,
-                'style': style,
-            }
-
-            fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2),
-                          encoding='utf-8')
-
-        def _save_settings():
-            """CH 스타일 설정만 빠르게 저장 (자동 저장용)."""
-            _settings_dir.mkdir(exist_ok=True)
-            data = {
-                'font_size': font_slider.value(),
-                'checked': {},
-            }
-            for i in range(ch_list.count()):
-                it = ch_list.item(i)
-                key = it.data(Qt.ItemDataRole.UserRole)
-                data['checked'][key] = it.checkState() == Qt.CheckState.Checked
-            fp = _settings_dir / 'last.json'
-            fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        
-        def _load_settings():
-            """bdt.json 파일에서 스타일(체크 상태, 폰트 크기) 복원."""
-            from PyQt6.QtWidgets import QFileDialog
-            fp, _ = QFileDialog.getOpenFileName(
-                ch_list, '스타일 불러오기',
-                str(_settings_dir),
-                'BDT Figure (*.bdt.json);;JSON (*.json)')
-            if not fp:
-                return
-            data = _json.loads(_Path(fp).read_text(encoding='utf-8'))
-            # .bdt.json 형식이면 style 섹션 사용
-            style = data.get('style', data)
-            if 'font_size' in style:
-                font_slider.setValue(style['font_size'])
-            # 체크 상태 복원
-            if 'checked' in style:
-                ch_list.blockSignals(True)
-                for i in range(ch_list.count()):
-                    it = ch_list.item(i)
-                    key = it.data(Qt.ItemDataRole.UserRole)
-                    if key in style['checked']:
-                        it.setCheckState(
-                            Qt.CheckState.Checked if style['checked'][key]
-                            else Qt.CheckState.Unchecked)
-                        if key in channel_map:
-                            for art in channel_map[key]['artists']:
-                                art.set_visible(style['checked'][key])
-                ch_list.blockSignals(False)
-                _update_ch_count()
-            canvas.draw_idle()
-        
-        _btn_style = (
-            f"QPushButton {{ font-size: 10px; padding: 0 4px; "
-            f"border: 1px solid {_btn_border}; border-radius: 3px; "
-            f"background: {_btn_bg}; }}"
-            f"QPushButton:hover {{ background: {_btn_hover}; }}")
-        _save_fig_btn = QPushButton("💾 Figure 저장")
-        _save_fig_btn.setFixedHeight(20)
-        _save_fig_btn.setStyleSheet(_btn_style)
-        _save_fig_btn.setToolTip('데이터 + Figure 설정을 JSON으로 저장')
-        _save_fig_btn.clicked.connect(_save_figure_data)
-        _load_btn = QPushButton("📂 스타일 불러오기")
-        _load_btn.setFixedHeight(20)
-        _load_btn.setStyleSheet(_btn_style)
-        _load_btn.setToolTip('채널 체크 상태, 폰트 크기 등 스타일만 복원')
-        _load_btn.clicked.connect(_load_settings)
-        ctrl_col.addWidget(_save_fig_btn)
-        ctrl_col.addWidget(_load_btn)
-        ctrl_col.addStretch()
-        
-        overlay_layout.addLayout(ctrl_col)
-        overlay_layout.addLayout(list_col)
-        
-
-        
-        # --- 2) 서브 채널 리스트 (sub_channel_map 있을 때만) ---
-        if sub_channel_map and len(sub_channel_map) > 1:
-            sub_list = QListWidget()
-            sub_list.setMinimumWidth(70)
-            sub_list.setMaximumWidth(120)
-            sub_list.setStyleSheet(_list_style)
-            
-            _sub_total = len(sub_channel_map)
-            _snw = len(str(_sub_total))
-            for idx, label in enumerate(sub_channel_map, 1):
-                item = QListWidgetItem(f"{idx:0{_snw}d}. {label}")
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Checked)
-                item.setForeground(QColor(sub_channel_map[label]['color']))
-                item.setToolTip(label)
-                sub_list.addItem(item)
-            
-            # ── 채널 그룹 → 서브 채널 연동 (표시/숨김) ──
-            _sub_chk_guard = {'updating': False}
-            
-            def _get_sub_items_for_group(group_label):
-                """채널 그룹에 속한 서브 채널 항목 리스트 반환"""
-                result = []
-                for i in range(sub_list.count()):
-                    sub_item = sub_list.item(i)
-                    sub_label = _strip_numbering(sub_item.text())
-                    if sub_label in sub_channel_map:
-                        if sub_channel_map[sub_label].get('parent') == group_label:
-                            result.append((sub_item, sub_label))
-                return result
-            
-            # on_item_changed 재정의: 채널 그룹 표시/숨김 → 하위 서브 채널도 연동
-            ch_list.itemChanged.disconnect(on_item_changed)
-            
-            def on_item_changed_linked(item):
-                """채널 그룹 표시/숨김 → 하위 서브 채널도 함께 변경"""
-                if _chk_guard['updating']:
-                    return
-                orig_key = item.data(Qt.ItemDataRole.UserRole)
-                visible = item.checkState() == Qt.CheckState.Checked
-                if orig_key in channel_map:
-                    for art in channel_map[orig_key]['artists']:
-                        art.set_visible(visible)
-                # 하위 서브 채널 항목 체크 상태도 동기화
-                if not _sub_chk_guard['updating']:
-                    _sub_chk_guard['updating'] = True
-                    for sub_item, sub_label in _get_sub_items_for_group(orig_key):
-                        sub_item.setCheckState(
-                            Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
-                    _sub_chk_guard['updating'] = False
-                _rebuild_legend()
-                canvas.draw_idle()
-            
-            ch_list.itemChanged.connect(on_item_changed_linked)
-            
-            # on_item_clicked 재정의: 채널 그룹 하이라이트 → 하위 서브 채널도 연동
-            ch_list.itemClicked.disconnect(on_item_clicked)
-            
-            def on_item_clicked_linked(item):
-                """채널 그룹 하이라이트 토글 → 하위 서브 채널도 함께 변경"""
-                orig_key = item.data(Qt.ItemDataRole.UserRole)
-                _highlight_channel(orig_key)
-            
-            ch_list.itemClicked.connect(on_item_clicked_linked)
-            
-            # 서브 채널 클릭/체크 핸들러 (하위 개별 제어)
-            def on_sub_item_clicked(item):
-                """서브 채널 개별 하이라이트 토글"""
-                if not highlight_state['enabled']:
-                    # 전체 하이라이트 ON → 체크박스 해제, 클릭한 서브채널만 dim
-                    chk_hl_all.setChecked(False)  # _on_hl_all → 전체 dim + enabled=True
-                    # 모든 채널 하이라이트 적용
-                    highlight_state['active'] = set(channel_map.keys())
-                    _apply_highlight()
-                    # 클릭한 서브 채널만 dim 처리
-                label = _strip_numbering(item.text())
-                if label not in sub_channel_map:
-                    return
-                info = sub_channel_map[label]
-                active = highlight_state['active']
-                parent = info.get('parent', '')
-                # 부모 그룹이 하이라이트에 포함되어 있으면 → 부모를 빼고 같은 그룹의 다른 서브만 추가
-                # 부모 그룹이 없으면 → 서브 채널 단독 토글
-                # 서브 채널 개별 artist를 직접 제어
-                artists = info['artists']
-                # 토글: 현재 하이라이트 상태 확인 (alpha 기준)
-                is_highlighted = any(art.get_alpha() == 1.0 for art in artists)
-                if is_highlighted:
-                    # dim 처리
-                    for art in artists:
-                        _dim_artist(art)
-                else:
-                    # 하이라이트 처리
-                    for art in artists:
-                        _highlight_artist(art)
-                canvas.draw_idle()
-            
-            def on_sub_item_changed(item):
-                """서브 채널 개별 표시/숨김"""
-                if _sub_chk_guard['updating']:
-                    return
-                label = _strip_numbering(item.text())
-                visible = item.checkState() == Qt.CheckState.Checked
-                if label in sub_channel_map:
-                    for art in sub_channel_map[label]['artists']:
-                        art.set_visible(visible)
-                canvas.draw_idle()
-            
-            sub_list.itemClicked.connect(on_sub_item_clicked)
-            sub_list.itemChanged.connect(on_sub_item_changed)
-            
-            # 서브 채널 열 레이아웃 (전체 표시/하이라이트 체크박스 없음)
-            sub_list_col = QVBoxLayout()
-            sub_list_col.setSpacing(1)
-            sub_list_lbl = QLabel(f"서브 채널 ({_sub_total})")
-            sub_list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
-            sub_list_col.addWidget(sub_list_lbl)
-            sub_list_col.addWidget(sub_list)
-            
-            overlay_layout.addLayout(sub_list_col)
-        
-        # --- 3) 서브2 채널 리스트 (sub2_channel_map 있을 때만 — 사이클 레벨) ---
-        if sub2_channel_map and len(sub2_channel_map) > 1:
-            sub2_list = QListWidget()
-            sub2_list.setMinimumWidth(60)
-            sub2_list.setMaximumWidth(100)
-            sub2_list.setStyleSheet(_list_style)
-            
-            _sub2_total = len(sub2_channel_map)
-            _s2nw = len(str(_sub2_total))
-            for idx, label in enumerate(sub2_channel_map, 1):
-                item = QListWidgetItem(f"{idx:0{_s2nw}d}. {label}")
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Checked)
-                item.setForeground(QColor(sub2_channel_map[label]['color']))
-                item.setToolTip(label)
-                sub2_list.addItem(item)
-            
-            _sub2_chk_guard = {'updating': False}
-            
-            def _get_sub2_items_for_parent(parent_label):
-                """특정 부모(서브 또는 채널)에 속한 서브2 항목 반환"""
-                result = []
-                for i in range(sub2_list.count()):
-                    s2_item = sub2_list.item(i)
-                    s2_label = _strip_numbering(s2_item.text())
-                    if s2_label in sub2_channel_map:
-                        if sub2_channel_map[s2_label].get('parent') == parent_label:
-                            result.append((s2_item, s2_label))
-                return result
-            
-            def _get_sub2_items_for_group(group_label):
-                """채널 그룹에 속한 모든 서브2 항목 반환 (서브 경유 또는 직접)"""
-                if sub_channel_map and len(sub_channel_map) > 1:
-                    sub_labels = {sl for sl, info in sub_channel_map.items()
-                                  if info.get('parent') == group_label}
-                    result = []
-                    for i in range(sub2_list.count()):
-                        s2_item = sub2_list.item(i)
-                        s2_label = _strip_numbering(s2_item.text())
-                        if s2_label in sub2_channel_map:
-                            if sub2_channel_map[s2_label].get('parent') in sub_labels:
-                                result.append((s2_item, s2_label))
-                    return result
-                else:
-                    return _get_sub2_items_for_parent(group_label)
-            
-            # ── 기존 핸들러에 sub2 연동 추가 ──
-            _has_sub = sub_channel_map and len(sub_channel_map) > 1
-            
-            if _has_sub:
-                # sub + sub2 모두 존재: 채널→서브→서브2 3단 연동
-                # on_item_changed_linked 재정의: sub2도 동기화
-                ch_list.itemChanged.disconnect(on_item_changed_linked)
-                
-                def on_item_changed_3level(item):
-                    """채널 그룹 표시/숨김 → 서브 + 서브2 체크 상태 동기화"""
-                    if _chk_guard['updating']:
-                        return
-                    orig_key = item.data(Qt.ItemDataRole.UserRole)
-                    visible = item.checkState() == Qt.CheckState.Checked
-                    if orig_key in channel_map:
-                        for art in channel_map[orig_key]['artists']:
-                            art.set_visible(visible)
-                    if not _sub_chk_guard['updating']:
-                        _sub_chk_guard['updating'] = True
-                        for sub_item, sub_label in _get_sub_items_for_group(orig_key):
-                            sub_item.setCheckState(
-                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
-                        _sub_chk_guard['updating'] = False
-                    if not _sub2_chk_guard['updating']:
-                        _sub2_chk_guard['updating'] = True
-                        for s2_item, _ in _get_sub2_items_for_group(orig_key):
-                            s2_item.setCheckState(
-                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
-                        _sub2_chk_guard['updating'] = False
-                    _rebuild_legend()
-                    canvas.draw_idle()
-                
-                ch_list.itemChanged.connect(on_item_changed_3level)
-                
-                # on_sub_item_changed 재정의: sub2도 연동
-                sub_list.itemChanged.disconnect(on_sub_item_changed)
-                
-                def on_sub_item_changed_linked(item):
-                    """서브 채널 표시/숨김 → 하위 서브2도 동기화"""
-                    if _sub_chk_guard['updating']:
-                        return
-                    label = _strip_numbering(item.text())
-                    visible = item.checkState() == Qt.CheckState.Checked
-                    if label in sub_channel_map:
-                        for art in sub_channel_map[label]['artists']:
-                            art.set_visible(visible)
-                    if not _sub2_chk_guard['updating']:
-                        _sub2_chk_guard['updating'] = True
-                        for s2_item, _ in _get_sub2_items_for_parent(label):
-                            s2_item.setCheckState(
-                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
-                        _sub2_chk_guard['updating'] = False
-                    canvas.draw_idle()
-                
-                sub_list.itemChanged.connect(on_sub_item_changed_linked)
-            else:
-                # sub2만 존재 (sub 없음): 채널→서브2 2단 연동
-                ch_list.itemChanged.disconnect(on_item_changed)
-                
-                def on_item_changed_with_sub2(item):
-                    """채널 그룹 표시/숨김 → 서브2 체크 상태 동기화"""
-                    if _chk_guard['updating']:
-                        return
-                    orig_key = item.data(Qt.ItemDataRole.UserRole)
-                    visible = item.checkState() == Qt.CheckState.Checked
-                    if orig_key in channel_map:
-                        for art in channel_map[orig_key]['artists']:
-                            art.set_visible(visible)
-                    if not _sub2_chk_guard['updating']:
-                        _sub2_chk_guard['updating'] = True
-                        for s2_item, _ in _get_sub2_items_for_parent(orig_key):
-                            s2_item.setCheckState(
-                                Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
-                        _sub2_chk_guard['updating'] = False
-                    _rebuild_legend()
-                    canvas.draw_idle()
-                
-                ch_list.itemChanged.connect(on_item_changed_with_sub2)
-            
-            # 서브2 채널 클릭/체크 핸들러 (개별 제어)
-            def on_sub2_item_clicked(item):
-                """서브2 채널 개별 하이라이트 토글"""
-                if not highlight_state['enabled']:
-                    chk_hl_all.setChecked(False)
-                    highlight_state['active'] = set(channel_map.keys())
-                    _apply_highlight()
-                label = _strip_numbering(item.text())
-                if label not in sub2_channel_map:
-                    return
-                info = sub2_channel_map[label]
-                artists = info['artists']
-                is_highlighted = any(art.get_alpha() == 1.0 for art in artists)
-                if is_highlighted:
-                    for art in artists:
-                        _dim_artist(art)
-                else:
-                    for art in artists:
-                        _highlight_artist(art)
-                canvas.draw_idle()
-            
-            def on_sub2_item_changed(item):
-                """서브2 채널 개별 표시/숨김"""
-                if _sub2_chk_guard['updating']:
-                    return
-                label = _strip_numbering(item.text())
-                visible = item.checkState() == Qt.CheckState.Checked
-                if label in sub2_channel_map:
-                    for art in sub2_channel_map[label]['artists']:
-                        art.set_visible(visible)
-                canvas.draw_idle()
-            
-            sub2_list.itemClicked.connect(on_sub2_item_clicked)
-            sub2_list.itemChanged.connect(on_sub2_item_changed)
-            
-            # 서브2 채널 열 레이아웃
-            sub2_list_col = QVBoxLayout()
-            sub2_list_col.setSpacing(1)
-            sub2_list_lbl = QLabel(f"사이클 ({_sub2_total})")
-            sub2_list_lbl.setStyleSheet("font-size: 12px; font-weight: bold; padding: 0; margin: 0;")
-            sub2_list_col.addWidget(sub2_list_lbl)
-            sub2_list_col.addWidget(sub2_list)
-            
-            overlay_layout.addLayout(sub2_list_col)
-        
-        return overlay
-    
-    def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
-                            channel_map, fig, axes_list, sub_channel_map=None,
-                            classify_info=None, save_context=None):
-        """
-        채널 제어 위젯 포함 (오버레이 방식)
-        classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
-        save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
-        """
-        from PyQt6.QtWidgets import QHBoxLayout, QLabel
-        # save_context에 classify_info 포함
-        if save_context is not None and classify_info:
-            save_context['classify_info'] = [
-                {k: v for k, v in cr.items() if k != 'classified'}
-                for cr in classify_info
-            ]
-        # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
-        if channel_map:
-            toggle_btn = self._create_cycle_channel_control(
-                channel_map, canvas, fig, axes_list, args_parent_tab=tab,
-                sub_channel_map=sub_channel_map,
-                save_context=save_context)
-            # toolbar + toggle_btn 을 한 줄에 배치
-            toolbar_row = QHBoxLayout()
-            toolbar_row.setContentsMargins(0, 0, 0, 0)
-            toolbar_row.setSpacing(4)
-            toolbar_row.addWidget(toolbar)
-            toolbar_row.addWidget(toggle_btn)
-            tab_layout.addLayout(toolbar_row)
-        else:
-            tab_layout.addWidget(toolbar)
-
-        # ── 사이클 카테고리 분류 정보 바 ──
-        if classify_info:
-            info_label = self._build_classify_info_label(classify_info)
-            if info_label:
-                tab_layout.addWidget(info_label)
-
-        tab_layout.addWidget(canvas)
-        self.cycle_tab.addTab(tab, str(tab_no))
-        self.cycle_tab.setCurrentWidget(tab)
-        self.cycle_tab_reset.setEnabled(True)
-        # 범례가 figure 오른쪽 외부에 있으면 여백 확보
-        if getattr(self, '_cycle_legend_outside', False):
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.82, 1])
-            self._cycle_legend_outside = False
-        else:
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-
-    @staticmethod
-    def _build_classify_info_label(classify_info: list[dict]):
-        """분류 결과 리스트 → 접을 수 있는 충방전 패턴 정보 위젯 생성.
-
-        단일 패턴(또는 모든 채널 동일) → 기존과 동일한 단순 QLabel.
-        여러 상이한 패턴 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 전체 패턴 표시.
-        팝업은 캔버스 위에 오버레이되므로 그래프 크기가 변하지 않는다.
-        """
-        from PyQt6.QtWidgets import (QLabel, QWidget, QHBoxLayout,
-                                      QPushButton, QFrame, QVBoxLayout)
-        from PyQt6.QtCore import Qt
-        from collections import OrderedDict
-
-        if not classify_info:
-            return None
-
-        # ── 모든 채널의 accel_pattern 수집 ──
-        patterns: list[tuple[str, str]] = []  # (channel_name, pattern_line)
-        for cr in classify_info:
-            ap = cr.get('accel_pattern')
-            if ap:
-                ch_name = cr.get('channel', '')
-                chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
-                dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
-                line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                        f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
-                patterns.append((ch_name, line))
-
-        if not patterns:
-            return None
-
-        # ── 동일 패턴끼리 그룹핑 ──
-        groups: OrderedDict[str, list[str]] = OrderedDict()
-        for ch_name, line in patterns:
-            groups.setdefault(line, []).append(ch_name)
-
-        _BAR_QSS = ('QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
-                     'border-radius: 3px; padding: 3px 8px; }')
-
-        # ── 패턴이 모두 동일 → 단순 QLabel ──
-        if len(groups) == 1:
-            single_line = next(iter(groups))
-            ch_list = next(iter(groups.values()))
-            suffix = (f'  <span style="color:#8491B4;">({len(ch_list)}채널 동일)</span>'
-                      if len(ch_list) > 1 else '')
-            html = (f'<span style="color:#3C5488; font-size:11px;">'
-                    f'{single_line}{suffix}</span>')
-            label = QLabel(html)
-            label.setStyleSheet(_BAR_QSS)
-            label.setWordWrap(True)
-            label.setMaximumHeight(24)
-            return label
-
-        # ── 여러 상이한 패턴 → 접기/펼치기 위젯 ──
-        container = QWidget()
-        container.setFixedHeight(24)
-        h_layout = QHBoxLayout(container)
-        h_layout.setContentsMargins(0, 0, 0, 0)
-        h_layout.setSpacing(4)
-
-        # 헤더 바: 첫 번째 패턴 + "(+N개 다른 패턴)"
-        first_line = next(iter(groups))
-        first_chs = next(iter(groups.values()))
-        n_other = len(groups) - 1
-        ch_tag = f'[{first_chs[0]}] ' if first_chs[0] else ''
-        header_html = (
-            f'<span style="color:#3C5488; font-size:11px;">'
-            f'{ch_tag}{first_line}  '
-            f'<span style="color:#E64B35; font-weight:bold;">'
-            f'(+{n_other}개 다른 패턴)</span></span>')
-        header_label = QLabel(header_html)
-        header_label.setStyleSheet(_BAR_QSS)
-        header_label.setMaximumHeight(24)
-
-        toggle_btn = QPushButton("▶ 전체")
-        toggle_btn.setFixedSize(60, 20)
-        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        toggle_btn.setStyleSheet(
-            "QPushButton { font-size: 10px; font-weight: bold; "
-            "border: 1px solid #D0D8E0; border-radius: 3px; "
-            "background: #F0F4F8; color: #3C5488; padding: 2px 4px; }"
-            "QPushButton:hover { background: #E0E8F0; }")
-
-        h_layout.addWidget(header_label, stretch=1)
-        h_layout.addWidget(toggle_btn, stretch=0)
-
-        # ── 펼침 팝업 (Tool 플로팅 윈도우 — 캔버스 위 오버레이) ──
-        popup = QFrame(container)
-        popup.setWindowFlags(
-            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint)
-        popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        popup.setStyleSheet(
-            'QFrame { background: #F0F4F8; '
-            'border: 1px solid #B0B8C0; border-radius: 5px; }')
-        popup_layout = QVBoxLayout(popup)
-        popup_layout.setContentsMargins(10, 8, 10, 8)
-        popup_layout.setSpacing(3)
-
-        # 제목
-        title_label = QLabel(
-            '<b style="color:#3C5488; font-size:12px;">충방전 패턴 상세</b>')
-        popup_layout.addWidget(title_label)
-
-        # 각 패턴 그룹 (PALETTE 색상으로 채널 구분)
-        palette = THEME['PALETTE']
-        for idx, (pat_line, ch_names) in enumerate(groups.items()):
-            color = palette[idx % len(palette)]
-            ch_str = ', '.join(ch_names)
-            if ch_str:
-                row_html = (
-                    f'<span style="font-size:11px;">'
-                    f'<b style="color:{color};">[{ch_str}]</b> '
-                    f'<span style="color:#3C5488;">{pat_line}</span></span>')
-            else:
-                row_html = (
-                    f'<span style="color:#3C5488; font-size:11px;">'
-                    f'{pat_line}</span>')
-            row_label = QLabel(row_html)
-            row_label.setWordWrap(True)
-            popup_layout.addWidget(row_label)
-
-        popup.adjustSize()
-        popup.hide()
-
-        def _toggle():
-            if popup.isVisible():
-                popup.hide()
-                toggle_btn.setText("▶ 전체")
-            else:
-                # 헤더 바 바로 아래에 팝업 배치
-                pos = container.mapToGlobal(container.rect().bottomLeft())
-                popup.move(pos.x(), pos.y() + 2)
-                popup.adjustSize()
-                popup.show()
-                toggle_btn.setText("▼ 접기")
-
-        toggle_btn.clicked.connect(_toggle)
-        return container
-
-    def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
-                           channel_map=None, fig=None, axes_list=None,
-                           sub_channel_map=None, sub2_channel_map=None):
-        if channel_map:
-            from PyQt6.QtWidgets import QHBoxLayout
-            toggle_btn = self._create_cycle_channel_control(
-                channel_map, canvas, fig, axes_list, args_parent_tab=tab,
-                sub_channel_map=sub_channel_map, sub2_channel_map=sub2_channel_map)
-            toolbar_row = QHBoxLayout()
-            toolbar_row.setContentsMargins(0, 0, 0, 0)
-            toolbar_row.setSpacing(4)
-            toolbar_row.addWidget(toolbar)
-            toolbar_row.addWidget(toggle_btn)
-            tab_layout.addLayout(toolbar_row)
-        else:
-            tab_layout.addWidget(toolbar)
-        tab_layout.addWidget(canvas)
-        self.cycle_tab.addTab(tab, str(tab_no))
-        self.cycle_tab.setCurrentWidget(tab)
-        self.cycle_tab_reset.setEnabled(True)
-        if getattr(self, '_has_colorbar', False):
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.88, 1])
-            self._has_colorbar = False
-        else:
-            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-    
-    def _setup_legend(self, axes_list, data_name, positions, fig=None):
-        """
-        범례 설정 - 항목 수에 따라 자동 전환
-        범례 항목이 LEGEND_THRESHOLD 이상이면 그라데이션+컬러바로 전환
-        """
-        # 범례 항목 수 자동 감지 (ax.get_lines()로 플롯된 라인만 반환됨)
-        n_items = 0
-        if fig is not None:
-            counts = []
-            for ax in axes_list:
-                n_lines = len(ax.get_lines())
-                if n_lines > 0:
-                    counts.append(n_lines)
-            n_items = min(counts) if counts else 0
-        
-        if n_items >= LEGEND_THRESHOLD and fig is not None:
-            # 모드별 컬러맵 자동 선택
-            if self.AllProfile.isChecked():
-                cmap_name = 'turbo'
-                legend_title = 'Cell × Cycle'
-            elif self.CycProfile.isChecked():
-                cmap_name = 'viridis'
-                legend_title = 'Cycle'
-            else:
-                cmap_name = 'tab20' if n_items <= 20 else 'hsv'
-                legend_title = 'Channel'
-            
-            cmap = plt.colormaps[cmap_name]
-            norm_val = max(n_items - 1, 1)
-            # 모든 축의 모든 플롯 라인에 그라데이션 색상 적용
-            for ax in axes_list:
-                lines = ax.get_lines()
-                if len(lines) == 0:
-                    continue
-                for idx, line in enumerate(lines):
-                    item_idx = min(idx, n_items - 1)
-                    color = cmap(item_idx / norm_val)
-                    line.set_color(color)
-                    line.set_label('')
-            
-            # 기존 범례 제거 (잔여 범례가 남지 않도록)
-            for ax in axes_list:
-                legend = ax.get_legend()
-                if legend:
-                    legend.remove()
-            
-            # 컬러바 추가
-            cbar_ax = fig.add_axes([0.90, 0.10, 0.02, 0.78])
-            norm = mcolors.Normalize(vmin=0, vmax=n_items - 1)
-            sm = cm.ScalarMappable(cmap=cmap, norm=norm)
-            sm.set_array([])
-            cb = fig.colorbar(sm, cax=cbar_ax)
-            cb.set_label(legend_title + f' ({n_items})', fontsize=THEME['TICK_SIZE'])
-            self._has_colorbar = True
-            # 색상 변경을 캔버스에 즉시 반영
-            fig.canvas.draw()
-        else:
-            # 기존 범례
-            _leg_kw = dict(fontsize=THEME['LEGEND_SIZE'],
-                           framealpha=THEME['LEGEND_FRAMEALPHA'],
-                           edgecolor=THEME['LEGEND_EDGECOLOR'],
-                           fancybox=True)
-            if len(data_name) != 0:
-                for ax, pos in zip(axes_list, positions):
-                    ax.legend(loc=pos, **_leg_kw)
-            else:
-                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), **_leg_kw)
-    
-    def _load_step_batch_task(self, task_info):
-        """
-        채널 단위 배치 스텝 프로파일 로딩 (ThreadPoolExecutor용)
-        1채널의 모든 사이클을 한 번에 로딩
-        """
-        folder_path, cycle_list, mincapacity, mincrate, firstCrate, is_pne, folder_idx, subfolder_idx = task_info
-        try:
-            if is_pne:
-                batch_results = pne_step_Profile_batch(folder_path, cycle_list, mincapacity, mincrate, firstCrate)
-            else:
-                batch_results = toyo_step_Profile_batch(folder_path, cycle_list, mincapacity, mincrate, firstCrate)
-            return (folder_idx, subfolder_idx, batch_results)
-        except Exception as e:
-            print(f"[배치 로딩 오류] {folder_path}: {e}")
-            return (folder_idx, subfolder_idx, None)
-    
-    @log_perf
-    def _load_all_step_data_parallel(self, all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=None):
-        """
-        모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩 (채널 단위 배치)
-        """
-        tasks = []
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder)
-                             if f.is_dir() and _is_channel_folder(f.name)]
-                is_pne = check_cycler(cyclefolder)
-                for j, folder_path in enumerate(subfolder):
-                    if "Pattern" not in folder_path:
-                        task_info = (folder_path, CycleNo, mincapacity, mincrate, firstCrate, is_pne, i, j)
-                        tasks.append(task_info)
-        
-        if max_workers is None:
-            max_workers = calc_optimal_workers(len(tasks))
-        _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
-                          f'cycles={CycleNo}, workers={max_workers}')
-        results = {}
-        total_tasks = len(tasks)
-        completed = 0
-        
-        if total_tasks == 0:
-            return results
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_step_batch_task, task): task for task in tasks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    folder_idx, subfolder_idx, batch_results = result
-                    if batch_results:
-                        for cyc_no, temp in batch_results.items():
-                            results[(folder_idx, subfolder_idx, cyc_no)] = temp
-                completed += 1
-                self.progressBar.setValue(int(completed / total_tasks * 50))
-        
-        return results
-    
-    # ─── 범용 프로파일 배치 병렬 로더 ───
-    def _load_profile_batch_task(self, task_info):
-        """
-        채널 단위 프로파일 배치 로딩 (ThreadPoolExecutor용).
-        profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
-        """
-        folder_path, profile_type, params, is_pne, folder_idx, subfolder_idx = task_info
-        try:
-            if profile_type == 'rate':
-                cycle_list, mincapacity, cutoff, inirate = params
-                if is_pne:
-                    batch_results = pne_rate_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate)
-                else:
-                    batch_results = toyo_rate_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate)
-            elif profile_type == 'chg':
-                cycle_list, mincapacity, cutoff, inirate, smoothdegree = params
-                if is_pne:
-                    batch_results = pne_chg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-                else:
-                    batch_results = toyo_chg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-            elif profile_type == 'dchg':
-                cycle_list, mincapacity, cutoff, inirate, smoothdegree = params
-                if is_pne:
-                    batch_results = pne_dchg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-                else:
-                    batch_results = toyo_dchg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-            elif profile_type == 'continue':
-                step_ranges, mincapacity, inirate, CDstate = params
-                if is_pne:
-                    batch_results = pne_continue_Profile_batch(folder_path, step_ranges, mincapacity, inirate, CDstate)
-                else:
-                    batch_results = toyo_continue_Profile_batch(folder_path, step_ranges, mincapacity, inirate)
-            else:
-                return (folder_idx, subfolder_idx, None)
-            return (folder_idx, subfolder_idx, batch_results)
-        except Exception as e:
-            print(f"[배치 로딩 오류] {profile_type} {folder_path}: {e}")
-            return (folder_idx, subfolder_idx, None)
-
-    @log_perf
-    def _load_all_profile_data_parallel(self, all_data_folder, profile_type, params, max_workers=None):
-        """
-        모든 폴더의 프로파일 데이터를 병렬로 로딩 (범용).
-        profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
-        """
-        tasks = []
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder)
-                             if f.is_dir() and _is_channel_folder(f.name)]
-                is_pne = check_cycler(cyclefolder)
-                for j, folder_path in enumerate(subfolder):
-                    if "Pattern" not in folder_path:
-                        task = (folder_path, profile_type, params, is_pne, i, j)
-                        tasks.append(task)
-
-        if max_workers is None:
-            max_workers = calc_optimal_workers(len(tasks))
-        _perf_logger.info(f'  조건: type={profile_type}, folders={len(all_data_folder)}, '
-                          f'tasks={len(tasks)}, workers={max_workers}')
-        results = {}
-        total_tasks = len(tasks)
-        completed = 0
-        if total_tasks == 0:
-            return results
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_profile_batch_task, task): task for task in tasks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    folder_idx, subfolder_idx, batch_results = result
-                    if batch_results:
-                        for key, data in batch_results.items():
-                            results[(folder_idx, subfolder_idx, key)] = data
-                completed += 1
-                self.progressBar.setValue(int(completed / total_tasks * 50))
-
-        return results
-
-    def _plot_and_save_step_data(self, axes, stepchg, capacity, headername, lgnd, temp_lgnd,
-                                  writer, write_column_num, save_file_name, Step_CycNo, save_csv=False):
-        """
-        스텝 프로파일 6개 그래프 플롯 + 데이터 저장 
-        """
-        step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6 = axes
-        
-        # 의도적 3중 플롯: 추후 축별 확대/범위 조정 용도
-        _artists = []
-        _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax1, self.vol_y_hlimit, self.vol_y_llimit,
-                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-        _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax3, self.vol_y_hlimit, self.vol_y_llimit,
-                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-        _artists.append(graph_step(stepchg.TimeMin, stepchg.Vol, step_ax2, self.vol_y_hlimit, self.vol_y_llimit,
-                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-        _artists.append(graph_step(stepchg.TimeMin, stepchg.Crate, step_ax5, 0, 3.4, 0.2,
-                   "Time(min)", "C-rate", temp_lgnd))
-        _artists.append(graph_step(stepchg.TimeMin, stepchg.SOC, step_ax4, 0, 1.2, 0.1,
-                   "Time(min)", "SOC", temp_lgnd))
-        _artists.append(graph_step(stepchg.TimeMin, stepchg.Temp, step_ax6, -15, 60, 5,
-                   "Time(min)", "Temperature (℃)", lgnd))
-        # Excel 저장
-        if self.saveok.isChecked() and save_file_name:
-            stepchg.to_excel(writer, startcol=write_column_num, index=False,
-                        header=[headername + "time(min)",
-                                headername + "SOC",
-                                headername + "Voltage",
-                                headername + "Crate",
-                                headername + "Temp."])
-            write_column_num += 5
-        # CSV 저장 (CycProfile 모드에서만 사용, .copy()로 SettingWithCopyWarning 방지)
-        if save_csv and self.ect_saveok.isChecked() and save_file_name:
-            continue_df = stepchg[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-            continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-            continue_df["Curr"] = (continue_df["Crate"] * capacity / 1000).round(4)
-            continue_df["Vol"] = continue_df["Vol"].round(4)
-            continue_df["Temp"] = continue_df["Temp"].round(1)
-            continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-            continue_df.to_csv(save_file_name + "_" + "%04d" % Step_CycNo + ".csv", index=False, sep=',',
-                                header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-        return write_column_num, _artists
-    
-    def _load_cycle_data_task(self, task_info):
-        """
-        단일 폴더의 사이클 데이터 로딩(ThreadPoolExecutor용)
-        """
-        folder_path, mincapacity, firstCrate, dcirchk, dcirchk_2, mkdcir, is_pne, folder_idx, subfolder_idx = task_info
-        try:
-            if is_pne:
-                cyctemp = pne_cycle_data(folder_path, mincapacity, firstCrate, dcirchk, dcirchk_2, mkdcir)
-            else:
-                cyctemp = toyo_cycle_data(folder_path, mincapacity, firstCrate, dcirchk_2)
-            return (folder_idx, subfolder_idx, folder_path, cyctemp)
-        except Exception as e:
-            print(f"[병렬 로딩 오류] {folder_path}: {e}")
-            return (folder_idx, subfolder_idx, folder_path, None)
-    
-    @log_perf
-    def _load_all_cycle_data_parallel(self, all_data_folder, mincapacity, firstCrate, 
-                                       dcirchk, dcirchk_2, mkdcir, max_workers=None,
-                                       per_path_capacities=None):
-        """
-        모든 폴더의 사이클 데이터를 병렬로 로딩
-        per_path_capacities: 테이블 용량 배열 (all_data_folder와 1:1 대응, > 0이면 우선 사용)
-        Returns: (results, subfolder_map)
-          - results: {(folder_idx, subfolder_idx): (folder_path, cyctemp)}
-          - subfolder_map: {folder_idx: [subfolder_path, ...]}
-        """
-        tasks = []
-        subfolder_map = {}  # 폴더별 subfolder 캐시 (os.scandir 1회만)
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.exists(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder)
-                             if f.is_dir() and _is_channel_folder(f.name)]
-                subfolder_map[i] = subfolder
-                is_pne = check_cycler(cyclefolder)
-                # 테이블 용량이 있으면 해당 path용 mincapacity 로 사용
-                _cap = mincapacity
-                if per_path_capacities and i < len(per_path_capacities) and per_path_capacities[i] > 0:
-                    _cap = per_path_capacities[i]
-                for j, folder_path in enumerate(subfolder):
-                    if "Pattern" not in folder_path:
-                        task_info = (folder_path, _cap, firstCrate, 
-                                     dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
-                        tasks.append(task_info)
-        
-        if max_workers is None:
-            max_workers = calc_optimal_workers(len(tasks))
-        _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
-                          f'mincap={mincapacity}, firstCrate={firstCrate}, '
-                          f'dcir={dcirchk}, dcir2={dcirchk_2}, workers={max_workers}')
-        
-        results = {}
-        total_tasks = len(tasks)
-        completed = 0
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_cycle_data_task, task): task for task in tasks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    folder_idx, subfolder_idx, folder_path, cyctemp = result
-                    results[(folder_idx, subfolder_idx)] = (folder_path, cyctemp)
-                completed += 1
-                # 진행률 업데이트 (50%까지만 - 나머지 50%는 그래프 생성)
-                self.progressBar.setValue(int(completed / total_tasks * 50))
-        
-        return results, subfolder_map
-    
-    def _save_cycle_excel_data(self, nd, writecolno, start_row, headername):
-        """사이클 데이터 엑셀 저장 공통 로직 (toyo/pne, 개별/통합/연결 모두 동일 결과)"""
-        cyc_head = ["Cycle"]
-        _dc = writecolno + 1
-        # 기본 데이터 시트
-        output_data(nd, "방전용량", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "방전용량", _dc, start_row, "Dchg", headername)
-        output_data(nd, "Rest End", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "Rest End", _dc, start_row, "RndV", headername)
-        output_data(nd, "평균 전압", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "평균 전압", _dc, start_row, "AvgV", headername)
-        output_data(nd, "충방효율", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "충방효율", _dc, start_row, "Eff", headername)
-        output_data(nd, "충전용량", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "충전용량", _dc, start_row, "Chg", headername)
-        output_data(nd, "방충효율", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "방충효율", _dc, start_row, "Eff2", headername)
-        output_data(nd, "방전Energy", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "방전Energy", _dc, start_row, "DchgEng", headername)
-        # DCIR 데이터 시트
-        cyctempdcir = nd[["OriCyc", "dcir"]].dropna(subset=["dcir"])
-        if self.mkdcir.isChecked() and "dcir2" in nd.columns:
-            cyctempdcir2 = nd[["OriCyc", "dcir2"]].dropna(subset=["dcir2"])
-            cyctemprssocv = nd[["OriCyc", "rssocv"]].dropna(subset=["rssocv"])
-            cyctemprssccv = nd[["OriCyc", "rssccv"]].dropna(subset=["rssccv"])
-            # SOC70 DCIR (존재 시)
-            if "soc70_dcir" in nd.columns:
-                cyctempsoc70dcir = nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
-                cyctempsoc70rssdcir = nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
-                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
-                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
-                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
-                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
-            output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-            output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-            output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-            output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
-        else:
-            output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
-
-    # ═══════════════════════════════════════════════════════════════
-    # 통합 Cycle 분석 관련 메서드
-    # ═══════════════════════════════════════════════════════════════
-
-    @staticmethod
-    def _parse_path_file(filepath):
-        """단일 .txt path 파일을 파싱하여 [(cyclename, cyclepath), ...] 반환"""
-        rows = []
-        with open(filepath, 'r', encoding='UTF-8') as f:
-            # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
-            for raw in f:
-                stripped = raw.strip()
-                if not stripped or stripped.startswith('#'):
-                    continue
-                break  # 헤더 줄 도달 → 스킵 후 탈출
-            for line in f:
-                if not line.strip():
-                    continue  # 그룹 구분자(빈 행) 무시
-                parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
-                if len(parts) >= 2:
-                    rows.append((' '.join(parts[:-1]), parts[-1]))
-        return rows
-
-    @staticmethod
-    def _parse_path_file_extended(filepath):
-        """4열 확장 path 파일 파싱 (하위호환: 2열도 지원)
-        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str}, ...]
-        """
-        rows = []
-        with open(filepath, 'r', encoding='UTF-8') as f:
-            # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
-            for raw in f:
-                stripped = raw.strip()
-                if not stripped or stripped.startswith('#'):
-                    continue
-                break  # 헤더 줄 도달 → 스킵 후 탈출
-            for line in f:
-                if not line.strip():
-                    continue  # 그룹 구분자(빈 행) 무시
-                parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
-                if len(parts) >= 4:
-                    rows.append({'name': parts[0], 'path': parts[1],
-                                 'channel': parts[2], 'capacity': parts[3]})
-                elif len(parts) >= 2:
-                    rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
-                                 'channel': '', 'capacity': ''})
-        return rows
-
-    def _build_group_from_lines(self, lines, file_idx):
-        """직접입력 줄들로 CycleGroup 생성. .xlsx/.xls=excel, .txt=path파일 재파싱, 나머지=folder"""
-        all_paths = []
-        path_names = []
-        data_type = 'folder'
-        source_file = ''
-
-        for line in lines:
-            ext = os.path.splitext(line)[1].lower()
-            if ext in ('.xlsx', '.xls'):
-                data_type = 'excel'
-                all_paths.append(line)
-                path_names.append('')
-            elif ext in ('.txt', '.csv'):
-                source_file = line
-                rows = self._parse_path_file(line)
-                for cname, cpath in rows:
-                    all_paths.append(cpath)
-                    path_names.append(cname)
-            else:
-                all_paths.append(line)
-                path_names.append('')
-
-        name = os.path.basename(all_paths[0]) if all_paths else 'unknown'
-        return CycleGroup(
-            name=name, paths=all_paths, path_names=path_names,
-            is_link=len(all_paths) > 1, data_type=data_type,
-            file_idx=file_idx, source_file=source_file
-        )
-
-    def _parse_cycle_input(self):
-        """입력 모드를 판별하여 list[CycleGroup] 반환
-        우선순위: 1) 지정Path 체크 → 파일 대화상자
-                 2) 테이블에 데이터 있음 → 테이블에서 읽기
-                 3) 폴더 선택 대화상자
-        """
-        groups = []
-        link_mode = self.chk_link_cycle.isChecked()
-
-        if self.chk_cyclepath.isChecked():
-            # 지정Path: 다중 파일 선택
-            root = Tk()
-            root.withdraw()
-            filepaths = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
-            root.destroy()
-            if not filepaths:
-                return groups
-
-            for file_idx, fp in enumerate(filepaths):
-                fp = fp.strip()
-                ext = os.path.splitext(fp)[1].lower()
-
-                if ext in ('.xlsx', '.xls'):
-                    groups.append(CycleGroup(
-                        name=os.path.splitext(os.path.basename(fp))[0],
-                        paths=[fp], path_names=[''],
-                        data_type='excel', file_idx=file_idx, source_file=fp
-                    ))
-                elif ext in ('.txt', '.csv'):
-                    rows = self._parse_path_file_extended(fp)
-                    if not rows:
-                        continue
-                    # cyclename으로 그룹화 (동일 cyclename = 자동 연결)
-                    name_order = OrderedDict()
-                    for row in rows:
-                        name_order.setdefault(row['name'], []).append(row)
-                    for cname, items in name_order.items():
-                        cpaths = [x['path'] for x in items]
-                        cnames = [x['name'] for x in items]
-                        # 첫 행의 capacity가 있으면 사용
-                        cap = items[0].get('capacity', '')
-                        groups.append(CycleGroup(
-                            name=cname, paths=cpaths, path_names=cnames,
-                            is_link=len(cpaths) > 1, data_type='folder',
-                            file_idx=file_idx, source_file=fp
-                        ))
-                else:
-                    # 폴더 경로로 간주
-                    groups.append(CycleGroup(
-                        name=os.path.basename(fp), paths=[fp], path_names=[''],
-                        data_type='folder', file_idx=file_idx, source_file=fp
-                    ))
-
-        elif self._has_table_data():
-            # 테이블에서 읽기
-            if link_mode:
-                # 연결 모드: 빈 행으로 그룹 분리
-                row_groups = self._get_table_row_groups()
-                for grp_idx, grp_rows in enumerate(row_groups):
-                    file_idx = 0  # 테이블은 단일 소스 → 통합 탭 시 1개 탭으로 합침
-                    all_paths = [r['path'] for r in grp_rows]
-                    all_pnames = [r['name'] for r in grp_rows]
-                    all_channels = [_parse_channel_str(r['channel']) for r in grp_rows]
-                    # 테이블 용량 수집 (per-path)
-                    all_caps = []
-                    for r in grp_rows:
-                        try:
-                            all_caps.append(float(r.get('capacity', '') or 0))
-                        except ValueError:
-                            all_caps.append(0.0)
-                    has_channels = any(chs for chs in all_channels)
-                    _src = ''
-                    for r in grp_rows:
-                        if 'mAh' in r.get('path', '') or 'mAh' in r.get('name', ''):
-                            _src = r['path']
-                            break
-
-                    if has_channels:
-                        # 채널 위치 기반 매핑: 같은 위치의 채널은 첫 번째 채널로 통합
-                        max_pos = max((len(chs) for chs in all_channels), default=0)
-                        link_map = {}  # {norm_ch: unified_sub_label}
-                        for pos in range(max_pos):
-                            unified_label = None
-                            for row_idx in range(len(grp_rows)):
-                                chs = all_channels[row_idx]
-                                if pos < len(chs) and chs[pos] != '-':
-                                    norm = _normalize_ch(chs[pos])
-                                    if unified_label is None:
-                                        unified_label = norm
-                                    link_map[norm] = unified_label
-                        # '-' 제거한 per_path_channels 구성
-                        clean_channels = []
-                        for chs in all_channels:
-                            clean_channels.append([_normalize_ch(ch) for ch in chs if ch != '-'])
-                        groups.append(CycleGroup(
-                            name=all_pnames[0] or os.path.basename(all_paths[0]),
-                            paths=all_paths, path_names=all_pnames,
-                            is_link=len(all_paths) > 1, data_type='folder',
-                            file_idx=file_idx, source_file=_src,
-                            per_path_channels=clean_channels,
-                            channel_link_map=link_map,
-                            per_path_capacities=all_caps,
-                        ))
-                    else:
-                        # 채널 미지정: 그룹 내 모든 경로를 연결
-                        groups.append(CycleGroup(
-                            name=all_pnames[0] or os.path.basename(all_paths[0]),
-                            paths=all_paths, path_names=all_pnames,
-                            is_link=len(all_paths) > 1, data_type='folder',
-                            file_idx=file_idx, source_file=_src,
-                            per_path_capacities=all_caps,
-                        ))
-            else:
-                # 개별 모드: 빈 행 무시, 각 행 = 개별 그룹
-                table_rows = self._get_table_rows()
-                for row in table_rows:
-                    path = row['path']
-                    ext = os.path.splitext(path)[1].lower()
-                    channels = _parse_channel_str(row['channel'])
-                    valid_chs = [ch for ch in channels if ch != '-']
-                    # 테이블 용량
-                    try:
-                        _cap = float(row.get('capacity', '') or 0)
-                    except ValueError:
-                        _cap = 0.0
-                    _caps = [_cap] if _cap > 0 else []
-
-                    if ext in ('.xlsx', '.xls'):
-                        groups.append(CycleGroup(
-                            name=row['name'] or os.path.splitext(os.path.basename(path))[0],
-                            paths=[path], path_names=[row['name']],
-                            data_type='excel', file_idx=0, source_file=path,
-                            per_path_capacities=_caps,
-                        ))
-                    elif ext in ('.txt', '.csv'):
-                        groups.append(self._build_group_from_lines([path], file_idx=0))
-                    else:
-                        groups.append(CycleGroup(
-                            name=row['name'] or os.path.basename(path),
-                            paths=[path], path_names=[row['name']],
-                            data_type='folder', file_idx=0, source_file='',
-                            per_path_channels=[valid_chs] if valid_chs else [],
-                            per_path_capacities=_caps,
-                        ))
-
-        else:
-            # 폴더 선택
-            root = Tk()
-            root.withdraw()
-            folders = multi_askopendirnames()
-            root.destroy()
-            if link_mode and len(folders) > 1:
-                # 연결 모드: 선택한 모든 폴더를 하나의 연결 그룹으로
-                groups.append(CycleGroup(
-                    name=os.path.basename(folders[0]),
-                    paths=list(folders),
-                    path_names=[os.path.basename(fp) for fp in folders],
-                    is_link=True, data_type='folder',
-                    file_idx=0, source_file=''
-                ))
-            else:
-                for fp in folders:
-                    groups.append(CycleGroup(
-                        name=os.path.basename(fp), paths=[fp], path_names=[''],
-                        data_type='folder', file_idx=0, source_file=''
-                    ))
-
-        return groups
-
-    @log_perf
-    def unified_cyc_confirm_button(self):
-        """통합 사이클 분석 (6개 함수 통합)"""
-        global writer
-        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
-        is_individual = self.radio_indiv.isChecked()
-        graphcolor = THEME['PALETTE']
-
-        self.cycle_confirm.setDisabled(True)
-        groups = self._parse_cycle_input()
-        if not groups:
-            self.cycle_confirm.setEnabled(True)
-            return
-
-        # 테이블 빈 셀 자동 채우기 (경로명, 채널, 용량)
-        if self._has_table_data():
-            self._autofill_table_empty_cells()
-
-        # 용량: 테이블 용량 열 입력 또는 자동파싱(빈칸)
-        # mincapacity=0 유지 → 각 서브폴더가 자체 경로에서 용량 감지
-        # 테이블 per_path_capacities > 0 이면 해당 값 우선 사용
-
-        # 파일 저장 설정
-        save_file_name = None
-        if self.saveok.isChecked():
-            root = Tk()
-            root.withdraw()
-            save_file_name = filedialog.asksaveasfilename(
-                initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-            root.destroy()
-            if save_file_name:
-                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-        self.cycle_confirm.setEnabled(True)
-
-        excel_groups = [g for g in groups if g.data_type == 'excel']
-        folder_groups = [g for g in groups if g.data_type == 'folder']
-
-        tab_no = 0
-        writecolno = 0
-        self.progressBar.setValue(0)
-
-        # ═══ Excel 그룹 (신뢰성) ═══
-        if excel_groups:
-            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-            colorno = 0
-            dfs_output = []
-            col_name_output = []
-            filename = ""
-            total_excel = sum(len(g.paths) for g in excel_groups)
-            done_excel = 0
-
-            for g in excel_groups:
-                for datafilepath in g.paths:
-                    # 용량: 파일명에서 자동 추출, 없으면 0
-                    if "mAh" in datafilepath:
-                        mincapacity = name_capacity(datafilepath)
-                    else:
-                        mincapacity = 0
-
-                    filename = os.path.splitext(os.path.basename(datafilepath))[0]
-                    try:
-                        wb = xw.Book(datafilepath)
-                        df = wb.sheets("Plot Base Data").used_range.offset(1, 0).options(
-                            pd.DataFrame, index=False, header=False).value
-                        xw.apps.active.quit()
-                        df = df.drop(0).iloc[:, 1::2]
-                        df.reset_index(drop=True, inplace=True)
-                        df.index = df.index + 1
-                        col_name = [filename] * len(df.columns)
-                        df = df / mincapacity
-
-                        if df.iat[2, 0] < df.iat[0, 0] * 0.5:
-                            count = len(df)
-                            lastcount = int((count + int(count / 199) + 1) / 2 + 1)
-                            index = 0
-                            for ii in range(lastcount - 1):
-                                if index == 0 or index == 197:
-                                    index = index + 1
-                                else:
-                                    if index > 197 and (index - 197) % 199 == 0:
-                                        index = index + 1
-                                    else:
-                                        df.loc[index + 1, :] = df.loc[index + 1, :] + df.loc[index + 2, :]
-                                        df.drop(index + 2, axis=0, inplace=True)
-                                        index = index + 2
-                            df.reset_index(drop=True, inplace=True)
-                            df.index = df.index + 1
-
-                        columncount = 0
-                        for col, column in df.items():
-                            lgnd = filename if columncount == 0 else ""
-                            graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
-                                        "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
-                                        graphcolor[colorno % len(graphcolor)])
-                            columncount += 1
-                            colorno = (colorno + 1) % len(graphcolor)
-                        dfs_output.append(df)
-                        col_name_output += col_name
-                    except Exception as e:
-                        print(f"오류 발생: {e}")
-                        raise
-
-                    done_excel += 1
-                    self.progressBar.setValue(int(done_excel / total_excel * 100))
-
-            dfoutput = pd.concat(dfs_output, axis=1) if dfs_output else pd.DataFrame()
-            if self.saveok.isChecked() and save_file_name:
-                dfoutput.to_excel(writer, sheet_name="Approval_cycle", header=col_name_output)
-
-            if filename:
-                plt.suptitle(filename, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                plt.legend(loc="upper right")
-                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                output_fig(self.figsaveok, filename)
-                tab = QtWidgets.QWidget()
-                tab_layout = QtWidgets.QVBoxLayout(tab)
-                canvas = FigureCanvas(fig)
-                toolbar = NavigationToolbar(canvas, None)
-                tab_layout.addWidget(toolbar)
-                tab_layout.addWidget(canvas)
-                self.cycle_tab.addTab(tab, str(tab_no))
-                self.cycle_tab.setCurrentWidget(tab)
-                self.cycle_tab_reset.setEnabled(True)
-                tab_no += 1
-            plt.close(fig)
-
-        # ═══ Folder 그룹 ═══
-        if folder_groups:
-            # 전체 paths flatten + 병렬 로딩
-            all_paths = []
-            flat_idx_of = {}  # (gi, pi) → flat_idx
-            for gi, g in enumerate(folder_groups):
-                for pi, p in enumerate(g.paths):
-                    flat_idx_of[(gi, pi)] = len(all_paths)
-                    all_paths.append(p)
-
-            # 테이블 용량 → per-path 배열 구성 (테이블 데이터 사용 시)
-            _per_path_caps = None
-            if self._has_table_data():
-                _per_path_caps = []
-                for gi, g in enumerate(folder_groups):
-                    for pi in range(len(g.paths)):
-                        cap_val = 0.0
-                        if g.per_path_capacities and pi < len(g.per_path_capacities):
-                            cap_val = g.per_path_capacities[pi]
-                        _per_path_caps.append(cap_val)
-
-            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-                np.array(all_paths), mincapacity, firstCrate,
-                self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-                per_path_capacities=_per_path_caps
-            )
-
-            # ── 경로별 사이클 카테고리 분류 ──
-            _classify_results = {}  # {flat_idx: {sub_idx: classify_result}}
-            for fi, subs in subfolder_map.items():
-                _classify_results[fi] = {}
-                cap_val = _per_path_caps[fi] if _per_path_caps and fi < len(_per_path_caps) else 0
-                for sub_idx, ch_path in enumerate(subs):
-                    if 'Pattern' in os.path.basename(ch_path):
-                        continue
-                    try:
-                        cr = classify_channel_path(ch_path, cap_val)
-                        if cr:
-                            cr['channel'] = os.path.basename(ch_path)
-                            _classify_results[fi][sub_idx] = cr
-                    except Exception:
-                        pass
-            # 콘솔 요약 출력
-            _all_cr = [cr for fi_dict in _classify_results.values() for cr in fi_dict.values()]
-            if _all_cr:
-                _perf_logger.info('▶ 사이클 카테고리 분류 완료')
-                _pattern_logged = False
-                for cr in _all_cr:
-                    cat_parts = [f'{cat}:{n}' for cat, n in cr['counts'].items() if n > 0]
-                    src_tag = '[sch]' if 'sch_info' in cr else '[csv]'
-                    _perf_logger.info(
-                        f'  [{cr["cycler"]}] {cr["channel"]}  '
-                        f'{cr["test_type"]} {src_tag}  총 {cr["total_cycles"]}cyc  {", ".join(cat_parts)}'
-                    )
-                    # 가속수명 패턴: 첫 번째 채널만 한 번 출력
-                    if not _pattern_logged and 'accel_pattern' in cr:
-                        for line in format_accel_pattern(cr['accel_pattern']):
-                            _perf_logger.info(line)
-                        _pattern_logged = True
-
-            # 탭 할당: 개별=group별, 통합=file_idx별
-            if is_individual:
-                tab_units = [[gi] for gi in range(len(folder_groups))]
-            else:
-                by_file = OrderedDict()
-                for gi, g in enumerate(folder_groups):
-                    by_file.setdefault(g.file_idx, []).append(gi)
-                tab_units = list(by_file.values())
-
-            total_tabs = len(tab_units)
-            # 사용자 원본 설정 보존 (탭 단위 리셋용)
-            _user_xscale = xscale
-            _user_irscale = irscale
-
-            for tab_idx, group_indices in enumerate(tab_units):
-                # 탭 단위로 auto-detect 값 리셋
-                xscale = _user_xscale
-                irscale = _user_irscale
-                # 예상 채널 수 → figure 폭 동적 결정
-                _n_expected = 0
-                for _gi in group_indices:
-                    _g = folder_groups[_gi]
-                    for _pi in range(len(_g.paths)):
-                        _fi = flat_idx_of.get((_gi, _pi), -1)
-                        if _fi in subfolder_map:
-                            _n_expected += len(subfolder_map[_fi])
-                _fig_w = 14
-                if _n_expected > 15:
-                    _fig_w = min(14 + (_n_expected - 15) * 0.2, 20)
-                elif _n_expected > 8:
-                    _fig_w = min(14 + (_n_expected - 8) * 0.15, 17)
-
-                fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(_fig_w, 8))
-                axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
-
-                tab = None
-                tab_layout = None
-                canvas = None
-                toolbar = None
-                channel_map = {}
-                sub_channel_map = {}
-                _seen_ch_labels = set()
-                has_valid_data = False
-                colorno = 0
-                cycnamelist = None
-                suptitle_name = None
-
-                for gi in group_indices:
-                    group = folder_groups[gi]
-                    flat_indices = [flat_idx_of[(gi, pi)] for pi in range(len(group.paths))]
-
-                    if group.is_link:
-                        # ═══ 연결 모드: sub_label별 병합 ═══
-                        merged = {}
-                        channel_state = {}  # {sub_label: {'offset': int, 'last_len': int}}
-                        _first_ch_label = None
-                        # 채널 필터·위치 매핑 준비
-                        _has_ch_filter = bool(group.per_path_channels)
-                        _link_map = group.channel_link_map  # {norm_ch: unified_sub}
-
-                        for path_idx, fi in enumerate(flat_indices):
-                            if fi not in subfolder_map:
-                                continue
-                            subfolder = subfolder_map[fi]
-                            local_colorno = 0
-                            # 이 path에 허용된 채널 목록
-                            _allowed_chs = (group.per_path_channels[path_idx]
-                                            if _has_ch_filter and path_idx < len(group.per_path_channels)
-                                            else [])
-
-                            for sub_idx, FolderBase in enumerate(subfolder):
-                                if (fi, sub_idx) not in loaded_data:
-                                    continue
-                                folder_path, cyctemp = loaded_data[(fi, sub_idx)]
-                                if cyctemp is None or cyctemp[1] is None:
-                                    continue
-
-                                has_valid_data = True
-                                cycnamelist = FolderBase.split("\\")
-                                headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-
-                                sub_label = extract_text_in_brackets(cycnamelist[-1])
-                                # 채널 필터 적용 (정규화 비교)
-                                if _allowed_chs and _normalize_ch(sub_label) not in _allowed_chs:
-                                    continue
-                                # 위치 기반 채널 매핑: 같은 위치의 채널을 통합 label로 병합
-                                if _link_map:
-                                    norm = _normalize_ch(sub_label)
-                                    sub_label = _link_map.get(norm, sub_label)
-                                if group.path_names and group.path_names[path_idx]:
-                                    ch_label = str(group.path_names[path_idx]).strip()
-                                else:
-                                    ch_label = cycnamelist[-2]
-                                if not ch_label:
-                                    ch_label = cycnamelist[-2]
-                                if "mAh_" in ch_label:
-                                    ch_label = ch_label.split("mAh_", 1)[1]
-                                if len(ch_label) > 30:
-                                    ch_label = ch_label[:30] + "..."
-
-                                if _first_ch_label is None:
-                                    _first_ch_label = ch_label
-                                ch_label = _first_ch_label
-
-                                if hasattr(cyctemp[1], "NewData"):
-                                    if irscale == 0 and cyctemp[0] != 0:
-                                        irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
-                                        irscale = min(irscale, 20)  # DC-IR 스케일 상한 제한
-
-                                    # index 오프셋 적용
-                                    if sub_label not in channel_state:
-                                        channel_state[sub_label] = {'offset': 0, 'last_len': 0}
-                                    st = channel_state[sub_label]
-                                    writerowno = st['offset'] + st['last_len']
-                                    cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
-                                    st['offset'] = writerowno
-                                    st['last_len'] = len(cyctemp[1].NewData)
-
-                                    if sub_label not in merged:
-                                        merged[sub_label] = {
-                                            'frames': [], 'colorno': local_colorno, 'ch_label': ch_label
-                                        }
-                                    merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
-
-                                    if self.saveok.isChecked() and save_file_name:
-                                        self._save_cycle_excel_data(
-                                            cyctemp[1].NewData, writecolno, writerowno, headername)
-                                        writecolno += 2
-                                    local_colorno += 1
-
-                        # 병합 데이터로 plot
-                        for sub_label, info in merged.items():
-                            merged_df = pd.concat(info['frames']).sort_index()
-                            _wrapper = type('CycData', (), {'NewData': merged_df})()
-
-                            if tab is None:
-                                tab = QtWidgets.QWidget()
-                                tab_layout = QtWidgets.QVBoxLayout(tab)
-                                canvas = FigureCanvas(fig)
-                                toolbar = NavigationToolbar(canvas, None)
-
-                            if not is_individual:
-                                if info['ch_label'] not in _seen_ch_labels:
-                                    lgnd = info['ch_label'].split("_")[-1] if "_" in info['ch_label'] else info['ch_label']
-                                    _seen_ch_labels.add(info['ch_label'])
-                                else:
-                                    lgnd = "_nolegend_"
-                            else:
-                                lgnd = sub_label
-
-                            # 개별: sub_label별 다른 색 / 통합: 그룹(ch_label) 동일 색
-                            _plot_colorno = info['colorno'] + colorno if is_individual else colorno
-
-                            _artists, _color = graph_output_cycle(
-                                _wrapper, xscale, ylimitlow, ylimithigh, irscale, lgnd,
-                                _plot_colorno, graphcolor, self.mkdcir,
-                                ax1, ax2, ax3, ax4, ax5, ax6
-                            )
-
-                            _ch = info['ch_label']
-                            _base = _ch
-                            _sfx = 2
-                            while _ch in channel_map and channel_map[_ch]['color'] != _color:
-                                _ch = f"{_base} ({_sfx})"
-                                _sfx += 1
-                            if _ch in channel_map:
-                                channel_map[_ch]['artists'].extend(_artists)
-                            else:
-                                channel_map[_ch] = {'artists': _artists, 'color': _color}
-                            sub_channel_map[sub_label] = {
-                                'artists': list(_artists), 'color': _color, 'parent': _ch}
-
-                        # 개별: sub 수만큼 증가 / 통합: 그룹 1개분만 증가
-                        if is_individual:
-                            colorno += len(merged)
-                        else:
-                            colorno += 1
-
-                    else:
-                        # ═══ 비연결 모드: 각 sub 직접 plot ═══
-                        _has_ch_filter = bool(group.per_path_channels)
-                        for path_idx, fi in enumerate(flat_indices):
-                            if fi not in subfolder_map:
-                                continue
-                            subfolder = subfolder_map[fi]
-                            _allowed_chs = (group.per_path_channels[path_idx]
-                                            if _has_ch_filter and path_idx < len(group.per_path_channels)
-                                            else [])
-
-                            for sub_idx, FolderBase in enumerate(subfolder):
-                                if (fi, sub_idx) not in loaded_data:
-                                    continue
-                                folder_path, cyctemp = loaded_data[(fi, sub_idx)]
-                                if cyctemp is None or cyctemp[1] is None:
-                                    continue
-
-                                if tab is None:
-                                    tab = QtWidgets.QWidget()
-                                    tab_layout = QtWidgets.QVBoxLayout(tab)
-                                    canvas = FigureCanvas(fig)
-                                    toolbar = NavigationToolbar(canvas, None)
-
-                                has_valid_data = True
-                                cycnamelist = FolderBase.split("\\")
-                                headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
-
-                                sub_label = extract_text_in_brackets(cycnamelist[-1])
-                                # 채널 필터 적용 (정규화 비교)
-                                if _allowed_chs and _normalize_ch(sub_label) not in _allowed_chs:
-                                    continue
-                                if group.path_names and group.path_names[path_idx]:
-                                    ch_label = str(group.path_names[path_idx]).strip()
-                                else:
-                                    ch_label = cycnamelist[-2]
-                                if not ch_label:
-                                    ch_label = cycnamelist[-2]
-                                if "mAh_" in ch_label:
-                                    ch_label = ch_label.split("mAh_", 1)[1]
-                                if len(ch_label) > 30:
-                                    ch_label = ch_label[:30] + "..."
-
-                                if not is_individual:
-                                    if ch_label not in _seen_ch_labels:
-                                        lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
-                                        _seen_ch_labels.add(ch_label)
-                                    else:
-                                        lgnd = "_nolegend_"
-                                else:
-                                    lgnd = sub_label
-
-                                if hasattr(cyctemp[1], "NewData"):
-                                    if float(self.dcirscale.text()) == 0 and cyctemp[0] != 0:
-                                        new_irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
-                                        new_irscale = min(new_irscale, 20)  # DC-IR 스케일 상한 제한
-                                        irscale = max(irscale, new_irscale)
-
-                                    _artists, _color = graph_output_cycle(
-                                        cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd,
-                                        colorno, graphcolor, self.mkdcir,
-                                        ax1, ax2, ax3, ax4, ax5, ax6
-                                    )
-
-                                    _base = ch_label
-                                    _sfx = 2
-                                    while ch_label in channel_map and channel_map[ch_label]['color'] != _color:
-                                        ch_label = f"{_base} ({_sfx})"
-                                        _sfx += 1
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': _artists, 'color': _color}
-
-                                    _sub_base = sub_label
-                                    _sub_sfx = 2
-                                    while sub_label in sub_channel_map:
-                                        sub_label = f"{_sub_base} ({_sub_sfx})"
-                                        _sub_sfx += 1
-                                    sub_channel_map[sub_label] = {
-                                        'artists': list(_artists), 'color': _color, 'parent': ch_label}
-
-                                    if is_individual:
-                                        colorno += 1
-
-                                    if self.saveok.isChecked() and save_file_name:
-                                        self._save_cycle_excel_data(
-                                            cyctemp[1].NewData, writecolno, 0, headername)
-                                        writecolno += 2
-
-                        # 개별 모드: 그룹(탭)별 색상 리셋
-                        if is_individual:
-                            colorno = 0
-                        else:
-                            colorno = colorno % len(THEME['PALETTE']) + 1
-
-                # suptitle 결정
-                if cycnamelist:
-                    suptitle_name = cycnamelist[-2]
-                    for gi in group_indices:
-                        g = folder_groups[gi]
-                        if g.source_file:
-                            base = os.path.splitext(os.path.basename(g.source_file))[0]
-                            if base:
-                                suptitle_name = base
-                            break
-                if suptitle_name:
-                    plt.suptitle(suptitle_name, fontsize=THEME['SUPTITLE_SIZE'],
-                                 fontweight=THEME['SUPTITLE_WEIGHT'])
-
-                # 범례 설정
-                # 축 범위 자동 조정 (xlim 동기화, ylim 확장, DCIR 상한 제한)
-                if has_valid_data:
-                    _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale)
-
-                if has_valid_data:
-                    n_legend = len(channel_map)
-                    if not is_individual:
-                        _lkw = dict(fontsize=THEME['LEGEND_SIZE'],
-                                    framealpha=THEME['LEGEND_FRAMEALPHA'],
-                                    edgecolor=THEME['LEGEND_EDGECOLOR'], fancybox=True)
-                        # 채널 수에 따른 범례 크기/열 수 조정
-                        if n_legend > 15:
-                            _lkw['fontsize'] = 'x-small'
-                            _lkw['ncol'] = 3
-                            _lkw['columnspacing'] = 0.5
-                            _lkw['handletextpad'] = 0.3
-                        elif n_legend > 8:
-                            _lkw['fontsize'] = 'x-small'
-                            _lkw['ncol'] = 2
-                            _lkw['columnspacing'] = 0.5
-
-                        # 범례 항목이 매우 많으면 → figure 오른쪽 외부에 공용 범례 1개
-                        if n_legend > 8:
-                            # ax1에서 고유 범례 항목 수집
-                            _handles, _labels = ax1.get_legend_handles_labels()
-                            _seen = set()
-                            _hl_unique = []
-                            for h, l in zip(_handles, _labels):
-                                if l and not l.startswith('_') and l not in _seen:
-                                    _seen.add(l)
-                                    _hl_unique.append((h, l))
-                            # 개별 subplot 범례 제거
-                            for _ax in axes_list:
-                                _leg = _ax.get_legend()
-                                if _leg:
-                                    _leg.remove()
-                            # figure 범례 배치 (오른쪽 외부)
-                            if _hl_unique:
-                                _fig_leg_kw = dict(
-                                    fontsize='x-small',
-                                    framealpha=THEME['LEGEND_FRAMEALPHA'],
-                                    edgecolor=THEME['LEGEND_EDGECOLOR'],
-                                    fancybox=True,
-                                    handletextpad=0.3,
-                                    labelspacing=0.3,
-                                )
-                                _ncol_fig = 1
-                                if n_legend > 30:
-                                    _ncol_fig = 2
-                                    _fig_leg_kw['columnspacing'] = 0.8
-                                fig.legend(
-                                    [h for h, l in _hl_unique],
-                                    [l for h, l in _hl_unique],
-                                    loc='center right',
-                                    ncol=_ncol_fig,
-                                    **_fig_leg_kw
-                                )
-                            # tight_layout에서 범례 공간 확보 (오른쪽 여백)
-                            self._cycle_legend_outside = True
-                        else:
-                            _legend_locs = [
-                                (ax1, "lower left", (0, 0)), (ax2, "lower right", (1, 0)),
-                                (ax3, "upper right", (1, 1)), (ax4, "upper right", (1, 1)),
-                                (ax5, "upper right", (1, 1)), (ax6, "lower right", (1, 0)),
-                            ]
-                            for _ax, _loc, _anchor in _legend_locs:
-                                _handles, _labels = _ax.get_legend_handles_labels()
-                                _hl = [(h, l) for h, l in zip(_handles, _labels)
-                                       if l and not l.startswith('_')]
-                                _seen = set()
-                                _hl_unique = []
-                                for h, l in _hl:
-                                    if l not in _seen:
-                                        _seen.add(l)
-                                        _hl_unique.append((h, l))
-                                if _hl_unique:
-                                    _ax.legend([h for h, l in _hl_unique],
-                                               [l for h, l in _hl_unique],
-                                               loc=_loc, bbox_to_anchor=_anchor,
-                                               borderaxespad=0.5, **_lkw)
-                            self._cycle_legend_outside = False
-                    else:
-                        _lkw_ind = {}
-                        if n_legend > 15:
-                            _lkw_ind = dict(fontsize='x-small', ncol=3,
-                                            columnspacing=0.5, handletextpad=0.3)
-                        elif n_legend > 8:
-                            _lkw_ind = dict(fontsize='x-small', ncol=2,
-                                            columnspacing=0.5)
-                        ax1.legend(loc="lower left", **_lkw_ind)
-                        ax2.legend(loc="lower right", **_lkw_ind)
-                        ax3.legend(loc="upper right", **_lkw_ind)
-                        ax4.legend(loc="upper right", **_lkw_ind)
-                        ax5.legend(loc="upper right", **_lkw_ind)
-                        ax6.legend(loc="lower right", **_lkw_ind)
-                        self._cycle_legend_outside = False
-                    place_dcir_labels(ax4)
-                    # DCIR(ax4) x축 범위를 방전용량(ax1)과 동일하게 설정
-                    ax4.set_xlim(ax1.get_xlim())
-                    place_avgrest_labels(ax6)
-                    _opaque_legend_markers(*axes_list)
-                    # figure 범례(외부 범례)도 alpha 보정
-                    for _fig_leg in fig.legends:
-                        for handle in _fig_leg.legend_handles:
-                            handle.set_alpha(1.0)
-
-                # 탭 추가
-                if has_valid_data and tab_layout is not None:
-                    # 이 탭에 해당하는 분류 결과 수집
-                    _tab_classify = []
-                    for gi in group_indices:
-                        _g = folder_groups[gi]
-                        for _pi in range(len(_g.paths)):
-                            _fi = flat_idx_of.get((gi, _pi), -1)
-                            if _fi in _classify_results:
-                                for _si, _cr in _classify_results[_fi].items():
-                                    _tab_classify.append(_cr)
-                    # Figure 저장용 컨텍스트 구성
-                    _first_group = folder_groups[group_indices[0]]
-                    _save_ctx = {
-                        'source_file': _first_group.source_file,
-                        'data_paths': [p for gi in group_indices
-                                       for p in folder_groups[gi].paths],
-                        'is_link': _first_group.is_link,
-                        'per_path_capacities': [
-                            c for gi in group_indices
-                            for c in (folder_groups[gi].per_path_capacities
-                                      or [0.0] * len(folder_groups[gi].paths))],
-                        'channel_link_map': _first_group.channel_link_map,
-                        'per_path_channels': [
-                            ch for gi in group_indices
-                            for ch in (folder_groups[gi].per_path_channels
-                                       or [[] for _ in folder_groups[gi].paths])],
-                        'firstCrate': firstCrate,
-                        'mincapacity': mincapacity,
-                        'xscale': xscale,
-                        'ylimitlow': ylimitlow,
-                        'ylimithigh': ylimithigh,
-                        'irscale': irscale,
-                        'dcirchk': self.dcirchk.isChecked(),
-                        'dcirchk_2': self.dcirchk_2.isChecked(),
-                        'mkdcir': self.mkdcir.isChecked(),
-                        'tab_mode': 'individual' if is_individual else 'overall',
-                    }
-                    self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                             channel_map, fig, axes_list, sub_channel_map,
-                                             classify_info=_tab_classify if _tab_classify else None,
-                                             save_context=_save_ctx)
-                    tab_no += 1
-                    if suptitle_name:
-                        output_fig(self.figsaveok, suptitle_name)
-                else:
-                    plt.close(fig)
-
-                # 진행률
-                self.progressBar.setValue(50 + int((tab_idx + 1) / total_tabs * 50))
-
-            # Phase 2: 실측 1st Dchg 교차 검증 (measured 데이터 구축 → Phase 1 재호출)
-            if self._has_table_data():
-                _measured = self._collect_measured_first_dchg(
-                    loaded_data, subfolder_map, len(all_paths))
-                self._build_row_measured_map(_measured, flat_idx_of, folder_groups)
-                self._highlight_capacity_mismatch()
-
-        if self.saveok.isChecked() and save_file_name:
-            writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
-
     def cyc_ini_set(self):
-        set_coincell_mode(self.chk_coincell_cyc.isChecked())
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
-        mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
+        if self.inicaprate.isChecked():
+            mincapacity = 0
+        elif self.inicaptype.isChecked():
+            mincapacity = float(self.capacitytext.text())
         xscale = int(self.tcyclerng.text())
         ylimithigh = float(self.tcyclerngyhl.text())
         ylimitlow = float(self.tcyclerngyll.text())
@@ -13241,7 +8257,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def Profile_ini_set(self):
         # UI 기준 초기 설정 데이터
         firstCrate = float(self.ratetext.text())
-        mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
+        if self.inicaprate.isChecked():
+            mincapacity = 0
+        elif self.inicaptype.isChecked():
+            mincapacity = float(self.capacitytext.text())
         CycleNo = convert_steplist(self.stepnum.toPlainText())
         smoothdegree = int(self.smooth.text())
         mincrate = float(self.cutoff.text())
@@ -13261,10 +8280,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         sys.exit()
 
     def inicaprate_on(self):
-        pass  # 하위 호환 유지 (용량 테이블 통합으로 더 이상 사용하지 않음)
+        self.inicaprate.setChecked(True)
 
     def inicaptype_on(self):
-        pass  # 하위 호환 유지 (용량 테이블 통합으로 더 이상 사용하지 않음)
+        self.inicaptype.setChecked(True)
 
     def pne_path_setting(self):
         all_data_name = []
@@ -13274,1967 +8293,1578 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if self.chk_cyclepath.isChecked():
             datafilepath = filedialog.askopenfilename(initialdir="d://", title="Choose Test files")
             if datafilepath:
-                # 가변 컬럼 수 지원: cyclepath=마지막 탭 필드, cyclename=나머지 합침
-                rows = []
-                with open(datafilepath, 'r', encoding='UTF-8') as f:
-                    header_line = f.readline()  # 헤더 스킵
-                    for line in f:
-                        parts = [p.strip().strip('"').strip("'") for p in line.strip().split('\t')]
-                        if len(parts) >= 2:
-                            rows.append({'cyclename': ' '.join(parts[:-1]), 'cyclepath': parts[-1]})
-                if rows:
-                    cycle_path = pd.DataFrame(rows)
-                else:
-                    cycle_path = pd.DataFrame()
-                if hasattr(cycle_path, "cyclepath") and len(cycle_path) > 0:
-                    all_data_folder = np.array([p.strip().strip('"').strip("'") for p in cycle_path.cyclepath.tolist()])
-                    if hasattr(cycle_path, "cyclename"):
-                        all_data_name = np.array([n.strip().strip('"').strip("'") for n in cycle_path.cyclename.tolist()])
-                    if "mAh" in datafilepath:
+                cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
+                if hasattr(cycle_path,"cyclepath"):
+                    all_data_folder = np.array(cycle_path.cyclepath.tolist())
+                    if hasattr(cycle_path,"cyclename"):
+                        all_data_name = np.array(cycle_path.cyclename.tolist())
+                    if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
                         self.mincapacity = name_capacity(datafilepath)
+                        self.capacitytext.setText(str(self.mincapacity))
                 else:
                     all_data_folder = multi_askopendirnames()
             else:
                 all_data_folder = multi_askopendirnames()
-        elif self._has_table_data():
-            table_rows = self._get_table_rows()
-            datafilepath = [r['path'] for r in table_rows]
+        elif self.stepnum_2.toPlainText() != "":
+            datafilepath = list(map(str, self.stepnum_2.toPlainText().split('\n')))
             all_data_folder = np.array(datafilepath)
-            names = [r['name'] for r in table_rows if r['name']]
-            if names:
-                all_data_name = np.array([r['name'] for r in table_rows])
         else:
             all_data_folder = multi_askopendirnames()
             datafilepath = all_data_folder
         return [all_data_folder, all_data_name, datafilepath]
 
+    def app_pne_path_setting(self):
+        all_data_name = []
+        all_data_folder = multi_askopendirnames()
+        return [all_data_folder, all_data_name]
+
     def cycle_tab_reset_confirm_button(self):
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
-        self.cycle_tab_reset.setEnabled(False)
-
-    def _update_cell_tooltip(self, row: int, col: int) -> None:
-        """셀 편집 시 툴팁 자동 갱신 + 경로 존재 여부 + 그룹 구분선"""
-        if self._table_undo_restoring:
-            return
-        item = self.cycle_path_table.item(row, col)
-        if item:
-            item.setToolTip(item.text())
-        # 경로 컬럼(1) 변경 시 존재 여부 시각 표시 및 구분선 갱신
-        if col == 1:
-            self._highlight_path_cell(row)
-            self._update_group_separators()
-
-    # ── 테이블 ↔ 데이터 유틸리티 ──
-
-    def _get_table_cell(self, row, col):
-        """테이블 셀 텍스트를 안전하게 반환 (None → '', 따옴표 제거)"""
-        item = self.cycle_path_table.item(row, col)
-        return item.text().strip().strip('"').strip("'") if item else ''
-
-    def _get_table_rows(self):
-        """테이블의 모든 행을 dict 리스트로 반환 (빈 행 제외)
-        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str}, ...]
-        """
-        rows = []
-        for r in range(self.cycle_path_table.rowCount()):
-            path = self._get_table_cell(r, 1)
-            if not path:
-                continue
-            rows.append({
-                'name': self._get_table_cell(r, 0),
-                'path': path,
-                'channel': self._get_table_cell(r, 2),
-                'capacity': self._get_table_cell(r, 3),
-            })
-        return rows
-
-    def _has_table_data(self):
-        """테이블에 데이터가 1행이라도 있으면 True"""
-        for r in range(self.cycle_path_table.rowCount()):
-            if self._get_table_cell(r, 1):
-                return True
-        return False
-
-    def _get_table_row_groups(self):
-        """테이블 행을 빈 행 기준으로 그룹 분리하여 반환
-        빈 행(경로 없음)이 그룹 구분자 역할.
-        Returns: list[list[dict]] — 각 그룹은 연속된 행의 dict 리스트
-        """
-        groups = []
-        current_group = []
-        for r in range(self.cycle_path_table.rowCount()):
-            path = self._get_table_cell(r, 1)
-            if not path:
-                if current_group:
-                    groups.append(current_group)
-                    current_group = []
-                continue
-            current_group.append({
-                'name': self._get_table_cell(r, 0),
-                'path': path,
-                'channel': self._get_table_cell(r, 2),
-                'capacity': self._get_table_cell(r, 3),
-            })
-        if current_group:
-            groups.append(current_group)
-        return groups
-
-    def _autofill_table_empty_cells(self):
-        """사이클 분석 시 테이블 셀 자동 채우기
-        경로(col1)를 기준으로 경로명(col0), 채널(col2), 용량(col3) 유추
-        - 빈 셀: 자동 산정값으로 채움
-        - 기존값 있음 + 자동값과 동일: 폰트 유지
-        - 기존값 있음 + 자동값과 다름: 기존값 유지, bold 폰트 처리
-        - 연결 모드: 그룹 내 첫 행과 동일한 값은 후속 행에 채우지 않음
-          다른 값만 후속 행에 표시
-        """
-        tbl = self.cycle_path_table
-        link_mode = self.chk_link_cycle.isChecked()
-        tbl.blockSignals(True)
-        try:
-            # ── Pass 1: 각 행의 자동값 산정 ──
-            auto_vals = []  # [{'name':..,'ch':..,'cap':..} or None]
-            for r in range(tbl.rowCount()):
-                path = self._get_table_cell(r, 1)
-                if not path:
-                    auto_vals.append(None)
-                    continue
-                # 경로명
-                basename = os.path.basename(path)
-                auto_name = basename
-                if "mAh_" in auto_name:
-                    auto_name = auto_name.split("mAh_", 1)[1]
-                if len(auto_name) > 30:
-                    auto_name = auto_name[:30] + "..."
-                # 채널
-                auto_ch = ""
-                if os.path.isdir(path):
-                    subfolders = sorted(
-                        [f.name for f in os.scandir(path)
-                         if f.is_dir() and "Pattern" not in f.name
-                         and _is_channel_folder(f.name)])
-                    channels = []
-                    for sf in subfolders:
-                        ch = extract_text_in_brackets(sf)
-                        channels.append(ch)
-                    if channels:
-                        auto_ch = ",".join(channels)
-                # 용량
-                auto_cap = None
-                if "mAh" in path:
-                    auto_cap = name_capacity(path)
-                if not auto_cap and os.path.isdir(path):
-                    try:
-                        first_crate = float(self.ratetext.text())
-                        subs = sorted([f.path for f in os.scandir(path)
-                                       if f.is_dir() and "Pattern" not in f.name])
-                        if subs:
-                            if check_cycler(path):
-                                auto_cap = pne_min_cap(subs[0], 0, first_crate)
-                            else:
-                                auto_cap = toyo_min_cap(subs[0], 0, first_crate)
-                    except Exception:
-                        auto_cap = None
-                auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
-                auto_vals.append({
-                    'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str})
-
-            # ── Pass 2: 셀 채우기 (연결 모드 시 그룹 내 중복 제거) ──
-            grp_first = None  # 그룹 첫 행의 auto값 dict
-            for r in range(tbl.rowCount()):
-                if auto_vals[r] is None:
-                    grp_first = None
-                    continue
-                auto = auto_vals[r]
-                is_grp_first = (grp_first is None)
-                if is_grp_first:
-                    grp_first = auto
-                # (col, 이 행의 자동값, 그룹 첫 행의 자동값)
-                cols = [
-                    (0, auto['name'], grp_first['name']),
-                    (2, auto['ch'],   grp_first['ch']),
-                    (3, auto['cap'],  grp_first['cap']),
-                ]
-                for col, auto_val, first_val in cols:
-                    existing = self._get_table_cell(r, col)
-                    # 연결 모드 후속 행:
-                    #   col 0(경로명): 항상 공란 (첫 행에만 표시)
-                    #   col 2,3(채널,용량): 첫 행과 동일하면 공란
-                    if link_mode and not is_grp_first and col == 0:
-                        skip_dup = True
-                    else:
-                        skip_dup = (link_mode and not is_grp_first
-                                    and auto_val and first_val
-                                    and auto_val.strip() == first_val.strip())
-                    if not existing:
-                        if auto_val and not skip_dup:
-                            item = tbl.item(r, col)
-                            if item is None:
-                                item = QtWidgets.QTableWidgetItem(auto_val)
-                                tbl.setItem(r, col, item)
-                            else:
-                                item.setText(auto_val)
-                            item.setToolTip(auto_val)
-                    else:
-                        # 기존값 bold 비교
-                        if auto_val:
-                            item = tbl.item(r, col)
-                            if item:
-                                font = item.font()
-                                font.setBold(
-                                    existing.strip() != auto_val.strip())
-                                item.setFont(font)
-        finally:
-            tbl.blockSignals(False)
-        # 경로 하이라이트 갱신
-        self._highlight_all_paths()
-        # 연결 모드: 채널 불일치 빨간 폰트 표시
-        self._highlight_channel_mismatch()
-        # 연결 모드: 용량 불일치 빨간 폰트 표시
-        self._highlight_capacity_mismatch()
-
-    def _set_table_rows(self, rows):
-        """dict 리스트를 테이블에 채움. None 항목은 빈 행(그룹 구분자)."""
-        self.cycle_path_table.setRowCount(max(len(rows), 5))
-        for r, row in enumerate(rows):
-            if row is None:
-                # 그룹 구분자: 빈 행
-                for col in range(4):
-                    self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
-                continue
-            for col, key in enumerate(['name', 'path', 'channel', 'capacity']):
-                val = row.get(key, '')
-                item = QtWidgets.QTableWidgetItem(val)
-                item.setToolTip(val)
-                self.cycle_path_table.setItem(r, col, item)
-
-    def _clear_table(self):
-        """테이블 내용 초기화"""
-        self.cycle_path_table.setRowCount(5)
-        self.cycle_path_table.clearContents()
-
-    @staticmethod
-    def _detect_path_columns(header_line):
-        """헤더 줄에서 열 이름 → 위치 매핑 반환.
-        지원 헤더 형식:
-          cyclename\tcyclepath\tchannel\tcapacity  (4열 신규)
-          cyclename\tcyclepath                      (2열 이전1/2)
-          cyclepath\tchannel\tcapacity              (3열 이전3)
-          cyclepath                                 (1열 이전4)
-        Returns: {'name': int|None, 'path': int, 'channel': int|None, 'capacity': int|None}
-        """
-        cols = [c.strip().lower() for c in header_line.rstrip('\n\r').split('\t')]
-        mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None}
-        # 알려진 별명 → 키 매핑
-        alias = {
-            'cyclename': 'name', 'name': 'name',
-            'cyclepath': 'path', 'path': 'path',
-            'channel': 'channel', 'ch': 'channel',
-            'capacity': 'capacity', 'cap': 'capacity',
-        }
-        for idx, col in enumerate(cols):
-            key = alias.get(col)
-            if key:
-                mapping[key] = idx
-        # path 열이 감지되지 않으면 → 첫 번째 열을 path로 간주
-        if mapping['path'] is None:
-            mapping['path'] = 0
-        return mapping
-
-    def _load_path_file_to_table(self):
-        """Path 파일(.txt)을 읽어 테이블에 채움
-        헤더 기반 열 자동 감지로 모든 이전 형식 지원:
-          4열(신규), 2열(이전1/2), 3열(이전3), 1열(이전4)
-        """
+    
+    def app_cyc_confirm_button(self):
+        # 버튼 비활성화
+        global writer
+        self.AppCycState = True
+        self.AppCycConfirm.setDisabled(True)
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
+                      '#17becf', ]
+        filecount,colorno , columncount = 0, 0, 0
+        dfoutput = pd.DataFrame()
+        col_name_output = []
         root = Tk()
         root.withdraw()
-        fp = filedialog.askopenfilename(
-            initialdir="d://", title="Path 파일 선택",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
-        if not fp:
-            return
-        rows = []  # dict 또는 None(빈 행)
-        link_mode = None
-        with open(fp, 'r', encoding='UTF-8') as f:
-            # DRM 회피용 공란 + 메타데이터 스킵 → 헤더 줄 캡처
-            header_line = None
-            for raw in f:
-                stripped = raw.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith('#link_mode='):
-                    link_mode = stripped.split('=', 1)[1].strip() == '1'
-                    continue
-                header_line = raw  # 헤더 줄 보존
-                break
-            if header_line is None:
-                return
-            col_map = self._detect_path_columns(header_line)
-            # 데이터 줄 파싱
-            for line in f:
-                if not line.strip():
-                    rows.append(None)  # 그룹 구분자 (빈 행)
-                    continue
-                parts = [p.strip().strip('"').strip("'")
-                         for p in line.rstrip('\n\r').split('\t')]
-                path = parts[col_map['path']] if col_map['path'] < len(parts) else ''
-                name = parts[col_map['name']] if col_map['name'] is not None and col_map['name'] < len(parts) else ''
-                channel = parts[col_map['channel']] if col_map['channel'] is not None and col_map['channel'] < len(parts) else ''
-                capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
-                if path:
-                    rows.append({'name': name, 'path': path,
-                                 'channel': channel, 'capacity': capacity})
-                elif name or channel or capacity:
-                    # path 비어있지만 다른 열에 값 있으면 → 데이터 행
-                    rows.append({'name': name, 'path': '',
-                                 'channel': channel, 'capacity': capacity})
-        # 연결처리 체크박스 복원
-        if link_mode is not None and self.chk_link_cycle.isEnabled():
-            self.chk_link_cycle.setChecked(link_mode)
-        if rows:
-            self._set_table_rows(rows)
-
-    def _save_table_to_path_file(self):
-        """테이블 내용을 4열 탭구분 Path 파일로 저장
-        - 연결처리 상태를 메타데이터로 보존
-        - 빈 행(그룹 구분자)도 함께 저장
-        """
-        if not self._has_table_data():
-            return
-        root = Tk()
-        root.withdraw()
-        fp = filedialog.asksaveasfilename(
-            initialdir="d://", title="Path 파일 저장",
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
-        if not fp:
-            return
-        link_mode = self.chk_link_cycle.isChecked()
-        with open(fp, 'w', encoding='UTF-8') as f:
-            f.write("\n")  # DRM 회피용 공란
-            f.write(f"#link_mode={int(link_mode)}\n")
-            f.write("cyclename\tcyclepath\tchannel\tcapacity\n")
-            # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
-            last_data_row = -1
-            for r in range(self.cycle_path_table.rowCount()):
-                if self._get_table_cell(r, 1):
-                    last_data_row = r
-            for r in range(last_data_row + 1):
-                name = self._get_table_cell(r, 0)
-                path = self._get_table_cell(r, 1)
-                ch = self._get_table_cell(r, 2)
-                cap = self._get_table_cell(r, 3)
-                if path:
-                    f.write(f"{name}\t{path}\t{ch}\t{cap}\n")
-                elif link_mode:
-                    f.write("\n")  # 그룹 구분자 (빈 행)
-
-    def _cycle_table_copy(self):
-        """선택 셀 → 클립보드 (탭 구분, 여러 행/열 지원)"""
-        sel = self.cycle_path_table.selectedRanges()
-        if not sel:
-            return
-        lines = []
-        for r in range(sel[0].topRow(), sel[0].bottomRow() + 1):
-            cols = []
-            for c in range(sel[0].leftColumn(), sel[0].rightColumn() + 1):
-                cols.append(self._get_table_cell(r, c))
-            lines.append('\t'.join(cols))
-        QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
-
-    def _cycle_table_paste(self):
-        """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)"""
-        text = QtWidgets.QApplication.clipboard().text()
-        if not text:
-            return
-        self._push_table_undo()
-        # 빈 행 보존하되, 연속 2칸 이상 빈 행은 1칸으로 축소
-        raw_lines = text.strip().split('\n')
-        rows = []
-        prev_empty = False
-        for line in raw_lines:
-            is_empty = not line.strip()
-            if is_empty:
-                if not prev_empty:
-                    rows.append([''] * self.cycle_path_table.columnCount())
-                prev_empty = True
-            else:
-                rows.append(line.split('\t'))
-                prev_empty = False
-        # 맨 끝 빈 행 제거
-        while rows and all(c == '' for c in rows[-1]):
-            rows.pop()
-        if not rows:
-            return
-        sel = self.cycle_path_table.selectedRanges()
-        start_row = sel[0].topRow() if sel else 0
-        start_col = sel[0].leftColumn() if sel else 0
-        need_rows = start_row + len(rows)
-        if need_rows > self.cycle_path_table.rowCount():
-            self.cycle_path_table.setRowCount(need_rows)
-        col_count = self.cycle_path_table.columnCount()
-        for ri, parts in enumerate(rows):
-            for ci, val in enumerate(parts):
-                c = start_col + ci
-                if c < col_count:
-                    self.cycle_path_table.setItem(
-                        start_row + ri, c, QtWidgets.QTableWidgetItem(val.strip().strip('"').strip("'")))
-
-    def _cycle_table_delete(self):
-        """선택 셀 내용 삭제"""
-        self._push_table_undo()
-        for item in self.cycle_path_table.selectedItems():
-            item.setText('')
-
-    def _swap_table_rows(self, row1, row2):
-        """테이블 두 행의 내용을 교환"""
-        tbl = self.cycle_path_table
-        for c in range(tbl.columnCount()):
-            text1 = self._get_table_cell(row1, c)
-            text2 = self._get_table_cell(row2, c)
-            item1 = tbl.item(row1, c)
-            item2 = tbl.item(row2, c)
-            if item1 is None:
-                item1 = QtWidgets.QTableWidgetItem('')
-                tbl.setItem(row1, c, item1)
-            if item2 is None:
-                item2 = QtWidgets.QTableWidgetItem('')
-                tbl.setItem(row2, c, item2)
-            item1.setText(text2)
-            item1.setToolTip(text2)
-            item2.setText(text1)
-            item2.setToolTip(text1)
-
-    def _highlight_path_cell(self, row):
-        """경로 셀의 존재 여부에 따라 폰트색 표시"""
-        item = self.cycle_path_table.item(row, 1)
-        if not item:
-            return
-        path = item.text().strip().strip('"').strip("'")
-        if not path:
-            item.setForeground(QtGui.QBrush())  # 기본색 복원
-            return
-        if os.path.exists(path):
-            item.setForeground(QtGui.QBrush())  # 기본색 — 경로 존재
-        else:
-            item.setForeground(QtGui.QColor('#E64B35'))  # 빨간 폰트 — 경로 없음
-
-    def _highlight_all_paths(self):
-        """모든 경로 셀의 존재 여부 갱신"""
-        self.cycle_path_table.blockSignals(True)
-        for r in range(self.cycle_path_table.rowCount()):
-            self._highlight_path_cell(r)
-        self.cycle_path_table.blockSignals(False)
-
-    def _highlight_channel_mismatch(self):
-        """연결 모드: 그룹 내 경로 간 채널 불일치 시 빨간 폰트 표시
-        - 위치 기반 입력('-' 포함): 위치 수 불일치만 경고
-        - 자동 채움(전체 채널): set 비교로 누락 채널 경고"""
-        if not self.chk_link_cycle.isChecked():
-            return
-        tbl = self.cycle_path_table
-        tbl.blockSignals(True)
-        try:
-            # 행 그룹 수집 (빈 행 기준 분리, row index 추적)
-            groups = []
-            current = []
-            for r in range(tbl.rowCount()):
-                path = self._get_table_cell(r, 1)
-                if not path:
-                    if current:
-                        groups.append(current)
-                        current = []
-                    continue
-                current.append(r)
-            if current:
-                groups.append(current)
-
-            for grp_rows in groups:
-                if len(grp_rows) < 2:
-                    for r in grp_rows:
-                        item = tbl.item(r, 2)
-                        if item:
-                            item.setForeground(QtGui.QBrush())
-                    continue
-
-                # 각 행의 원본 채널 문자열과 파싱 결과 수집
-                row_raw = {}       # {row: 원본 문자열}
-                row_ch_lists = {}  # {row: ['032','073','074'] 또는 ['105','-','-']}
-                row_ch_sets = {}   # {row: {정규화된 유효 채널}}
-                has_dash = False
-                for r in grp_rows:
-                    ch_str = self._get_table_cell(r, 2)
-                    row_raw[r] = ch_str
-                    if ch_str:
-                        parts = [c.strip() for c in ch_str.split(',')]
-                        row_ch_lists[r] = parts
-                        if '-' in parts:
-                            has_dash = True
-                        chs = {_normalize_ch(p) for p in parts
-                               if p and p != '-'}
-                    else:
-                        row_ch_lists[r] = []
-                        chs = set()
-                    row_ch_sets[r] = chs
-
-                # 비교 가능한 채널이 2행 미만이면 기본색
-                non_empty = [s for s in row_ch_sets.values() if s]
-                if len(non_empty) < 2:
-                    for r in grp_rows:
-                        item = tbl.item(r, 2)
-                        if item:
-                            item.setForeground(QtGui.QBrush())
-                    continue
-
-                if has_dash:
-                    # ── 위치 기반 입력: '-'가 포함된 경우 ──
-                    # 최대 위치 수 계산
-                    max_pos = max(len(row_ch_lists[r]) for r in grp_rows)
-                    for r in grp_rows:
-                        item = tbl.item(r, 2)
-                        if not item:
-                            continue
-                        n = len(row_ch_lists[r])
-                        if n < max_pos:
-                            # 위치 수 부족 → 빨간 폰트
-                            item.setForeground(QtGui.QColor('#E64B35'))
-                            item.setToolTip(
-                                f"채널 위치 {n}개 / 그룹 최대 {max_pos}개\n"
-                                f"부족한 위치가 {max_pos - n}개 있습니다")
-                        else:
-                            item.setForeground(QtGui.QBrush())
-                            item.setToolTip(row_raw[r])
-                else:
-                    # ── set 비교: 자동 채움(전체 채널) ──
-                    all_union = set()
-                    for s in non_empty:
-                        all_union |= s
-                    for r in grp_rows:
-                        item = tbl.item(r, 2)
-                        if not item:
-                            continue
-                        chs = row_ch_sets[r]
-                        if not chs:
-                            continue
-                        missing = all_union - chs
-                        if missing:
-                            item.setForeground(QtGui.QColor('#E64B35'))
-                            item.setToolTip(
-                                f"채널: {','.join(sorted(chs))}\n"
-                                f"누락: {','.join(sorted(missing))}")
-                        else:
-                            item.setForeground(QtGui.QBrush())
-        finally:
-            tbl.blockSignals(False)
-
-    def _highlight_capacity_mismatch(self):
-        """용량 검증: Phase 1(연결 그룹 불일치), Phase 2(실측 교차검증)
-        다수결로 기준값 결정, 소수파 행에 빨간색 적용
-        2행 동률 시 Phase 2 실측으로 기준 해소"""
-        tbl = self.cycle_path_table
-        tbl.blockSignals(True)
-        is_link = self.chk_link_cycle.isChecked()
-        _has_measured = hasattr(self, '_row_measured_cap') and bool(self._row_measured_cap)
-        try:
-            # 빈 행 기준 그룹 분리 (row index 추적)
-            groups = []
-            current = []
-            for r in range(tbl.rowCount()):
-                path = self._get_table_cell(r, 1)
-                if not path:
-                    if current:
-                        groups.append(current)
-                        current = []
-                    continue
-                current.append(r)
-            if current:
-                groups.append(current)
-
-            for grp_rows in groups:
-                # Phase 1~2: 연결 모드가 아니면 건너뜀
-                if not is_link:
-                    continue
-                # 각 행의 용량값 수집
-                row_caps = {}  # {row: float or None}
-                for r in grp_rows:
-                    cap_str = self._get_table_cell(r, 3)
-                    if cap_str:
-                        try:
-                            row_caps[r] = float(cap_str)
-                        except ValueError:
-                            row_caps[r] = None
-                    else:
-                        row_caps[r] = None
-
-                valid_caps = {r: v for r, v in row_caps.items() if v is not None and v > 0}
-                majority_val = None
-                majority_cnt = 0
-
-                # ── Phase 1: 다수결 기반 공칭 불일치 표시 ──
-                if len(grp_rows) < 2 or len(valid_caps) < 2:
-                    for r in grp_rows:
-                        item = tbl.item(r, 3)
-                        if item:
-                            item.setForeground(QtGui.QBrush())
-                elif len(set(valid_caps.values())) == 1:
-                    for r in grp_rows:
-                        item = tbl.item(r, 3)
-                        if item:
-                            item.setForeground(QtGui.QBrush())
-                else:
-                    from collections import Counter
-                    unique_vals = set(valid_caps.values())
-                    val_counts = Counter(valid_caps.values())
-                    majority_val, majority_cnt = val_counts.most_common(1)[0]
-
-                    # Phase 2 판정 불가 해소: 실측으로 기준 결정
-                    if majority_cnt == 1 and _has_measured:
-                        grp_meas = [self._row_measured_cap[r]
-                                    for r in grp_rows if r in self._row_measured_cap]
-                        if grp_meas:
-                            avg_meas = sum(grp_meas) / len(grp_meas)
-                            best_nom = None
-                            best_diff = float('inf')
-                            for nom_val in unique_vals:
-                                ratio_check = avg_meas / nom_val
-                                if 0.5 <= ratio_check <= 1.05:
-                                    diff = abs(ratio_check - 1.0)
-                                    if diff < best_diff:
-                                        best_diff = diff
-                                        best_nom = nom_val
-                            if best_nom is not None:
-                                # 실측으로 기준 해소 → 다수결처럼 처리
-                                majority_val = best_nom
-                                majority_cnt = 2  # 해소됨 표시
-
-                    for r in grp_rows:
-                        item = tbl.item(r, 3)
-                        if not item:
-                            continue
-                        cap = valid_caps.get(r)
-                        if cap is None:
-                            continue
-                        if majority_cnt == 1:
-                            # 실측으로도 해소 불가 → 전부 빨간색
-                            item.setForeground(QtGui.QColor('#E64B35'))
-                            vals_str = ', '.join(str(int(v)) for v in sorted(unique_vals))
-                            item.setToolTip(f"그룹 내 용량 불일치: {vals_str}\n(판정 불가)")
-                        elif cap != majority_val:
-                            item.setForeground(QtGui.QColor('#E64B35'))
-                            item.setToolTip(
-                                f"용량 {int(cap)} ≠ 그룹 기준값 {int(majority_val)}")
-                        else:
-                            item.setForeground(QtGui.QBrush())
-                            item.setToolTip(self._get_table_cell(r, 3))
-
-                # ── Phase 2: 실측 2nd Dchg 교차 검증 (툴팁 보강) ──
-                if not _has_measured:
-                    continue
-                for r in grp_rows:
-                    item = tbl.item(r, 3)
-                    if not item:
-                        continue
-                    cap = valid_caps.get(r)
-                    meas = self._row_measured_cap.get(r)
-                    if not meas or not cap or cap <= 0:
-                        continue
-                    ratio = meas / cap
-                    existing_tip = item.toolTip() or ''
-                    is_red = (item.foreground().color() == QtGui.QColor('#E64B35'))
-
-                    if is_red and majority_val and cap != majority_val:
-                        # 소수파 → 실측이 다수결/해소 기준 정상 범위인지
-                        ratio_maj = meas / majority_val
-                        if 0.5 <= ratio_maj <= 1.05:
-                            tip_add = (f"\n[실측 검증] 2nd Dchg {meas:.0f}mAh "
-                                       f"(실측/기준 = {ratio_maj:.2f}) "
-                                       f"→ 공칭 오류 가능성")
-                        else:
-                            tip_add = (f"\n[실측 검증] 2nd Dchg {meas:.0f}mAh "
-                                       f"(실측/기준 = {ratio_maj:.2f}) "
-                                       f"→ 기준 범위 벗어남")
-                        item.setToolTip((existing_tip + tip_add).strip())
-                    elif ratio > 1.2 or ratio < 0.5:
-                        warn = "과대" if ratio > 1.2 else "과소"
-                        tip_add = (f"\n[실측 경고] 2nd Dchg {meas:.0f}mAh "
-                                   f"(실측/공칭 = {ratio:.2f}) → {warn}")
-                        item.setToolTip((existing_tip + tip_add).strip())
-                        if not is_red:
-                            item.setForeground(QtGui.QColor('#FF8C00'))
-                    elif 0.5 <= ratio <= 1.05:
-                        tip_add = (f"\n[실측] 2nd Dchg {meas:.0f}mAh "
-                                   f"(실측/공칭 = {ratio:.2f})")
-                        item.setToolTip((existing_tip + tip_add).strip())
-        finally:
-            tbl.blockSignals(False)
-
-    def _collect_measured_first_dchg(self, loaded_data, subfolder_map, n_paths):
-        """각 path(folder_idx)의 실측 2nd Dchg(mAh) 수집
-        첫 번째 채널의 2nd cycle Dchg 기준 (1st는 초기 안정화 영향)
-        2nd가 없으면 1st 사용
-        Returns: {folder_idx: measured_mAh}
-        """
-        measured = {}
-        for fi in range(n_paths):
-            if fi not in subfolder_map:
-                continue
-            for sub_idx in range(len(subfolder_map[fi])):
-                if (fi, sub_idx) not in loaded_data:
-                    continue
-                _, cyctemp = loaded_data[(fi, sub_idx)]
-                if cyctemp is None or cyctemp[1] is None:
-                    continue
-                if not hasattr(cyctemp[1], 'NewData') or cyctemp[1].NewData.empty:
-                    continue
-                cap = cyctemp[0]
-                if cap <= 0:
-                    continue
-                # Dchg는 mincapacity로 정규화된 값 → 실측 mAh = ratio × mincapacity
-                # 2nd cycle 우선, 없으면 1st
-                df = cyctemp[1].NewData
-                idx = 1 if len(df) >= 2 else 0
-                dchg_ratio = df['Dchg'].iloc[idx]
-                measured[fi] = round(dchg_ratio * cap, 1)
-                break  # 첫 채널만
-        return measured
-
-    def _build_row_measured_map(self, measured, flat_idx_of, folder_groups):
-        """테이블 row → 실측 1st Dchg(mAh) 매핑 구축
-        measured: {folder_idx: mAh}
-        flat_idx_of: {(gi, pi): folder_idx}
-        """
-        self._row_measured_cap = {}
-        tbl = self.cycle_path_table
-        link_mode = self.chk_link_cycle.isChecked()
-        _gi = 0
-        _pi = 0
-        _in_group = False
-        for row in range(tbl.rowCount()):
-            path = self._get_table_cell(row, 1)
-            if not path:
-                if _in_group and link_mode:
-                    _gi += 1
-                    _pi = 0
-                    _in_group = False
-                continue
-            _in_group = True
-            fi = flat_idx_of.get((_gi, _pi))
-            if fi is not None and fi in measured:
-                self._row_measured_cap[row] = measured[fi]
-            if link_mode:
-                _pi += 1
-            else:
-                _gi += 1  # 개별 모드: 각 행이 별도 그룹
-
-    def _update_group_separators(self):
-        """연결처리 활성 시 빈 행(그룹 구분자)에 시각적 구분선 표시 + 그룹별 번호
-        구분선 조건: 위·아래 모두 경로가 존재하는 빈 행만 구분선 처리
-        (테이블 끝의 빈 행이나 단일 그룹 뒤 빈 행은 구분선이 아님)
-        """
-        tbl = self.cycle_path_table
-        tbl.blockSignals(True)
-        link_mode = self.chk_link_cycle.isChecked()
-        sep_bg = QtGui.QColor('#D5D8DC')
-        clear_bg = QtGui.QBrush()
-
-        def _is_row_all_empty(row):
-            """행의 모든 셀이 비어있는지 판별"""
-            return not any(self._get_table_cell(row, c) for c in range(tbl.columnCount()))
-
-        def _is_between_groups(row):
-            """빈 행이 두 그룹 사이에 있는지 판별 (위·아래 모두 경로 존재)"""
-            has_above = False
-            for above in range(row - 1, -1, -1):
-                if self._get_table_cell(above, 1):
-                    has_above = True
-                    break
-            if not has_above:
-                return False
-            for below in range(row + 1, tbl.rowCount()):
-                if self._get_table_cell(below, 1):
-                    return True
-            return False
-
-        # 1차: 구분자 위치 판별 + 그룹 번호 계산
-        group_no = 0
-        in_group = False
-        row_labels = []
-        for r in range(tbl.rowCount()):
-            path = self._get_table_cell(r, 1)
-            is_sep = (link_mode and not path
-                      and _is_row_all_empty(r) and _is_between_groups(r))
-            if is_sep:
-                row_labels.append('')
-                in_group = False
-            elif path:
-                if not in_group:
-                    group_no += 1
-                    in_group = True
-                    row_labels.append(str(group_no))  # 그룹 첫 행만 번호 표시
-                else:
-                    row_labels.append('')  # 같은 그룹 나머지 행은 빈칸
-            else:
-                row_labels.append('')
-                in_group = False
-        # 2차: 스타일 적용 + 행 헤더 설정
-        for r in range(tbl.rowCount()):
-            path = self._get_table_cell(r, 1)
-            _is_sep = (link_mode and not path
-                       and _is_row_all_empty(r) and _is_between_groups(r))
-            tbl.setRowHeight(r, 6 if _is_sep else 22)
-            # 행 헤더 (그룹 번호)
-            if link_mode:
-                header_item = QtWidgets.QTableWidgetItem(row_labels[r])
-                header_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                tbl.setVerticalHeaderItem(r, header_item)
-            else:
-                tbl.setVerticalHeaderItem(r, QtWidgets.QTableWidgetItem(str(r + 1)))
-            for c in range(tbl.columnCount()):
-                item = tbl.item(r, c)
-                if _is_sep:
-                    if item is None:
-                        item = QtWidgets.QTableWidgetItem('')
-                        tbl.setItem(r, c, item)
-                    item.setBackground(sep_bg)
-                elif item:
-                    item.setBackground(clear_bg)
-        tbl.blockSignals(False)
-
-    def _push_table_undo(self):
-        """현재 테이블 상태를 Undo 스택에 저장"""
-        tbl = self.cycle_path_table
-        state = []
-        for r in range(tbl.rowCount()):
-            row_data = []
-            for c in range(tbl.columnCount()):
-                item = tbl.item(r, c)
-                row_data.append(item.text() if item else '')
-            state.append(row_data)
-        self._table_undo_stack.append(state)
-        if len(self._table_undo_stack) > 20:
-            self._table_undo_stack.pop(0)
-
-    def _undo_table(self):
-        """테이블 상태를 이전으로 복원 (Ctrl+Z)"""
-        if not self._table_undo_stack:
-            return
-        state = self._table_undo_stack.pop()
-        self._table_undo_restoring = True
-        tbl = self.cycle_path_table
-        tbl.setRowCount(len(state))
-        for r, row_data in enumerate(state):
-            for c, text in enumerate(row_data):
-                item = QtWidgets.QTableWidgetItem(text)
-                item.setToolTip(text)
-                tbl.setItem(r, c, item)
-        self._table_undo_restoring = False
-        self._highlight_all_paths()
-        self._update_group_separators()
-
-    def _cycle_table_context_menu(self, pos):
-        """경로 테이블 우클릭 컨텍스트 메뉴"""
-        menu = QtWidgets.QMenu(self.cycle_path_table)
-        row = self.cycle_path_table.rowAt(pos.y())
-        tbl = self.cycle_path_table
-        selected_rows = sorted({idx.row() for idx in tbl.selectedIndexes()})
-
-        act_insert_above = menu.addAction("행 삽입 (위)")
-        act_insert_below = menu.addAction("행 삽입 (아래)")
-        menu.addSeparator()
-        act_move_up = menu.addAction("행 이동 ↑")
-        act_move_down = menu.addAction("행 이동 ↓")
-        menu.addSeparator()
-        act_clear = menu.addAction("행 클리어")
-        act_delete = menu.addAction("행 삭제")
-
-        # 이동 제한
-        if row <= 0:
-            act_move_up.setEnabled(False)
-        if row < 0 or row >= tbl.rowCount() - 1:
-            act_move_down.setEnabled(False)
-        # 최소 1행 유지
-        if tbl.rowCount() <= 1:
-            act_delete.setEnabled(False)
-
-        action = menu.exec(tbl.viewport().mapToGlobal(pos))
-        if action is None:
-            return
-
-        self._push_table_undo()
-        target = row if row >= 0 else 0
-
-        if action == act_insert_above:
-            tbl.insertRow(target)
-        elif action == act_insert_below:
-            tbl.insertRow(target + 1)
-        elif action == act_move_up:
-            self._swap_table_rows(target, target - 1)
-            tbl.selectRow(target - 1)
-        elif action == act_move_down:
-            self._swap_table_rows(target, target + 1)
-            tbl.selectRow(target + 1)
-        elif action == act_clear:
-            rows_to_clear = selected_rows if selected_rows else ([row] if row >= 0 else [])
-            for r in rows_to_clear:
-                for c in range(tbl.columnCount()):
-                    item = tbl.item(r, c)
-                    if item:
-                        item.setText('')
-        elif action == act_delete:
-            rows_to_del = selected_rows if selected_rows else ([row] if row >= 0 else [])
-            if tbl.rowCount() - len(rows_to_del) < 1:
-                rows_to_del = rows_to_del[:-1]
-            for r in reversed(rows_to_del):
-                tbl.removeRow(r)
-
-        # 시각 갱신
-        self._highlight_all_paths()
-        self._update_group_separators()
-
-    def eventFilter(self, obj, event):
-        """경로 테이블에서 Enter 키로 마지막 행 자동 확장"""
-        if obj is self.cycle_path_table and event.type() == QtCore.QEvent.Type.KeyPress:
-            key = event.key()
-            if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
-                row = self.cycle_path_table.currentRow()
-                if row >= self.cycle_path_table.rowCount() - 1:
-                    self._push_table_undo()
-                    self.cycle_path_table.setRowCount(row + 2)
-        return super().eventFilter(obj, event)
-
-    def _on_cyclepath_toggled(self, checked):
-        """지정Path사용 체크 시 연결처리 스위치 비활성화"""
-        self.chk_link_cycle.setEnabled(not checked)
-        if checked:
-            self.chk_link_cycle.setChecked(False)
-
-    @log_perf
-    def step_confirm_button(self):
-        # 함수 사용으로 변경
-        init_data = self._init_confirm_button(self.StepConfirm)
-        firstCrate, mincapacity, CycleNo = init_data['firstCrate'], init_data['mincapacity'], init_data['CycleNo']
-        smoothdegree, mincrate, dqscale, dvscale = init_data['smoothdegree'], init_data['mincrate'], init_data['dqscale'], init_data['dvscale']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-        
-        #global writer 제거 → 로컬 변수로만 사용
-        write_column_num, folder_count, chnlcount, cyccount = 0, 0, 0, 0
-        
-        # 함수 사용으로 변경
-        writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_step_data_parallel(
-            all_data_folder, CycleNo, mincapacity, mincrate, firstCrate
-        )
-        
+        filename = ""
+        all_data_folder = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.AppCycConfirm.setEnabled(True)
+        fig, ((ax1)) = plt.subplots(nrows=1, ncols=1, figsize=(14, 8))
         tab_no = 0
-        all_profile = self.AllProfile.isChecked()
-        # AllProfile: 루프 전에 fig/tab 1개만 생성
-        if all_profile:
-            fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                nrows=2, ncols=3, figsize=(14, 10))
-            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-            last_step_namelist = None
-            all_profile_channel_map = {}
-            all_profile_sub_map = {}
-            all_profile_sub2_map = {}
+        for i, datafilepath in enumerate(all_data_folder):
+            # tab 그래프 추가
+            tab = QtWidgets.QWidget()
+            tab_layout = QtWidgets.QVBoxLayout(tab)
+            canvas = FigureCanvas(fig)
+            toolbar = NavigationToolbar(canvas, None)
+            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
+                mincapacity = name_capacity(datafilepath)
+                self.capacitytext.setText(str(mincapacity))
+            else:
+                mincapacity = float(self.capacitytext.text())
+            filename = datafilepath.split(".x")[-2].split("/")[-1].split("\\")[-1]
+            try:
+                wb = xw.Book(datafilepath)
+                df = wb.sheets("Plot Base Data").used_range.offset(1,0).options(pd.DataFrame, index=False, header=False).value
+                xw.apps.active.quit()
+                df = df.drop(0)
+                df = df.iloc[:,1::2]
+                # df = df.dropna(axis=0)
+                df.reset_index(drop=True, inplace=True)
+                df.index = df.index + 1
+                col_name = [filename for i in range(0, len(df.columns))]
+                df = df/mincapacity
+                # df.index = df.index + 1
+                if df.iat[2, 0] < df.iat[0, 0] * 0.5:
+                    count = len(df)
+                    lastcount = int((count + int(count / 199) + 1) / 2 + 1)
+                    index = 0
+                    for i in range(lastcount - 1):
+                        if (index == 0) or (index == 197):
+                            index = index + 1
+                        else:
+                            if (index > 197) and ((index - 197) % 199 == 0):
+                                index = index + 1
+                            else:
+                                df.loc[index + 1,:] = df.loc[index + 1,:] + df.loc[index + 2,:]
+                                df.drop(index + 2, axis=0, inplace=True)
+                                index = index + 2
+                    df.reset_index(drop=True, inplace=True)
+                    df.index = df.index + 1
+                columncount = 0
+                for col, column in df.items():
+                    if columncount == 0:
+                        graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05, "Cycle", "Discharge Capacity Ratio",
+                                    filename, xscale, graphcolor[colorno])
+                    else:
+                        graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05, "Cycle", "Discharge Capacity Ratio",
+                                    "" , xscale, graphcolor[colorno])
+                    columncount = columncount + 1
+                    colorno = (colorno + 1)%10
+                filecountmax = len(all_data_folder)
+                progressdata = filecount/filecountmax * 100
+                filecount = filecount + 1
+                self.progressBar.setValue(int(progressdata))
+                dfoutput = pd.concat([dfoutput, df], axis=1)
+                col_name_output = col_name_output + col_name
+            except Exception as e:
+                print(f"오류 발생: {e}")
+                raise
+        if self.saveok.isChecked() and save_file_name:
+            dfoutput.to_excel(writer, sheet_name="Approval_cycle", header = col_name_output)
+            writer.close()
+        if filename != "":
+            plt.suptitle(filename, fontsize= 15, fontweight='bold')
+            plt.legend(loc="upper right")
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+            self.progressBar.setValue(100)
+            output_fig(self.figsaveok, filename)
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
+            tab_no = tab_no + 1
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        plt.close()
+
+    def indiv_cyc_confirm_button(self):
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        # 용량 선정 관련
+        global writer
+        foldercount, chnlcount, writecolno, writerowno, Chnl_num, colorno = 0, 0, 0, 0, 0, 0
+        root = Tk()
+        root.withdraw()
+        self.indiv_cycle.setDisabled(True)
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        if pne_path[2]:
+            mincapacity = name_capacity(pne_path[2])
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.indiv_cycle.setEnabled(True)
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        j = 0
+        # while self.cycle_tab.count() > 0:
+        #     self.cycle_tab.removeTab(0)
+        tab_no = 0
+        for i, cyclefolder in enumerate(all_data_folder):
+            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+            if os.path.exists(cyclefolder):
+                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                foldercountmax = len(all_data_folder)
+                foldercount = foldercount + 1
+                for FolderBase in subfolder:
+                    # tab 그래프 추가
+                    tab = QtWidgets.QWidget()
+                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                    canvas = FigureCanvas(fig)
+                    toolbar = NavigationToolbar(canvas, None)
+                    chnlcountmax = len(subfolder)
+                    chnlcount = chnlcount + 1
+                    progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, 1, 1)
+                    self.progressBar.setValue(int(progressdata))
+                    cycnamelist = FolderBase.split("\\")
+                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+                    if len(all_data_name) != 0 and j == i:
+                        lgnd = all_data_name[i]
+                        j = j + 1
+                    elif len(all_data_name) != 0 and j != i:
+                        lgnd = ""
+                    else:
+                        lgnd = extract_text_in_brackets(cycnamelist[-1])
+                    if not check_cycler(cyclefolder):
+                        cyctemp = toyo_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk_2.isChecked())
+                    else:
+                        cyctemp = pne_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk.isChecked(),
+                                                    self.dcirchk_2.isChecked(), self.mkdcir.isChecked())
+                    if hasattr(cyctemp[1], "NewData"):
+                        self.capacitytext.setText(str(cyctemp[0]))
+                        irscale = float(self.dcirscale.text())
+                        if irscale == 0 and cyctemp[0] != 0:
+                            irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                        if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
+                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                        else:
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, lgnd, colorno,
+                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                        colorno = colorno + 1
+                        # # Data output option
+                        if self.saveok.isChecked() and save_file_name:
+                            output_data(cyctemp[1].NewData, "방전용량", writecolno, 0, "Dchg", headername)
+                            output_data(cyctemp[1].NewData, "Rest End", writecolno, 0, "RndV", headername)
+                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, 0, "AvgV", headername)
+                            output_data(cyctemp[1].NewData, "충방효율", writecolno, 0, "Eff", headername)
+                            output_data(cyctemp[1].NewData, "충전용량", writecolno, 0, "Chg", headername)
+                            output_data(cyctemp[1].NewData, "방충효율", writecolno, 0, "Eff2", headername)
+                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, 0, "DchgEng", headername)
+                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
+                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
+                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
+                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
+                                cyctempsoc70dcir = cyctemp[1].NewData.soc70_dcir.dropna(axis=0)
+                                cyctempsoc70rssdcir = cyctemp[1].NewData.soc70_rss_dcir.dropna(axis=0)
+                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "soc70_dcir", headername)
+                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "soc70_rss_dcir", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
+                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                            else:
+                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                            output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
+                            writecolno = writecolno + 1
+                    # if len(all_data_name) != 0:
+                    plt.suptitle(cycnamelist[-2], fontsize= 15, fontweight='bold')
+                    ax1.legend(loc="lower left")
+                    ax2.legend(loc="lower right")
+                    ax3.legend(loc="upper right")
+                    ax4.legend(loc="upper right")
+                    ax5.legend(loc="upper right")
+                    ax6.legend(loc="lower right")
+                    # else:
+                    #     plt.suptitle(cycnamelist[-2], fontsize= 15, fontweight='bold')
+                    #     # plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                    #     ax6.legend(loc="lower right")
+                tab_layout.addWidget(toolbar)
+                tab_layout.addWidget(canvas)
+                self.cycle_tab.addTab(tab, str(tab_no))
+                self.cycle_tab.setCurrentWidget(tab)
+                tab_no = tab_no + 1
+                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                output_fig(self.figsaveok, cycnamelist[-2])
+                colorno = 0
+        if self.saveok.isChecked() and save_file_name:
+            writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        self.progressBar.setValue(100)
+        plt.close()
+
+    def overall_cyc_confirm_button(self):
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        # 용량 선정 관련
+        global writer
+        foldercount, chnlcount, writecolno, writerowno, Chnl_num = 0, 0, 0, 0, 0
+        root = Tk()
+        root.withdraw()
+        self.overall_cycle.setDisabled(True)
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        mincapacity = name_capacity(pne_path[2])
+        if len(pne_path[2]) != 0:
+            if ".t" in pne_path[2][0]:
+                overall_filename = pne_path[2][0].split(".t")[-2].split("/")[-1]
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.overall_cycle.setEnabled(True)
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        # Cycle 관련 (그래프통합)
+        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+        writecolno, colorno, j, overall_xlimit = 0, 0, 0, 0
+        tab_no = 0
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
                 foldercountmax = len(all_data_folder)
-                folder_count += 1
-                # 같은 cyclefolder에 대해 1회만 호출
-                is_pne = check_cycler(cyclefolder)
-                if self.CycProfile.isChecked():
+                foldercount = foldercount + 1
+                for FolderBase in subfolder:
+                    tab = QtWidgets.QWidget()
+                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                    canvas = FigureCanvas(fig)
+                    toolbar = NavigationToolbar(canvas, None)
+                    chnlcountmax = len(subfolder)
+                    chnlcount = chnlcount + 1
+                    progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, 1, 1)
+                    self.progressBar.setValue(int(progressdata))
+                    cycnamelist = FolderBase.split("\\")
+                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+                    # 중복없이 같은 LOT끼리에서만 legend 추가
+                    if len(all_data_name) != 0 and j == i:
+                        temp_lgnd = all_data_name[i]
+                        j = j + 1
+                    elif len(all_data_name) == 0 and j == i:
+                        temp_lgnd = cycnamelist[-2].split('_')[-1]
+                        j = j + 1
+                    else:
+                        temp_lgnd = ""
+                    if not check_cycler(cyclefolder):
+                        cyctemp = toyo_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk_2.isChecked())
+                    else:
+                        cyctemp = pne_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk.isChecked(),
+                                                    self.dcirchk_2.isChecked(), self.mkdcir.isChecked())
+                    if hasattr(cyctemp[1], "NewData"):
+                        self.capacitytext.setText(str(cyctemp[0]))
+                        if float(self.dcirscale.text()) == 0:
+                            irscale_new = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                            irscale = max(irscale, irscale_new)
+                        if len(cyctemp[1].NewData.index) > overall_xlimit:
+                            overall_xlimit = len(cyctemp[1].NewData.index)
+                        if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd,
+                                                colorno, graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                        else:
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, temp_lgnd, colorno,
+                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                        # # Data output option
+                        if self.saveok.isChecked() and save_file_name:
+                            output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
+                            output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
+                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
+                            output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
+                            output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
+                            output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
+                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
+                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
+                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
+                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
+                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
+                                cyctempsoc70dcir = cyctemp[1].NewData.soc70_dcir.dropna(axis=0)
+                                cyctempsoc70rssdcir = cyctemp[1].NewData.soc70_rss_dcir.dropna(axis=0)
+                                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "soc70_dcir", headername)
+                                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "soc70_rss_dcir", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
+                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                            else:
+                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                            writecolno = writecolno + 1
+                colorno = colorno % 9 + 1
+        if len(all_data_name) != 0:
+            ax1.legend(loc="lower left")
+            ax2.legend(loc="lower right")
+            ax3.legend(loc="upper right")
+            ax4.legend(loc="upper right")
+            ax5.legend(loc="upper right")
+            ax6.legend(loc="lower right")
+        else:
+            ax6.legend(loc="lower right")
+        if "overall_filename" in locals():
+            if self.chk_cyclepath.isChecked():
+                output_fig(self.figsaveok, overall_filename)
+            else:
+                output_fig(self.figsaveok, str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        if len(all_data_folder) != 0:
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
+            tab_no = tab_no + 1
+        if self.saveok.isChecked() and save_file_name:
+            writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        self.progressBar.setValue(100)
+        plt.close()
+
+    def link_cyc_confirm_button(self):
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        # 용량 선정 관련
+        global writer
+        foldercount, chnlcount, writecolno, writerowno, Chnl_num = 0, 0, 0, 0, 0
+        CycleMax = [0, 0, 0, 0, 0]
+        link_writerownum = [0, 0, 0, 0, 0]
+        root = Tk()
+        root.withdraw()
+        self.link_cycle.setDisabled(True)
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        mincapacity = name_capacity(pne_path[2])
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.link_cycle.setEnabled(True)
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        # Cycle 관련 (그래프 연결)
+        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+        writecolno ,colorno, j = 0, 0, 0
+        # while self.cycle_tab.count() > 0:
+        #     self.cycle_tab.removeTab(0)
+        tab_no = 0
+        for i, cyclefolder in enumerate(all_data_folder):
+        # for cyclefolder in all_data_folder:
+            if os.path.exists(cyclefolder):
+                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                foldercountmax = len(all_data_folder)
+                foldercount = foldercount + 1
+                colorno, writecolno , Chnl_num = 0, 0, 0
+                for FolderBase in subfolder:
+                    tab = QtWidgets.QWidget()
+                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                    canvas = FigureCanvas(fig)
+                    toolbar = NavigationToolbar(canvas, None)
+                    chnlcountmax = len(subfolder)
+                    chnlcount = chnlcount + 1
+                    # progressdata = (foldercount + chnlcount/chnlcountmax - 1)/foldercountmax * 100
+                    progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, 1, 1)
+                    self.progressBar.setValue(int(progressdata))
+                    cycnamelist = FolderBase.split("\\")
+                    headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+                    if len(all_data_name) != 0 and j == i:
+                        lgnd = all_data_name[i]
+                        j = j + 1
+                    elif len(all_data_name) != 0 and j != i:
+                        lgnd = ""
+                    else:
+                        lgnd = cycnamelist[-1]
+                    if not check_cycler(cyclefolder):
+                        cyctemp = toyo_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk_2.isChecked())
+                    else:
+                        cyctemp = pne_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk.isChecked(),
+                                                 self.dcirchk_2.isChecked(), self.mkdcir.isChecked())
+                    if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
+                        writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
+                        cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
+                        if xscale == 0:
+                            xscale = len(cyctemp[1].NewData) * (foldercountmax + 1)
+                        self.capacitytext.setText(str(cyctemp[0]))
+                        if irscale == 0:
+                            irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                        if len(all_data_name) == 0:
+                            temp_lgnd = ""
+                        else:
+                            temp_lgnd = lgnd
+                        if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                                               graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                        else:
+                            graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                                                graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                        # # Data output option
+                        if self.saveok.isChecked() and save_file_name:
+                            output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
+                            output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
+                            output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
+                            output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
+                            output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
+                            output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
+                            output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
+                            cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
+                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
+                                cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
+                                cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
+                                output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
+                                output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
+                                output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                            else:
+                                output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                        colorno = colorno + 1
+                        writecolno = writecolno + 1
+                        CycleMax[Chnl_num] = len(cyctemp[1].NewData)
+                        link_writerownum[Chnl_num] = writerowno
+                        Chnl_num = Chnl_num + 1
+        if "cycnamelist" in locals():
+            if len(all_data_name) != 0:
+                plt.suptitle(cycnamelist[-2], fontsize= 15, fontweight='bold')
+                ax1.legend(loc="lower left")
+                ax2.legend(loc="lower right")
+                ax3.legend(loc="upper right")
+                ax4.legend(loc="upper right")
+                ax5.legend(loc="upper right")
+                ax6.legend(loc="lower right")
+            else:
+                plt.suptitle(cycnamelist[-2],fontsize= 15, fontweight='bold')
+                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+        tab_layout.addWidget(toolbar)
+        tab_layout.addWidget(canvas)
+        self.cycle_tab.addTab(tab, str(tab_no))
+        self.cycle_tab.setCurrentWidget(tab)
+        tab_no = tab_no + 1
+        if "cycnamelist" in locals():
+            output_fig(self.figsaveok, cycnamelist[-2])
+        if self.saveok.isChecked() and save_file_name:
+            writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        self.progressBar.setValue(100)
+        plt.close()
+
+    def link_cyc_indiv_confirm_button(self):
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        # 용량 선정 관련
+        global writer
+        root = Tk()
+        root.withdraw()
+        self.link_cycle.setDisabled(True)
+        all_data_name = []
+        all_data_folder = []
+        datafilepath = []
+        alldatafilepath = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.link_cycle.setEnabled(True)
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        # Cycle 관련 (그래프 연결)
+        writecolno ,colorno, j, writecolnomax = 0, 0, 0, 0
+        tab_no = 0
+        for k, datafilepath in enumerate(alldatafilepath):
+            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+            folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
+            writecolno = writecolnomax
+            colorno, j = 0, 0
+            CycleMax = [0, 0, 0, 0, 0]
+            link_writerownum = [0, 0, 0, 0, 0]
+            cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
+            all_data_folder = np.array(cycle_path.cyclepath.tolist())
+            if hasattr(cycle_path,"cyclename"):
+                all_data_name = np.array(cycle_path.cyclename.tolist())
+            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
+                mincapacity = name_capacity(datafilepath)
+                self.capacitytext.setText(str(self.mincapacity))
+            for i, cyclefolder in enumerate(all_data_folder):
+            # for cyclefolder in all_data_folder:
+                if os.path.exists(cyclefolder):
+                    subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                    folder_cnt_max = len(all_data_folder)
+                    folder_cnt = folder_cnt + 1
+                    colorno, writecolno , Chnl_num = 0, 0, 0
                     for j, FolderBase in enumerate(subfolder):
-                        fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
+                        tab = QtWidgets.QWidget()
+                        tab_layout = QtWidgets.QVBoxLayout(tab)
+                        canvas = FigureCanvas(fig)
+                        toolbar = NavigationToolbar(canvas, None)
+                        chnl_cnt_max = len(subfolder)
+                        chnl_cnt = chnl_cnt + 1
+                        filepath_max = len(alldatafilepath)
+                        progressdata = progress(1, filepath_max, folder_cnt, folder_cnt_max, chnl_cnt, chnl_cnt_max)
+                        self.progressBar.setValue(int(progressdata))
+                        cycnamelist = FolderBase.split("\\")
+                        headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+                        if len(all_data_name) != 0 and i == 0 and j == 0:
+                            lgnd = all_data_name[i]
+                        elif len(all_data_name) != 0:
+                            lgnd = ""
+                        else:
+                            lgnd = cycnamelist[-1]
+                        if not check_cycler(cyclefolder):
+                            cyctemp = toyo_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk_2.isChecked())
+                        else:
+                            cyctemp = pne_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk.isChecked(),
+                                                     self.dcirchk_2.isChecked(), self.mkdcir.isChecked())
+                        if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
+                            writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
+                            cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
+                            if xscale == 0:
+                                xscale = len(cyctemp[1].NewData) * (folder_cnt_max + 1)
+                            self.capacitytext.setText(str(cyctemp[0]))
+                            if irscale == 0:
+                                irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                            if len(all_data_name) == 0:
+                                temp_lgnd = ""
+                            else:
+                                temp_lgnd = lgnd
+                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                                                   graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                            else:
+                                graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                                                    graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                            # # Data output option
+                            if self.saveok.isChecked() and save_file_name:
+                                output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
+                                output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
+                                output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
+                                output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
+                                output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
+                                output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
+                                output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
+                                cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
+                                if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                    cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
+                                    cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
+                                    cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
+                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
+                                    output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
+                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                                else:
+                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                                output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
+                                writecolno = writecolno + 1
+                            colorno = colorno + 1
+                            CycleMax[Chnl_num] = len(cyctemp[1].NewData)
+                            link_writerownum[Chnl_num] = writerowno
+                            Chnl_num = Chnl_num + 1
+                            writecolnomax = max(writecolno, writecolnomax)
+            if "cycnamelist" in locals():
+                if len(all_data_name) != 0:
+                    plt.suptitle(cycnamelist[-2], fontsize= 15, fontweight='bold')
+                    ax1.legend(loc="lower left")
+                    ax2.legend(loc="lower right")
+                    ax3.legend(loc="upper right")
+                    ax4.legend(loc="upper right")
+                    ax5.legend(loc="upper right")
+                    ax6.legend(loc="lower right")
+                else:
+                    plt.suptitle(cycnamelist[-2],fontsize= 15, fontweight='bold')
+                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
+            tab_no = tab_no + 1
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+            if "cycnamelist" in locals():
+                output_fig(self.figsaveok, cycnamelist[-2])
+        if self.saveok.isChecked() and save_file_name:
+            writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        self.progressBar.setValue(100)
+        plt.close()
+
+    def link_cyc_overall_confirm_button(self):
+        firstCrate, mincapacity, xscale, ylimithigh, ylimitlow, irscale = self.cyc_ini_set()
+        # 용량 선정 관련
+        global writer
+        root = Tk()
+        root.withdraw()
+        self.link_cycle.setDisabled(True)
+        all_data_name = []
+        all_data_folder = []
+        datafilepath = []
+        alldatafilepath = filedialog.askopenfilenames(initialdir="d://", title="Choose Test files")
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        self.link_cycle.setEnabled(True)
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        # Cycle 관련 (그래프 연결)
+        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+        writecolno ,colorno, j, maxcolor, writecolnomax = 0, 0, 0, 0, 0
+        tab_no = 0
+        for k, datafilepath in enumerate(alldatafilepath):
+            folder_cnt, chnl_cnt, writerowno, Chnl_num = 0, 0, 0, 0
+            writecolno = writecolnomax
+            CycleMax = [0, 0, 0, 0, 0]
+            link_writerownum = [0, 0, 0, 0, 0]
+            cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
+            all_data_folder = np.array(cycle_path.cyclepath.tolist())
+            if hasattr(cycle_path,"cyclename"):
+                all_data_name = np.array(cycle_path.cyclename.tolist())
+            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
+                mincapacity = name_capacity(datafilepath)
+                self.capacitytext.setText(str(self.mincapacity))
+            for i, cyclefolder in enumerate(all_data_folder):
+            # for cyclefolder in all_data_folder:
+                if os.path.exists(cyclefolder):
+                    subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                    folder_cnt_max = len(all_data_folder)
+                    folder_cnt = folder_cnt + 1
+                    colorno, writecolno , Chnl_num = maxcolor, 0, 0
+                    for j, FolderBase in enumerate(subfolder):
+                        tab = QtWidgets.QWidget()
+                        tab_layout = QtWidgets.QVBoxLayout(tab)
+                        canvas = FigureCanvas(fig)
+                        toolbar = NavigationToolbar(canvas, None)
+                        chnl_cnt_max = len(subfolder)
+                        chnl_cnt = chnl_cnt + 1
+                        filepath_max = len(alldatafilepath)
+                        progressdata = progress(1, filepath_max, folder_cnt, folder_cnt_max, chnl_cnt, chnl_cnt_max)
+                        self.progressBar.setValue(int(progressdata))
+                        cycnamelist = FolderBase.split("\\")
+                        headername = [cycnamelist[-2] + ", " + cycnamelist[-1]]
+                        if len(all_data_name) != 0 and i == 0 and j == 0:
+                            lgnd = all_data_name[i]
+                        elif len(all_data_name) != 0:
+                            lgnd = ""
+                        else:
+                            lgnd = cycnamelist[-1]
+                        if not check_cycler(cyclefolder):
+                            cyctemp = toyo_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk_2.isChecked())
+                        else:
+                            cyctemp = pne_cycle_data(FolderBase, mincapacity, firstCrate, self.dcirchk.isChecked(),
+                                                     self.dcirchk_2.isChecked(), self.mkdcir.isChecked())
+                        if hasattr(cyctemp[1], "NewData") and (len(link_writerownum) > Chnl_num):
+                            writerowno = link_writerownum[Chnl_num] + CycleMax[Chnl_num]
+                            cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
+                            if xscale == 0:
+                                xscale = len(cyctemp[1].NewData) * (folder_cnt_max + 1)
+                            self.capacitytext.setText(str(cyctemp[0]))
+                            if irscale == 0:
+                                irscale = int(1/(cyctemp[0]/5000) + 1)//2 * 2
+                            if len(all_data_name) == 0:
+                                temp_lgnd = ""
+                            else:
+                                temp_lgnd = lgnd
+                            if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                                                   graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                            else:
+                                graph_output_cycle(cyctemp[1], xscale, ylimitlow, ylimithigh, irscale, lgnd, temp_lgnd, colorno,
+                                                    graphcolor, self.mkdcir, ax1, ax2, ax3, ax4, ax5, ax6)
+                            # Data output option
+                            if self.saveok.isChecked() and save_file_name:
+                                output_data(cyctemp[1].NewData, "방전용량", writecolno, writerowno, "Dchg", headername)
+                                output_data(cyctemp[1].NewData, "Rest End", writecolno, writerowno, "RndV", headername)
+                                output_data(cyctemp[1].NewData, "평균 전압", writecolno, writerowno, "AvgV", headername)
+                                output_data(cyctemp[1].NewData, "충방효율", writecolno, writerowno, "Eff", headername)
+                                output_data(cyctemp[1].NewData, "충전용량", writecolno, writerowno, "Chg", headername)
+                                output_data(cyctemp[1].NewData, "방충효율", writecolno, writerowno, "Eff2", headername)
+                                output_data(cyctemp[1].NewData, "방전Energy", writecolno, writerowno, "DchgEng", headername)
+                                cyctempdcir = cyctemp[1].NewData.dcir.dropna(axis=0)
+                                if self.mkdcir.isChecked() and hasattr(cyctemp[1].NewData, "dcir2"):
+                                    cyctempdcir2 = cyctemp[1].NewData.dcir2.dropna(axis=0)
+                                    cyctemprssocv = cyctemp[1].NewData.rssocv.dropna(axis=0)
+                                    cyctemprssccv = cyctemp[1].NewData.rssccv.dropna(axis=0)
+                                    output_data(cyctempdcir2, "DCIR", writecolno, 0, "dcir2", headername)
+                                    output_data(cyctempdcir, "RSS", writecolno, 0, "dcir", headername)
+                                    output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "rssocv", headername)
+                                    output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "rssccv", headername)
+                                else:
+                                    output_data(cyctempdcir, "DCIR", writecolno, 0, "dcir", headername)
+                                output_data(cyctemp[1].NewData, "충방전기CY", writecolno, 0, "OriCyc", headername)
+                                writecolno = writecolno + 1
+                            CycleMax[Chnl_num] = len(cyctemp[1].NewData)
+                            link_writerownum[Chnl_num] = writerowno
+                            Chnl_num = Chnl_num + 1
+                            writecolnomax = max(writecolno, writecolnomax)
+                colorno = colorno + 1
+            maxcolor = max(colorno, maxcolor)
+            if "cycnamelist" in locals():
+                if len(all_data_name) != 0:
+                    plt.suptitle(cycnamelist[-2], fontsize= 15, fontweight='bold')
+                    ax1.legend(loc="lower left")
+                    ax2.legend(loc="lower right")
+                    ax3.legend(loc="upper right")
+                    ax4.legend(loc="upper right")
+                    ax5.legend(loc="upper right")
+                    ax6.legend(loc="lower right")
+                else:
+                    plt.suptitle(cycnamelist[-2],fontsize= 15, fontweight='bold')
+                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+        tab_layout.addWidget(toolbar)
+        tab_layout.addWidget(canvas)
+        self.cycle_tab.addTab(tab, str(tab_no))
+        self.cycle_tab.setCurrentWidget(tab)
+        tab_no = tab_no + 1
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        if "cycnamelist" in locals():
+            output_fig(self.figsaveok, cycnamelist[-2])
+        if self.saveok.isChecked() and save_file_name:
+            writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+        self.progressBar.setValue(100)
+        plt.close()
+
+    def step_confirm_button(self):
+        self.StepConfirm.setDisabled(True)
+        firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
+        # 용량 선정 관련
+        global writer
+        write_column_num, folder_count, chnlcount, cyccount = 0, 0, 0, 0
+        root = Tk()
+        root.withdraw()
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        self.StepConfirm.setEnabled(True)
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        if self.ect_saveok.isChecked():
+            # save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".csv")
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name")
+        tab_no = 0
+        for i, cyclefolder in enumerate(all_data_folder):
+            if os.path.isdir(cyclefolder):
+                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                foldercountmax = len(all_data_folder)
+                folder_count = folder_count + 1
+                if self.CycProfile.isChecked():
+                    for FolderBase in subfolder:
+                        fig, ((step_ax1, step_ax2, step_ax3) ,(step_ax4, step_ax5, step_ax6)) = plt.subplots(
                             nrows=2, ncols=3, figsize=(14, 10))
-                        # 함수 사용으로 변경
-                        tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                        chnlcount += 1
+                        tab = QtWidgets.QWidget()
+                        tab_layout = QtWidgets.QVBoxLayout(tab)
+                        canvas = FigureCanvas(fig)
+                        toolbar = NavigationToolbar(canvas, None)
+                        chnlcount = chnlcount + 1
                         chnlcountmax = len(subfolder)
                         if "Pattern" not in FolderBase:
-                            step_namelist = None
-                            channel_map = {}
-                            sub2_channel_map = {}
                             for Step_CycNo in CycleNo:
                                 cyccountmax = len(CycleNo)
-                                cyccount += 1
-                                progressdata = 50 + progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax) * 0.5
+                                cyccount = cyccount + 1
+                                progressdata = progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
                                 self.progressBar.setValue(int(progressdata))
                                 step_namelist = FolderBase.split("\\")
                                 headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str(Step_CycNo) + "cy, "
                                 lgnd = "%04d" % Step_CycNo
-                                # 병렬 로딩 결과 사용
-                                temp = loaded_data.get((i, j, Step_CycNo))
-                                if temp is None:
-                                    if not is_pne:
-                                        temp = toyo_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                    else:
-                                        temp = pne_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
+                                if not check_cycler(cyclefolder):
+                                    temp = toyo_step_Profile_data( FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
+                                else:
+                                    temp = pne_step_Profile_data( FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
+                                if len(all_data_name) == 0:
+                                    temp_lgnd = ""
+                                else:
+                                    temp_lgnd = all_data_name[i] +" "+lgnd
                                 if hasattr(temp[1], "stepchg"):
                                     if len(temp[1].stepchg) > 2:
-                                        #플롯+저장
-                                        axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num, _artists = self._plot_and_save_step_data(
-                                            axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
-                                            writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
-                                        _color = mcolors.to_hex(_artists[0].get_color())
-                                        ch_label, _sub_label = _make_channel_labels(step_namelist, all_data_name, i)
-                                        cyc_label = "%04d" % Step_CycNo
-                                        if ch_label in channel_map:
-                                            channel_map[ch_label]['artists'].extend(_artists)
-                                        else:
-                                            channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                        sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                            if step_namelist:
-                                title = step_namelist[-2] + "=" + step_namelist[-1]
-                                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                                axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
-                                positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                                self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                            # 함수 사용으로 변경
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                                    channel_map=channel_map, fig=fig,
-                                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6],
-                                                    sub2_channel_map=sub2_channel_map)
-                            tab_no += 1
-                elif all_profile:
-                    # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                    for j, FolderBase in enumerate(subfolder):
-                        chnlcount += 1
-                        chnlcountmax = len(subfolder)
-                        if "Pattern" not in FolderBase:
-                            for Step_CycNo in CycleNo:
-                                cyccountmax = len(CycleNo)
-                                cyccount += 1
-                                progressdata = 50 + progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax) * 0.5
-                                self.progressBar.setValue(int(progressdata))
-                                last_step_namelist = FolderBase.split("\\")
-                                headername = last_step_namelist[-2] + ", " + last_step_namelist[-1] + ", " + str(Step_CycNo) + "cy, "
-                                lgnd = last_step_namelist[-1] + " %04d" % Step_CycNo
-                                temp = loaded_data.get((i, j, Step_CycNo))
-                                if temp is None:
-                                    if not is_pne:
-                                        temp = toyo_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                    else:
-                                        temp = pne_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                                if hasattr(temp[1], "stepchg"):
-                                    if len(temp[1].stepchg) > 2:
-                                        axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num, _artists = self._plot_and_save_step_data(
-                                            axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
-                                            writer, write_column_num, save_file_name, Step_CycNo, save_csv=True)
-                                        _color = mcolors.to_hex(_artists[0].get_color())
-                                        ch_label, sub_label = _make_channel_labels(last_step_namelist, all_data_name, i)
-                                        sub_key = ch_label + " " + sub_label
-                                        cyc_label = "%04d" % Step_CycNo
-                                        if ch_label in all_profile_channel_map:
-                                            all_profile_channel_map[ch_label]['artists'].extend(_artists)
-                                        else:
-                                            all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                        if sub_key in all_profile_sub_map:
-                                            all_profile_sub_map[sub_key]['artists'].extend(_artists)
-                                        else:
-                                            all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                        sub2_key = sub_key + " " + cyc_label
-                                        all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
+                                        self.capacitytext.setText(str(temp[0]))
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, self.vol_y_hlimit, self.vol_y_llimit,
+                                                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax3, self.vol_y_hlimit, self.vol_y_llimit,
+                                                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax2, self.vol_y_hlimit, self.vol_y_llimit,
+                                                   self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax5, 0, 3.4, 0.2,
+                                                   "Time(min)", "C-rate", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax4, 0, 1.2, 0.1,
+                                                   "Time(min)", "SOC", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5,
+                                                   "Time(min)", "Temperature (℃)", lgnd)
+                                        # Data output option
+                                        if self.saveok.isChecked() and save_file_name:
+                                            temp[1].stepchg.to_excel(writer, startcol=write_column_num, index=False,
+                                                                header=[headername + "time(min)",
+                                                                        headername + "SOC",
+                                                                        headername + "Voltage",
+                                                                        headername + "Crate",
+                                                                        headername + "Temp."])
+                                            write_column_num = write_column_num + 5
+                                        if self.ect_saveok.isChecked() and save_file_name:
+                                            temp[1].stepchg["TimeSec"] = temp[1].stepchg.TimeMin * 60
+                                            temp[1].stepchg["Curr"] = temp[1].stepchg.Crate * temp[0]/ 1000
+                                            continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                            # 각 열을 소수점 자리수에 맞게 반올림
+                                            continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
+                                            continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
+                                            continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
+                                            continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
+                                            continue_df.to_csv(save_file_name + "_" + "%04d" % Step_CycNo + ".csv", index=False, sep=',',
+                                                                header=["time(s)",
+                                                                        "Voltage(V)",
+                                                                        "Current(A)",
+                                                                        "Temp."])
+                            title = step_namelist[-2] + "=" + step_namelist[-1]
+                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                            if len(all_data_name) != 0:
+                                step_ax1.legend(loc="lower right")
+                                step_ax2.legend(loc="lower right")
+                                step_ax4.legend(loc="lower right")
+                                step_ax3.legend(loc="lower right")
+                                step_ax5.legend(loc="upper right")
+                                step_ax6.legend(loc="upper right")
+                            else:
+                                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                            tab_layout.addWidget(toolbar)
+                            tab_layout.addWidget(canvas)
+                            self.cycle_tab.addTab(tab, str(tab_no))
+                            self.cycle_tab.setCurrentWidget(tab)
+                            tab_no = tab_no + 1
+                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                 else:
                     for Step_CycNo in CycleNo:
-                        fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
+                        fig, ((step_ax1, step_ax2, step_ax3) ,(step_ax4, step_ax5, step_ax6)) = plt.subplots(
                             nrows=2, ncols=3, figsize=(14, 10))
-                        # 함수 사용으로 변경
-                        tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                        chnlcount += 1
+                        tab = QtWidgets.QWidget()
+                        tab_layout = QtWidgets.QVBoxLayout(tab)
+                        canvas = FigureCanvas(fig)
+                        toolbar = NavigationToolbar(canvas, None)
+                        chnlcount = chnlcount + 1
                         chnlcountmax = len(subfolder)
-                        step_namelist = None
-                        channel_map = {}
-                        sub_channel_map = {}
-                        for j, FolderBase in enumerate(subfolder):
+                        for FolderBase in subfolder:
                             if "Pattern" not in FolderBase:
                                 cyccountmax = len(CycleNo)
-                                cyccount += 1
-                                progressdata = 50 + progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax) * 0.5
+                                cyccount = cyccount + 1
+                                progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
                                 self.progressBar.setValue(int(progressdata))
                                 step_namelist = FolderBase.split("\\")
                                 headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str(Step_CycNo) + "cy, "
                                 lgnd = step_namelist[-1]
-                                # 병렬 로딩 결과 사용
-                                temp = loaded_data.get((i, j, Step_CycNo))
-                                if temp is None:
-                                    if not is_pne:
-                                        temp = toyo_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                    else:
-                                        temp = pne_step_Profile_data(FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
-                                temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
+                                if not check_cycler(cyclefolder):
+                                    temp = toyo_step_Profile_data( FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
+                                else:
+                                    temp = pne_step_Profile_data( FolderBase, Step_CycNo, mincapacity, mincrate, firstCrate)
+                                if len(all_data_name) == 0:
+                                    temp_lgnd = ""
+                                else:
+                                    temp_lgnd = all_data_name[i] +" "+lgnd
                                 if hasattr(temp[1], "stepchg"):
                                     if len(temp[1].stepchg) > 2:
-                                        #플롯+저장
-                                        axes = (step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6)
-                                        write_column_num, _artists = self._plot_and_save_step_data(
-                                            axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
-                                            writer, write_column_num, save_file_name, Step_CycNo)
-                                        _color = mcolors.to_hex(_artists[0].get_color())
-                                        ch_label, sub_label = _make_channel_labels(step_namelist, all_data_name, i)
-                                        if ch_label in channel_map:
-                                            channel_map[ch_label]['artists'].extend(_artists)
-                                        else:
-                                            channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                        sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                        #title/legend 모든 채널 플롯 완료 후 1회 실행
-                        if step_namelist:
-                            title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
-                            positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        # 함수 사용으로 변경
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                                channel_map=channel_map, fig=fig,
-                                                axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6],
-                                                sub_channel_map=sub_channel_map)
-                        tab_no += 1
-        # AllProfile: 루프 종료 후 한번에 finalize
-        if all_profile and last_step_namelist:
-            title = last_step_namelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            axes_list = [step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6]
-            positions = ["lower right", "lower right", "lower right", "lower right", "upper right", "upper right"]
-            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                    channel_map=all_profile_channel_map, fig=fig,
-                                    axes_list=[step_ax1, step_ax2, step_ax4, step_ax3, step_ax5, step_ax6],
-                                    sub_channel_map=all_profile_sub_map,
-                                    sub2_channel_map=all_profile_sub2_map)
-            tab_no += 1
+                                        self.capacitytext.setText(str(temp[0]))
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                   "Time(min)", "Voltage(V)", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax3, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                   "Time(min)", "Voltage(V)", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax2, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                   "Time(min)", "Voltage(V)", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax5, 0, 3.4, 0.2,
+                                                   "Time(min)", "C-rate", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax4, 0, 1.2, 0.1,
+                                                   "Time(min)", "SOC", temp_lgnd)
+                                        graph_step(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5,
+                                                   "Time(min)", "Temperature (℃)", lgnd)
+                                        # Data output option
+                                        if self.saveok.isChecked() and save_file_name:
+                                            temp[1].stepchg.to_excel(writer, startcol=write_column_num, index=False,
+                                                                header=[headername + "time(min)",
+                                                                        headername + "SOC",
+                                                                        headername + "Voltage",
+                                                                        headername + "Crate",
+                                                                        headername + "Temp."])
+                                            write_column_num = write_column_num + 5
+                                title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                if len(all_data_name) != 0:
+                                    step_ax1.legend(loc="lower right")
+                                    step_ax2.legend(loc="lower right")
+                                    step_ax4.legend(loc="lower right")
+                                    step_ax3.legend(loc="lower right")
+                                    step_ax5.legend(loc="upper right")
+                                    step_ax6.legend(loc="upper right")
+                                else:
+                                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                        tab_layout.addWidget(toolbar)
+                        tab_layout.addWidget(canvas)
+                        self.cycle_tab.addTab(tab, str(tab_no))
+                        self.cycle_tab.setCurrentWidget(tab)
+                        tab_no = tab_no + 1
+                        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
-    @log_perf
     def rate_confirm_button(self):
-        # 함수 사용으로 변경
-        init_data = self._init_confirm_button(self.RateConfirm)
-        firstCrate, mincapacity, CycleNo = init_data['firstCrate'], init_data['mincapacity'], init_data['CycleNo']
-        smoothdegree, mincrate, dqscale, dvscale = init_data['smoothdegree'], init_data['mincrate'], init_data['dqscale'], init_data['dvscale']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-        
-        #global writer 제거 → 로컬 변수로만 사용
+        self.RateConfirm.setDisabled(True)
+        firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
+        # 용량 선정 관련
+        global writer
         writecolno, foldercount, chnlcount, cyccount = 0, 0, 0, 0
-        
-        #함수 사용으로 변경
-        writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'rate', (CycleNo, mincapacity, mincrate, firstCrate))
-        
+        root = Tk()
+        root.withdraw()
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        self.RateConfirm.setEnabled(True)
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        if self.ect_saveok.isChecked():
+            # save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".csv")
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name")
         tab_no = 0
-        all_profile = self.AllProfile.isChecked()
-        # AllProfile: 루프 전에 fig/tab 1개만 생성
-        if all_profile:
-            fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
-                nrows=2, ncols=3, figsize=(14, 10))
-            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-            last_Ratenamelist = None
-            all_profile_channel_map = {}
-            all_profile_sub_map = {}
-            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
-            if not os.path.isdir(cyclefolder):
-                continue
             subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
             foldercountmax = len(all_data_folder)
-            foldercount += 1
-            #cyclefolder 당 1회만 호출
-            is_pne = check_cycler(cyclefolder)
+            foldercount = foldercount + 1
             if self.CycProfile.isChecked():
-                for j, FolderBase in enumerate(subfolder):
-                    fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
+                for FolderBase in subfolder:
+                    fig, ((rate_ax1, rate_ax2, rate_ax3) ,(rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
                         nrows=2, ncols=3, figsize=(14, 10))
-                    tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                    chnlcount += 1
+                    tab = QtWidgets.QWidget()
+                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                    canvas = FigureCanvas(fig)
+                    toolbar = NavigationToolbar(canvas, None)
+                    chnlcount = chnlcount + 1
                     chnlcountmax = len(subfolder)
                     if "Pattern" not in FolderBase:
-                        Ratenamelist = None
-                        channel_map = {}
-                        sub2_channel_map = {}
                         for CycNo in CycleNo:
                             cyccountmax = len(CycleNo)
-                            cyccount += 1
+                            cyccount = cyccount + 1
                             progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Ratenamelist = FolderBase.split("\\")
                             headername = Ratenamelist[-2] + ", " + Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = "%04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Ratetemp = loaded_data.get((i, j, CycNo))
-                            if Ratetemp is None:
-                                if not is_pne:
-                                    Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                                else:
-                                    Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
+                            if not check_cycler(cyclefolder):
+                                Ratetemp = toyo_rate_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            else:
+                                Ratetemp = pne_rate_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            if len(all_data_name) == 0:
+                                temp_lgnd = ""
+                            else:	
+                                temp_lgnd = all_data_name[i] + " " + lgnd
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
                                     self.capacitytext.setText(str(Ratetemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, _sub_label = _make_channel_labels(Ratenamelist, all_data_name, i)
-                                    cyc_label = "%04d" % CycNo
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                               "Time(min)", "Voltage(V)", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                               "Time(min)", "Voltage(V)", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
+                                               "Time(min)", "SOC", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
+                                               "Time(min)", "Temp.", lgnd)
+                                    # Data output option
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "time(min)", headername + "SOC",
-                                                    headername + "Voltage", headername + "Crate", headername + "Temp."])
-                                        writecolno += 5
+                                            writer,
+                                            startcol=writecolno,
+                                            index=False,
+                                            header=[
+                                                headername + "time(min)",
+                                                headername + "SOC",
+                                                headername + "Voltage",
+                                                headername + "Crate",
+                                                headername + "Temp."
+                                            ])
+                                        writecolno = writecolno + 5
                                     if self.ect_saveok.isChecked() and save_file_name:
-                                        continue_df = Ratetemp[1].rateProfile[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                        continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                        continue_df["Curr"] = (continue_df["Crate"] * Ratetemp[0] / 1000).round(4)
-                                        continue_df["Vol"] = continue_df["Vol"].round(4)
-                                        continue_df["Temp"] = continue_df["Temp"].round(1)
-                                        continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
+                                        Ratetemp[1].Profile["TimeSec"] = Ratetemp[1].Profile.TimeMin * 60
+                                        Ratetemp[1].Profile["Curr"] = Ratetemp[1].Profile.Crate * Ratetemp[0] /1000
+                                        continue_df = Ratetemp[1].Profile.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                        # 각 열을 소수점 자리수에 맞게 반올림
+                                        continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
+                                        continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
+                                        continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
+                                        continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
                                         continue_df.to_csv(save_file_name + "_" + "%04d" % CycNo + ".csv", index=False, sep=',',
-                                                            header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                        if Ratenamelist:
+                                                            header=["time(s)",
+                                                                    "Voltage(V)",
+                                                                    "Current(A)",
+                                                                    "Temp."])
                             title = Ratenamelist[-2] + "=" + Ratenamelist[-1]
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
-                            positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                                channel_map=channel_map, fig=fig,
-                                                axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6],
-                                                sub2_channel_map=sub2_channel_map)
-                        tab_no += 1
+                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                            if len(all_data_name) != 0:
+                                rate_ax1.legend(loc="lower right")
+                                rate_ax2.legend(loc="upper right")
+                                rate_ax3.legend(loc="lower right")
+                                rate_ax4.legend(loc="lower right")
+                                rate_ax5.legend(loc="upper right")
+                                rate_ax6.legend(loc="upper right")
+                            else:
+                                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                        tab_layout.addWidget(toolbar)
+                        tab_layout.addWidget(canvas)
+                        self.cycle_tab.addTab(tab, str(tab_no))
+                        self.cycle_tab.setCurrentWidget(tab)
+                        tab_no = tab_no + 1
+                        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                         output_fig(self.figsaveok, title)
-            elif all_profile:
-                # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            last_Ratenamelist = FolderBase.split("\\")
-                            headername = last_Ratenamelist[-2] + ", " + last_Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = last_Ratenamelist[-1] + " %04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Ratetemp = loaded_data.get((i, j, CycNo))
-                            if Ratetemp is None:
-                                if not is_pne:
-                                    Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                                else:
-                                    Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Ratetemp[1], "rateProfile"):
-                                if len(Ratetemp[1].rateProfile) > 2:
-                                    self.capacitytext.setText(str(Ratetemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                               "Time(min)", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, sub_label = _make_channel_labels(last_Ratenamelist, all_data_name, i)
-                                    sub_key = ch_label + " " + sub_label
-                                    cyc_label = "%04d" % CycNo
-                                    if ch_label in all_profile_channel_map:
-                                        all_profile_channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    if sub_key in all_profile_sub_map:
-                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    sub2_key = sub_key + " " + cyc_label
-                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Ratetemp[1].rateProfile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "time(min)", headername + "SOC",
-                                                    headername + "Voltage", headername + "Crate", headername + "Temp."])
-                                        writecolno += 5
             else:
                 for CycNo in CycleNo:
-                    fig, ((rate_ax1, rate_ax2, rate_ax3), (rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
+                    fig, ((rate_ax1, rate_ax2, rate_ax3) ,(rate_ax4, rate_ax5, rate_ax6)) = plt.subplots(
                         nrows=2, ncols=3, figsize=(14, 10))
-                    tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                    chnlcount += 1
+                    tab = QtWidgets.QWidget()
+                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                    canvas = FigureCanvas(fig)
+                    toolbar = NavigationToolbar(canvas, None)
+                    chnlcount = chnlcount + 1
                     chnlcountmax = len(subfolder)
-                    # [최적화] namelist 미초기화 방어
-                    Ratenamelist = None
-                    channel_map = {}
-                    sub_channel_map = {}
-                    for j, FolderBase in enumerate(subfolder):
+                    for FolderBase in subfolder:
                         if "Pattern" not in FolderBase:
                             cyccountmax = len(CycleNo)
-                            cyccount += 1
+                            cyccount = cyccount + 1
                             progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
+                            self.progressBar.setValue(int(progressdata))
                             Ratenamelist = FolderBase.split("\\")
                             headername = Ratenamelist[-2] + ", " + Ratenamelist[-1] + ", " + str(CycNo) + "cy, "
                             lgnd = Ratenamelist[-1]
-                            # 병렬 로딩 결과 사용
-                            Ratetemp = loaded_data.get((i, j, CycNo))
-                            if Ratetemp is None:
-                                if not is_pne:
-                                    Ratetemp = toyo_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                                else:
-                                    Ratetemp = pne_rate_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
+                            if not check_cycler(cyclefolder):
+                                Ratetemp = toyo_rate_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            else:
+                                Ratetemp = pne_rate_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate)
+                            if len(all_data_name) == 0:
+                                temp_lgnd = ""
+                            else:	
+                                temp_lgnd = all_data_name[i] + " " + lgnd
                             if hasattr(Ratetemp[1], "rateProfile"):
                                 if len(Ratetemp[1].rateProfile) > 2:
                                     self.capacitytext.setText(str(Ratetemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit,
-                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit,
-                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
-                                               "Time(min)", "C-rate", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
-                                               "Time(min)", "SOC", temp_lgnd))
-                                    _artists.append(graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
-                                               "Time(min)", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, sub_label = _make_channel_labels(Ratenamelist, all_data_name, i)
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax1, self.vol_y_hlimit,
+                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Vol, rate_ax4, self.vol_y_hlimit,
+                                               self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax2, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Crate, rate_ax5, 0, 3.4, 0.2,
+                                               "Time(min)", "C-rate", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.SOC, rate_ax3, 0, 1.2, 0.1,
+                                               "Time(min)", "SOC", temp_lgnd)
+                                    graph_step(Ratetemp[1].rateProfile.TimeMin, Ratetemp[1].rateProfile.Temp, rate_ax6, -15, 60, 5,
+                                               "Time(min)", "Temp.", lgnd)
+                                    # Data output option
                                     if self.saveok.isChecked() and save_file_name:
                                         Ratetemp[1].rateProfile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "time(min)", headername + "SOC",
-                                                    headername + "Voltage", headername + "Crate", headername + "Temp."])
-                                        writecolno += 5
-
-                    if Ratenamelist:
-                        title = Ratenamelist[-2] + "=" + "%04d" % CycNo
-                        plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                        axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
-                        positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                            channel_map=channel_map, fig=fig,
-                                            axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6],
-                                            sub_channel_map=sub_channel_map)
-                    tab_no += 1
+                                            writer,
+                                            startcol=writecolno,
+                                            index=False,
+                                            header=[
+                                                headername + "time(min)",
+                                                headername + "SOC",
+                                                headername + "Voltage",
+                                                headername + "Crate",
+                                                headername + "Temp."
+                                            ])
+                                        writecolno = writecolno + 5
+                            title = Ratenamelist[-2] + "=" + "%04d" % CycNo
+                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                            if len(all_data_name) != 0:
+                                rate_ax1.legend(loc="lower right")
+                                rate_ax2.legend(loc="upper right")
+                                rate_ax3.legend(loc="lower right")
+                                rate_ax4.legend(loc="lower right")
+                                rate_ax5.legend(loc="upper right")
+                                rate_ax6.legend(loc="upper right")
+                            else:
+                                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                    tab_layout.addWidget(toolbar)
+                    tab_layout.addWidget(canvas)
+                    self.cycle_tab.addTab(tab, str(tab_no))
+                    self.cycle_tab.setCurrentWidget(tab)
+                    tab_no = tab_no + 1
+                    plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                     output_fig(self.figsaveok, title)
-        # AllProfile: 루프 종료 후 한번에 finalize
-        if all_profile and last_Ratenamelist:
-            title = last_Ratenamelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            axes_list = [rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6]
-            positions = ["lower right", "upper right", "lower right", "lower right", "upper right", "upper right"]
-            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                    channel_map=all_profile_channel_map, fig=fig,
-                                    axes_list=[rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6],
-                                    sub_channel_map=all_profile_sub_map,
-                                    sub2_channel_map=all_profile_sub2_map)
-            tab_no += 1
-            output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
-    @log_perf
     def chg_confirm_button(self):
-        # 함수 사용으로 변경
-        init_data = self._init_confirm_button(self.ChgConfirm)
-        firstCrate, mincapacity, CycleNo = init_data['firstCrate'], init_data['mincapacity'], init_data['CycleNo']
-        smoothdegree, mincrate, dqscale, dvscale = init_data['smoothdegree'], init_data['mincrate'], init_data['dqscale'], init_data['dvscale']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-        
-        # [최적화] global writer 제거 → 로컬 변수로만 사용
+        self.ChgConfirm.setDisabled(True)
+        firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
+        # 용량 선정 관련
+        global writer
         foldercount, chnlcount, cyccount, writecolno = 0, 0, 0, 0
-        
-        # 함수 사용으로 변경
-        writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'chg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree))
-        
+        root = Tk()
+        root.withdraw()
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        self.ChgConfirm.setEnabled(True)
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        if self.ect_saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name")
         tab_no = 0
-        all_profile = self.AllProfile.isChecked()
-        # AllProfile: 루프 전에 fig/tab 1개만 생성
-        if all_profile:
-            fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                nrows=2, ncols=3, figsize=(14, 10))
-            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-            last_Chgnamelist = None
-            all_profile_channel_map = {}
-            all_profile_sub_map = {}
-            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
-            if not os.path.isdir(cyclefolder):
-                continue
-            subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
-            foldercountmax = len(all_data_folder)
-            foldercount += 1
-            is_pne = check_cycler(cyclefolder)
-            if self.CycProfile.isChecked():
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                            nrows=2, ncols=3, figsize=(14, 10))
-                        tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                        Chgnamelist = None
-                        channel_map = {}
-                        sub2_channel_map = {}
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            Chgnamelist = FolderBase.split("\\")
-                            headername = Chgnamelist[-2] + ", " + Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = "%04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Chgtemp = loaded_data.get((i, j, CycNo))
-                            if Chgtemp is None:
-                                if not is_pne:
-                                    Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Chgtemp[1], "Profile"):
-                                if len(Chgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Chgtemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
-                                    if self.chk_dqdv.isChecked():
-                                        _artists.append(graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
-                                                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd))
-                                    else:
-                                        _artists.append(graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
-                                                    0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, _sub_label = _make_channel_labels(Chgnamelist, all_data_name, i)
-                                    cyc_label = "%04d" % CycNo
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Chgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "SOC", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-                                    if self.ect_saveok.isChecked() and save_file_name:
-                                        continue_df = Chgtemp[1].Profile[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                        continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                        continue_df["Curr"] = (continue_df["Crate"] * Chgtemp[0] / 1000).round(4)
-                                        continue_df["Vol"] = continue_df["Vol"].round(4)
-                                        continue_df["Temp"] = continue_df["Temp"].round(1)
-                                        continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                                        continue_df.to_csv(save_file_name + "_" + "%04d" % CycNo + ".csv", index=False, sep=',',
-                                                            header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                        
-                        if Chgnamelist:
-                            title = Chgnamelist[-2] + "=" + Chgnamelist[-1]
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                            positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
-                                               sub2_channel_map=sub2_channel_map)
-                        tab_no += 1
-                        output_fig(self.figsaveok, title)
-            elif all_profile:
-                # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            last_Chgnamelist = FolderBase.split("\\")
-                            headername = last_Chgnamelist[-2] + ", " + last_Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = last_Chgnamelist[-1] + " %04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Chgtemp = loaded_data.get((i, j, CycNo))
-                            if Chgtemp is None:
-                                if not is_pne:
-                                    Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Chgtemp[1], "Profile"):
-                                if len(Chgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Chgtemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
-                                    if self.chk_dqdv.isChecked():
-                                        _artists.append(graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
-                                                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd))
-                                    else:
-                                        _artists.append(graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
-                                                    0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, sub_label = _make_channel_labels(last_Chgnamelist, all_data_name, i)
-                                    sub_key = ch_label + " " + sub_label
-                                    cyc_label = "%04d" % CycNo
-                                    if ch_label in all_profile_channel_map:
-                                        all_profile_channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    if sub_key in all_profile_sub_map:
-                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    sub2_key = sub_key + " " + cyc_label
-                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Chgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "SOC", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-            else:
-                for CycNo in CycleNo:
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                        nrows=2, ncols=3, figsize=(14, 10))
-                    tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                    
-                    Chgnamelist = None
-                    channel_map = {}
-                    sub_channel_map = {}
-                    for j, FolderBase in enumerate(subfolder):
+            if os.path.isdir(cyclefolder):
+                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                foldercountmax = len(all_data_folder)
+                foldercount = foldercount + 1
+                if self.CycProfile.isChecked():
+                    for FolderBase in subfolder:
+                        chnlcount = chnlcount + 1
+                        chnlcountmax = len(subfolder)
                         if "Pattern" not in FolderBase:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            Chgnamelist = FolderBase.split("\\")
-                            headername = Chgnamelist[-2] + ", " + Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = Chgnamelist[-1]
-                            # 병렬 로딩 결과 사용
-                            Chgtemp = loaded_data.get((i, j, CycNo))
-                            if Chgtemp is None:
-                                if not is_pne:
-                                    Chgtemp = toyo_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
+                            fig, ((Chg_ax1, Chg_ax2, Chg_ax3) ,(Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
+                                nrows=2, ncols=3, figsize=(14, 10))
+                            tab = QtWidgets.QWidget()
+                            tab_layout = QtWidgets.QVBoxLayout(tab)
+                            canvas = FigureCanvas(fig)
+                            toolbar = NavigationToolbar(canvas, None)
+                            for CycNo in CycleNo:
+                                cyccountmax = len(CycleNo)
+                                cyccount = cyccount + 1
+                                progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
+                                self.progressBar.setValue(int(progressdata))
+                                Chgnamelist = FolderBase.split("\\")
+                                headername = Chgnamelist[-2] + ", " + Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
+                                lgnd = "%04d" % CycNo
+                                if not check_cycler(cyclefolder):
+                                    Chgtemp = toyo_chg_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate,
+                                                                    smoothdegree)
                                 else:
-                                    Chgtemp = pne_chg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Chgtemp[1], "Profile"):
-                                if len(Chgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Chgtemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd))
-                                    if self.chk_dqdv.isChecked():
-                                        _artists.append(graph_profile(Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
-                                                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale,
-                                                    "Voltage(V)", "dQdV", temp_lgnd))
-                                    else:
-                                        _artists.append(graph_profile(Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
-                                                    0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                    "dQdV", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
-                                    _artists.append(graph_profile(Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, sub_label = _make_channel_labels(Chgnamelist, all_data_name, i)
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Chgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "SOC", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-                    if Chgnamelist:
-                        title = Chgnamelist[-2] + "=" + "%04d" % CycNo
-                        plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                        axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                        positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
-                                           sub_channel_map=sub_channel_map)
-                    tab_no += 1
-                    output_fig(self.figsaveok, title)
-        # AllProfile: 루프 종료 후 한번에 finalize
-        if all_profile and last_Chgnamelist:
-            title = last_Chgnamelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-            positions = ["lower right", "lower right", "lower right", "upper right", "upper right", "upper right"]
-            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list,
-                                   sub_channel_map=all_profile_sub_map,
-                                   sub2_channel_map=all_profile_sub2_map)
-            tab_no += 1
-            output_fig(self.figsaveok, title)
+                                    Chgtemp = pne_chg_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate,
+                                                                   smoothdegree)
+                                if len(all_data_name) == 0:
+                                    temp_lgnd = ""
+                                else:	
+                                    temp_lgnd = all_data_name[i] + " " + lgnd
+                                if hasattr(Chgtemp[1], "Profile"):
+                                    if len(Chgtemp[1].Profile) > 2:
+                                        self.capacitytext.setText(str(Chgtemp[0]))
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                        if self.chk_dqdv.isChecked():
+                                            graph_profile( Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
+                                                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale, 
+                                                        "Voltage(V)","dQdV", temp_lgnd)
+                                        else:
+                                            graph_profile( Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
+                                                        0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                        "dQdV", "Voltage(V)", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
+                                                      0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd) 
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                      0, 1.3, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
+                                                      0, 1.3, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                                        # Data output option
+                                        if self.saveok.isChecked() and save_file_name:
+                                            Chgtemp[1].Profile.to_excel(
+                                                writer,
+                                                startcol=writecolno,
+                                                index=False,
+                                                header=[
+                                                    headername + "Time(min)",
+                                                    headername + "SOC",
+                                                    headername + "Energy",
+                                                    headername + "Voltage",
+                                                    headername + "Crate",
+                                                    headername + "dQdV",
+                                                    headername + "dVdQ",
+                                                    headername + "Temp."
+                                                ])
+                                            writecolno = writecolno + 8
+                                        if self.ect_saveok.isChecked() and save_file_name:
+                                            Chgtemp[1].Profile["TimeSec"] = Chgtemp[1].Profile["TimeMin"] * 60
+                                            Chgtemp[1].Profile["Curr"] = Chgtemp[1].Profile["Crate"] * Chgtemp[0] / 1000
+                                            continue_df = Chgtemp[1].Profile.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                            # 각 열을 소수점 자리수에 맞게 반올림
+                                            continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
+                                            continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
+                                            continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
+                                            continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
+                                            continue_df.to_csv(save_file_name + "_"+ "%04d" % CycNo + ".csv", index=False, sep=',',
+                                                                header=["time(s)",
+                                                                        "Voltage(V)",
+                                                                        "Current(A)",
+                                                                        "Temp."])
+                                title = Chgnamelist[-2] + "=" + Chgnamelist[-1]
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                if len(all_data_name) != 0:
+                                    Chg_ax1.legend(loc="lower right")
+                                    Chg_ax2.legend(loc="lower right")
+                                    Chg_ax3.legend(loc="lower right")
+                                    Chg_ax4.legend(loc="upper right")
+                                    Chg_ax5.legend(loc="upper right")
+                                    Chg_ax6.legend(loc="upper right")
+                                else:
+                                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                            tab_layout.addWidget(toolbar)
+                            tab_layout.addWidget(canvas)
+                            self.cycle_tab.addTab(tab, str(tab_no))
+                            self.cycle_tab.setCurrentWidget(tab)
+                            tab_no = tab_no + 1
+                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                            output_fig(self.figsaveok, title)
+                else:
+                    for CycNo in CycleNo:
+                        chnlcount = chnlcount + 1
+                        chnlcountmax = len(subfolder)
+                        fig, ((Chg_ax1, Chg_ax2, Chg_ax3) ,(Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
+                            nrows=2, ncols=3, figsize=(14, 10))
+                        tab = QtWidgets.QWidget()
+                        tab_layout = QtWidgets.QVBoxLayout(tab)
+                        canvas = FigureCanvas(fig)
+                        toolbar = NavigationToolbar(canvas, None)
+                        for FolderBase in subfolder:
+                            if "Pattern" not in FolderBase:
+                                cyccountmax = len(CycleNo)
+                                cyccount = cyccount + 1
+                                progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
+                                self.progressBar.setValue(int(progressdata))
+                                Chgnamelist = FolderBase.split("\\")
+                                headername = Chgnamelist[-2] + ", " + Chgnamelist[-1] + ", " + str(CycNo) + "cy, "
+                                lgnd = Chgnamelist[-1]
+                                if not check_cycler(cyclefolder):
+                                    Chgtemp = toyo_chg_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate,
+                                                                    smoothdegree)
+                                else:
+                                    Chgtemp = pne_chg_Profile_data( FolderBase, CycNo, mincapacity, mincrate, firstCrate,
+                                                                   smoothdegree)
+                                if len(all_data_name) == 0:
+                                    temp_lgnd = ""
+                                else:	
+                                    temp_lgnd = all_data_name[i] + " " + lgnd
+                                if hasattr(Chgtemp[1], "Profile"):
+                                    if len(Chgtemp[1].Profile) > 2:
+                                        self.capacitytext.setText(str(Chgtemp[0]))
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax1,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Vol, Chg_ax3,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "SOC", "Voltage(V)", temp_lgnd)
+                                        if self.chk_dqdv.isChecked():
+                                            graph_profile( Chgtemp[1].Profile.Vol, Chgtemp[1].Profile.dQdV, Chg_ax2,
+                                                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, 0, 5.5 * dqscale, 0.5 * dqscale, 
+                                                        "Voltage(V)","dQdV", temp_lgnd)
+                                        else:
+                                            graph_profile( Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2,
+                                                        0, 5.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                        "dQdV", "Voltage(V)", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.dQdV, Chgtemp[1].Profile.Vol, Chg_ax2, 0, 5.5 * dqscale, 0.5 * dqscale,
+                                                      self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "dQdV", "Voltage(V)", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Crate, Chg_ax5,
+                                                      0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd) 
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                      0, 1.3, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                                        graph_profile( Chgtemp[1].Profile.SOC, Chgtemp[1].Profile.Temp, Chg_ax6,
+                                                      0, 1.3, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd) 
+                                        # Data output option
+                                        if self.saveok.isChecked() and save_file_name:
+                                            Chgtemp[1].Profile.to_excel(
+                                                writer,
+                                                startcol=writecolno,
+                                                index=False,
+                                                header=[
+                                                    headername + "Time(min)",
+                                                    headername + "SOC",
+                                                    headername + "Energy",
+                                                    headername + "Voltage",
+                                                    headername + "Crate",
+                                                    headername + "dQdV",
+                                                    headername + "dVdQ",
+                                                    headername + "Temp."
+                                                ])
+                                            writecolno = writecolno + 8
+                                title = Chgnamelist[-2] + "=" + "%04d" % CycNo
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                if len(all_data_name) != 0:
+                                    Chg_ax1.legend(loc="lower right")
+                                    Chg_ax2.legend(loc="lower right")
+                                    Chg_ax3.legend(loc="lower right")
+                                    Chg_ax4.legend(loc="upper right")
+                                    Chg_ax5.legend(loc="upper right")
+                                    Chg_ax6.legend(loc="upper right")
+                                else:
+                                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                        tab_layout.addWidget(toolbar)
+                        tab_layout.addWidget(canvas)
+                        self.cycle_tab.addTab(tab, str(tab_no))
+                        self.cycle_tab.setCurrentWidget(tab)
+                        tab_no = tab_no + 1
+                        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                        output_fig(self.figsaveok, title)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
+        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         self.progressBar.setValue(100)
         plt.close()
 
-    @log_perf
     def dchg_confirm_button(self):
-        # 함수 사용으로 변경
-        init_data = self._init_confirm_button(self.DchgConfirm)
-        firstCrate, mincapacity, CycleNo = init_data['firstCrate'], init_data['mincapacity'], init_data['CycleNo']
-        smoothdegree, mincrate, dqscale, dvscale = init_data['smoothdegree'], init_data['mincrate'], init_data['dqscale'], init_data['dvscale']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-        
-        #global writer 제거 → 로컬 변수로만 사용
+        self.DchgConfirm.setDisabled(True)
+        firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
+        # 용량 선정 관련
+        global writer
         foldercount, chnlcount, cyccount, writecolno = 0, 0, 0, 0
-        
-        #함수 사용으로 변경    
-        writer, save_file_name = self._setup_file_writer()
-        
-        # 데이터 병렬 로딩 (ThreadPoolExecutor)
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'dchg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree))
-        
+        root = Tk()
+        root.withdraw()
+        pne_path = self.pne_path_setting()
+        all_data_folder = pne_path[0]
+        all_data_name = pne_path[1]
+        self.DchgConfirm.setEnabled(True)
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+        if self.ect_saveok.isChecked():
+            # save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".csv")
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name")
         tab_no = 0
-        all_profile = self.AllProfile.isChecked()
-        # AllProfile: 루프 전에 fig/tab 1개만 생성
-        if all_profile:
-            fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                nrows=2, ncols=3, figsize=(14, 10))
-            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-            last_Dchgnamelist = None
-            all_profile_channel_map = {}
-            all_profile_sub_map = {}
-            all_profile_sub2_map = {}
         for i, cyclefolder in enumerate(all_data_folder):
-            if not os.path.isdir(cyclefolder):
-                continue
-            subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
-            foldercountmax = len(all_data_folder)
-            foldercount += 1
-            #cyclefolder 당 1회만 호출
-            is_pne = check_cycler(cyclefolder)
-            if self.CycProfile.isChecked():
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                            nrows=2, ncols=3, figsize=(14, 10))
-                        tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                        Dchgnamelist = None
-                        channel_map = {}
-                        sub2_channel_map = {}
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            Dchgnamelist = FolderBase.split("\\")
-                            headername = Dchgnamelist[-2] + ", " + Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = "%04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Dchgtemp = loaded_data.get((i, j, CycNo))
-                            if Dchgtemp is None:
-                                if not is_pne:
-                                    Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Dchgtemp[1], "Profile"):
-                                if len(Dchgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Dchgtemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
-                                                  -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, _sub_label = _make_channel_labels(Dchgnamelist, all_data_name, i)
-                                    cyc_label = "%04d" % CycNo
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    sub2_channel_map[cyc_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Dchgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "DOD", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-                                    if self.ect_saveok.isChecked() and save_file_name:
-                                        continue_df = Dchgtemp[1].Profile[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                        continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                        continue_df["Curr"] = (continue_df["Crate"] * Dchgtemp[0] / 1000).round(4)
-                                        continue_df["Vol"] = continue_df["Vol"].round(4)
-                                        continue_df["Temp"] = continue_df["Temp"].round(1)
-                                        continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                                        continue_df.to_csv(save_file_name + "_" + "%04d" % CycNo + ".csv", index=False, sep=',',
-                                                            header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                        if Dchgnamelist:
-                            title = Dchgnamelist[-2] + "=" + Dchgnamelist[-1]
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                            positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                        self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                               channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
-                                               sub2_channel_map=sub2_channel_map)
-                        tab_no += 1
-                        output_fig(self.figsaveok, title)
-            elif all_profile:
-                # 전체 통합: 모든 cyclefolder의 셀×사이클을 사전 생성된 1개 fig에 오버레이
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    if "Pattern" not in FolderBase:
-                        for CycNo in CycleNo:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            last_Dchgnamelist = FolderBase.split("\\")
-                            headername = last_Dchgnamelist[-2] + ", " + last_Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = last_Dchgnamelist[-1] + " %04d" % CycNo
-                            # 병렬 로딩 결과 사용
-                            Dchgtemp = loaded_data.get((i, j, CycNo))
-                            if Dchgtemp is None:
-                                if not is_pne:
-                                    Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                                else:
-                                    Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Dchgtemp[1], "Profile"):
-                                if len(Dchgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Dchgtemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
-                                                  -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, sub_label = _make_channel_labels(last_Dchgnamelist, all_data_name, i)
-                                    sub_key = ch_label + " " + sub_label
-                                    cyc_label = "%04d" % CycNo
-                                    if ch_label in all_profile_channel_map:
-                                        all_profile_channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    if sub_key in all_profile_sub_map:
-                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    sub2_key = sub_key + " " + cyc_label
-                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Dchgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "DOD", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-            else:
-                for CycNo in CycleNo:
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    fig, ((Chg_ax1, Chg_ax2, Chg_ax3), (Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
-                        nrows=2, ncols=3, figsize=(14, 10))
-                    tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                    Dchgnamelist = None
-                    channel_map = {}
-                    sub_channel_map = {}
-                    for j, FolderBase in enumerate(subfolder):
+            if os.path.isdir(cyclefolder):
+                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                foldercountmax = len(all_data_folder)
+                foldercount = foldercount + 1
+                if self.CycProfile.isChecked():
+                    for FolderBase in subfolder:
+                        chnlcount = chnlcount + 1
+                        chnlcountmax = len(subfolder)
                         if "Pattern" not in FolderBase:
-                            cyccountmax = len(CycleNo)
-                            cyccount += 1
-                            progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                            self.progressBar.setValue(int(50 + progressdata * 0.5))
-                            Dchgnamelist = FolderBase.split("\\")
-                            headername = Dchgnamelist[-2] + ", " + Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
-                            lgnd = Dchgnamelist[-1]
-                            # 병렬 로딩 결과 사용
-                            Dchgtemp = loaded_data.get((i, j, CycNo))
-                            if Dchgtemp is None:
-                                if not is_pne:
+                            fig, ((Chg_ax1, Chg_ax2, Chg_ax3) ,(Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
+                                nrows=2, ncols=3, figsize=(14, 10))
+                            tab = QtWidgets.QWidget()
+                            tab_layout = QtWidgets.QVBoxLayout(tab)
+                            canvas = FigureCanvas(fig)
+                            toolbar = NavigationToolbar(canvas, None)
+                            for CycNo in CycleNo:
+                                cyccountmax = len(CycleNo)
+                                cyccount = cyccount + 1
+                                progressdata = progress(foldercount, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
+                                self.progressBar.setValue(int(progressdata))
+                                Dchgnamelist = FolderBase.split("\\")
+                                headername = Dchgnamelist[-2] + ", " + Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
+                                lgnd = "%04d" % CycNo
+                                if not check_cycler(cyclefolder):
+                                    Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate,
+                                                                      smoothdegree)
+                                else:
+                                    Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate,
+                                                                     smoothdegree)
+                                if len(all_data_name) == 0:
+                                    temp_lgnd = ""
+                                else:	
+                                    temp_lgnd = all_data_name[i] + " " + lgnd
+                                if hasattr(Dchgtemp[1], "Profile"):
+                                    if len(Dchgtemp[1].Profile) > 2:
+                                        self.capacitytext.setText(str(Dchgtemp[0]))
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
+                                                      -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                      "dQdV", "Voltage(V)", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
+                                                      0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                      0, 1.3, 0.1, -5 * dvscale, 0.5 * self.dvscale, 0.5 * self.dvscale,
+                                                      "DOD", "dVdQ", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
+                                                      0, 1.3, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd) # Data output option
+                                        if self.saveok.isChecked() and save_file_name:
+                                            Dchgtemp[1].Profile.to_excel(
+                                                writer,
+                                                startcol=writecolno,
+                                                index=False,
+                                                header=[
+                                                    headername + "Time(min)",
+                                                    headername + "DOD",
+                                                    headername + "Energy",
+                                                    headername + "Voltage",
+                                                    headername + "Crate",
+                                                    headername + "dQdV",
+                                                    headername + "dVdQ",
+                                                    headername + "Temp."
+                                                ])
+                                            writecolno = writecolno + 8
+                                        if self.ect_saveok.isChecked() and save_file_name:
+                                            Dchgtemp[1].Profile["TimeSec"] = Dchgtemp[1].Profile.TimeMin * 60
+                                            Dchgtemp[1].Profile["Curr"] = Dchgtemp[1].Profile.Crate * Dchgtemp[0] / 1000
+                                            continue_df = Dchgtemp[1].Profile.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                            # 각 열을 소수점 자리수에 맞게 반올림
+                                            continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
+                                            continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
+                                            continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
+                                            continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
+                                            continue_df.to_csv(save_file_name +"_"+ "%04d" % CycNo + ".csv", index=False, sep=',',
+                                                                header=["time(s)",
+                                                                        "Voltage(V)",
+                                                                        "Current(A)",
+                                                                        "Temp."])
+                                title = Dchgnamelist[-2] + "=" + Dchgnamelist[-1]
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                if len(all_data_name) != 0:
+                                    Chg_ax1.legend(loc="lower left")
+                                    Chg_ax2.legend(loc="upper left")
+                                    Chg_ax3.legend(loc="lower left")
+                                    Chg_ax4.legend(loc="lower left")
+                                    Chg_ax5.legend(loc="upper right")
+                                    Chg_ax6.legend(loc="upper right")
+                                else:
+                                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                            tab_layout.addWidget(toolbar)
+                            tab_layout.addWidget(canvas)
+                            self.cycle_tab.addTab(tab, str(tab_no))
+                            self.cycle_tab.setCurrentWidget(tab)
+                            tab_no = tab_no + 1
+                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                            output_fig(self.figsaveok, title)
+                else:
+                    for CycNo in CycleNo:
+                        chnlcount = chnlcount + 1
+                        chnlcountmax = len(subfolder)
+                        fig, ((Chg_ax1, Chg_ax2, Chg_ax3) ,(Chg_ax4, Chg_ax5, Chg_ax6)) = plt.subplots(
+                            nrows=2, ncols=3, figsize=(14, 10))
+                        tab = QtWidgets.QWidget()
+                        tab_layout = QtWidgets.QVBoxLayout(tab)
+                        canvas = FigureCanvas(fig)
+                        toolbar = NavigationToolbar(canvas, None)
+                        for FolderBase in subfolder:
+                            if "Pattern" not in FolderBase:
+                                cyccountmax = len(CycleNo)
+                                cyccount = cyccount + 1
+                                progressdata = progress(foldercount, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
+                                self.progressBar.setValue(int(progressdata))
+                                Dchgnamelist = FolderBase.split("\\")
+                                headername = Dchgnamelist[-2] + ", " + Dchgnamelist[-1] + ", " + str(CycNo) + "cy, "
+                                lgnd = Dchgnamelist[-1]
+                                if not check_cycler(cyclefolder):
                                     Dchgtemp = toyo_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
                                 else:
                                     Dchgtemp = pne_dchg_Profile_data(FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                            if hasattr(Dchgtemp[1], "Profile"):
-                                if len(Dchgtemp[1].Profile) > 2:
-                                    self.capacitytext.setText(str(Dchgtemp[0]))
-                                    _artists = []
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
-                                                  -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
-                                                  -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                  "dQdV", "Voltage(V)", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
-                                                  -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                                    # [버그수정] self.dvscale → dvscale (로컬 변수 사용)
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
-                                                  -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                                                  "DOD", "dVdQ", temp_lgnd))
-                                    _artists.append(graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
-                                                  -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    ch_label, sub_label = _make_channel_labels(Dchgnamelist, all_data_name, i)
-                                    if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
-                                    else:
-                                        channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    sub_channel_map[sub_label] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    if self.saveok.isChecked() and save_file_name:
-                                        Dchgtemp[1].Profile.to_excel(
-                                            writer, startcol=writecolno, index=False,
-                                            header=[headername + "Time(min)", headername + "DOD", headername + "Energy",
-                                                    headername + "Voltage", headername + "Crate", headername + "dQdV",
-                                                    headername + "dVdQ", headername + "Temp."])
-                                        writecolno += 8
-                                    if self.ect_saveok.isChecked() and save_file_name:
-                                        continue_df = Dchgtemp[1].Profile[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                        continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                        continue_df["Curr"] = (continue_df["Crate"] * Dchgtemp[0] / 1000).round(4)
-                                        continue_df["Vol"] = continue_df["Vol"].round(4)
-                                        continue_df["Temp"] = continue_df["Temp"].round(1)
-                                        continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                                        continue_df.to_csv(save_file_name + "_" + Dchgnamelist[-1] + ".csv", index=False, sep=',',
-                                                            header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                    if Dchgnamelist:
-                        title = Dchgnamelist[-2] + "=" + "%04d" % CycNo
-                        plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                        axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-                        positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-                        self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                    self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                           channel_map=channel_map, fig=fig, axes_list=[Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6],
-                                           sub_channel_map=sub_channel_map)
-                    tab_no += 1
-                    output_fig(self.figsaveok, title)
-        # AllProfile: 루프 종료 후 한번에 finalize
-        if all_profile and last_Dchgnamelist:
-            title = last_Dchgnamelist[-2] + " All"
-            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-            axes_list = [Chg_ax1, Chg_ax2, Chg_ax3, Chg_ax4, Chg_ax5, Chg_ax6]
-            positions = ["lower left", "upper left", "lower left", "lower left", "upper right", "upper right"]
-            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                   channel_map=all_profile_channel_map, fig=fig, axes_list=axes_list,
-                                   sub_channel_map=all_profile_sub_map,
-                                   sub2_channel_map=all_profile_sub2_map)
-            tab_no += 1
-            output_fig(self.figsaveok, title)
+                                if len(all_data_name) == 0:
+                                    temp_lgnd = ""
+                                else:	
+                                    temp_lgnd = all_data_name[i] + " " + lgnd
+                                if hasattr(Dchgtemp[1], "Profile"):
+                                    if len(Dchgtemp[1].Profile) > 2:
+                                        self.capacitytext.setText(str(Dchgtemp[0]))
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax1,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Vol, Chg_ax3,
+                                                      0, 1.3, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "DOD", "Voltage(V)", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.dQdV, Dchgtemp[1].Profile.Vol, Chg_ax2,
+                                                      -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                                      "dQdV", "Voltage(V)", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Crate, Chg_ax5,
+                                                      0, 1.3, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.dVdQ, Chg_ax4,
+                                                      0, 1.3, 0.1, -5 * dvscale, 0.5 * self.dvscale, 0.5 * self.dvscale,
+                                                      "DOD", "dVdQ", temp_lgnd)
+                                        graph_profile(Dchgtemp[1].Profile.SOC, Dchgtemp[1].Profile.Temp, Chg_ax6,
+                                                      0, 1.3, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd) 
+                                        # Data output option
+                                        if self.saveok.isChecked() and save_file_name:
+                                            Dchgtemp[1].Profile.to_excel(
+                                                writer,
+                                                startcol=writecolno,
+                                                index=False,
+                                                header=[
+                                                    headername + "Time(min)",
+                                                    headername + "DOD",
+                                                    headername + "Energy",
+                                                    headername + "Voltage",
+                                                    headername + "Crate",
+                                                    headername + "dQdV",
+                                                    headername + "dVdQ",
+                                                    headername + "Temp."
+                                                ])
+                                            writecolno = writecolno + 8
+                                        if self.ect_saveok.isChecked() and save_file_name:
+                                            Dchgtemp[1].Profile["TimeSec"] = Dchgtemp[1].Profile.TimeMin * 60
+                                            Dchgtemp[1].Profile["Curr"] = Dchgtemp[1].Profile.Crate * Dchgtemp[0] / 1000
+                                            continue_df = Dchgtemp[1].Profile.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                            # 각 열을 소수점 자리수에 맞게 반올림
+                                            continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
+                                            continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
+                                            continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
+                                            continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
+                                            continue_df.to_csv(save_file_name + "_" + Dchgnamelist[-1] + ".csv", index=False, sep=',',
+                                                                header=["time(s)",
+                                                                        "Voltage(V)",
+                                                                        "Current(A)",
+                                                                        "Temp."])
+                                title = Dchgnamelist[-2] + "=" + "%04d" % CycNo
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                if len(all_data_name) != 0:
+                                    Chg_ax1.legend(loc="lower left")
+                                    Chg_ax2.legend(loc="upper left")
+                                    Chg_ax3.legend(loc="lower left")
+                                    Chg_ax4.legend(loc="lower left")
+                                    Chg_ax5.legend(loc="upper right")
+                                    Chg_ax6.legend(loc="upper right")
+                                else:
+                                    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                        tab_layout.addWidget(toolbar)
+                        tab_layout.addWidget(canvas)
+                        self.cycle_tab.addTab(tab, str(tab_no))
+                        self.cycle_tab.setCurrentWidget(tab)
+                        tab_no = tab_no + 1
+                        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                        output_fig(self.figsaveok, title)
+                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                plt.close()
+            else:
+                err_msg('파일 or 폴더 없음!!','파일 or 폴더 없음!!')
+                return
+        self.progressBar.setValue(100)
         if self.saveok.isChecked() and save_file_name:
             writer.close()
-        self.progressBar.setValue(100)
-        plt.close()
 
     def continue_confirm_button(self):
         if self.chk_ectpath.isChecked():
@@ -15242,7 +9872,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             self.pro_continue_confirm_button()
 
-    @log_perf
     def ect_confirm_button(self):
         self.ContinueConfirm.setDisabled(True)
         firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
@@ -15259,8 +9888,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ect_cycle = np.array(cycle_path.cycle.tolist())
             ect_CD = np.array(cycle_path.CD.tolist())
             ect_save = np.array(cycle_path.save.tolist())
-            if "mAh" in datafilepath:
+            if (self.inicaprate.isChecked()) and ("mAh" in datafilepath):
                 self.mincapacity = name_capacity(datafilepath)
+                self.capacitytext.setText(str(self.mincapacity))
         self.ContinueConfirm.setEnabled(True)
         tab_no = 0
         for i, cyclefolder in enumerate(ect_path):
@@ -15299,17 +9929,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if hasattr(temp[1], "stepchg"):
                                 if len(temp[1].stepchg) > 2:
                                     self.capacitytext.setText(str(temp[0]))
-                                    _artists = []
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2, 0, 3.2, 0.2, "Time(min)", "C-rate",temp_lgnd))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax5, -3.0, 0.2, 0.2, "Time(min)", "C-rate",temp_lgnd))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3, 0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5, "Time(min)", "Temp.", lgnd))
-                                    ch_label = temp_lgnd or lgnd
-                                    _color = mcolors.to_hex(_artists[0].get_color())
-                                    channel_map = {}
-                                    channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
+                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd)
+                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd)
+                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2, 0, 3.2, 0.2, "Time(min)", "C-rate",temp_lgnd)
+                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax5, -3.0, 0.2, 0.2, "Time(min)", "C-rate",temp_lgnd)
+                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3, 0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
+                                    graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5, "Time(min)", "Temp.", lgnd)
                                     # Data output option
                                     continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
                                     # 각 열을 소수점 자리수에 맞게 반올림
@@ -15323,236 +9948,181 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                                 "Current(A)",
                                                                 "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                            positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                                    channel_map=channel_map, fig=fig,
-                                                    axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
+                            plt.suptitle(title, fontsize= 15, fontweight='bold')
+                            if len(all_data_name) != 0:
+                                step_ax1.legend(loc="lower left")
+                                step_ax2.legend(loc="lower right")
+                                step_ax3.legend(loc="upper right")
+                                step_ax4.legend(loc="lower right")
+                                step_ax5.legend(loc="lower left")
+                                step_ax6.legend(loc="upper right")
+                            else:
+                                plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                            tab_layout.addWidget(toolbar)
+                            tab_layout.addWidget(canvas)
+                            self.cycle_tab.addTab(tab, str(tab_no))
+                            self.cycle_tab.setCurrentWidget(tab)
                             tab_no = tab_no + 1
+                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                             output_fig(self.figsaveok, ect_save[i])
         self.progressBar.setValue(100)
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         plt.close()
 
-    @log_perf
     def pro_continue_confirm_button(self):
-        # 함수 사용으로 변경
         self.ContinueConfirm.setDisabled(True)
-        config = self.Profile_ini_set()
-        firstCrate, mincapacity, CycleNo = config[0], config[1], config[2]
-        smoothdegree, mincrate, dqscale, dvscale = config[3], config[4], config[5], config[6]
+        firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
         all_data_name = []
-        #global writer 제거 → 로컬 변수로만 사용
-        if self.stepnum.toPlainText().strip():
+        # 용량 선정 관련
+        global writer
+        if "-" in self.stepnum.toPlainText():
             write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
+            root = Tk()
+            root.withdraw()
             pne_path = self.pne_path_setting()
             all_data_folder = pne_path[0]
             all_data_name = pne_path[1]
-            
-            # 함수 사용으로 변경
-            writer, save_file_name = self._setup_file_writer()
+            if self.saveok.isChecked():
+                save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+                if save_file_name:
+                    writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+            if self.ect_saveok.isChecked():
+                # save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".csv")
+                save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name")
             self.ContinueConfirm.setEnabled(True)
             chg_dchg_dcir_no = list((self.stepnum.toPlainText().split(" ")))
-            
-            # step_ranges 사전 파싱 및 병렬 로딩
-            step_ranges = []
-            for dcir_step in chg_dchg_dcir_no:
-                if "-" in dcir_step:
-                    s, e = map(int, dcir_step.split("-"))
-                else:
-                    s = int(dcir_step)
-                    e = s
-                step_ranges.append((s, e))
-            self.progressBar.setValue(0)
-            loaded_data = self._load_all_profile_data_parallel(
-                all_data_folder, 'continue', (step_ranges, mincapacity, firstCrate, ""))
-            
             tab_no = 0
-            all_profile = self.AllProfile.isChecked()
-            # AllProfile: 사전에 fig/tab 1개 생성
-            if all_profile:
-                fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                last_namelist = None
-                all_profile_channel_map = {}
-                all_profile_sub_map = {}
-                all_profile_sub2_map = {}
             for i, cyclefolder in enumerate(all_data_folder):
-                if not os.path.isdir(cyclefolder):
-                    continue
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
-                foldercountmax = len(all_data_folder)
-                folder_count += 1
-                #cyclefolder 당 1회만 호출
-                is_pne = check_cycler(cyclefolder)
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    for dcir_continue_step in chg_dchg_dcir_no:
-                        if "-" in dcir_continue_step:
-                            Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
-                        else:
-                            Step_CycNo, Step_CycEnd = int(dcir_continue_step), int(dcir_continue_step)
-                        CycleNo = range(Step_CycNo, Step_CycEnd + 1)
-                        if "Pattern" in FolderBase:
-                            continue
-                        if not all_profile:
-                            fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                                nrows=2, ncols=3, figsize=(14, 10))
-                            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                            channel_map = {}
-                        cyccountmax = len(CycleNo)
-                        cyccount += 1
-                        progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                        self.progressBar.setValue(int(50 + progressdata * 0.5))
-                        step_namelist = FolderBase.split("\\")
-                        headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str(Step_CycNo)
-                        if Step_CycNo == Step_CycEnd:
-                            headername = headername + "cy, "
-                        else:
-                            headername = headername + "-" + str(Step_CycEnd) + "cy, "
-                        if all_profile:
-                            lgnd = step_namelist[-1] + " %04d" % Step_CycNo
-                        elif self.CycProfile.isChecked():
-                            lgnd = "%04d" % Step_CycNo
-                        else:
-                            lgnd = step_namelist[-1]
-                        # 병렬 로딩 결과 사용
-                        temp = loaded_data.get((i, j, (Step_CycNo, Step_CycEnd)))
-                        if temp is None:
-                            if not is_pne:
-                                # fallback: 논리 사이클 → 파일 번호 변환 후 로딩
-                                cm, _ = toyo_build_cycle_map(FolderBase, mincapacity, firstCrate)
-                                if cm:
-                                    fb_start = cm.get(Step_CycNo, (Step_CycNo, Step_CycNo))[0]
-                                    fb_end = cm.get(Step_CycEnd, (Step_CycEnd, Step_CycEnd))[1]
-                                else:
-                                    fb_start, fb_end = Step_CycNo, Step_CycEnd
-                                temp = toyo_Profile_continue_data(FolderBase, fb_start, fb_end, mincapacity, firstCrate)
-                            else:
-                                temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
-                        if all_profile:
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                        else:
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
-                        if hasattr(temp[1], "stepchg"):
-                            if len(temp[1].stepchg) > 2:
-                                self.capacitytext.setText(str(temp[0]))
-                                has_ocv = "OCV" in temp[1].stepchg.columns
-                                _artists = []
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
-                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
-                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-                                if has_ocv:
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
-                                               -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd))
-                                if len(temp) > 2 and hasattr(temp[2], 'AccCap') and not temp[2].empty:
-                                    _artists.append(graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                   "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
-                                    _artists.append(graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                   "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
-                                               0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
-                                               -15, 60, 5, "Time(min)", "Temp.", lgnd))
-                                ch_label, sub_label = _make_channel_labels(step_namelist, all_data_name, i)
-                                _color = mcolors.to_hex(_artists[0].get_color())
-                                _target_map = all_profile_channel_map if all_profile else channel_map
-                                if ch_label in _target_map:
-                                    _target_map[ch_label]['artists'].extend(_artists)
-                                else:
-                                    _target_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                if all_profile:
-                                    sub_key = ch_label + " " + sub_label
-                                    cyc_label = "%04d" % Step_CycNo
-                                    if sub_key in all_profile_sub_map:
-                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
+                if os.path.isdir(cyclefolder):
+                    subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+                    foldercountmax = len(all_data_folder)
+                    folder_count = folder_count + 1
+                    for FolderBase in subfolder:
+                        chnlcount = chnlcount + 1
+                        chnlcountmax = len(subfolder)
+                        for dcir_continue_step in chg_dchg_dcir_no:
+                            if "-" in dcir_continue_step:
+                                Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
+                                CycleNo = range(Step_CycNo, Step_CycEnd + 1)
+                                if "Pattern" not in FolderBase:
+                                    fig, ((step_ax1, step_ax2, step_ax3) ,(step_ax4, step_ax5, step_ax6)) = plt.subplots( nrows=2, ncols=3, figsize=(14, 10))
+                                    tab = QtWidgets.QWidget()
+                                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                                    canvas = FigureCanvas(fig)
+                                    toolbar = NavigationToolbar(canvas, None)
+                                    cyccountmax = len(CycleNo)
+                                    cyccount = cyccount + 1
+                                    progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
+                                    self.progressBar.setValue(int(progressdata))
+                                    step_namelist = FolderBase.split("\\")
+                                    headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str( Step_CycNo)
+                                    headername = headername + "-" + str(Step_CycEnd) + "cy, "
+                                    if self.CycProfile.isChecked():
+                                        lgnd = "%04d" % Step_CycNo
                                     else:
-                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    sub2_key = sub_key + " " + cyc_label
-                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
-                                                                    
-                                if self.saveok.isChecked() and save_file_name:
-                                    if has_ocv:
-                                        excel_df = temp[1].stepchg[["TimeSec", "Vol", "Curr", "OCV", "CCV",
-                                                                     "Crate", "SOC", "Temp"]].copy()
-                                        excel_df.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
-                                                         index=False,
-                                                         header=[headername + "time(s)", headername + "Voltage(V)",
-                                                                 headername + "Current(A)", headername + "OCV",
-                                                                 headername + "CCV", headername + "Crate",
-                                                                 headername + "SOC", headername + "Temp."])
-                                        write_column_num += 8
-                                        temp[2].to_excel(writer, sheet_name="OCV_CCV", startcol=write_column_num2,
-                                                         index=False,
-                                                         header=[headername + "SOC", headername + "OCV",
-                                                                 headername + "CCV"])
-                                        write_column_num2 += 3
+                                        lgnd = step_namelist[-1]
+                                    if not check_cycler(cyclefolder):
+                                        err_msg("Toyo는 준비 중", "토요는 시간나면 추가할께요 ^^;")
                                     else:
-                                        excel_df = temp[1].stepchg[["TimeMin", "SOC", "Vol", "Crate", "Temp"]].copy()
-                                        excel_df.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
-                                                         index=False,
-                                                         header=[headername + "Time(min)", headername + "SOC",
-                                                                 headername + "Voltage(V)", headername + "Crate",
-                                                                 headername + "Temp."])
-                                        write_column_num += 5
-                                if self.ect_saveok.isChecked() and save_file_name:
-                                    continue_df = temp[1].stepchg[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                    continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                    continue_df["Curr"] = (continue_df["Crate"] * temp[0] / 1000).round(4)
-                                    continue_df["Vol"] = continue_df["Vol"].round(4)
-                                    continue_df["Temp"] = continue_df["Temp"].round(1)
-                                    continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                                    continue_df.to_csv(save_file_name + "_" + "%04d" % tab_no + ".csv",
-                                                       index=False, sep=',',
-                                                       header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                        if all_profile:
-                            last_namelist = step_namelist
-                        else:
-                            title = step_namelist[-2] + "=" + step_namelist[-1] if self.CycProfile.isChecked() else step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            
-                            axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                            positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                            self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                            
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                                    channel_map=channel_map, fig=fig,
-                                                    axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
-                            if self.CycProfile.isChecked():
-                                tab_no += 1
-                            output_fig(self.figsaveok, title)
-            # AllProfile: 루프 종료 후 한번에 finalize
-            if all_profile and last_namelist:
-                title = last_namelist[-2] + " All"
-                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                        channel_map=all_profile_channel_map, fig=fig,
-                                        axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6],
-                                        sub_channel_map=all_profile_sub_map,
-                                        sub2_channel_map=all_profile_sub2_map)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
+                                        temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
+                                        if len(all_data_name) == 0:
+                                            temp_lgnd = ""
+                                        else:	
+                                            temp_lgnd = all_data_name[i]
+                                        if hasattr(temp[1], "stepchg"):
+                                            if len(temp[1].stepchg) > 2:
+                                                self.capacitytext.setText(str(temp[0]))
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
+                                                               2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd)
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
+                                                               2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd)
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
+                                                               2.0, 4.8, 0.2, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o")
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
+                                                               2.0, 4.8, 0.2, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o")
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
+                                                               -1.8, 1.7, 0.2, "Time(min)", "C-rate",temp_lgnd)
+                                                graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, 2.0, 4.8, 0.2,
+                                                               "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o") 
+                                                graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, 2.0, 4.8, 0.2,
+                                                               "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o")
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
+                                                               0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd)
+                                                graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
+                                                               -15, 60, 5, "Time(min)", "Temp.", lgnd)
+                                                # Data output option
+                                                if self.saveok.isChecked() and save_file_name:
+                                                    temp[1].stepchg = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr","OCV", "CCV",
+                                                                                             "Crate", "SOC", "Temp"]]
+                                                    temp[1].stepchg.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
+                                                                             index=False,
+                                                                             header=[headername + "time(s)",
+                                                                                     headername + "Voltage(V)",
+                                                                                     headername + "Current(A)",
+                                                                                     headername + "OCV",
+                                                                                     headername + "CCV",
+                                                                                     headername + "Crate",
+                                                                                     headername + "SOC",
+                                                                                     headername + "Temp."])
+                                                    write_column_num = write_column_num + 8
+                                                    temp[2].to_excel(writer, sheet_name="OCV_CCV", startcol=write_column_num2,
+                                                                     index=False,
+                                                                     header=[headername + "SOC",
+                                                                             headername + "OCV",
+                                                                             headername + "CCV"])
+                                                    write_column_num2 = write_column_num2 + 3
+                                                if self.ect_saveok.isChecked() and save_file_name:
+                                                    temp[1].stepchg["TimeSec"] = temp[1].stepchg.TimeMin * 60
+                                                    temp[1].stepchg["Curr"] = temp[1].stepchg.Crate * temp[0] / 1000
+                                                    continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                                    # 각 열을 소수점 자리수에 맞게 반올림
+                                                    continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
+                                                    continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
+                                                    continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
+                                                    continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
+                                                    continue_df.to_csv((save_file_name + "_" + "%04d" % tab_no + ".csv"), index=False, sep=',',
+                                                                        header=["time(s)",
+                                                                                "Voltage(V)",
+                                                                                "Current(A)",
+                                                                                "Temp."])
+                                        if self.CycProfile.isChecked():
+                                            title = step_namelist[-2] + "=" + step_namelist[-1]
+                                        else:
+                                            title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
+                                        plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                        if len(all_data_name) != 0:
+                                            step_ax1.legend(loc="lower left")
+                                            step_ax2.legend(loc="lower right")
+                                            step_ax3.legend(loc="upper right")
+                                            step_ax4.legend(loc="lower right")
+                                            step_ax5.legend(loc="lower left")
+                                            step_ax6.legend(loc="upper right")
+                                        else:
+                                            plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+                                        if self.CycProfile.isChecked():
+                                            tab_layout.addWidget(toolbar)
+                                            tab_layout.addWidget(canvas)
+                                            self.cycle_tab.addTab(tab, str(tab_no))
+                                            self.cycle_tab.setCurrentWidget(tab)
+                                            # tab_no = tab_no + 1
+                                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                                            output_fig(self.figsaveok, title)
+                                        tab_layout.addWidget(toolbar)
+                                        tab_layout.addWidget(canvas)
+                                        self.cycle_tab.addTab(tab, str(tab_no))
+                                        self.cycle_tab.setCurrentWidget(tab)
+                                        tab_no = tab_no + 1
+                                        plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                                        output_fig(self.figsaveok, title)
             if self.saveok.isChecked() and save_file_name:
                 writer.close()
             self.progressBar.setValue(100)
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
             plt.close()
         else:
-            err_msg('Step 에러','Step에 사이클 번호를 넣어주세요! 예) 2 3-5 8')
+            err_msg('Step 에러','Step에 3-5 같은 연속 형식으로 넣어주세요!')
             self.ContinueConfirm.setEnabled(True)
 
-    @log_perf
     def dcir_confirm_button(self):
         firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
         # 용량 선정 관련
@@ -15585,99 +10155,96 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         for dcir_continue_step in chg_dchg_dcir_no:
                             if "-" in dcir_continue_step:
                                 Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
-                            else:
-                                Step_CycNo, Step_CycEnd = int(dcir_continue_step), int(dcir_continue_step)
-                            CycleNo = range(Step_CycNo, Step_CycEnd + 1)
-                            if "Pattern" not in FolderBase:
-                                fig, ((step_ax1, step_ax3), (step_ax2, step_ax4)) = plt.subplots(
-                                    nrows=2, ncols=2, figsize=(14, 8))
-                                tab = QtWidgets.QWidget()
-                                tab_layout = QtWidgets.QVBoxLayout(tab)
-                                canvas = FigureCanvas(fig)
-                                toolbar = NavigationToolbar(canvas, None)
-                                cyccountmax = len(CycleNo)
-                                cyccount = cyccount + 1
-                                progressdata = progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
-                                self.progressBar.setValue(int(progressdata))
-                                step_namelist = FolderBase.split("\\")
-                                headername = step_namelist[-2] + ", " + step_namelist[-1]
-                                if self.CycProfile.isChecked():
-                                    lgnd = "%04d" % Step_CycNo
-                                else:
-                                    lgnd = step_namelist[-1]
-                                if not check_cycler(cyclefolder):
-                                    err_msg("PNE 충방전기 사용 요청", "DCIR은 PNE 충방전기를 사용하여 측정 부탁 드립니다.")
-                                else:
-                                    temp = pne_dcir_Profile_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
-                                    if (temp is not None) and hasattr(temp[1], "AccCap"):
-                                        if len(temp[1]) > 2:
-                                            self.capacitytext.setText(str(temp[0]))
-                                            graph_soc_continue(temp[1].SOC, temp[1].OCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "OCV", "o")
-                                            graph_soc_continue(temp[1].SOC, temp[1].rOCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "rOCV", "o")
-                                            graph_soc_continue(temp[1].SOC, temp[1].CCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV","CCV", "o")
-                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 7], step_ax2, "SOC", "DCIR(mΩ)", " 0.1s DCIR", "o")
-                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 8], step_ax2, "SOC", "DCIR(mΩ)", " 1.0s DCIR", "o")
-                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 9], step_ax2, "SOC", "DCIR(mΩ)", "10.0s DCIR", "o")
-                                            graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 10], step_ax2, "SOC", "DCIR(mΩ)", "20.0s DCIR", "o")
-                                            graph_soc_dcir(temp[1].SOC, temp[1].RSS, step_ax2, "SOC", "DCIR(mΩ)", "RSS DCIR", "o")
-                                            graph_continue(temp[1].OCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","OCV", "o")
-                                            graph_continue(temp[1].CCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","CCV", "o")
-                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 7], step_ax4, "OCV", "DCIR(mΩ)", " 0.1s DCIR", "o")
-                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 8], step_ax4, "OCV", "DCIR(mΩ)", " 1.0s DCIR", "o")
-                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 9], step_ax4, "OCV", "DCIR(mΩ)", "10.0s DCIR", "o")
-                                            graph_dcir(temp[1].OCV, temp[1].iloc[:, 10], step_ax4, "OCV", "DCIR(mΩ)", "20.0s DCIR", "o")
-                                            graph_dcir(temp[1].OCV, temp[1].RSS, step_ax4, "OCV", "DCIR(mΩ)", "RSS DCIR", "o")
-                                            # Data output option
-                                            if self.saveok.isChecked() and save_file_name:
-                                                # temp[1] = temp[1].iloc[:,[1, 2, 4, 6, 7, 8, 9, 10, 5, 3]]
-                                                temp[1] = temp[1].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
-                                                temp[1].to_excel(writer, sheet_name="DCIR", startcol=write_column_num, index=False,
-                                                                    header=[headername + " Capacity(mAh)",
-                                                                            headername + " SOC",
-                                                                            headername + " OCV",
-                                                                            # headername + " OCV_est",
-                                                                            headername + "  0.1s DCIR",
-                                                                            headername + "  1.0s DCIR",
-                                                                            headername + " 10.0s DCIR",
-                                                                            headername + " 20.0s DCIR",
-                                                                            headername + " RSS",
-                                                                            headername + " CCV"])
-                                                temp[2] = temp[2].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
-                                                temp[2].to_excel(writer, sheet_name="RSQ", startcol=write_column_num, index=False,
-                                                                    header=[headername + " Capacity(mAh)",
-                                                                            headername + " SOC",
-                                                                            headername + " OCV",
-                                                                            # headername + " OCV_est",
-                                                                            headername + "  0.1s DCIR RSQ",
-                                                                            headername + "  1.0s DCIR RSQ",
-                                                                            headername + " 10.0s DCIR RSQ",
-                                                                            headername + " 20.0s DCIR RSQ",
-                                                                            headername + " RSS",
-                                                                            headername + " CCV"])
-                                                write_column_num = write_column_num + 9
-                                            if self.CycProfile.isChecked():
-                                                title = step_namelist[-2] + "=" + step_namelist[-1]
-                                            else:
-                                                title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                                            step_ax1.legend(loc="lower right")
-                                            step_ax2.legend(loc="upper right")
-                                            step_ax3.legend(loc="lower right")
-                                            step_ax4.legend(loc="upper right")
-                                            tab_layout.addWidget(toolbar)
-                                            tab_layout.addWidget(canvas)
-                                            if temp[1].iloc[0,2] == 100:
-                                                self.cycle_tab.addTab(tab, "dchg" + str(dchg_tab_no))
-                                                dchg_tab_no = dchg_tab_no + 1
-                                            else:
-                                                self.cycle_tab.addTab(tab, "chg" + str(chg_tab_no))
-                                                chg_tab_no = chg_tab_no + 1
-                                            self.cycle_tab.setCurrentWidget(tab)
-                                            self.cycle_tab_reset.setEnabled(True)
-                                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                                            output_fig(self.figsaveok, title)
-                            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                            plt.close()
+                                CycleNo = range(Step_CycNo, Step_CycEnd + 1)
+                                if "Pattern" not in FolderBase:
+                                    fig, ((step_ax1, step_ax3), (step_ax2, step_ax4)) = plt.subplots(
+                                        nrows=2, ncols=2, figsize=(14, 8))
+                                    tab = QtWidgets.QWidget()
+                                    tab_layout = QtWidgets.QVBoxLayout(tab)
+                                    canvas = FigureCanvas(fig)
+                                    toolbar = NavigationToolbar(canvas, None)
+                                    cyccountmax = len(CycleNo)
+                                    cyccount = cyccount + 1
+                                    progressdata = progress(folder_count, foldercountmax, chnlcount, chnlcountmax, cyccount, cyccountmax)
+                                    self.progressBar.setValue(int(progressdata))
+                                    step_namelist = FolderBase.split("\\")
+                                    headername = step_namelist[-2] + ", " + step_namelist[-1]
+                                    if self.CycProfile.isChecked():
+                                        lgnd = "%04d" % Step_CycNo
+                                    else:
+                                        lgnd = step_namelist[-1]
+                                    if not check_cycler(cyclefolder):
+                                        err_msg("PNE 충방전기 사용 요청", "DCIR은 PNE 충방전기를 사용하여 측정 부탁 드립니다.")
+                                    else:
+                                        temp = pne_dcir_Profile_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
+                                        if (temp is not None) and hasattr(temp[1], "AccCap"):
+                                            if len(temp[1]) > 2:
+                                                self.capacitytext.setText(str(temp[0]))
+                                                graph_soc_continue(temp[1].SOC, temp[1].OCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "OCV", "o")
+                                                graph_soc_continue(temp[1].SOC, temp[1].rOCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "rOCV", "o")
+                                                graph_soc_continue(temp[1].SOC, temp[1].CCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV","CCV", "o")
+                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 7], step_ax2, "SOC", "DCIR(mΩ)", " 0.1s DCIR", "o")
+                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 8], step_ax2, "SOC", "DCIR(mΩ)", " 1.0s DCIR", "o")
+                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 9], step_ax2, "SOC", "DCIR(mΩ)", "10.0s DCIR", "o")
+                                                graph_soc_dcir(temp[1].SOC, temp[1].iloc[:, 10], step_ax2, "SOC", "DCIR(mΩ)", "20.0s DCIR", "o")
+                                                graph_soc_dcir(temp[1].SOC, temp[1].RSS, step_ax2, "SOC", "DCIR(mΩ)", "RSS DCIR", "o")
+                                                graph_continue(temp[1].OCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","OCV", "o")
+                                                graph_continue(temp[1].CCV, temp[1].SOC, step_ax3, -20, 120, 10, "Voltage (V)", "SOC","CCV", "o")
+                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 7], step_ax4, "OCV", "DCIR(mΩ)", " 0.1s DCIR", "o")
+                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 8], step_ax4, "OCV", "DCIR(mΩ)", " 1.0s DCIR", "o")
+                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 9], step_ax4, "OCV", "DCIR(mΩ)", "10.0s DCIR", "o")
+                                                graph_dcir(temp[1].OCV, temp[1].iloc[:, 10], step_ax4, "OCV", "DCIR(mΩ)", "20.0s DCIR", "o")
+                                                graph_dcir(temp[1].OCV, temp[1].RSS, step_ax4, "OCV", "DCIR(mΩ)", "RSS DCIR", "o")
+                                                # Data output option
+                                                if self.saveok.isChecked() and save_file_name:
+                                                    # temp[1] = temp[1].iloc[:,[1, 2, 4, 6, 7, 8, 9, 10, 5, 3]]
+                                                    temp[1] = temp[1].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
+                                                    temp[1].to_excel(writer, sheet_name="DCIR", startcol=write_column_num, index=False,
+                                                                        header=[headername + " Capacity(mAh)",
+                                                                                headername + " SOC",
+                                                                                headername + " OCV",
+                                                                                # headername + " OCV_est",
+                                                                                headername + "  0.1s DCIR",
+                                                                                headername + "  1.0s DCIR",
+                                                                                headername + " 10.0s DCIR",
+                                                                                headername + " 20.0s DCIR",
+                                                                                headername + " RSS",
+                                                                                headername + " CCV"])
+                                                    temp[2] = temp[2].iloc[:,[1, 2, 4, 7, 8, 9, 10, 5, 3]]
+                                                    temp[2].to_excel(writer, sheet_name="RSQ", startcol=write_column_num, index=False,
+                                                                        header=[headername + " Capacity(mAh)",
+                                                                                headername + " SOC",
+                                                                                headername + " OCV",
+                                                                                # headername + " OCV_est",
+                                                                                headername + "  0.1s DCIR RSQ",
+                                                                                headername + "  1.0s DCIR RSQ",
+                                                                                headername + " 10.0s DCIR RSQ",
+                                                                                headername + " 20.0s DCIR RSQ",
+                                                                                headername + " RSS",
+                                                                                headername + " CCV"])
+                                                    write_column_num = write_column_num + 9
+                                                if self.CycProfile.isChecked():
+                                                    title = step_namelist[-2] + "=" + step_namelist[-1]
+                                                else:
+                                                    title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
+                                                plt.suptitle(title, fontsize= 15, fontweight='bold')
+                                                step_ax1.legend(loc="lower right")
+                                                step_ax2.legend(loc="upper right")
+                                                step_ax3.legend(loc="lower right")
+                                                step_ax4.legend(loc="upper right")
+                                                tab_layout.addWidget(toolbar)
+                                                tab_layout.addWidget(canvas)
+                                                if temp[1].iloc[0,2] == 100:
+                                                    self.cycle_tab.addTab(tab, "dchg" + str(dchg_tab_no))
+                                                    dchg_tab_no = dchg_tab_no + 1
+                                                else:
+                                                    self.cycle_tab.addTab(tab, "chg" + str(chg_tab_no))
+                                                    chg_tab_no = chg_tab_no + 1
+                                                self.cycle_tab.setCurrentWidget(tab)
+                                                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                                                output_fig(self.figsaveok, title)
+                                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+                                plt.close()
         if self.saveok.isChecked() and save_file_name:
             writer.close()
         self.progressBar.setValue(100)
@@ -15746,23 +10313,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(90)
         self.chk_network_drive()
         self.progressBar.setValue(100)
+        self.AllchnlData = pd.DataFrame()
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
                 self.progressBar.setValue(0)
-                all_dfs = []
                 for i in range(0, 5):
-                    result = self.toyo_data_make(i, self.toyo_cycler_name[i])
-                    if result is not None and not result.empty:
-                        all_dfs.append(result)
+                    self.toyo_data_make(i, self.toyo_cycler_name[i])
                     self.progressBar.setValue(int(((i + 1) / 5) * 20))
                 for j in range(0, 26):
-                    result = self.pne_data_make(j, self.pne_cycler_name[j])
-                    if result is not None and not result.empty:
-                        all_dfs.append(result)
+                    self.pne_data_make(j, self.pne_cycler_name[j])
                     self.progressBar.setValue(int(20 + ((j + 1) / 26) * 80))
                 self.progressBar.setValue(100)
-                self.AllchnlData = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
                 self.AllchnlData.to_excel(writer, index=False)
                 writer.close()
@@ -15854,33 +10416,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 toyo_data["vol"] = toyo_data['testname'].str.split(" ").str[2]
             toyo_data["cyclername"] = blkname
             used_chnl = toyo_data["use"].sum()
-            toyo_data["use"] = toyo_data["use"].astype(object)  # 문자열 할당을 위해 타입 변환
             toyo_data.loc[(toyo_data["chno"] == 1) & (toyo_data["use"] == 0), "use"] = "완료"
             toyo_data.loc[(toyo_data["chno"] == 0) & (toyo_data["use"] == 0), "use"] = "작업정지"
             toyo_data.loc[toyo_data["use"] == 1, "use"] = "작업중"
             toyo_data["chno"] = toyo_data.index
-        else:
-            # 파일이 없는 경우 빈 DataFrame 반환
-            toyo_data = pd.DataFrame(columns=self.toyo_column_list[0:4])
-            used_chnl = 0
         return [toyo_data, used_chnl]
 
     def toyo_data_make(self, toyo_num, blkname):
         toyo_data = self.toyo_base_data_make(toyo_num, blkname)
         self.df = toyo_data[0]
-        return self.df
+        self.AllchnlData = pd.concat([self.AllchnlData, self.df])
 
     def toyo_table_make(self, num_i, num_j, toyo_num, blkname):
         toyo_data = self.toyo_base_data_make(toyo_num, blkname)
         self.df = toyo_data[0]
-        # 데이터 파일 최종 수정 시간 표시
-        toyoworkpath = "z:\\Working\\" + self.toyo_blk_list[toyo_num] + "\\Chpatrn.cfg"
-        if os.path.isfile(toyoworkpath):
-            mtime = os.path.getmtime(toyoworkpath)
-            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-            self.tb_modified_time.setText(f"최종 수정: {mtime_str}")
-        else:
-            self.tb_modified_time.setText("")
         self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - toyo_data[1])))
         self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(toyo_data[1])))
         for i in range(1, num_i + 1):
@@ -15891,50 +10440,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
                     self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                 self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                # 상태별 배경색 결정
-                bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음
-                self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
+                # text가 있는 부분에 대해서 별도 표시 기능 추가
                 if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지" or self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
-                    if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
-                        bg_level = 1
-                    else:
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
-                        bg_level = 2
-                elif toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
-                    bg_level = 1
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,127,0))
+                if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(200,255,255))
                 # 코인셀 구분
                 if (toyo_num == 0 and (i + (j - 1) * num_i) < 17) or ((toyo_num == 0 or toyo_num == 1) and
                                                                       ((i + (j - 1) * num_i) > 64) and ((i + (j - 1) * num_i) < 81)):
                     self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
-                # 강조 문자 필터
-                if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                        # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
-                        # 45도 계열: Toyo1,3 ch>64
-                        fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
-                        fg_15 = [(140,0,200), (100,0,160), (100,0,160)][bg_level]
-                        fg_normal = [(18,21,23), (10,12,14), (10,12,14)][bg_level]
+                # text가 있는 부분에 대해서 별도 표시 기능 추가
+                if (str(self.FindText.text()) == "") or (str(self.FindText.text()) in self.df.loc[i + (j - 1) * num_i,"testname"]):
+                        # 온도별 구분
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
-                        elif (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15))
-                        elif (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0))
+                        if (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,255))
+                        if (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0))
                         else:
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal))
-                        if str(self.FindText.text()).strip():
-                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(0, 0, 0))
-                        else:
-                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,0))
                 else:
-                    if str(self.FindText.text()).strip():
-                        # 검색 활성 시 비매칭 셀 흰색 배경 + 회색 글자
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255, 255, 255))
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189))
-                    else:
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
-                    self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+                    self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(175, 175, 175))
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
@@ -15985,29 +10512,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.df["chno"] = self.df.index
             # 데이터 경로 변경
             self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
-            return self.df
+            self.AllchnlData = pd.concat([self.AllchnlData, self.df])
     
     def pne_table_make(self, num_i, num_j, pne_num, blkname):
         # 경로 확인
         if os.path.isdir(self.pne_work_path_list[pne_num]):
             pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
             pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
-            # 데이터 파일 최종 수정 시간 표시
-            mtime_path = pneworkpath2 if os.path.isfile(pneworkpath2) else pneworkpath
-            if os.path.isfile(mtime_path):
-                mtime = os.path.getmtime(mtime_path)
-                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                self.tb_modified_time.setText(f"최종 수정: {mtime_str}")
             if os.path.isfile(pneworkpath2):
-                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
+                with open(pneworkpath) as f1:
                     js1 = json.loads(f1.read())
-                with open(pneworkpath2, encoding='cp949', errors='ignore') as f2:
+                with open(pneworkpath2) as f2:
                     js2 = json.loads(f2.read())
                 df1 = pd.DataFrame(js1['Channel'])
                 df2 = pd.DataFrame(js2['Channel'])
                 self.df = pd.concat([df1, df2])
             else:
-                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
+                with open(pneworkpath) as f1:
                     try:
                         js1 = json.loads(f1.read())
                     except json.JSONDecodeError as e:
@@ -16050,45 +10571,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
                             self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                         self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                    # 상태별 배경색 결정
-                    bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음, 3=작업멈춤
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
+                    # 채널 구분 
+                    # # 사용 가능 채널 구분 _ 하늘색
                     if (self.df.loc[i + (j - 1) * num_i,"use"] == "대기") or (self.df.loc[i + (j - 1) * num_i,"use"] == "준비"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
-                        bg_level = 1
-                    elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
-                        bg_level = 2
-                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,155,154))
-                        bg_level = 3
-                    # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
-                    if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                            fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
-                            fg_35 = [(195,47,39), (154,32,24), (154,32,24), (154,32,24)][bg_level]
-                            fg_15 = [(140,0,200), (100,0,160), (100,0,160), (100,0,160)][bg_level]
-                            fg_normal = [(18,21,23), (10,12,14), (10,12,14), (10,12,14)][bg_level]
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(200,255,255))
+                    elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"): # 사용 가능 채널 구분 _ 주황색
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,127,0))
+                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤": # 정지 채널 구분 _ 붉은색
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255,200,229))
+                    # text가 있는 부분에 대해서 별도 표시 기능 추가
+                    if (str(self.FindText.text()) == "") or (str(self.FindText.text()) in self.df.loc[i + (j - 1) * num_i,"testname"]):
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15)) # 15도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,255)) # 15도 파란색
                             elif self.df.loc[i + (j - 1) * num_i, "temp"] > 30 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 40:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_35)) # 35도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,255,0)) # 35도 녹색
                             elif self.df.loc[i + (j - 1) * num_i, "temp"] > 40 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 50:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45)) # 45도
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(255,0,0)) # 45도 빨간색
                             else:
-                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal)) # 기본 23도
-                            if str(self.FindText.text()).strip():
-                                self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(0, 0, 0))
-                            else:
-                                self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(0,0,0)) # 기본 검은색
                     else:
-                        if str(self.FindText.text()).strip():
-                            # 검색 활성 시 비매칭 셀 흰색 배경 + 회색 글자
-                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255, 255, 255))
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189))
-                        else:
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
-                        self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(175, 175, 175))
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
@@ -16100,24 +10603,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def table_reset(self):
         self.tb_channel.clear()
-        self.tb_modified_time.setText("")
-
-    def match_highlight_text(self, search_text, testname):
-        """멀티 단어 검색: 스페이스=OR, 쉼표=AND, 대소문자 무시"""
-        if search_text.strip() == "":
-            return True
-        import re
-        # 쉼표 주변 스페이스 제거 → "A, B" → "A,B" (AND 보존)
-        normalized = re.sub(r'\s*,\s*', ',', search_text)
-        testname_lower = testname.lower()
-        for group in normalized.split(" "):
-            group = group.strip()
-            if not group:
-                continue
-            keywords = [kw.strip().lower() for kw in group.split(",") if kw.strip()]
-            if keywords and all(kw in testname_lower for kw in keywords):
-                return True
-        return False
 
     def change_drive(self, df, changed):
         # 상세 데이터부터 범용 데이터 순으로 바꾸기 진행
@@ -16265,11 +10750,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if self.saveok.isChecked() and save_file_name:
                     if "방전" in filepath:
                     # 방전 Profile 추출용
-                        dfdchg = pd.concat([dfdchg, df])
+                        dfdchg = dfdchg._append(df)
                         # dfdchg.to_excel(writer, sheet_name="dchg")
                     else:
                     # 충전 Profile 추출용
-                        dfchg = pd.concat([dfchg, df])
+                        dfchg = dfchg._append(df)
                         # dfchg.to_excel(writer, sheet_name="chg")
             if self.saveok.isChecked() and save_file_name:
                 dfdchg.to_excel(writer, sheet_name="dchg")
@@ -16315,7 +10800,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 df["Cyc"] = int(CycNo)
                 df=df[df.loc[:,'SOC']!="Charge_counter"]
                 df['SOC']=df['SOC'].apply(float)/10/mincapa/2/100
-                dfcyc = pd.concat([dfcyc, df.loc[[0]]])
+                dfcyc = dfcyc._append(df.loc[0])
             subfile2 = [f for f in os.listdir(datafilepath) if f.startswith('충전_')]
             for filepath2 in subfile2:
                 filecountmax = len(subfile2)
@@ -16333,7 +10818,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 df2["Cyc2"] = int(CycNo)
                 df2=df2[df2.loc[:,'SOC2']!="Charge_counter"]
                 df2['SOC2']=df2['SOC2'].apply(float)/10/mincapa/2/100
-                dfcyc2 = pd.concat([dfcyc2, df2.iloc[[-1]]])
+                dfcyc2 = dfcyc2._append(df2.iloc[-1])
             dfcyc = dfcyc.sort_values(by="Cyc")
             dfcyc2 = dfcyc2.sort_values(by="Cyc2")
             graph_cycle(dfcyc.Cyc, dfcyc.SOC, ax1, 0.8, 1.05, 0.05, "Cycle", "Discharge Capacity Ratio", datafilepath, setxscale, 0)
@@ -16409,9 +10894,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 graph_set_profile(df.Time, df.SOC2, ax9, 0, 120, 10, "Time(hr)", "real SOC", CycNo, 0, 0, 4, 1)
             if self.saveok.isChecked() and save_file_name:
                 if "방전" in filepath:
-                    dfdchg = pd.concat([dfdchg, df])
+                    dfdchg = dfdchg._append(df)
                 else:
-                    dfchg = pd.concat([dfchg, df])
+                    dfchg = dfchg._append(df)
         if self.saveok.isChecked() and save_file_name:
             dfdchg.to_excel(writer, sheet_name="dchg")
             dfchg.to_excel(writer, sheet_name="chg")
@@ -16456,7 +10941,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             df["Cyc"] = int(CycNo)
             df=df[df.loc[:,'SOC']!="Charge_counter"]
             df['SOC']=df['SOC'].apply(float)/10/mincapa/2/100
-            dfcyc = pd.concat([dfcyc, df.loc[[0]]])
+            dfcyc = dfcyc._append(df.loc[0])
         subfile2 = [f for f in os.listdir(datafilepath) if f.startswith('충전_')]
         for filepath2 in subfile2:
             filecountmax = len(subfile2)
@@ -16474,7 +10959,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             df2["Cyc2"] = int(CycNo)
             df2=df2[df2.loc[:,'SOC2']!="Charge_counter"]
             df2['SOC2']=df2['SOC2'].apply(float)/10/mincapa/2/100
-            dfcyc2 = pd.concat([dfcyc2, df2.iloc[[-1]]])
+            dfcyc2 = dfcyc2._append(df2.iloc[-1])
         dfcyc = dfcyc.sort_values(by="Cyc")
         dfcyc2 = dfcyc2.sort_values(by="Cyc2")
         graph_cycle(dfcyc.Cyc, dfcyc.SOC, ax1, 0.7, 1.05, 0.05, "Cycle", "Discharge Capacity Ratio", datafilepath, setxscale, 0)
@@ -16549,7 +11034,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_delete(self.set_tab)
         self.tab_no = 0
         
-    @log_perf
     def set_log_confirm_button(self):
         # battery_dump profile
         # 0:Time, 1:VOLTAGE NOW, 2:CURRENT NOW, 3:CURRENT MAX, 4:CHARGING CURRENT, 5:CAPACITY, 6:TBAT, 7:TUSB, 8:TCHG, 9:TWPC, 10:TBLK,
@@ -16792,7 +11276,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     #         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
     #         plt.show()
 
-    @log_perf
     def set_confirm_button(self):
         'Battery Status data log'
         '''0:Time 1:Level 2:Charging 3:Temperature(BA) 4:PlugType 5:Speed
@@ -16897,13 +11380,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             'Dchg_realSOC': [dchgrealcap],
                             'Chg time(min)': [chgmaxtime],
                             'Dchg time(min)': [dchgmaxtime]})
-                        cycoutputdf = pd.concat([cycoutputdf, cycoutputdata])
+                        cycoutputdf = cycoutputdf._append(cycoutputdata)
                         # 충전 Profile 추출용
                         if hasattr(temp, "ChgProfile"):
-                            chgoutputdf = pd.concat([chgoutputdf, temp.ChgProfile])
+                            chgoutputdf = chgoutputdf._append(temp.ChgProfile)
                         # 방전 Profile 추출용
                         if hasattr(temp, "DchgProfile"):
-                            dchgoutputdf = pd.concat([dchgoutputdf, temp.DchgProfile])
+                            dchgoutputdf = dchgoutputdf._append(temp.DchgProfile)
                     # Chgnamelist = datafilepath.split("/")
                     for i in range(2):
                         for j in range(4):
@@ -16954,7 +11437,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             fig, ((ax1), (ax2)) = plt.subplots(nrows=1, ncols=2, figsize=(8, 3))
             filecount = 0
             mincapa = int(self.SetMincapacity.text())
-            graphcolor = THEME['PALETTE']
+            graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
@@ -17014,11 +11497,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             Profile = pd.read_csv(datafilepath, sep=",", skiprows = 1, on_bad_lines='skip')
         Profile.columns = Profile.columns.str.replace('[^A-Za-z0-9_]+', '', regex=True)
         Profile = Profile[['Time', 'voltage_nowmV', 'CtypeEtcChargCur', 'CurrentAvg', 'TemperatureBA', 'Level', 'ectSOC',
-                           'RSOC', 'SOC_RE', 'Charging', 'Battery_Cycle', 'AnodePotential', 'SC_VALUE','SC_SCORE', 'SC_Grade', 'SC_V_Acc',
-                            'SC_V_Avg', 'avg_I_ISC', 'avg_R_ISC', 'avg_R_ISC_min', 'VavgmV', 'LUT_VOLT0', 'LUT_VOLT1', 'LUT_VOLT2', 'LUT_VOLT3']]
+                           'RSOC', 'SOC_RE', 'Charging', 'Battery_Cycle', 'AnodePotential', 'SC_SCORE', 'VavgmV', 'LUT_VOLT0',
+                           'LUT_VOLT1', 'LUT_VOLT2', 'LUT_VOLT3']]
         Profile.columns = ['Time', 'Vol', 'Curr', 'CurrAvg', 'Temp', 'SOC', 'SOCectraw',
-                        'RSOCect', 'SOCect', 'Type', 'Cyc', 'anodeE', 'short_value', 'short_score', 'short_grade', 'short_v_acc',
-                        'short_v_avg', 'avg_i_isc', 'avg_r_isc', 'avg_r_isc_min', 'Vavg', '1stepV', '2stepV', '3stepV', '4stepV']
+                        'RSOCect', 'SOCect', 'Type', 'Cyc', 'anodeE', 'short', 'Vavg', '1stepV', '2stepV',
+                        '3stepV', '4stepV']
         Profile.Time = '20'+ Profile['Time'].astype(str)
         Profile = Profile[:-1]
         cycmin = int(Profile.Cyc.min())
@@ -17058,7 +11541,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             Profile["SOCrefAvg"] = 0
         return Profile
     
-    @log_perf
     def ect_short_button(self):
         global writer
         root = Tk()
@@ -17074,55 +11556,29 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                     if save_file_name:
                         writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-                fig, ax = plt.subplots(nrows=7, ncols=2, figsize=(6, 10))
+                fig, ax = plt.subplots(nrows=5, ncols=1, figsize=(6, 10))
                 tab = QtWidgets.QWidget()
                 tab_layout = QtWidgets.QVBoxLayout(tab)
                 canvas = FigureCanvas(fig)
                 toolbar = NavigationToolbar(canvas, None)
                 Profile = self.ect_data(datafilepath, "short")
             #Short Profile 확인용
-                graph_set_profile(Profile.Time, Profile.Cyc, ax[0][0], 0, 0, 0, "Time(hr)", "Cycle", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.Vol, ax[1][0], 3.0, 5.0, 0.5, "Time(hr)", "Vol.(V)", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.anodeE, ax[2][0], -0.2, 0.8, 0.2, "Time(hr)", "Anode V(V)", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.CurrAvg, ax[3][0], 0, 0, 0, "Time(hr)", "Curr.(A)", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.Temp, ax[4][0], 0, 0, 0, "Time(hr)", "Temp.(℃)", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.SOCectraw, ax[5][0], 0, 120, 20, "Time(hr)", "ECT ASOC", "ECT ASOC", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.SOC, ax[6][0], 0, 120, 20, "Time(hr)", "SOC", "SOC", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.SOCect, ax[6][0], 0, 120, 20, "Time(hr)", "SOC", "SOCect", 1, 0, 0, 0)
-                # graph_set_profile(Profile.Time, Profile.short_grade, ax[6][0], 0, 6, 1, "Time(hr)", "Short Grade", "", 0, 0, 0, 0)
-            
-                graph_set_profile(Profile.Time, Profile.short_value, ax[0][1], 0, 12, 2, "Time(hr)", "Short Value", "short value(1, 2, 4)", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.short_v_acc, ax[1][1], 0, 0, 0, "Time(hr)", "Short V acc.", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.short_v_avg, ax[2][1], 0, 0, 0, "Time(hr)", "Short V avg.", "", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.short_score, ax[3][1], 0, 6, 1, "Time(hr)", "Short Score", "short check(>= 3)", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.avg_i_isc, ax[4][1], 0, 120, 20, "Time(hr)", "Short I(mA)", "short current", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.short_grade, ax[5][1], 0, 6, 1, "Time(hr)", "Short Grade", "Short Grade", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.avg_r_isc, ax[6][1], 0, 1200, 200, "Time(hr)", "Short R(Ω)", "short resistance", 0, 0, 0, 0)
-                graph_set_profile(Profile.Time, Profile.avg_r_isc_min, ax[6][1], 0, 1200, 200, "Time(hr)", "Short R(Ω)", "min short resistance", 0, 0, 0, 0)       
+                graph_set_profile(Profile.Time, Profile.Vol, ax[0], 3.0, 4.8, 0.2, "Time(hr)", "Voltage (V)", "", 0, 0, 0, 0)
+                # graph_set(Profile.Time, Profile.anodeE, ax2, -0.1, 0.8, 0.1, "Time(hr)", "anodeE", "", 99)
+                graph_set_profile(Profile.Time, Profile.CurrAvg, ax[1], -10, 11, 2, "Time(hr)", "Curr(A)", "", 0, 0, 0, 0)
+                graph_set_profile(Profile.Time, Profile.Temp, ax[2], 20, 50, 4, "Time(hr)", "temp.(℃)", "", 0, 0, 0, 0)
+                graph_set_profile(Profile.Time, Profile.SOC, ax[3], 0, 120, 10, "Time(hr)", "SOC/SOCect", "", 0, 0, 0, 0)
+                graph_set_profile(Profile.Time, Profile.SOCect, ax[3], 0, 120, 10, "Time(hr)", "SOC/SOCect", "", 1, 0, 0, 0)
+                # graph_set_profile(Profile.Time, Profile.SOCectraw, ax[3], 0, 120, 10, "Time(hr)", "SOC/SOCect/SOCectraw", "", 2, 0, 0, 0)
             # Short 관련
-                
+                graph_set_profile(Profile.Time, Profile.short, ax[4], 0, 6, 1, "Time(hr)", "Short Score", "", 0, 0, 0, 0)
                 # 마지막 행을 제외한 각 서브플롯 설정
-                for j in range(2):
-                    for i in range(6):
-                        # X축 레이블 제거
-                        ax[i][j].set_xlabel('')
-                        # X축 틱 레이블 제거
-                        ax[i][j].set_xticklabels([])
+                for i in range(4):
+                    # X축 레이블 제거
+                    ax[i].set_xlabel('')
+                    # X축 틱 레이블 제거
+                    ax[i].set_xticklabels([])
                 Chgnamelist = datafilepath.split("/")
-                # ax[0, 0].legend(loc="lower left")
-                # ax[1, 0].legend(loc="lower left")
-                # ax[2, 0].legend(loc="lower left")
-                # ax[3, 0].legend(loc="lower left")
-                # ax[4, 0].legend(loc="lower left")
-                ax[5, 0].legend(loc="lower left")
-                ax[6, 0].legend(loc="lower left")
-                ax[0, 1].legend(loc="lower left")
-                # ax[1, 1].legend(loc="lower left")
-                # ax[2, 1].legend(loc="lower left")
-                ax[3, 1].legend(loc="lower left")
-                ax[4, 1].legend(loc="lower left")
-                ax[5, 1].legend(loc="lower left")
-                ax[6, 1].legend(loc="lower left")
                 tab_layout.addWidget(toolbar)
                 tab_layout.addWidget(canvas)
                 self.set_tab.addTab(tab, Chgnamelist[-1])
@@ -17131,7 +11587,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if self.saveok.isChecked() and save_file_name:
                 Profile.to_excel(writer)
                 writer.close()
-                # fig.legend()
+            fig.legend()
             plt.subplots_adjust(right=0.8)
             # plt.suptitle(Chgnamelist[-1], fontsize= 15, fontweight='bold')
             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
@@ -17139,7 +11595,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             plt.close()
         self.progressBar.setValue(100)
 
-    @log_perf
     def ect_soc_button(self):
         global writer
         root = Tk()
@@ -17235,7 +11690,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     graph_soc_err(DchgProfile.SOCrefAvg, DchgProfile.SOCError, ax[3, 1], -10, 11, 2, "SOCref", "Error(%)", "SOC", 3)
                     graph_soc_err(DchgProfile.SOCrefAvg, DchgProfile.SOCectError, ax[3, 1], -10, 11, 2, "SOCref", "Error(%)", "SOC_ect", 4)
                 if self.saveok.isChecked() and save_file_name:
-                    dfdchg = pd.concat([dfdchg, DchgProfile])
+                    dfdchg = dfdchg._append(DchgProfile)
                 if self.saveok.isChecked() and save_file_name:
                     dfdchg.to_excel(writer, sheet_name="dchg")
                     writer.close()
@@ -17258,7 +11713,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 filecount = filecount + 1
             self.progressBar.setValue(100)
 
-    @log_perf
     def ect_set_profile_button(self):
         global writer
         root = Tk()
@@ -17361,8 +11815,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # X축 틱 레이블 제거
                         ax[i, j].set_xticklabels([])
                 if self.saveok.isChecked() and save_file_name:
-                    dfdchg = pd.concat([dfdchg, DchgProfile])
-                    dfchg = pd.concat([dfchg, ChgProfile])
+                    dfdchg = dfdchg._append(DchgProfile)
+                    dfchg = dfchg._append(ChgProfile)
                 if self.saveok.isChecked() and save_file_name:
                     if not self.chk_setcyc_sep.isChecked():
                         dfdchg.to_excel(writer, sheet_name="dchg")
@@ -17383,7 +11837,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 plt.close()
             self.progressBar.setValue(100)
 
-    @log_perf
     def ect_set_cycle_button(self):
         self.ECTSetCycle.setDisabled(True)
         global writer
@@ -17400,7 +11853,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             canvas = FigureCanvas(fig)
             toolbar = NavigationToolbar(canvas, None)
             filecount = 0
-            graphcolor = THEME['PALETTE']
+            graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
             if self.saveok.isChecked():
                 save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
                 if save_file_name:
@@ -17481,7 +11934,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             output_fig(self.figsaveok, tab_name_list)
             plt.close()
 
-    @log_perf
     def ect_set_log_button(self):
         '''
         ECT result
@@ -17587,7 +12039,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # X축 틱 레이블 제거
                         ax[i, j].set_xticklabels([])
                 if self.saveok.isChecked() and save_file_name:
-                    df = pd.concat([df, overall])
+                    df = df._append(overall)
                 if self.saveok.isChecked() and save_file_name:
                     if not self.chk_setcyc_sep.isChecked():
                         df.to_excel(writer, sheet_name="log")
@@ -17607,7 +12059,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 plt.close()
             self.progressBar.setValue(100)
 
-    @log_perf
     def ect_set_log2_button(self):
         '''
         ECT result
@@ -17767,22 +12218,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ax2 = plt.subplot(2, 1, 2)
         toolbar = NavigationToolbar(canvas, None)
         # Voltage Profile 그리기
-        ax1_right = ax1.twinx()
-        ax1_right.plot(simul_full.full_cap, simul_full.an_volt, "-", color = "b")
+        ax1.plot(simul_full.full_cap, simul_full.an_volt, "-", color = "b")
         ax1.plot(simul_full.full_cap, simul_full.ca_volt, "-", color = "r")
         ax1.plot(simul_full.full_cap, simul_full.full_volt, "--", color = "g")
         ax1.plot(simul_full.full_cap, simul_full.real_volt, "-", color = "k")
-        
-        ax1.set_ylim(2.0, 4.6)
-        ax1_right.set_ylim(0, 1.5)
+        ax1.set_ylim(0, 4.7)
         ax1.set_xticks(np.linspace(-5, 105, 23))
-
         ax1.legend(["음극", "양극", "예측", "실측"])
-
         ax1.set_xlabel("SOC")
         ax1.set_ylabel("Voltage")
-        ax1_right.set_ylabel("Anode Voltage", color="b")
-        ax1_right.tick_params(axis="y", labelcolor="b")
         ax1.grid(which="major", axis="both", alpha=0.5)
         # dVdQ 그래프 그리기
         ax2.plot(simul_full.full_cap, simul_full.an_dvdq, "-", color = "b")
@@ -17814,7 +12258,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         plt.close()
 
-    @log_perf
     def dvdq_fitting_button(self):
         global writer
         ca_mat_filepath = str(self.ca_mat_dvdq_path.text())
@@ -17939,7 +12382,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.dvdq_fitting2_button()
         self.progressBar.setValue(100)
 
-    @log_perf
     def dvdq_fitting2_button(self):
         self.fittingdegree = 1
         self.min_rms = np.inf
@@ -18032,7 +12474,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_delete(self.cycle_simul_tab)
         self.tab_no = 0
 
-    @log_perf
     def path_approval_cycle_estimation_button(self):
         def cyccapparameter(x, f_d):
             return 1 - np.exp(a_par1 * x[1] + b_par1) * (x[0] * f_d) ** b1_par1 - np.exp(c_par1 * x[1] + d_par1) * (
@@ -18065,13 +12506,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         root = Tk()
         root.withdraw()
         self.pathappcycestimation.setDisabled(True)
-        # 테이블에 경로가 없을 때만 파일 대화상자 사용
-        if not self._has_table_data():
-            self.chk_cyclepath.setChecked(True)
-            pne_path = self.pne_path_setting()
-            self.chk_cyclepath.setChecked(False)
-        else:
-            pne_path = self.pne_path_setting()
+        self.chk_cyclepath.setChecked(True)
+        pne_path = self.pne_path_setting()
+        self.chk_cyclepath.setChecked(False)
         all_data_folder = pne_path[0]
         all_data_name = pne_path[1]
         if self.saveok.isChecked():
@@ -18079,7 +12516,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if save_file_name:
                 writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
         self.pathappcycestimation.setEnabled(True)
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         for i, cyclefolder in enumerate(all_data_folder):
             # tab 그래프 추가
             fig, ax1 = plt.subplots(nrows=1, ncols=1, figsize=(8, 6))
@@ -18161,7 +12598,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                      label='가속 = %5.3f' % tuple(popt2[0] / p2))
                             ax1.plot(df2.x2, cyccapparameter02((df2.x2, df2.t2), *popt2) * cyctemp[4], '--', color=graphcolor[colorno],
                                      label='오차 = %5.3f' % r_squared2)
-                            colorno = colorno % len(THEME['PALETTE']) + 1
+                            colorno = colorno % 9 + 1
                             # Data output option
                             output_df_all = cyctemp[7][["Dchg", "Temp", "Curr", "max_vol", "min_vol"]]
                             output_df_05c = cyctemp[1][["Dchg", "Temp", "Curr", "max_vol", "min_vol"]]
@@ -18172,9 +12609,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 output_df_02c.to_excel(writer, sheet_name="rate02c_cycle", startcol=writecolno)
                                 writecolno = writecolno + 6
                             if len(all_data_name) != 0:
-                                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
                             else:
-                                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                                plt.suptitle(title, fontsize= 15, fontweight='bold')
                             ax1.tick_params(axis='both', which='major', labelsize=12) 
                             ax1.legend(loc="center left", bbox_to_anchor=(1, 0.5))
                             ax1.set_ylim(float(self.simul_y_min.text()), float(self.simul_y_max.text()))
@@ -18196,7 +12633,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         plt.close()
         self.progressBar.setValue(100)
     
-    @log_perf
     def folder_approval_cycle_estimation_button(self):
         def cyccapparameter(x, f_d):
             return 1 - np.exp(a_par1 * x[1] + b_par1) * (x[0] * f_d) ** b1_par1 - np.exp(c_par1 * x[1] + d_par1) \
@@ -18232,7 +12668,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.folderappcycestimation.setDisabled(True)
         pne_path = filedialog.askopenfilenames(initialdir="D://", title="Data File Name", defaultextension=".txt")
         self.folderappcycestimation.setEnabled(True)
-        graphcolor = THEME['PALETTE']
+        graphcolor = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
         for i, cyclefolder in enumerate(pne_path):
             # tab 그래프 추가
             if os.path.exists(cyclefolder):
@@ -18308,7 +12744,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                      label='0.2C 가속 = %5.3f' % tuple(popt2[0] / p2))
                             ax1.plot(df2.x2, cyccapparameter02((df2.x2, df2.t2), *popt2) * cyctemp[4], '--', color=graphcolor[colorno],
                                      label='0.2C 오차 = %5.3f' % r_squared2)
-                            colorno = colorno % len(THEME['PALETTE']) + 1
+                            colorno = colorno % 9 + 1
                             ax1.tick_params(axis='both', which='major', labelsize=12) 
                             ax1.legend(loc="center left", bbox_to_anchor=(1, 0.5))
                             ax1.set_ylim(float(self.simul_y_min.text()), float(self.simul_y_max.text()))
@@ -18316,7 +12752,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ax1.set_xlabel('cycle or day', fontsize = 14)
                             ax1.grid(which="major", axis="both", alpha=.5)
                             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+                            plt.suptitle(title, fontsize= 15, fontweight='bold')
                             tab_layout.addWidget(toolbar)
                             tab_layout.addWidget(canvas)
                             self.cycle_simul_tab.addTab(tab, f"예측{num}")
@@ -18404,7 +12840,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         err_msg("저장", "저장되었습니다.") 
         output_para_fig(self.figsaveok, "fig_" + namelist[0])
 
-    @log_perf
     def eu_fitting_confirm_button(self):
         global writer
         # exp complex degradation (cycle 기준, day 기준)
@@ -18482,7 +12917,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if dataadd.t.max() < 273:
                             dataadd.t = dataadd.t + 273
                         # 전체 dataframe을 누적
-                        dfall = pd.concat([dfall, dataadd])
+                        dfall = dfall._append(dataadd)
                         progressdata = (file + 1 + num/len(list(df)))/filemax * 100
                         self.progressBar.setValue(int(progressdata))
                 else:
@@ -18509,7 +12944,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             # 용량이 있는 값을 기준으로 cycle 산정
                             dataadd = pd.DataFrame({'x': x1, 't': t1, 'y': y1})
                             # 전체 dataframe을 누적
-                            dfall = pd.concat([dfall, dataadd])
+                            dfall = dfall._append(dataadd)
                             progressdata = (file + 1 + num/len(list(df)))/filemax * 100
                             self.progressBar.setValue(int(progressdata))
                 dfall = dfall.dropna()
@@ -18607,7 +13042,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
     
-    @log_perf
     def eu_constant_fitting_confirm_button(self):
         global writer
         # exp 열화 모드 - parameter 고정 후 가속 계수 확인
@@ -18695,7 +13129,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if dataadd.t.max() < 273:
                             dataadd.t = dataadd.t + 273
                         # 전체 dataframe을 누적
-                        dfall = pd.concat([dfall, dataadd])
+                        dfall = dfall._append(dataadd)
                         progressdata = (file + 1 + num/len(list(df)))/filemax * 100
                         self.progressBar.setValue(int(progressdata))
                 else:
@@ -18722,7 +13156,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 t1 = t1 + 273
                             dataadd = pd.DataFrame({'x': x1, 't': t1, 'y': y1})
                             raw_all = pd.concat([dfall, raw_all], axis=1)
-                            dfall = pd.concat([dfall, dataadd])
+                            dfall = dfall._append(dataadd)
                             progressdata = (file + 1 + num/len(list(df)))/filemax * 100
                             self.progressBar.setValue(int(progressdata))
                 dfall = dfall.dropna()
@@ -18819,7 +13253,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.close()
 
-    @log_perf
     def eu_indiv_constant_fitting_confirm_button(self):
         global writer
         # exp 열화 모드 - parameter 고정 후 가속 계수 확인
@@ -18902,7 +13335,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if dataadd.t.max() < 273:
                             dataadd.t = dataadd.t + 273
                         progressdata = (file + 1 + num/len(list(df)))/filemax * 100
-                        dfall = pd.concat([dfall, dataadd])
+                        dfall = dfall._append(dataadd)
                         self.progressBar.setValue(int(progressdata))
                         if dataadd.t.max() == 296:
                             dfall = dfall[dfall.t == 296]
@@ -19710,1698 +14143,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if len(self.ptn_df_select) == 0:
             self.ptn_df_select = [""]
 
-    # ===================================================================
-    # PNE → Toyo 패턴 변환 기능
-    # ===================================================================
-
-    # --- Toyo PATRN 서브스텝 템플릿 (PATRN1.1 기준 추출) ---
-    # LEFT 서브스텝 = 261 chars, RIGHT 서브스텝 = 272 chars, LOOP = 10 chars
-    TOYO_CHARGE_LEFT = (
-        " 10       399    4.47       0       -       -       -    39.9"
-        "       -       -       -       -       -      60       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -   0 - 0                      -       -0"
-        "  - -  010       -       -    60"
-    )
-    TOYO_CHARGE_CC_LEFT = (
-        " 10    2593.5    4.16       0       -       -       -    1995"
-        "       -       -       -       -       -      60       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -   0 - 0                      -       -0"
-        "  - -  0 0       -       -    60"
-    )
-    TOYO_REST_LEFT = (
-        " 30         0       0       0       -       -       -       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -   0 0 0                      -       -0"
-        "  0 0  0 0       -       -     -"
-    )
-    TOYO_DCHG_RIGHT = (
-        " 00       399       0       0                      2.75"
-        "       -       -       -       -       -      60       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -   0 - 0                    -       -0"
-        "                    - -  010       -       -    60 "
-    )
-    TOYO_DCHG_NO_INTERVAL_RIGHT = (
-        " 00       399       0       0                      2.75"
-        "       -       -       -       -       -       -       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -   0 - 0                    -       -0"
-        "                    - -  010       -       -    60 "
-    )
-    TOYO_REST_RIGHT = (
-        " 30         0       0       0                         -"
-        "       -       -       -       -       -       -       -"
-        "       -       -       -       -       -       -       -"
-        "       -       -   0 0 0                    -       -0"
-        "                    0 0  0 0       -       -     - "
-    )
-    TOYO_LOOP_NONE = " 1      01"
-    # 헤더 템플릿 (PATRN1.1 기준, 이름/라인수 제외한 고정 부분 = 202 바이트)
-    TOYO_HEADER_PREFIX = (
-        "0 00009       -        -    4.55"
-        "       0       -       -      60       0       -       -"
-        "  20000000000000000000000000000000000000000000000000000000000001"
-        "  10111001010000000000     11100  1 1   0   0   00"
-    )
-
-    @staticmethod
-    def _toyo_fmt_num(value):
-        """숫자를 Toyo PATRN 형식 문자열로 변환 (정수면 정수, 소수면 소수)"""
-        if value == 0:
-            return "0"
-        if value == int(value):
-            return str(int(value))
-        return f"{value:g}"
-
-    def _toyo_substitute(self, template, positions):
-        """템플릿 문자열의 지정 위치에 값을 right-justify로 대입"""
-        t = list(template)
-        for (start, end), value_str in positions:
-            field_width = end - start
-            t[start:end] = list(value_str.rjust(field_width))
-        return "".join(t)
-
-    def _toyo_build_charge_left(self, current_mA, voltage_V, endI_mA, is_cccv=True, interval_s=60):
-        """충전 LEFT 서브스텝 생성 (261 chars)"""
-        template = self.TOYO_CHARGE_LEFT if is_cccv else self.TOYO_CHARGE_CC_LEFT
-        subs = [
-            ((3, 13), self._toyo_fmt_num(current_mA)),
-            ((13, 21), self._toyo_fmt_num(voltage_V)),
-            ((53, 61), self._toyo_fmt_num(endI_mA)),
-        ]
-        if interval_s > 0:
-            subs.append(((101, 109), str(int(interval_s))))
-        return self._toyo_substitute(template, subs)
-
-    def _toyo_build_dchg_right(self, current_mA, endV_V, interval_s=60):
-        """방전 RIGHT 서브스텝 생성 (272 chars)"""
-        template = self.TOYO_DCHG_RIGHT if interval_s > 0 else self.TOYO_DCHG_NO_INTERVAL_RIGHT
-        subs = [
-            ((3, 13), self._toyo_fmt_num(current_mA)),
-            ((29, 55), self._toyo_fmt_num(endV_V)),
-        ]
-        if interval_s > 0:
-            subs.append(((95, 103), str(int(interval_s))))
-        return self._toyo_substitute(template, subs)
-
-    def _toyo_build_rest_left(self):
-        """휴지 LEFT 서브스텝 생성 (261 chars)"""
-        return self.TOYO_REST_LEFT
-
-    def _toyo_build_rest_right(self):
-        """휴지 RIGHT 서브스텝 생성 (272 chars)"""
-        return self.TOYO_REST_RIGHT
-
-    def _toyo_build_loop(self, target_line=0, count=0):
-        """루프 정보 문자열 생성 (10 chars)"""
-        if target_line <= 0 or count <= 0:
-            return self.TOYO_LOOP_NONE
-        return f" 1{target_line:>2}{count:>4}01"
-
-    def _toyo_build_line(self, left_sub, right_sub, loop_str):
-        """PATRN 데이터 라인 = LEFT(261) + RIGHT(272) + LOOP(10) = 543"""
-        return left_sub + right_sub + loop_str
-
-    def _toyo_build_header(self, pattern_name, num_lines):
-        """PATRN 헤더 라인 생성 (265 바이트, cp949 기준 42바이트 이름 필드)"""
-        # 이름을 cp949로 인코딩하여 42바이트에 맞춤
-        name_bytes = pattern_name.encode("cp949", errors="replace")[:42]
-        name_bytes = name_bytes.ljust(42, b" ")
-        # 상수 부분 (바이트 43~265)
-        suffix = self.TOYO_HEADER_PREFIX.encode("ascii")
-        line_count = f"{num_lines:>21}".encode("ascii")
-        return (name_bytes + suffix + line_count).decode("cp949")
-
-    def _toyo_build_option(self, capacity_mAh):
-        """Patrn.option 파일 내용 생성"""
-        return f"[BaseCellCapacity]\nPattern_BaseCellCapacity={int(capacity_mAh)}\n"
-
-    def _toyo_build_option2(self, line_types):
-        """Patrn.option2 파일 내용 생성 (PATRN 데이터 라인 단위)
-        
-        Args:
-            line_types: list of str, 각 PATRN 라인의 타입 ("active" 또는 "rest")
-                        RIGHT 서브스텝이 discharge면 "active", 아니면 "rest"
-        """
-        # 헤더 라인 (고정 266 chars)
-        header = (
-            "0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,-,-,-,-,-,-,-,0,1,-,-,,,-,-,TOYO,,-,-,-,"
-            "-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,"
-            "1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,1000,0,0,-,0,0,0,0,1,1,,1,,"
-        )
-        # 첫 번째 라인 (295 chars) — active/rest
-        first_active = (
-            "0,0,0,1,0,1,0,1,0,-,-,0,-,-,,,-,-,,,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
-            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
-        )
-        first_rest = (
-            "0,0,0,0,0,0,0,0,0,-,-,0,-,-,,,-,-,,,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
-            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
-        )
-        # 중간 라인 (299 chars) — active/rest
-        middle_active = (
-            "0,0,0,1,0,1,0,1,0,-,-,0,-,-,-,-,-,-,-,-,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
-            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
-        )
-        middle_rest = (
-            "0,0,0,0,0,0,0,0,0,-,-,0,-,-,-,-,-,-,-,-,-,-,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
-            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
-        )
-        # 마지막 라인 (295 chars) — 항상 end 형식
-        end_line = (
-            "0,0,0,0,0,0,0,0,0,-,-,0,-,-,-,-,,,-,-,,,1,0,0,0,,,,,-,-,0,0,0,0,0,0,-,-,-,-,-,-,-,-,0,0,0,0,0,0,-,-,"
-            "0,1,0,1,0,0,1,0,1,0,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,0,1,0,1,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,,,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-,-"
-        )
-
-        lines = [header]
-        for i, ltype in enumerate(line_types):
-            if i == len(line_types) - 1:
-                lines.append(end_line)
-            elif i == 0:
-                lines.append(first_active if ltype == "active" else first_rest)
-            else:
-                lines.append(middle_active if ltype == "active" else middle_rest)
-        return "\n".join(lines) + "\n"
-
-    def _toyo_build_puls_dir(self, num_lines):
-        """Fld_Puls.DIR 파일 생성 (PATRN 데이터 라인 수만큼)"""
-        return ",\n" * num_lines
-
-    def _pne_steps_to_toyo_substeps(self, steps_df):
-        """PNE Step 테이블 rows → Toyo 서브스텝 리스트 변환
-        
-        Args:
-            steps_df: DataFrame with StepType, Iref, EndI, Vref_Charge, Vref_DisCharge, EndV, Value2
-        
-        Returns:
-            list of dicts: [{type, left_sub, right_sub, loop_target, loop_count}, ...]
-            각 dict = PATRN 데이터 라인 1개 (서브스텝 2개 쌍)
-        """
-        # PNE 스텝을 Toyo 서브스텝으로 변환 (Loop 제외)
-        substeps = []  # [(type_str, ...)]
-        pne_step_indices = []  # substeps와 1:1 매핑, PNE 원본 인덱스 (0-based)
-        loop_info = {}  # {substeps_index: (target_pne_step_1based, count)}
-        pne_idx = 0  # PNE DataFrame 행 인덱스 (0-based)
-
-        for idx, row in steps_df.iterrows():
-            step_type = int(row.get("StepType", 0))
-            iref = float(row.get("Iref", 0) or 0)
-            end_i = float(row.get("EndI", 0) or 0)
-            vref_chg = float(row.get("Vref_Charge", 0) or 0)
-            vref_dchg = float(row.get("Vref_DisCharge", 0) or 0)
-            end_v = float(row.get("EndV", 0) or 0)
-            value2 = str(row.get("Value2", "") or "").strip()
-
-            if step_type == 1:  # 충전
-                voltage_V = vref_chg / 1000.0 if vref_chg > 0 else 4.2
-                # CC-CV 판단: EndI/Iref < 0.3 → CV cutoff (소량 전류)
-                # EndI/Iref >= 0.3 → CC 모드 (용량 제한)
-                if end_i > 0 and iref > 0:
-                    is_cccv = (end_i / iref) < 0.3
-                else:
-                    is_cccv = False
-                end_val = end_i if end_i > 0 else iref
-                substeps.append(("charge", iref, voltage_V, end_val, is_cccv))
-                pne_step_indices.append(pne_idx)
-            elif step_type == 2:  # 방전
-                endV_V = vref_dchg / 1000.0 if vref_dchg > 0 else (end_v / 1000.0 if end_v > 0 else 3.0)
-                substeps.append(("discharge", iref, endV_V))
-                pne_step_indices.append(pne_idx)
-            elif step_type == 3 or step_type == 4:  # 휴지 / OCV
-                substeps.append(("rest",))
-                pne_step_indices.append(pne_idx)
-            elif step_type == 5:  # Impedance (펄스 측정)
-                # 짧은 방전 펄스로 변환
-                substeps.append(("discharge", iref, 0))
-                pne_step_indices.append(pne_idx)
-            elif step_type == 8:  # Loop
-                # Value2에서 loop 대상 스텝 번호 추출
-                import re as _re
-                nums = _re.findall(r'\d+', value2)
-                if nums:
-                    target_pne_step = int(nums[0])  # 1-based PNE step number
-                    loop_count = int(iref) if iref > 0 else 99
-                    loop_info[len(substeps)] = (target_pne_step, loop_count)
-                substeps.append(("loop",))
-                pne_step_indices.append(pne_idx)
-            elif step_type == 6:  # End
-                pne_idx += 1
-                continue  # 건너뜀
-            elif step_type == 9:  # Continuation
-                # 이전 스텝 컨텍스트에 따라 충전/방전
-                if len(substeps) > 0 and substeps[-1][0] == "charge":
-                    voltage_V = vref_chg / 1000.0 if vref_chg > 0 else 4.2
-                    if end_i > 0 and iref > 0:
-                        is_cccv = (end_i / iref) < 0.3
-                    else:
-                        is_cccv = False
-                    end_val = end_i if end_i > 0 else iref
-                    substeps.append(("charge", iref, voltage_V, end_val, is_cccv))
-                else:
-                    endV_V = vref_dchg / 1000.0 if vref_dchg > 0 else 3.0
-                    substeps.append(("discharge", iref, endV_V))
-                pne_step_indices.append(pne_idx)
-            else:
-                # 미지원 타입 → 휴지로 처리
-                substeps.append(("rest",))
-                pne_step_indices.append(pne_idx)
-
-            pne_idx += 1
-
-        # Loop 스텝 자체는 Toyo에서 별도 라인이 아님 → 제거하고 이전 라인에 loop 정보 부착
-        # 실제 서브스텝만 남기기 (loop 제외)
-        actual_substeps = []
-        actual_pne_indices = []  # actual_substeps와 1:1 매핑
-        actual_loop_attach = {}  # {actual_idx: (target_pne_step_1based, count)}
-        for i, sub in enumerate(substeps):
-            if sub[0] == "loop":
-                # 이전 actual 서브스텝에 loop 정보 부착
-                if i in loop_info and len(actual_substeps) > 0:
-                    actual_loop_attach[len(actual_substeps) - 1] = loop_info[i]
-            else:
-                actual_substeps.append(sub)
-                actual_pne_indices.append(pne_step_indices[i])
-
-        # 서브스텝을 라인으로 조립하면서 pne_idx → toyo_line 매핑 생성
-        patrn_lines = []
-        line_types = []  # option2용: 라인 당 "active"(RIGHT=방전) 또는 "rest"
-        pne_to_toyo_line = {}  # {pne_step_0based: toyo_line_1based}
-        queue = list(enumerate(zip(actual_substeps, actual_pne_indices)))  # [(actual_idx, (sub, pne_idx))]
-
-        while queue:
-            actual_idx_a, (sub_a, pne_idx_a) = queue.pop(0)
-            toyo_line_no = len(patrn_lines) + 1  # 현재 라인 번호 (1-based)
-
-            # pne_idx → toyo_line 매핑 등록
-            if pne_idx_a not in pne_to_toyo_line:
-                pne_to_toyo_line[pne_idx_a] = toyo_line_no
-
-            # LEFT 서브스텝 결정
-            if sub_a[0] == "charge":
-                _, curr, volt, end_val, is_cccv = sub_a
-                left = self._toyo_build_charge_left(curr, volt, end_val, is_cccv)
-                # RIGHT: 다음 서브스텝 소비
-                if queue:
-                    actual_idx_b, (sub_b, pne_idx_b) = queue.pop(0)
-                else:
-                    sub_b = ("rest",)
-                    actual_idx_b = -1
-                    pne_idx_b = -1
-            elif sub_a[0] == "discharge":
-                # 방전은 RIGHT로 → LEFT는 REST, sub_a를 RIGHT로 사용
-                left = self._toyo_build_rest_left()
-                sub_b = sub_a
-                actual_idx_b = actual_idx_a
-                pne_idx_b = pne_idx_a
-            else:  # rest, OCV 등
-                left = self._toyo_build_rest_left()
-                if queue:
-                    actual_idx_b, (sub_b, pne_idx_b) = queue.pop(0)
-                else:
-                    sub_b = ("rest",)
-                    actual_idx_b = -1
-                    pne_idx_b = -1
-
-            # pne_idx_b → toyo_line 매핑 등록
-            if pne_idx_b >= 0 and pne_idx_b not in pne_to_toyo_line:
-                pne_to_toyo_line[pne_idx_b] = toyo_line_no
-
-            # RIGHT 서브스텝 빌드 + 라인 타입 결정
-            right_is_discharge = False
-            if sub_b[0] == "discharge":
-                curr = sub_b[1]
-                endV = sub_b[2] if len(sub_b) > 2 else 3.0
-                # LEFT가 REST이면 interval 없음 (첫 라인 초기 방전 등)
-                iv = 0 if sub_a[0] == "rest" or sub_a[0] == "discharge" else 60
-                right = self._toyo_build_dchg_right(curr, endV, interval_s=iv)
-                right_is_discharge = True
-            elif sub_b[0] == "charge":
-                # 충전이 RIGHT에 오면 → REST RIGHT로 대체, 충전은 다음 라인 LEFT로 이월
-                right = self._toyo_build_rest_right()
-                queue.insert(0, (actual_idx_b, (sub_b, pne_idx_b)))  # 다시 큐 앞에 넣기
-                # pne_to_toyo_line 등록 취소 (다음 라인에서 다시 등록됨)
-                if pne_idx_b in pne_to_toyo_line and pne_to_toyo_line[pne_idx_b] == toyo_line_no:
-                    del pne_to_toyo_line[pne_idx_b]
-            else:  # rest
-                right = self._toyo_build_rest_right()
-
-            line_types.append("active" if right_is_discharge else "rest")
-
-            # Loop 정보 확인 — actual_idx 기반으로 actual_loop_attach 조회
-            loop_target = 0
-            loop_count = 0
-            for check_idx in [actual_idx_a, actual_idx_b]:
-                if check_idx >= 0 and check_idx in actual_loop_attach:
-                    target_pne_1based, count = actual_loop_attach[check_idx]
-                    # target_pne는 1-based PNE 스텝 번호
-                    # pne_to_toyo_line에서 해당 PNE 스텝의 Toyo 라인 번호 조회
-                    target_pne_0based = target_pne_1based - 1
-                    if target_pne_0based in pne_to_toyo_line:
-                        loop_target = pne_to_toyo_line[target_pne_0based]
-                    else:
-                        # 매핑이 없으면 근사 계산
-                        loop_target = max(1, (target_pne_1based + 1) // 2)
-                    loop_count = count
-
-            loop_str = self._toyo_build_loop(loop_target, loop_count)
-            line = self._toyo_build_line(left, right, loop_str)
-            patrn_lines.append(line)
-
-        return patrn_lines, line_types
-
-    def ptn_toyo_convert_button(self):
-        """PNE 패턴을 Toyo PATRN 파일로 변환"""
-        self.progressBar.setValue(0)
-        ptn_ori_path = str(self.ptn_ori_path.text())
-
-        # 선택된 패턴 확인
-        if (not hasattr(self, "ptn_df_select")) or len(self.ptn_df_select) == 0 or self.ptn_df_select[0] == "":
-            QtWidgets.QMessageBox.warning(self, "알림", "패턴을 먼저 선택하세요.\n패턴 Load 후 목록에서 행을 선택하세요.")
-            return
-
-        # MDB 경로 확인
-        if not os.path.isfile(ptn_ori_path):
-            ptn_ori_path = filedialog.askopenfilename(
-                initialdir="c:\\Program Files\\PNE CTSPro\\Database\\",
-                title="MDB 파일 선택",
-                filetypes=[("Access DB", "*.mdb *.accdb")]
-            )
-            if not ptn_ori_path:
-                return
-            self.ptn_ori_path.setText(str(ptn_ori_path))
-
-        # 출력 폴더 선택
-        output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Toyo 패턴 저장 폴더 선택")
-        if not output_dir:
-            return
-
-        # 패턴 번호 입력
-        patrn_num, ok = QtWidgets.QInputDialog.getInt(
-            self, "패턴 번호", "Toyo 패턴 번호 (PATRN{N}.1):", 1, 1, 999
-        )
-        if not ok:
-            return
-
-        # 용량 입력 (ptn_capacity 값 사용)
-        try:
-            capacity_mAh = float(self.ptn_capacity.text())
-        except (ValueError, AttributeError):
-            capacity_mAh = 1000
-
-        # MDB 연결
-        conn_str = (
-            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-        )
-        try:
-            conn = pyodbc.connect(conn_str)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "오류", f"MDB 연결 실패:\n{e}")
-            return
-
-        results = []
-        for idx, test_id in enumerate(self.ptn_df_select):
-            current_patrn_num = patrn_num + idx
-
-            # Step 데이터 조회
-            steps_df = pd.read_sql(
-                f"SELECT * FROM Step WHERE TestID = {test_id} ORDER BY StepID", conn
-            )
-            if steps_df.empty:
-                results.append(f"TestID {test_id}: Step 데이터 없음")
-                continue
-
-            # TestName 조회
-            try:
-                test_info = pd.read_sql(
-                    f"SELECT TestName FROM TestName WHERE TestID = {test_id}", conn
-                )
-                pattern_name = test_info.iloc[0]["TestName"] if not test_info.empty else f"Pattern_{test_id}"
-            except Exception:
-                pattern_name = f"Pattern_{test_id}"
-
-            # PNE → Toyo 변환
-            try:
-                patrn_lines, line_types = self._pne_steps_to_toyo_substeps(steps_df)
-            except Exception as e:
-                results.append(f"TestID {test_id}: 변환 오류 - {e}")
-                continue
-
-            if not patrn_lines:
-                results.append(f"TestID {test_id}: 변환 결과 없음")
-                continue
-
-            num_lines = len(patrn_lines)
-
-            # 1) PATRN{N}.1 생성
-            header = self._toyo_build_header(pattern_name, num_lines)
-            patrn_content = header + "\n" + "\n".join(patrn_lines) + "\n"
-            patrn_path = os.path.join(output_dir, f"PATRN{current_patrn_num}.1")
-            with open(patrn_path, "w", encoding="cp949") as f:
-                f.write(patrn_content)
-
-            # 2) Patrn{N}.option 생성
-            option_content = self._toyo_build_option(capacity_mAh)
-            option_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option")
-            with open(option_path, "w", encoding="cp949") as f:
-                f.write(option_content)
-
-            # 3) Patrn{N}.option2 생성
-            option2_content = self._toyo_build_option2(line_types)
-            option2_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option2")
-            with open(option2_path, "w", encoding="cp949") as f:
-                f.write(option2_content)
-
-            # 4) Fld_Puls{N}.DIR 생성
-            puls_content = self._toyo_build_puls_dir(num_lines)
-            puls_path = os.path.join(output_dir, f"Fld_Puls{current_patrn_num}.DIR")
-            with open(puls_path, "w", encoding="cp949") as f:
-                f.write(puls_content)
-
-            # 5) Fld_Thermo{N}.DIR 생성 (빈 파일)
-            thermo_path = os.path.join(output_dir, f"Fld_Thermo{current_patrn_num}.DIR")
-            with open(thermo_path, "w", encoding="cp949") as f:
-                f.write("")
-
-            # 6) THPTNNO.1 생성 (빈 파일, 없으면)
-            thptn_path = os.path.join(output_dir, "THPTNNO.1")
-            if not os.path.exists(thptn_path):
-                with open(thptn_path, "w", encoding="cp949") as f:
-                    f.write("")
-
-            results.append(
-                f"TestID {test_id} → PATRN{current_patrn_num}.1 "
-                f"({num_lines}라인, {len(steps_df)}스텝)"
-            )
-            self.progressBar.setValue(int((idx + 1) / len(self.ptn_df_select) * 100))
-
-        conn.close()
-
-        # 결과 표시
-        msg = "Toyo 패턴 변환 완료\n\n" + "\n".join(results) + f"\n\n저장 위치: {output_dir}"
-        QtWidgets.QMessageBox.information(self, "변환 완료", msg)
-        self.progressBar.setValue(100)
-
-    # ===== PyBaMM 시뮬레이션 탭 핸들러 =====
-    def pybamm_run_button(self):
-        """시뮬레이션 실행 버튼 핸들러"""
-        if not HAS_PYBAMM:
-            QtWidgets.QMessageBox.warning(self, "PyBaMM", "PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치해주세요.")
-            return
-        self.progressBar.setValue(0)
-        self.progressBar.setRange(0, 100)
-        self.pybamm_run_btn.setDisabled(True)
-        QtWidgets.QApplication.processEvents()
-
-        # 1) UI에서 파라미터 수집
-        params_dict = {}
-        for row in range(self.pybamm_param_table.rowCount()):
-            name_item = self.pybamm_param_table.item(row, 0)
-            val_item = self.pybamm_param_table.item(row, 1)
-            if name_item and val_item:
-                params_dict[name_item.text()] = val_item.text()
-        self.progressBar.setValue(10)
-        QtWidgets.QApplication.processEvents()
-
-        # 2) 실험 설정 수집
-        experiment_config = {}
-        if self.pybamm_mode_charge.isChecked():
-            experiment_config["mode"] = "charge"
-            experiment_config["steps"] = self._pybamm_collect_list_steps(self.pybamm_chg_list)
-            experiment_config["cycles"] = int(self.pybamm_chg_cycles.text() or "1")
-        elif self.pybamm_mode_discharge.isChecked():
-            experiment_config["mode"] = "discharge"
-            experiment_config["steps"] = self._pybamm_collect_list_steps(self.pybamm_dchg_list)
-            experiment_config["cycles"] = int(self.pybamm_dchg_cycles.text() or "1")
-        elif self.pybamm_mode_gitt.isChecked():
-            experiment_config["mode"] = "gitt"
-            experiment_config["pattern_type"] = self.pybamm_gitt_type.currentText()
-            gitt_keys = ["pulse_current", "pulse_time", "rest_time", "repeats", "v_min"]
-            gitt_labels = list(self.pybamm_gitt_inputs.keys())
-            for key, lbl in zip(gitt_keys, gitt_labels):
-                experiment_config[key] = float(self.pybamm_gitt_inputs[lbl].text())
-        elif self.pybamm_mode_custom.isChecked():
-            experiment_config["mode"] = "custom"
-            raw_text = self.pybamm_custom_text.toPlainText().strip()
-            steps = [s.strip().strip('"').strip("'") for s in raw_text.split(",") if s.strip()]
-            experiment_config["steps"] = steps
-        # 시작 SOC
-        experiment_config["init_soc"] = self.pybamm_init_soc.text().strip()
-        # 출력 간격 (period)
-        experiment_config["period"] = self.pybamm_period.text().strip()
-        self.progressBar.setValue(20)
-        QtWidgets.QApplication.processEvents()
-
-        # 3) 시뮬레이션 실행
-        model_name = self.pybamm_model_combo.currentText()
-        try:
-            self.progressBar.setRange(0, 0)  # indeterminate 모드
-            QtWidgets.QApplication.processEvents()
-            sol, param_vals = run_pybamm_simulation(model_name, params_dict, experiment_config)
-        except Exception as e:
-            self.progressBar.setRange(0, 100)
-            self.progressBar.setValue(0)
-            self.pybamm_run_btn.setDisabled(False)
-            QtWidgets.QMessageBox.critical(self, "시뮬레이션 오류",
-                f"시뮬레이션 실행 중 오류 발생:\n{type(e).__name__}: {e}")
-            return
-        self.progressBar.setRange(0, 100)  # 확정 모드 복귀
-        self.progressBar.setValue(60)
-
-        # EmptySolution 체크
-        if isinstance(sol, pybamm.EmptySolution) or not hasattr(sol, "__getitem__"):
-            self.progressBar.setValue(0)
-            self.pybamm_run_btn.setDisabled(False)
-            QtWidgets.QMessageBox.warning(self, "시뮬레이션 결과 없음",
-                "시뮬레이션이 빈 결과를 반환했습니다.\n"
-                "실험 스텝이 올바른지, 초기 SOC와 전압 범위가\n"
-                "모순되지 않는지 확인해주세요.")
-            return
-
-        # 4) 결과 데이터 추출 ─────────────────────────────────────
-        def _safe(key):
-            """sol에서 변수를 안전하게 추출; 없으면 None.
-            2D (공간×시간) 배열이면 공간 축(axis=0) 평균으로 1D 변환."""
-            try:
-                arr = sol[key].entries
-                if arr is not None and arr.ndim == 2:
-                    arr = np.mean(arr, axis=0)
-                return arr
-            except Exception:
-                return None
-
-        t = sol["Time [s]"].entries
-        t_min = t / 60.0
-        V = sol["Terminal voltage [V]"].entries
-        I = sol["Current [A]"].entries
-
-        # 용량 (항상 양수로 표시)
-        Q = _safe("Discharge capacity [A.h]")
-        if Q is None:
-            Q = np.cumsum(np.abs(I) * np.diff(t, prepend=t[0])) / 3600.0
-        Q = np.abs(Q)
-
-        # ── 일반 Plot 변수 ──
-        # 1.3 전극 전위 & OCP
-        pos_potential   = _safe("X-averaged positive electrode potential [V]")
-        pos_ocp         = _safe("X-averaged positive electrode open-circuit potential [V]")
-        if pos_ocp is None:
-            pos_ocp = _safe("Positive electrode open-circuit potential [V]")
-        neg_potential   = _safe("X-averaged negative electrode potential [V]")
-        neg_ocp         = _safe("X-averaged negative electrode open-circuit potential [V]")
-        if neg_ocp is None:
-            neg_ocp = _safe("Negative electrode open-circuit potential [V]")
-        # 1.4 전극 리튬화 정도
-        pos_lith = _safe("X-averaged positive electrode extent of lithiation")
-        neg_lith = _safe("X-averaged negative electrode extent of lithiation")
-        # 1.5 셀 온도
-        T_cell = _safe("Volume-averaged cell temperature [°C]")
-        if T_cell is None:
-            T_K = _safe("Volume-averaged cell temperature [K]")
-            if T_K is not None:
-                T_cell = T_K - 273.15
-        # 1.6 발열량
-        heat_ohmic = _safe("Volume-averaged Ohmic heating [W.m-3]")
-        heat_irrev = _safe("Volume-averaged irreversible electrochemical heating [W.m-3]")
-        heat_rev   = _safe("Volume-averaged reversible heating [W.m-3]")
-
-        # ── 상세 Plot 변수 ──
-        # 2.1 과전압 분해  ── 양극/음극 평균 후 합산
-        _pos_rxn = _safe("X-averaged positive electrode reaction overpotential [V]")
-        _neg_rxn = _safe("X-averaged negative electrode reaction overpotential [V]")
-        ovp_reaction = None
-        if _pos_rxn is not None and _neg_rxn is not None:
-            ovp_reaction = _pos_rxn + _neg_rxn
-        elif _pos_rxn is not None:
-            ovp_reaction = _pos_rxn
-        elif _neg_rxn is not None:
-            ovp_reaction = _neg_rxn
-        ovp_elyte_ohm = _safe("X-averaged electrolyte ohmic losses [V]")
-        ovp_solid_ohm = _safe("X-averaged solid phase ohmic losses [V]")
-        _pos_conc = _safe("X-averaged positive electrode concentration overpotential [V]")
-        _neg_conc = _safe("X-averaged negative electrode concentration overpotential [V]")
-        ovp_conc = None
-        if _pos_conc is not None and _neg_conc is not None:
-            ovp_conc = _pos_conc + _neg_conc
-        elif _pos_conc is not None:
-            ovp_conc = _pos_conc
-        elif _neg_conc is not None:
-            ovp_conc = _neg_conc
-        # 2.2 입자 농도
-        c_pos_surf = _safe("X-averaged positive particle surface concentration [mol.m-3]")
-        c_pos_bulk = _safe("X-averaged positive particle concentration [mol.m-3]")
-        c_neg_surf = _safe("X-averaged negative particle surface concentration [mol.m-3]")
-        c_neg_bulk = _safe("X-averaged negative particle concentration [mol.m-3]")
-        # 2.3 전해질 농도
-        elyte_c_pos = _safe("X-averaged positive electrolyte concentration [mol.m-3]")
-        elyte_c_sep = _safe("X-averaged separator electrolyte concentration [mol.m-3]")
-        elyte_c_neg = _safe("X-averaged negative electrolyte concentration [mol.m-3]")
-        # 2.4 전해질 전위
-        elyte_p_pos = _safe("X-averaged positive electrolyte potential [V]")
-        elyte_p_sep = _safe("X-averaged separator electrolyte potential [V]")
-        elyte_p_neg = _safe("X-averaged negative electrolyte potential [V]")
-        # 2.5 계면 전류 밀도
-        j_pos = _safe("X-averaged positive electrode interfacial current density [A.m-2]")
-        j_neg = _safe("X-averaged negative electrode interfacial current density [A.m-2]")
-        # 2.6 리튬 석출 위험도
-        plating_ovp = _safe("X-averaged lithium plating reaction overpotential [V]")
-
-        self.progressBar.setValue(75)
-
-        palette = THEME['PALETTE']
-        LW = THEME['LINE_WIDTH']
-        LA = THEME['LINE_ALPHA']
-        TS = THEME['TITLE_SIZE']
-        TW = THEME['SUPTITLE_WEIGHT']
-
-        def _no_data(ax, msg="N/A"):
-            """데이터 없는 subplot에 안내 텍스트 표시"""
-            ax.text(0.5, 0.5, msg, transform=ax.transAxes,
-                    ha='center', va='center', fontsize=12, color='#999999')
-
-        # ── 누적 실행: 상위 Run 탭 + 내부 서브탭 ──
-        self._pybamm_run_counter += 1
-        run_no = self._pybamm_run_counter
-        mode_label = experiment_config.get('mode', '?')
-        mode_names = {'charge': '충전', 'discharge': '방전',
-                      'gitt': 'GITT', 'custom': '커스텀', 'ccv': 'CC-CV'}
-        mode_str = mode_names.get(mode_label, mode_label)
-        run_tab_title = f"Run {run_no}  ({model_name}, {mode_str})"
-
-        inner_tab = QtWidgets.QTabWidget()
-        inner_tab.setFont(self.pybamm_plot_tab.font())
-
-        # ================================================================
-        # ██  탭 1: 일반 Plot (General Performance)  ─  2×3  ██
-        # ================================================================
-        fig_g, axes_g = plt.subplots(2, 3, figsize=(18, 10))
-        fig_g.set_facecolor(THEME['FIG_FACECOLOR'])
-        for _ax_row in axes_g:
-            for _ax in _ax_row:
-                _ax.set_facecolor(THEME['AX_FACECOLOR'])
-
-        # [1.1] Cell Voltage & Current ─ 좌: V, 우: I (twinx)
-        ax = axes_g[0, 0]
-        ax.plot(t_min, V, color=palette[0], linewidth=LW, alpha=LA, label="Voltage")
-        graph_base_parameter(ax, "Time [min]", "Terminal Voltage [V]")
-        ax.set_title("Cell Voltage & Current", fontsize=TS, fontweight=TW)
-        ax_r = ax.twinx()
-        ax_r.plot(t_min, np.abs(I), color=palette[1], linewidth=LW, alpha=LA, label="Current")
-        ax_r.set_ylabel("|Current| [A]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
-        ax_r.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
-        # 두 축 범례 합치기
-        h1, l1 = ax.get_legend_handles_labels()
-        h2, l2 = ax_r.get_legend_handles_labels()
-        ax.legend(h1 + h2, l1 + l2, fontsize=8, loc='best')
-        # 좌우 Y축 tick 위치 일치
-        _nt = 6
-        _l1, _l2 = ax.get_ylim()
-        _r1, _r2 = ax_r.get_ylim()
-        ax.set_yticks(np.linspace(_l1, _l2, _nt))
-        ax_r.set_yticks(np.linspace(_r1, _r2, _nt))
-
-        # [1.2] Electrode Balance — SoC_Cell vs OCP
-        # X축: SoC_Cell [%] (100→0 반전), 좌Y: PE OCP + Cell V, 우Y: NE OCP
-        ax = axes_g[0, 1]
-        _has_12 = (pos_ocp is not None and neg_ocp is not None
-                   and pos_lith is not None and neg_lith is not None)
-        if _has_12:
-            # 전체 OCP 함수 가져오기
-            _f_pos, _f_neg = None, None
-            try:
-                _fp = param_vals["Positive electrode OCP [V]"]
-                _fn = param_vals["Negative electrode OCP [V]"]
-                if callable(_fp):
-                    _f_pos = _fp
-                if callable(_fn):
-                    _f_neg = _fn
-            except Exception:
-                pass
-
-            # Stoichiometry → SoC_Cell 선형 매핑
-            _sto_p0, _sto_pN = pos_lith[0], pos_lith[-1]
-            _sto_n0, _sto_nN = neg_lith[0], neg_lith[-1]
-            _d_p = _sto_pN - _sto_p0
-            _d_n = _sto_nN - _sto_n0
-
-            # 시뮬레이션 데이터의 SoC_Cell (PE 기준)
-            if abs(_d_p) > 1e-10:
-                _soc_sim = 100.0 * (pos_lith - _sto_p0) / _d_p
-            else:
-                _soc_sim = np.linspace(0, 100, len(pos_lith))
-
-            # 전체 OCP 커브 (연한 배경) — sto → SoC 선형 외삽
-            _sto_full = np.linspace(0.001, 0.999, 500)
-            if _f_pos is not None and abs(_d_p) > 1e-10:
-                _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
-                _soc_pe_full = 100.0 * (_sto_full - _sto_p0) / _d_p
-                ax.plot(_soc_pe_full, _ocp_pos_full, color=palette[1],
-                        linewidth=0.8, alpha=0.7, linestyle='-')
-            ax_r12 = ax.twinx()
-            if _f_neg is not None and abs(_d_n) > 1e-10:
-                _ocp_neg_full = np.asarray(_f_neg(_sto_full), dtype=float).ravel()
-                _soc_ne_full = 100.0 * (_sto_full - _sto_n0) / _d_n
-                ax_r12.plot(_soc_ne_full, _ocp_neg_full, color=palette[0],
-                            linewidth=0.8, alpha=0.7, linestyle='-')
-
-            # ── 양극 OCP 실사용 영역 (좌Y, 빨간) ──
-            ax.plot(_soc_sim, pos_ocp, color=palette[1],
-                    linewidth=LW + 0.5, alpha=LA, label="PE OCP")
-
-            # ── Cell Voltage 오버레이 (좌Y, 회색 점선) ──
-            ax.plot(_soc_sim, V, color='black',
-                    linewidth=LW, alpha=0.7, linestyle='-', label="Cell Voltage")
-
-            # ── 음극 OCP 실사용 영역 (우Y, 파란) ──
-            ax_r12.plot(_soc_sim, neg_ocp, color=palette[0],
-                        linewidth=LW + 0.5, alpha=LA, label="NE OCP")
-
-            # V_max, V_min 수평 기준선
-            _v_max_val = experiment_config.get("v_max", None)
-            _v_min_val = experiment_config.get("v_min", None)
-            if _v_max_val is None:
-                try:
-                    _v_max_val = float(param_vals["Upper voltage cut-off [V]"])
-                except Exception:
-                    pass
-            if _v_min_val is None:
-                try:
-                    _v_min_val = float(param_vals["Lower voltage cut-off [V]"])
-                except Exception:
-                    pass
-            
-
-            # stoichiometry 범위 주석
-            ax.annotate(f"PE: x={pos_lith[0]:.3f}→{pos_lith[-1]:.3f}",
-                        xy=(0.02, 0.97), xycoords='axes fraction',
-                        fontsize=6.5, color=palette[1], va='top')
-            ax_r12.annotate(f"NE: x={neg_lith[0]:.3f}→{neg_lith[-1]:.3f}",
-                            xy=(0.98, 0.97), xycoords='axes fraction',
-                            fontsize=6.5, color=palette[0], va='top', ha='right')
-
-            # 범례 합치기
-            h1, l1 = ax.get_legend_handles_labels()
-            h2, l2 = ax_r12.get_legend_handles_labels()
-            ax.legend(h1 + h2, l1 + l2, fontsize=7, loc='best')
-            ax_r12.set_ylabel("NE Voltage [V]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
-            ax_r12.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
-            ax.yaxis.label.set_color(palette[1])
-            ax.tick_params(axis='y', colors=palette[1])
-            ax_r12.yaxis.label.set_color(palette[0])
-            ax_r12.tick_params(axis='y', colors=palette[0])
-            ax.set_xlim([110, -10])  # 100%→0% 반전
-            ax.set_ylim([2.5, 4.5])
-            ax_r12.set_ylim([-0.05, 1.0])
-            # 좌우 Y축 tick 위치 일치
-            _nt = 6
-            ax.set_yticks(np.linspace(2.5, 4.5, _nt))
-            ax_r12.set_yticks(np.linspace(-0.05, 1.0, _nt))
-        else:
-            _no_data(ax, "Electrode OCP\ndata not available")
-        graph_base_parameter(ax, "SoC_Cell [%]", "PE / Cell Voltage [V]")
-        ax.set_title("Electrode Balance", fontsize=TS, fontweight=TW)
-
-        # [1.4] Voltage Components (전압 분해 — stacked area)
-        # OCP(Neg/Pos) + Overpotential 합(Neg/Pos) + Ohmic 합(Neg/Pos) 3그룹
-        ax = axes_g[1, 0]
-        _vc_neg_ocp = _safe("Negative electrode bulk open-circuit potential [V]")
-        _vc_pos_ocp = _safe("Positive electrode bulk open-circuit potential [V]")
-        _vc_neg_pco = _safe("Negative particle concentration overpotential [V]")
-        _vc_pos_pco = _safe("Positive particle concentration overpotential [V]")
-        _vc_neg_rxn = _safe("X-averaged negative electrode reaction overpotential [V]")
-        _vc_pos_rxn = _safe("X-averaged positive electrode reaction overpotential [V]")
-        _vc_conc_ovp = _safe("X-averaged battery concentration overpotential [V]")
-        _vc_elyte_ohm = _safe("X-averaged battery electrolyte ohmic losses [V]")
-        _vc_neg_solid = _safe("X-averaged battery negative solid phase ohmic losses [V]")
-        _vc_pos_solid = _safe("X-averaged battery positive solid phase ohmic losses [V]")
-        _vc_ok = (_vc_neg_ocp is not None and _vc_pos_ocp is not None)
-        if _vc_ok:
-            _zeros = np.zeros_like(t_min)
-            initial_ocp_n = _vc_neg_ocp[0]
-            initial_ocp_p = _vc_pos_ocp[0]
-            initial_ocv = initial_ocp_p - initial_ocp_n
-            delta_ocp_n = _vc_neg_ocp - initial_ocp_n
-            delta_ocp_p = _vc_pos_ocp - initial_ocp_p
-            # ① Neg OCP
-            top = initial_ocv
-            ax.fill_between(t_min, initial_ocv - delta_ocp_n, initial_ocv,
-                            alpha=0.6, label="Neg OCP", color=palette[0])
-            top = initial_ocv - delta_ocp_n
-            # ② Pos OCP
-            ax.fill_between(t_min, top + delta_ocp_p, top,
-                            alpha=0.6, label="Pos OCP", color=palette[4])
-            top = top + delta_ocp_p
-            # ③ Neg Overpotential 합 (particle conc. + reaction)
-            _neg_ovp = ((_vc_neg_pco if _vc_neg_pco is not None else _zeros)
-                        + (_vc_neg_rxn if _vc_neg_rxn is not None else _zeros))
-            bottom = top + (-1) * _neg_ovp
-            ax.fill_between(t_min, bottom, top, alpha=0.6,
-                            label="Neg Overpotential", color=palette[2])
-            top = bottom
-            # ④ Pos Overpotential 합 (particle conc. + reaction)
-            _pos_ovp = ((_vc_pos_pco if _vc_pos_pco is not None else _zeros)
-                        + (_vc_pos_rxn if _vc_pos_rxn is not None else _zeros))
-            bottom = top + _pos_ovp
-            ax.fill_between(t_min, bottom, top, alpha=0.6,
-                            label="Pos Overpotential", color=palette[1])
-            top = bottom
-            # ⑤ Ohmic 합 (electrolyte conc. + electrolyte ohmic + solid neg + solid pos)
-            _ohmic_total = ((_vc_conc_ovp if _vc_conc_ovp is not None else _zeros)
-                           + (_vc_elyte_ohm if _vc_elyte_ohm is not None else _zeros)
-                           + ((-1) * _vc_neg_solid if _vc_neg_solid is not None else _zeros)
-                           + (_vc_pos_solid if _vc_pos_solid is not None else _zeros))
-            bottom = top + _ohmic_total
-            ax.fill_between(t_min, bottom, top, alpha=0.6,
-                            label="Ohmic Losses", color=palette[8])
-            top = bottom
-            ax.plot(t_min, V, 'k--', linewidth=LW, alpha=0.8, label="Voltage")
-            ax.legend(fontsize=7, loc='best', frameon=True, framealpha=0.85)
-            _v_min = 0.98 * min(np.nanmin(V), np.nanmin(initial_ocv - delta_ocp_n))
-            _v_max = 1.02 * max(np.nanmax(V), np.nanmax(initial_ocv))
-            ax.set_ylim([_v_min, _v_max])
-        else:
-            _no_data(ax, "Voltage component\ndata not available")
-        graph_base_parameter(ax, "Time [min]", "Voltage [V]")
-        ax.set_title("Voltage Components", fontsize=TS, fontweight=TW)
-
-        # [1.5] Electrode Balance — Stoichiometry vs OCP
-        # X축: Stoichiometry (x) 0~1, 좌Y: PE OCP, 우Y: NE OCP
-        # 전체 OCP 커브(연장선)와 실사용 영역(굵은선)을 함께 표시
-        ax = axes_g[1, 1]
-        _has_13 = (pos_ocp is not None and neg_ocp is not None
-                   and pos_lith is not None and neg_lith is not None)
-        if _has_13:
-            # 전체 OCP 함수 가져오기
-            _f_pos, _f_neg = None, None
-            try:
-                _fp = param_vals["Positive electrode OCP [V]"]
-                _fn = param_vals["Negative electrode OCP [V]"]
-                if callable(_fp):
-                    _f_pos = _fp
-                if callable(_fn):
-                    _f_neg = _fn
-            except Exception:
-                pass
-
-            # 전체 OCP 커브 (연한 배경)
-            _sto_full = np.linspace(0.001, 0.999, 500)
-            if _f_pos is not None:
-                _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
-                ax.plot(_sto_full, _ocp_pos_full, color=palette[1],
-                        linewidth=0.8, alpha=0.2, linestyle='-')
-            ax_r13 = ax.twinx()
-            if _f_neg is not None:
-                _ocp_neg_full = np.asarray(_f_neg(_sto_full), dtype=float).ravel()
-                ax_r13.plot(_sto_full, _ocp_neg_full, color=palette[0],
-                            linewidth=0.8, alpha=0.2, linestyle='-')
-
-            # ── 양극 OCP 실사용 영역 (좌Y, 빨간) ──
-            ax.plot(pos_lith, pos_ocp, color=palette[1],
-                    linewidth=LW + 0.5, alpha=LA, label="PE OCP")
-            ax.plot(pos_lith[0], pos_ocp[0], 'o', color=palette[1],
-                    markersize=5, zorder=5)
-            ax.plot(pos_lith[-1], pos_ocp[-1], 's', color=palette[1],
-                    markersize=5, zorder=5)
-
-            # ── 음극 OCP 실사용 영역 (우Y, 파란) ──
-            ax_r13.plot(neg_lith, neg_ocp, color=palette[0],
-                        linewidth=LW + 0.5, alpha=LA, label="NE OCP")
-            ax_r13.plot(neg_lith[0], neg_ocp[0], 'o', color=palette[0],
-                        markersize=5, zorder=5)
-            ax_r13.plot(neg_lith[-1], neg_ocp[-1], 's', color=palette[0],
-                        markersize=5, zorder=5)
-
-            # stoichiometry 범위 주석
-            ax.annotate(f"PE: x={pos_lith[0]:.3f}→{pos_lith[-1]:.3f}",
-                        xy=(0.02, 0.97), xycoords='axes fraction',
-                        fontsize=6.5, color=palette[1], va='top')
-            ax_r13.annotate(f"NE: x={neg_lith[0]:.3f}→{neg_lith[-1]:.3f}",
-                            xy=(0.98, 0.97), xycoords='axes fraction',
-                            fontsize=6.5, color=palette[0], va='top', ha='right')
-
-            # 범례 합치기
-            h1, l1 = ax.get_legend_handles_labels()
-            h2, l2 = ax_r13.get_legend_handles_labels()
-            ax.legend(h1 + h2, l1 + l2, fontsize=7, loc='center left')
-            ax_r13.set_ylabel("NE Voltage [V]", fontsize=THEME['LABEL_SIZE'] - 1, fontweight='bold')
-            ax_r13.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
-            ax.yaxis.label.set_color(palette[1])
-            ax.tick_params(axis='y', colors=palette[1])
-            ax_r13.yaxis.label.set_color(palette[0])
-            ax_r13.tick_params(axis='y', colors=palette[0])
-            ax.set_xlim([-0.1, 1.1])
-            ax.set_ylim([3.0, 4.5])
-            ax_r13.set_ylim([-0.05, 1.0])
-            # 좌우 Y축 tick 위치 일치
-            _nt = 6
-            ax.set_yticks(np.linspace(3.0, 4.5, _nt))
-            ax_r13.set_yticks(np.linspace(-0.05, 1.0, _nt))
-        else:
-            _no_data(ax, "Electrode OCP\ndata not available")
-        graph_base_parameter(ax, "Stoichiometry (x)", "PE Voltage [V]")
-        ax.set_title("Electrode Balance", fontsize=TS, fontweight=TW)
-
-        # [1.3] Cell Temperature
-        ax = axes_g[0, 2]
-        if T_cell is not None:
-            ax.plot(t_min, T_cell, color=palette[2], linewidth=LW, alpha=LA)
-        else:
-            _no_data(ax, "Temperature data\nnot available")
-        graph_base_parameter(ax, "Time [min]", "Cell Temperature [°C]")
-        ax.set_title("Cell Temperature", fontsize=TS, fontweight=TW)
-
-        # [1.6] Heat Generation Sources
-        ax = axes_g[1, 2]
-        _has_16 = False
-        if heat_ohmic is not None:
-            ax.plot(t_min, heat_ohmic, color=palette[3], linewidth=LW, alpha=LA, label="Ohmic")
-            _has_16 = True
-        if heat_irrev is not None:
-            ax.plot(t_min, heat_irrev, color=palette[1], linewidth=LW, alpha=LA, label="Irreversible")
-            _has_16 = True
-        if heat_rev is not None:
-            ax.plot(t_min, heat_rev, color=palette[4], linewidth=LW, alpha=LA, label="Reversible")
-            _has_16 = True
-        if not _has_16:
-            _no_data(ax, "Heat generation data\nnot available")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Heat [W/m³]")
-        ax.set_title("Heat Generation Sources", fontsize=TS, fontweight=TW)
-
-        fig_g.tight_layout(pad=2.0)
-        tab_g, lay_g, canvas_g, toolbar_g = self._create_plot_tab(fig_g, 1)
-        lay_g.addWidget(toolbar_g)
-        scroll_g = QtWidgets.QScrollArea()
-        scroll_g.setWidgetResizable(True)
-        scroll_g.setWidget(canvas_g)
-        lay_g.addWidget(scroll_g)
-        inner_tab.addTab(tab_g, "📊 일반 Plot")
-
-        # ================================================================
-        # ██  탭 2: 상세 Plot (Detailed Diagnostics)  ─  2×3  ██
-        # ================================================================
-        fig_d, axes_d = plt.subplots(2, 3, figsize=(18, 10))
-        fig_d.set_facecolor(THEME['FIG_FACECOLOR'])
-        for _ax_row in axes_d:
-            for _ax in _ax_row:
-                _ax.set_facecolor(THEME['AX_FACECOLOR'])
-
-        # [2.1] Overpotential Breakdown
-        ax = axes_d[0, 0]
-        _has_21 = False
-        if ovp_reaction is not None:
-            ax.plot(t_min, ovp_reaction, color=palette[0], linewidth=LW, alpha=LA, label="Reaction η")
-            _has_21 = True
-        if ovp_elyte_ohm is not None:
-            ax.plot(t_min, ovp_elyte_ohm, color=palette[1], linewidth=LW, alpha=LA, label="Electrolyte Ohmic")
-            _has_21 = True
-        if ovp_solid_ohm is not None:
-            ax.plot(t_min, ovp_solid_ohm, color=palette[2], linewidth=LW, alpha=LA, label="Solid-phase Ohmic")
-            _has_21 = True
-        if ovp_conc is not None:
-            ax.plot(t_min, ovp_conc, color=palette[3], linewidth=LW, alpha=LA, label="Concentration η")
-            _has_21 = True
-        if not _has_21:
-            _no_data(ax, "Overpotential data\nnot available")
-        else:
-            ax.legend(fontsize=7, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Overpotential [V]")
-        ax.set_title("Overpotential Breakdown", fontsize=TS, fontweight=TW)
-
-        # [2.2] Solid-Phase Diffusion (입자 표면/내부 농도)
-        ax = axes_d[0, 1]
-        _has_22 = False
-        if c_pos_surf is not None:
-            ax.plot(t_min, c_pos_surf, color=palette[1], linewidth=LW, alpha=LA, label="Cathode surface")
-            _has_22 = True
-        if c_pos_bulk is not None:
-            ax.plot(t_min, c_pos_bulk, color=palette[1], linewidth=LW, alpha=0.35, linestyle='--', label="Cathode bulk")
-            _has_22 = True
-        if c_neg_surf is not None:
-            ax.plot(t_min, c_neg_surf, color=palette[0], linewidth=LW, alpha=LA, label="Anode surface")
-            _has_22 = True
-        if c_neg_bulk is not None:
-            ax.plot(t_min, c_neg_bulk, color=palette[0], linewidth=LW, alpha=0.35, linestyle='--', label="Anode bulk")
-            _has_22 = True
-        if not _has_22:
-            _no_data(ax, "Particle concentration\nnot available")
-        else:
-            ax.legend(fontsize=7, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Concentration [mol/m³]")
-        ax.set_title("Solid-Phase Diffusion", fontsize=TS, fontweight=TW)
-
-        # [2.3] Electrolyte Li⁺ Concentration
-        ax = axes_d[0, 2]
-        _has_23 = False
-        if elyte_c_pos is not None:
-            ax.plot(t_min, elyte_c_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode region")
-            _has_23 = True
-        if elyte_c_sep is not None:
-            ax.plot(t_min, elyte_c_sep, color=palette[2], linewidth=LW, alpha=LA, label="Separator")
-            _has_23 = True
-        if elyte_c_neg is not None:
-            ax.plot(t_min, elyte_c_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode region")
-            _has_23 = True
-        if not _has_23:
-            _no_data(ax, "Electrolyte concentration\nnot available\n(SPMe/DFN only)")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Electrolyte Conc. [mol/m³]")
-        ax.set_title("Electrolyte Li⁺ Concentration", fontsize=TS, fontweight=TW)
-
-        # [2.4] Electrolyte Potential Gradient
-        ax = axes_d[1, 0]
-        _has_24 = False
-        if elyte_p_pos is not None:
-            ax.plot(t_min, elyte_p_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode region")
-            _has_24 = True
-        if elyte_p_sep is not None:
-            ax.plot(t_min, elyte_p_sep, color=palette[2], linewidth=LW, alpha=LA, label="Separator")
-            _has_24 = True
-        if elyte_p_neg is not None:
-            ax.plot(t_min, elyte_p_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode region")
-            _has_24 = True
-        if not _has_24:
-            _no_data(ax, "Electrolyte potential\nnot available\n(SPMe/DFN only)")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Electrolyte Potential [V]")
-        ax.set_title("Electrolyte Potential Gradient", fontsize=TS, fontweight=TW)
-
-        # [2.5] Interfacial Current Density
-        ax = axes_d[1, 1]
-        _has_25 = False
-        if j_pos is not None:
-            ax.plot(t_min, j_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode j")
-            _has_25 = True
-        if j_neg is not None:
-            ax.plot(t_min, j_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode j")
-            _has_25 = True
-        if not _has_25:
-            _no_data(ax, "Interfacial current\nnot available")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Current Density [A/m²]")
-        ax.set_title("Interfacial Current Density", fontsize=TS, fontweight=TW)
-
-        # [2.6] Lithium Plating Risk
-        ax = axes_d[1, 2]
-        _has_26 = False
-        if plating_ovp is not None:
-            ax.plot(t_min, plating_ovp, color=palette[8], linewidth=LW, alpha=LA, label="Plating η")
-            ax.axhline(y=0, color='#333333', linewidth=0.8, linestyle=':', alpha=0.6)
-            _has_26 = True
-        if neg_potential is not None:
-            ax.plot(t_min, neg_potential, color=palette[0], linewidth=LW, alpha=0.4,
-                    linestyle='--', label="Anode potential (ref)")
-            _has_26 = True
-        if not _has_26:
-            _no_data(ax, "Plating data not available\n(OKane2022 등 전용 모델 필요)")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Overpotential [V]")
-        ax.set_title("Lithium Plating Risk", fontsize=TS, fontweight=TW)
-
-        fig_d.tight_layout(pad=2.0)
-        tab_d, lay_d, canvas_d, toolbar_d = self._create_plot_tab(fig_d, 2)
-        lay_d.addWidget(toolbar_d)
-        scroll_d = QtWidgets.QScrollArea()
-        scroll_d.setWidgetResizable(True)
-        scroll_d.setWidget(canvas_d)
-        lay_d.addWidget(scroll_d)
-        inner_tab.addTab(tab_d, "🔬 상세 Plot")
-
-        # 상위 탭에 Run 추가 (누적)
-        self.pybamm_plot_tab.addTab(inner_tab, run_tab_title)
-        self.pybamm_plot_tab.setCurrentWidget(inner_tab)
-
-        self.progressBar.setValue(100)
-        self.pybamm_run_btn.setDisabled(False)
-
-    def _pybamm_close_run_tab(self, index):
-        """개별 Run 탭 닫기 (× 버튼)"""
-        self.pybamm_plot_tab.removeTab(index)
-
-    def pybamm_tab_reset_button(self):
-        """PyBaMM 플롯 탭 전체 초기화"""
-        while self.pybamm_plot_tab.count() > 0:
-            self.pybamm_plot_tab.removeTab(0)
-        self._pybamm_run_counter = 0
-        self.progressBar.setValue(0)
-        # 프리셋 첫 번째(Chen2020)로 복원 → 패턴 자동 연동
-        self.pybamm_param_combo.setCurrentIndex(0)
-        self._pybamm_load_preset(0)
-        self.pybamm_mode_charge.setChecked(True)
-
-    def _pybamm_toggle_param_table(self, checked):
-        """파라미터 테이블 표시/숨김 토글"""
-        self.pybamm_param_table.setVisible(checked)
-        self.pybamm_edit_btn.setText("편집 닫기" if checked else "파라미터 편집")
-        # ── 핵심 수정: param_group 최소높이를 테이블 포함 여부에 따라 명시 설정 ──
-        # 테이블이 visible이어도 GroupBox의 minimumSize(70)가 layout에 전파되어
-        # 충전/방전/GITT처럼 exp_group이 큰 모드에서 param_group이 압축됨.
-        if checked:
-            # 테이블(460) + 프리셋 행(~30) + GroupBox title/margins(~50)
-            self.pybamm_param_group.setMinimumHeight(
-                self.pybamm_param_table.minimumHeight() + 80)
-        else:
-            self.pybamm_param_group.setMinimumHeight(70)
-        # 스크롤 영역 컨테이너 최소높이도 갱신
-        QtCore.QTimer.singleShot(0, self._pybamm_refresh_scroll)
-
-    def _pybamm_refresh_scroll(self):
-        """스크롤 영역 컨텐츠 크기 재계산 – minimumHeight 강제 갱신"""
-        container = self.pybamm_left_scroll.widget()
-        if container and container.layout():
-            container.layout().invalidate()
-            container.layout().activate()
-            min_h = container.layout().totalMinimumSize().height()
-            container.setMinimumHeight(min_h)
-
-    def _pybamm_insert_step(self, list_widget, *items):
-        """선택 항목 뒤에 삽입, 선택 없으면 끝에 추가"""
-        row = list_widget.currentRow()
-        if row >= 0:
-            insert_at = row + 1
-        else:
-            insert_at = list_widget.count()
-        for i, text in enumerate(items):
-            list_widget.insertItem(insert_at + i, text)
-        # 삽입된 마지막 항목 선택
-        list_widget.setCurrentRow(insert_at + len(items) - 1)
-        self._pybamm_renumber_steps(list_widget)
-
-    def _pybamm_strip_step_prefix(self, text):
-        """스텝 번호 접두사 ([n] 또는 └) 제거"""
-        import re
-        return re.sub(r'^(\[\d+\]\s*|\s*└\s*)', '', text)
-
-    def _pybamm_setup_model_tooltips(self):
-        """모델 콤보박스 각 항목에 설명 + 이미지 툴팁 설정"""
-        import base64
-        from pathlib import Path
-
-        base_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
-        img_path = base_dir / "Electrochemical_tooltip.png"
-        img_tag = ""
-        if img_path.exists():
-            img_b64 = base64.b64encode(img_path.read_bytes()).decode()
-            img_tag = (f'<br><img src="data:image/png;base64,{img_b64}"'
-                       f' width="450"/>')
-
-        descs = {
-            "SPM": ("<b>SPM</b> — Single Particle Model<br>"
-                    "대표 입자 1개 · 전해질 무시<br>"
-                    "BMS 실시간 계산에 적합&nbsp;&nbsp;"
-                    "<span style='color:#00A087'>⚡ 가장 빠름</span>"),
-            "SPMe": ("<b>SPMe</b> — SPM + electrolyte<br>"
-                     "대표 입자 1개 + 전해질 효과 반영<br>"
-                     "속도↑ · 중간 정확도&nbsp;&nbsp;"
-                     "<span style='color:#3C5488'>⚡ 빠름 / 정확도 중간</span>"),
-            "DFN": ("<b>DFN (P2D)</b> — Doyle-Fuller-Newman<br>"
-                    "다수 입자 · 모든 물리량이 위치(x)에 따라 변화<br>"
-                    "가장 정밀 · 계산량 큼&nbsp;&nbsp;"
-                    "<span style='color:#E64B35'>⚡ 느림 / 정확도 높음</span>"),
-        }
-        for i in range(self.pybamm_model_combo.count()):
-            model = self.pybamm_model_combo.itemText(i)
-            desc = descs.get(model, "")
-            html = f"<div style='padding:4px'>{desc}{img_tag}</div>"
-            self.pybamm_model_combo.setItemData(
-                i, html, QtCore.Qt.ItemDataRole.ToolTipRole)
-
-    def _pybamm_renumber_steps(self, list_widget):
-        """리스트 위젯의 모든 스텝에 번호/그룹 접두사 재부여
-        CC/Rest → [n], CC 바로 뒤 CV(CCCV 쌍) → └"""
-        n = 1
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            raw = self._pybamm_strip_step_prefix(item.text())
-            tag = raw.split("|", 1)[0].strip().upper() if "|" in raw else ""
-            if tag == "CV" and i > 0:
-                prev_raw = self._pybamm_strip_step_prefix(
-                    list_widget.item(i - 1).text())
-                prev_tag = (prev_raw.split("|", 1)[0].strip().upper()
-                            if "|" in prev_raw else "")
-                if prev_tag == "CC":
-                    item.setText(f"    └ {raw}")
-                    continue
-            item.setText(f"[{n}] {raw}")
-            n += 1
-
-    def _pybamm_update_step_fields(self, step_type, crate_w, vcut_w, cutoff_w, prefix):
-        """유형 변경 시 입력 필드의 활성/비활성
-
-        CC   : C-rate ✅, 전압(V) ✅, Cutoff ❌
-        CV   : C-rate ❌, 전압(V) ✅, Cutoff ✅ (C-rate cutoff)
-        CCCV : C-rate ✅, 전압(V) ✅, Cutoff ✅ (C-rate cutoff)
-        Rest : HH ✅, MM ✅, SS ✅ (시간:분:초)
-        """
-        default_v = "4.2" if prefix == "chg" else "2.5"
-        # 헤더 라벨 참조
-        hdr_labels = getattr(self, f'_pybamm_{prefix}_hdr_labels', None)
-
-        if step_type == "CC":
-            crate_w.setEnabled(True)
-            crate_w.setPlaceholderText("C-rate")
-            vcut_w.setEnabled(True)
-            vcut_w.setPlaceholderText("전압(V)")
-            vcut_w.setText(default_v)
-            cutoff_w.setEnabled(False)
-            cutoff_w.setPlaceholderText("")
-            cutoff_w.setText("")
-            if hdr_labels:
-                hdr_labels[1].setText("C-rate")
-                hdr_labels[2].setText("전압(V)")
-                hdr_labels[3].setText("Cutoff")
-        elif step_type == "CV":
-            crate_w.setEnabled(False)
-            crate_w.setPlaceholderText("")
-            crate_w.setText("")
-            vcut_w.setEnabled(True)
-            vcut_w.setPlaceholderText("전압(V)")
-            vcut_w.setText(default_v)
-            cutoff_w.setEnabled(True)
-            cutoff_w.setPlaceholderText("C/s/m/h")
-            cutoff_w.setText("0.05C")
-            if hdr_labels:
-                hdr_labels[1].setText("C-rate")
-                hdr_labels[2].setText("전압(V)")
-                hdr_labels[3].setText("Cutoff")
-        elif step_type == "CCCV":
-            crate_w.setEnabled(True)
-            crate_w.setPlaceholderText("C-rate")
-            vcut_w.setEnabled(True)
-            vcut_w.setPlaceholderText("전압(V)")
-            vcut_w.setText(default_v)
-            cutoff_w.setEnabled(True)
-            cutoff_w.setPlaceholderText("C/s/m/h")
-            cutoff_w.setText("0.05C")
-            if hdr_labels:
-                hdr_labels[1].setText("C-rate")
-                hdr_labels[2].setText("전압(V)")
-                hdr_labels[3].setText("Cutoff")
-        elif step_type == "Rest":
-            crate_w.setEnabled(True)
-            crate_w.setPlaceholderText("시")
-            crate_w.setText("00")
-            vcut_w.setEnabled(True)
-            vcut_w.setPlaceholderText("분")
-            vcut_w.setText("10")
-            cutoff_w.setEnabled(True)
-            cutoff_w.setPlaceholderText("초")
-            cutoff_w.setText("00")
-            if hdr_labels:
-                hdr_labels[1].setText("시")
-                hdr_labels[2].setText("분")
-                hdr_labels[3].setText("초")
-
-    @staticmethod
-    def _pybamm_parse_cutoff(raw):
-        """Cutoff 문자열 파싱 → (값, 단위)
-        지원: 0.05C, C/50, 600s, 10m, 1h  (단위 없으면 C로 간주)"""
-        raw = raw.strip()
-        if not raw:
-            return "0.05", "C"
-        # C/50 형식 → C-rate
-        if raw.upper().startswith("C/"):
-            return raw, "C_fraction"
-        low = raw.lower()
-        if low.endswith("h"):
-            return raw[:-1].strip(), "h"
-        elif low.endswith("m") and not low.endswith("am"):
-            return raw[:-1].strip(), "m"
-        elif low.endswith("s"):
-            return raw[:-1].strip(), "s"
-        elif low.endswith("c"):
-            return raw[:-1].strip(), "C"
-        else:
-            return raw, "C"
-
-    def _pybamm_cutoff_to_cv_str(self, raw, vcut):
-        """Cutoff 입력을 CV Hold용 PyBaMM 문자열로 변환"""
-        val, unit = self._pybamm_parse_cutoff(raw)
-        if unit == "C_fraction":
-            return f"Hold at {vcut}V until {val}"  # C/50 그대로
-        elif unit == "C":
-            return f"Hold at {vcut}V until {val}C"
-        elif unit == "s":
-            return f"Hold at {vcut}V for {val} seconds"
-        elif unit == "m":
-            return f"Hold at {vcut}V for {val} minutes"
-        elif unit == "h":
-            return f"Hold at {vcut}V for {val} hours"
-        return f"Hold at {vcut}V until {val}C"
-
-    def _pybamm_cutoff_to_rest_str(self, raw):
-        """Cutoff 입력을 Rest용 PyBaMM 시간 문자열로 변환 """
-        val, unit = self._pybamm_parse_cutoff(raw)
-        if unit == "s":
-            return f"{val} seconds"
-        elif unit == "m":
-            return f"{val} minutes"
-        elif unit == "h":
-            return f"{val} hours"
-        else:
-            return f"{val} seconds"
-
-    def _pybamm_hhmmss_to_rest_str(self, hh_str, mm_str, ss_str):
-        """HH:MM:SS 3개 필드로부터 Rest용 PyBaMM 시간 문자열 생성"""
-        try:
-            hh = int(hh_str) if hh_str else 0
-        except ValueError:
-            hh = 0
-        try:
-            mm = int(mm_str) if mm_str else 0
-        except ValueError:
-            mm = 0
-        try:
-            ss = int(ss_str) if ss_str else 0
-        except ValueError:
-            ss = 0
-        total = hh * 3600 + mm * 60 + ss
-        if total <= 0:
-            total = 600  # 기본값 10분
-        if total >= 3600 and total % 3600 == 0:
-            return f"{total // 3600} hours"
-        elif total >= 60 and total % 60 == 0:
-            return f"{total // 60} minutes"
-        else:
-            return f"{total} seconds"
-
-    def _pybamm_chg_add_step(self):
-        """충전 스텝 리스트에 항목 추가 (선택 항목 뒤에 삽입)"""
-        step_type = self.pybamm_chg_step_type.currentText()
-        crate = self.pybamm_chg_crate.text().strip() or "1.0"
-        vcut = self.pybamm_chg_vcut.text().strip() or "4.2"
-        cutoff = self.pybamm_chg_cutoff.text().strip() or "0.05C"
-        if step_type == "CC":
-            self._pybamm_insert_step(self.pybamm_chg_list,
-                f"CC  |  Charge at {crate}C until {vcut}V")
-        elif step_type == "CV":
-            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
-            self._pybamm_insert_step(self.pybamm_chg_list,
-                f"CV  |  {cv_str}")
-        elif step_type == "CCCV":
-            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
-            self._pybamm_insert_step(self.pybamm_chg_list,
-                f"CC  |  Charge at {crate}C until {vcut}V",
-                f"CV  |  {cv_str}")
-        elif step_type == "Rest":
-            rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
-            self._pybamm_insert_step(self.pybamm_chg_list,
-                f"Rest  |  Rest for {rest_str}")
-
-    def _pybamm_dchg_add_step(self):
-        """방전 스텝 리스트에 항목 추가 (선택 항목 뒤에 삽입)"""
-        step_type = self.pybamm_dchg_step_type.currentText()
-        crate = self.pybamm_dchg_crate.text().strip() or "1.0"
-        vcut = self.pybamm_dchg_vcut.text().strip() or "2.5"
-        cutoff = self.pybamm_dchg_cutoff.text().strip() or "0.05C"
-        if step_type == "CC":
-            self._pybamm_insert_step(self.pybamm_dchg_list,
-                f"CC  |  Discharge at {crate}C until {vcut}V")
-        elif step_type == "CV":
-            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
-            self._pybamm_insert_step(self.pybamm_dchg_list,
-                f"CV  |  {cv_str}")
-        elif step_type == "CCCV":
-            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
-            self._pybamm_insert_step(self.pybamm_dchg_list,
-                f"CC  |  Discharge at {crate}C until {vcut}V",
-                f"CV  |  {cv_str}")
-        elif step_type == "Rest":
-            rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
-            self._pybamm_insert_step(self.pybamm_dchg_list,
-                f"Rest  |  Rest for {rest_str}")
-
-    def _pybamm_del_step(self, list_widget):
-        """선택된 스텝 항목 삭제 (다중 선택 지원)"""
-        rows = sorted([idx.row() for idx in list_widget.selectedIndexes()], reverse=True)
-        for row in rows:
-            list_widget.takeItem(row)
-        self._pybamm_renumber_steps(list_widget)
-
-    def _pybamm_copy_steps(self, list_widget):
-        """선택된 스텝 항목을 클립보드에 복사 (Ctrl+C)"""
-        rows = sorted(idx.row() for idx in list_widget.selectedIndexes())
-        if not rows:
-            return
-        lines = [self._pybamm_strip_step_prefix(list_widget.item(r).text()) for r in rows]
-        QtWidgets.QApplication.clipboard().setText("\n".join(lines))
-
-    def _pybamm_paste_steps(self, list_widget):
-        """클립보드 텍스트를 선택 항목 뒤에 붙여넣기 (Ctrl+V)"""
-        text = QtWidgets.QApplication.clipboard().text()
-        if not text:
-            return
-        lines = [l for l in text.splitlines() if l.strip()]
-        if not lines:
-            return
-        rows = sorted(idx.row() for idx in list_widget.selectedIndexes())
-        insert_at = (rows[-1] + 1) if rows else list_widget.count()
-        for i, line in enumerate(lines):
-            list_widget.insertItem(insert_at + i, line)
-        list_widget.setCurrentRow(insert_at + len(lines) - 1)
-        self._pybamm_renumber_steps(list_widget)
-
-    def _pybamm_load_step_to_fields(self, item, step_type_w, crate_w, vcut_w, cutoff_w, prefix):
-        """리스트 항목을 더블클릭하면 입력 필드에 값을 로드"""
-        import re
-        text = self._pybamm_strip_step_prefix(item.text())
-        if "|" not in text:
-            return
-        tag = text.split("|", 1)[0].strip().upper()
-        body = text.split("|", 1)[1].strip()
-
-        if tag == "CC":
-            step_type_w.setCurrentText("CC")
-            # "Charge at 1C until 4.2V" or "Discharge at 1C until 2.5V"
-            m = re.search(r'at\s+([\d.]+)C\s+until\s+([\d.]+)V', body)
-            if m:
-                crate_w.setText(m.group(1))
-                vcut_w.setText(m.group(2))
-        elif tag == "CV":
-            step_type_w.setCurrentText("CV")
-            # "Hold at 4.2V until 0.05C" / "Hold at 4.2V until C/50" / "Hold at 4.2V for 600 seconds"
-            m_until = re.search(r'Hold at\s+([\d.]+)V\s+until\s+(.+)', body)
-            m_for = re.search(r'Hold at\s+([\d.]+)V\s+for\s+(.+)', body)
-            if m_until:
-                vcut_w.setText(m_until.group(1))
-                cutoff_w.setText(m_until.group(2).strip())
-            elif m_for:
-                vcut_w.setText(m_for.group(1))
-                # "600 seconds" → "600s", "10 minutes" → "10m", "1 hours" → "1h"
-                time_str = m_for.group(2).strip()
-                parts = time_str.split()
-                if len(parts) == 2:
-                    val, unit = parts
-                    unit_map = {"seconds": "s", "minutes": "m", "hours": "h"}
-                    cutoff_w.setText(f"{val}{unit_map.get(unit, 's')}")
-                else:
-                    cutoff_w.setText(time_str)
-        elif tag == "REST":
-            step_type_w.setCurrentText("Rest")
-            # "Rest for 600 seconds" / "Rest for 10 minutes" / "Rest for 1 hours"
-            m = re.search(r'Rest for\s+([\d.]+)\s+(\w+)', body)
-            if m:
-                val = float(m.group(1))
-                unit = m.group(2).lower()
-                if unit.startswith("second"):
-                    total_sec = int(val)
-                elif unit.startswith("minute"):
-                    total_sec = int(val * 60)
-                elif unit.startswith("hour"):
-                    total_sec = int(val * 3600)
-                else:
-                    total_sec = int(val)
-                hh = total_sec // 3600
-                mm = (total_sec % 3600) // 60
-                ss = total_sec % 60
-                crate_w.setText(f"{hh:02d}")
-                vcut_w.setText(f"{mm:02d}")
-                cutoff_w.setText(f"{ss:02d}")
-
-    def _pybamm_edit_step(self, list_widget, step_type_w, crate_w, vcut_w, cutoff_w, prefix):
-        """선택된 스텝 항목을 현재 입력 필드 값으로 교체"""
-        row = list_widget.currentRow()
-        if row < 0:
-            return
-        step_type = step_type_w.currentText()
-        crate = crate_w.text().strip()
-        vcut = vcut_w.text().strip()
-        cutoff = cutoff_w.text().strip()
-        default_v = "4.2" if prefix == "chg" else "2.5"
-        direction = "Charge" if prefix == "chg" else "Discharge"
-
-        if step_type == "CC":
-            crate = crate or "1.0"
-            vcut = vcut or default_v
-            new_text = f"CC  |  {direction} at {crate}C until {vcut}V"
-            list_widget.item(row).setText(new_text)
-        elif step_type == "CV":
-            vcut = vcut or default_v
-            cutoff = cutoff or "0.05C"
-            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
-            list_widget.item(row).setText(f"CV  |  {cv_str}")
-        elif step_type == "CCCV":
-            crate = crate or "1.0"
-            vcut = vcut or default_v
-            cutoff = cutoff or "0.05C"
-            cv_str = self._pybamm_cutoff_to_cv_str(cutoff, vcut)
-            # CCCV는 2줄(CC+CV)이므로 현재 행만 CC로, 다음 행이 CV면 교체
-            list_widget.item(row).setText(f"CC  |  {direction} at {crate}C until {vcut}V")
-            if row + 1 < list_widget.count():
-                next_text = self._pybamm_strip_step_prefix(list_widget.item(row + 1).text())
-                next_tag = next_text.split("|", 1)[0].strip().upper()
-                if next_tag == "CV":
-                    list_widget.item(row + 1).setText(f"CV  |  {cv_str}")
-                else:
-                    list_widget.insertItem(row + 1, f"CV  |  {cv_str}")
-            else:
-                list_widget.insertItem(row + 1, f"CV  |  {cv_str}")
-        elif step_type == "Rest":
-            rest_str = self._pybamm_hhmmss_to_rest_str(crate, vcut, cutoff)
-            list_widget.item(row).setText(f"Rest  |  Rest for {rest_str}")
-        self._pybamm_renumber_steps(list_widget)
-
-    def _pybamm_collect_list_steps(self, list_widget):
-        """QListWidget에서 PyBaMM Experiment 문자열 리스트 추출"""
-        steps = []
-        for i in range(list_widget.count()):
-            text = self._pybamm_strip_step_prefix(list_widget.item(i).text())
-            if "|" in text:
-                steps.append(text.split("|", 1)[1].strip())
-            else:
-                steps.append(text.strip())
-        return steps
-
-    def _pybamm_load_preset(self, index):
-        """프리셋 파라미터 세트 로드"""
-        # 순서: 양극두께 양극입자 양극활물질 양극Brug
-        #       음극두께 음극입자 음극활물질 음극Brug
-        #       분리막두께 분리막Brug 전해질농도 전극면적 셀용량 온도
-        presets = {
-            "Chen2020 - Gr(Si)/NMC811": [
-                "75.6", "5.22", "0.665", "1.5",
-                "85.2", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "1.58", "5.0", "25",
-            ],
-            "Ecker2015 - Gr/NMC111": [
-                "54.0", "6.5", "0.408", "1.54",
-                "74.0", "13.7", "0.372", "1.64",
-                "20.0", "1.98", "1000", "0.085", "0.156", "25",
-            ],
-            "Marquis2019 - Gr/NMC": [
-                "100.0", "10.0", "0.5", "1.5",
-                "100.0", "10.0", "0.6", "1.5",
-                "25.0", "1.5", "1000", "0.207", "0.68", "25",
-            ],
-            "Mohtat2020 - Gr/NMC111": [
-                "67.0", "3.5", "0.445", "1.5",
-                "62.0", "2.5", "0.61", "1.5",
-                "12.0", "1.5", "1000", "0.205", "5.0", "25",
-            ],
-            "NCA_Kim2011 - Gr/NCA": [
-                "50.0", "1.63", "0.41", "2.0",
-                "70.0", "0.508", "0.51", "2.0",
-                "25.0", "2.0", "1200", "0.14", "0.43", "25",
-            ],
-            "OKane2022 - Gr(Si)/NMC811": [
-                "75.6", "5.22", "0.665", "1.5",
-                "85.2", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "1.58", "5.0", "25",
-            ],
-            "ORegan2022 - Gr(Si)/NMC811": [
-                "75.6", "5.22", "0.665", "1.5",
-                "85.2", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "1.58", "5.0", "25",
-            ],
-        }
-        combo_text = self.pybamm_param_combo.currentText()
-        if combo_text in presets:
-            values = presets[combo_text]
-            for row, val in enumerate(values):
-                self.pybamm_param_table.item(row, 1).setText(val)
-
-        # ── 프리셋별 충방전 패턴 연동 ──
-        patterns = {
-            #  chg_steps (CC, CC, CCCV, CCCV 4스텝 구조),  dchg_steps
-            #  전압 스텝: v_max-0.3, v_max-0.2, v_max-0.1(+CV), v_max(+CV)
-            "Chen2020 - Gr(Si)/NMC811":     (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-            "Ecker2015 - Gr/NMC111":    (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-            "Marquis2019 - Gr/NMC":  (["CC  |  Charge at 2.0C until 3.8V",
-                             "CC  |  Charge at 1.6C until 3.9V",
-                             "CC  |  Charge at 1.3C until 4.0V",
-                             "CV  |  Hold at 4.0V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.1V",
-                             "CV  |  Hold at 4.1V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 3.105V"]),
-            "Mohtat2020 - Gr/NMC111":   (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.8V"]),
-            "NCA_Kim2011 - Gr/NCA":  (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 0.5C until 2.7V"]),
-            "OKane2022 - Gr(Si)/NMC811":    (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-            "ORegan2022 - Gr(Si)/NMC811":   (["CC  |  Charge at 2.0C until 4.1V",
-                             "CC  |  Charge at 1.6C until 4.2V",
-                             "CC  |  Charge at 1.3C until 4.3V",
-                             "CV  |  Hold at 4.3V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.4V",
-                             "CV  |  Hold at 4.4V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-        }
-        if combo_text in patterns:
-            chg_steps, dchg_steps = patterns[combo_text]
-            self.pybamm_chg_list.clear()
-            self.pybamm_chg_list.addItems(chg_steps)
-            self.pybamm_dchg_list.clear()
-            self.pybamm_dchg_list.addItems(dchg_steps)
-            self._pybamm_renumber_steps(self.pybamm_chg_list)
-            self._pybamm_renumber_steps(self.pybamm_dchg_list)
-            self.pybamm_chg_cycles.setText("1")
-            self.pybamm_dchg_cycles.setText("1")
-            self.pybamm_init_soc.setText("auto")
-            self.pybamm_period.setText("10")
-
 # UI 실행
 if __name__ == "__main__":
-    # 슬롯 내부 예외를 콘솔에 출력
-    def _exception_hook(exctype, value, traceback):
-        sys.__excepthook__(exctype, value, traceback)
-    sys.excepthook = _exception_hook
-
     # HiDPI 스케일링을 명시적으로 비활성화합니다.
     # os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '0'
     # os.environ['QT_SCALE_FACTOR'] = '1.0'
@@ -21410,12 +14153,6 @@ if __name__ == "__main__":
     app.setFont(QtGui.QFont("Malgun gothic"))
     # app.setStyleSheet("background-color: #FFFFFF;")
     myWindow = WindowClass()
-    # 화면 영역 내에 창 배치 (좌상단 기준)
-    screen = app.primaryScreen().availableGeometry()
-    win_w = min(myWindow.width(), screen.width())
-    win_h = min(myWindow.height(), screen.height())
-    myWindow.resize(win_w, win_h)
-    myWindow.move(screen.x(), screen.y())
     myWindow.show()
     # app.exec_()
     sys.exit(app.exec())
