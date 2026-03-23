@@ -19421,36 +19421,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
-        # 쿼리 실행
         cursor = conn.cursor()
-        if (not hasattr(self, "ptn_df_select")) or (len(self.ptn_df_select) == 0) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
-            for testidcount in self.ptn_df_select:
-                cursor.execute("SELECT MAX(Iref) From Step WHERE TestID = ? AND StepType = 2", str(testidcount))
-                max_value = cursor.fetchone()[0]
-                if max_value is not None:
-                    base_capacity = max_value / ptn_crate
-                    real_capacity = ptn_capacity
-                    ratio = real_capacity / base_capacity
-                    # Access SQL 함수(int/round)+파라미터 조합이 pyodbc 5.x에서 -3035 오류
-                    # → Python에서 값 계산 후 개별 UPDATE
-                    rows = cursor.execute(
-                        "SELECT StepID, Iref, EndI FROM Step WHERE TestID = ?",
-                        str(testidcount)
-                    ).fetchall()
-                    use_round = self.chk_coincell.isChecked()
-                    for row in rows:
-                        new_iref = (-round(-row.Iref * ratio, 3) if use_round
-                                    else -int(-row.Iref * ratio)) if row.Iref is not None else None
-                        new_endi = (-round(-row.EndI * ratio, 3) if use_round
-                                    else -int(-row.EndI * ratio)) if row.EndI is not None else None
-                        cursor.execute(
-                            "UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
-                            new_iref, new_endi, row.StepID)
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
+        try:
+            if (not hasattr(self, "ptn_df_select")) or (len(self.ptn_df_select) == 0) or (self.ptn_df_select[0] == ""):
+                pass
+            else:
+                use_round = self.chk_coincell.isChecked()
+                for testidcount in self.ptn_df_select:
+                    cursor.execute("SELECT MAX(Iref) From Step WHERE TestID = ? AND StepType = 2", str(testidcount))
+                    max_value = cursor.fetchone()[0]
+                    if max_value is not None:
+                        base_capacity = max_value / ptn_crate
+                        real_capacity = ptn_capacity
+                        # Python에서 계산 후 단순 UPDATE (Access SQL 함수+파라미터 호환성 문제 회피)
+                        cursor.execute("SELECT StepID, Iref, EndI FROM Step WHERE TestID = ?", str(testidcount))
+                        rows = cursor.fetchall()
+                        for step_id, iref, endi in rows:
+                            if use_round:
+                                new_iref = -round(-iref / base_capacity * real_capacity, 3) if iref else iref
+                                new_endi = -round(-endi / base_capacity * real_capacity, 3) if endi else endi
+                            else:
+                                new_iref = -int(-iref / base_capacity * real_capacity) if iref else iref
+                                new_endi = -int(-endi / base_capacity * real_capacity) if endi else endi
+                            cursor.execute("UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
+                                        new_iref, new_endi, step_id)
+        finally:
+            cursor.close()
+            conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_refi_button(self):
@@ -19469,29 +19466,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
-        # 쿼리 실행
         cursor = conn.cursor()
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
-            for testidcount in self.ptn_df_select:
-                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
-                rows = cursor.execute(
-                    "SELECT StepID, Iref FROM Step WHERE TestID = ?",
-                    str(testidcount)
-                ).fetchall()
+        try:
+            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+                pass
+            else:
                 use_round = self.chk_coincell.isChecked()
-                for row in rows:
-                    if row.Iref is None:
-                        continue
-                    normalized = round(row.Iref, 3) if use_round else int(row.Iref)
-                    target = round(ptn_refi_pre, 3) if use_round else int(ptn_refi_pre)
-                    if normalized == target:
-                        cursor.execute("UPDATE Step SET Iref = ? WHERE StepID = ?",
-                                    ptn_refi_after, row.StepID)
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
+                for testidcount in self.ptn_df_select:
+                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
+                    cursor.execute("SELECT StepID, Iref FROM Step WHERE TestID = ?", str(testidcount))
+                    rows = cursor.fetchall()
+                    for step_id, iref in rows:
+                        cleaned = round(iref, 3) if use_round else int(iref) if iref else iref
+                        if cleaned == ptn_refi_pre:
+                            cursor.execute("UPDATE Step SET Iref = ? WHERE StepID = ?",
+                                        ptn_refi_after, step_id)
+        finally:
+            cursor.close()
+            conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_chgv_button(self):
@@ -19510,24 +19502,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
-        # 쿼리 실행
         cursor = conn.cursor()
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
-            for testidcount in self.ptn_df_select:
-                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
-                rows = cursor.execute(
-                    "SELECT StepID, Vref_Charge FROM Step WHERE TestID = ?",
-                    str(testidcount)
-                ).fetchall()
-                for row in rows:
-                    if row.Vref_Charge is not None and int(row.Vref_Charge) == int(ptn_chgv_pre):
-                        cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE StepID = ?",
-                                    ptn_chgv_after, row.StepID)
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
+        try:
+            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+                pass
+            else:
+                for testidcount in self.ptn_df_select:
+                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
+                    cursor.execute("SELECT StepID, Vref_Charge FROM Step WHERE TestID = ?", str(testidcount))
+                    rows = cursor.fetchall()
+                    for step_id, vref_chg in rows:
+                        if vref_chg and int(vref_chg) == int(ptn_chgv_pre):
+                            cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE StepID = ?",
+                                        ptn_chgv_after, step_id)
+        finally:
+            cursor.close()
+            conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_dchgv_button(self):
@@ -19546,24 +19536,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
-        # 쿼리 실행
         cursor = conn.cursor()
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
-            for testidcount in self.ptn_df_select:
-                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
-                rows = cursor.execute(
-                    "SELECT StepID, Vref_DisCharge FROM Step WHERE TestID = ?",
-                    str(testidcount)
-                ).fetchall()
-                for row in rows:
-                    if row.Vref_DisCharge is not None and int(row.Vref_DisCharge) == int(ptn_dchgv_pre):
-                        cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE StepID = ?",
-                                    ptn_dchgv_after, row.StepID)
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
+        try:
+            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+                pass
+            else:
+                for testidcount in self.ptn_df_select:
+                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
+                    cursor.execute("SELECT StepID, Vref_DisCharge FROM Step WHERE TestID = ?", str(testidcount))
+                    rows = cursor.fetchall()
+                    for step_id, vref_dchg in rows:
+                        if vref_dchg and int(vref_dchg) == int(ptn_dchgv_pre):
+                            cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE StepID = ?",
+                                        ptn_dchgv_after, step_id)
+        finally:
+            cursor.close()
+            conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_endv_button(self):
@@ -19582,24 +19570,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
-        # 쿼리 실행
         cursor = conn.cursor()
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
-            for testidcount in self.ptn_df_select:
-                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
-                rows = cursor.execute(
-                    "SELECT StepID, EndV FROM Step WHERE TestID = ?",
-                    str(testidcount)
-                ).fetchall()
-                for row in rows:
-                    if row.EndV is not None and int(row.EndV) == int(ptn_endv_pre):
-                        cursor.execute("UPDATE Step SET EndV = ? WHERE StepID = ?",
-                                    ptn_endv_after, row.StepID)
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
+        try:
+            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+                pass
+            else:
+                for testidcount in self.ptn_df_select:
+                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
+                    cursor.execute("SELECT StepID, EndV FROM Step WHERE TestID = ?", str(testidcount))
+                    rows = cursor.fetchall()
+                    for step_id, endv in rows:
+                        if endv and int(endv) == int(ptn_endv_pre):
+                            cursor.execute("UPDATE Step SET EndV = ? WHERE StepID = ?",
+                                        ptn_endv_after, step_id)
+        finally:
+            cursor.close()
+            conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_endi_button(self):
@@ -19618,29 +19604,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
-        # 쿼리 실행
         cursor = conn.cursor()
-        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-            pass
-        else:
-            for testidcount in self.ptn_df_select:
-                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
-                rows = cursor.execute(
-                    "SELECT StepID, EndI FROM Step WHERE TestID = ?",
-                    str(testidcount)
-                ).fetchall()
+        try:
+            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+                pass
+            else:
                 use_round = self.chk_coincell.isChecked()
-                for row in rows:
-                    if row.EndI is None:
-                        continue
-                    normalized = round(row.EndI, 3) if use_round else int(row.EndI)
-                    target = round(ptn_endi_pre, 3) if use_round else int(ptn_endi_pre)
-                    if normalized == target:
-                        cursor.execute("UPDATE Step SET EndI = ? WHERE StepID = ?",
-                                    ptn_endi_after, row.StepID)
-        # 커서 및 연결 닫기
-        cursor.close()
-        conn.close()
+                for testidcount in self.ptn_df_select:
+                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
+                    cursor.execute("SELECT StepID, EndI FROM Step WHERE TestID = ?", str(testidcount))
+                    rows = cursor.fetchall()
+                    for step_id, endi in rows:
+                        cleaned = round(endi, 3) if use_round else int(endi) if endi else endi
+                        if cleaned == ptn_endi_pre:
+                            cursor.execute("UPDATE Step SET EndI = ? WHERE StepID = ?",
+                                        ptn_endi_after, step_id)
+        finally:
+            cursor.close()
+            conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_step_button(self):

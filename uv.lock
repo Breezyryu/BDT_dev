@@ -300,7 +300,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.39.0" },
     { name = "pybamm", specifier = ">=24.11" },
     { name = "pyinstaller", specifier = ">=6.18.0" },
-    { name = "pyodbc", specifier = ">=5.3.0" },
+    { name = "pyodbc", specifier = ">=5.1.0" },
     { name = "pyqt6", specifier = ">=6.10.2" },
     { name = "scipy", specifier = ">=1.17.0" },
     { name = "xlrd", specifier = ">=2.0.2" },

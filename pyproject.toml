@@ -9,8 +9,8 @@ dependencies = [
     "matplotlib>=3.10.8",
     "openpyxl>=3.1.5",
     "pandas>=3.0.0",
-    "pyinstaller>=6.18.0",
-    "pyodbc>=5.3.0",
+    "pyinstaller>=6.18.0",ㅕㅍ ㅔㅑ
+    "pyodbc==5.1.0",
     "pybamm>=24.11",
     "pyqt6>=6.10.2",
     "scipy>=1.17.0",
