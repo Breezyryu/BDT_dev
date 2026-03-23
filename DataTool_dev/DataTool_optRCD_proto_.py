@@ -19405,37 +19405,98 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # plt.show()
         plt.close()
 
+    # ── 패턴수정 디버깅 로거 ──────────────────────────────────
+    def _get_ptn_logger(self, mdb_path=""):
+        """패턴수정 전용 파일 로거 생성/반환"""
+        logger = logging.getLogger("ptn_debug")
+        if not logger.handlers:
+            logger.setLevel(logging.DEBUG)
+            # 로그 파일 위치: mdb 파일과 같은 폴더, 없으면 앱 실행 경로
+            if mdb_path and os.path.isfile(mdb_path):
+                log_dir = os.path.dirname(os.path.abspath(mdb_path))
+            else:
+                log_dir = os.path.dirname(os.path.abspath(__file__))
+            log_path = os.path.join(log_dir, "ptn_debug.log")
+            fh = logging.FileHandler(log_path, encoding="utf-8", mode="a")
+            fh.setLevel(logging.DEBUG)
+            fmt = logging.Formatter(
+                "[%(asctime)s] %(levelname)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            )
+            fh.setFormatter(fmt)
+            logger.addHandler(fh)
+        return logger
+
+    def _ptn_log_env(self, logger, mdb_path):
+        """환경정보 기록: pyodbc 버전, 드라이버, 파일 권한, .ldb 존재 여부 등"""
+        import platform
+        logger.info("=" * 70)
+        logger.info("환경정보 수집 시작")
+        logger.info(f"  OS: {platform.platform()}")
+        logger.info(f"  Python: {sys.version}")
+        logger.info(f"  pyodbc: {pyodbc.version}")
+        logger.info(f"  Access Drivers: {[d for d in pyodbc.drivers() if 'Access' in d]}")
+        logger.info(f"  MDB 경로: {mdb_path}")
+        logger.info(f"  MDB 존재: {os.path.isfile(mdb_path)}")
+        if os.path.isfile(mdb_path):
+            logger.info(f"  MDB 크기: {os.path.getsize(mdb_path)} bytes")
+            logger.info(f"  MDB 읽기 가능: {os.access(mdb_path, os.R_OK)}")
+            logger.info(f"  MDB 쓰기 가능: {os.access(mdb_path, os.W_OK)}")
+            # .ldb 잠금 파일 확인
+            ldb_path = mdb_path.rsplit('.', 1)[0] + '.ldb'
+            logger.info(f"  LDB 잠금 파일 존재: {os.path.isfile(ldb_path)}")
+            if os.path.isfile(ldb_path):
+                try:
+                    logger.info(f"  LDB 크기: {os.path.getsize(ldb_path)} bytes")
+                except Exception:
+                    pass
+        logger.info(f"  ptn_df_select: {getattr(self, 'ptn_df_select', 'NOT SET')}")
+        logger.info(f"  chk_coincell: {self.chk_coincell.isChecked()}")
+
     def ptn_change_pattern_button(self):
         # ui에서 데이터 확인
         self.progressBar.setValue(0)
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_crate = float(self.ptn_crate.text())
         ptn_capacity = float(self.ptn_capacity.text())
+        log = self._get_ptn_logger(ptn_ori_path)
+        log.info("[전류일괄변경] 함수 시작 — C-rate=%s, capacity=%s", ptn_crate, ptn_capacity)
+        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
                                                       title="Choose Test files")
             self.ptn_ori_path.setText(str(ptn_ori_path))
+            log.info("[전류일괄변경] 파일 다시 선택됨: %s", ptn_ori_path)
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        log.info("[전류일괄변경] 연결 시도: %s", conn_str)
+        try:
+            conn = pyodbc.connect(conn_str, autocommit=True)
+            log.info("[전류일괄변경] 연결 성공 (autocommit=True)")
+        except Exception as e:
+            log.error("[전류일괄변경] 연결 실패: %s", e, exc_info=True)
+            raise
         cursor = conn.cursor()
         try:
             if (not hasattr(self, "ptn_df_select")) or (len(self.ptn_df_select) == 0) or (self.ptn_df_select[0] == ""):
-                pass
+                log.warning("[전류일괄변경] ptn_df_select 비어있음, 작업 건너뜀")
             else:
                 use_round = self.chk_coincell.isChecked()
+                log.info("[전류일괄변경] use_round=%s, 선택 TestID=%s", use_round, self.ptn_df_select)
                 for testidcount in self.ptn_df_select:
                     cursor.execute("SELECT MAX(Iref) From Step WHERE TestID = ? AND StepType = 2", str(testidcount))
                     max_value = cursor.fetchone()[0]
+                    log.info("[전류일괄변경] TestID=%s, MAX(Iref)=%s", testidcount, max_value)
                     if max_value is not None:
                         base_capacity = max_value / ptn_crate
                         real_capacity = ptn_capacity
-                        # Python에서 계산 후 단순 UPDATE (Access SQL 함수+파라미터 호환성 문제 회피)
                         cursor.execute("SELECT StepID, Iref, EndI FROM Step WHERE TestID = ?", str(testidcount))
                         rows = cursor.fetchall()
+                        log.info("[전류일괄변경] SELECT 행 수: %d", len(rows))
+                        update_count = 0
                         for step_id, iref, endi in rows:
                             if use_round:
                                 new_iref = -round(-iref / base_capacity * real_capacity, 3) if iref else iref
@@ -19443,11 +19504,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             else:
                                 new_iref = -int(-iref / base_capacity * real_capacity) if iref else iref
                                 new_endi = -int(-endi / base_capacity * real_capacity) if endi else endi
-                            cursor.execute("UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
-                                        new_iref, new_endi, step_id)
+                            try:
+                                cursor.execute("UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
+                                            new_iref, new_endi, step_id)
+                                update_count += 1
+                            except Exception as e:
+                                log.error("[전류일괄변경] UPDATE 실패 — StepID=%s, Iref=%s→%s, EndI=%s→%s, 에러: %s",
+                                          step_id, iref, new_iref, endi, new_endi, e, exc_info=True)
+                                raise
+                        log.info("[전류일괄변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
+        except Exception as e:
+            log.error("[전류일괄변경] 전체 실행 에러: %s", e, exc_info=True)
+            raise
         finally:
             cursor.close()
             conn.close()
+            log.info("[전류일괄변경] 연결 종료")
         self.progressBar.setValue(100)
 
     def ptn_change_refi_button(self):
@@ -19456,6 +19528,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_refi_pre = float(self.ptn_refi_pre.text())
         ptn_refi_after = float(self.ptn_refi_after.text())
+        log = self._get_ptn_logger(ptn_ori_path)
+        log.info("[Iref변경] 함수 시작 — pre=%s, after=%s", ptn_refi_pre, ptn_refi_after)
+        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19465,25 +19540,44 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        log.info("[Iref변경] 연결 시도")
+        try:
+            conn = pyodbc.connect(conn_str, autocommit=True)
+            log.info("[Iref변경] 연결 성공")
+        except Exception as e:
+            log.error("[Iref변경] 연결 실패: %s", e, exc_info=True)
+            raise
         cursor = conn.cursor()
         try:
             if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                pass
+                log.warning("[Iref변경] ptn_df_select 비어있음")
             else:
                 use_round = self.chk_coincell.isChecked()
+                log.info("[Iref변경] use_round=%s, TestID=%s", use_round, self.ptn_df_select)
                 for testidcount in self.ptn_df_select:
-                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
                     cursor.execute("SELECT StepID, Iref FROM Step WHERE TestID = ?", str(testidcount))
                     rows = cursor.fetchall()
+                    log.info("[Iref변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
+                    update_count = 0
                     for step_id, iref in rows:
                         cleaned = round(iref, 3) if use_round else int(iref) if iref else iref
                         if cleaned == ptn_refi_pre:
-                            cursor.execute("UPDATE Step SET Iref = ? WHERE StepID = ?",
-                                        ptn_refi_after, step_id)
+                            try:
+                                cursor.execute("UPDATE Step SET Iref = ? WHERE StepID = ?",
+                                            ptn_refi_after, step_id)
+                                update_count += 1
+                            except Exception as e:
+                                log.error("[Iref변경] UPDATE 실패 — StepID=%s, Iref=%s→%s, 에러: %s",
+                                          step_id, iref, ptn_refi_after, e, exc_info=True)
+                                raise
+                    log.info("[Iref변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
+        except Exception as e:
+            log.error("[Iref변경] 전체 실행 에러: %s", e, exc_info=True)
+            raise
         finally:
             cursor.close()
             conn.close()
+            log.info("[Iref변경] 연결 종료")
         self.progressBar.setValue(100)
 
     def ptn_change_chgv_button(self):
@@ -19492,6 +19586,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_chgv_pre = float(self.ptn_chgv_pre.text())
         ptn_chgv_after = float(self.ptn_chgv_after.text())
+        log = self._get_ptn_logger(ptn_ori_path)
+        log.info("[충전전압변경] 함수 시작 — pre=%s, after=%s", ptn_chgv_pre, ptn_chgv_after)
+        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19501,23 +19598,42 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        log.info("[충전전압변경] 연결 시도")
+        try:
+            conn = pyodbc.connect(conn_str, autocommit=True)
+            log.info("[충전전압변경] 연결 성공")
+        except Exception as e:
+            log.error("[충전전압변경] 연결 실패: %s", e, exc_info=True)
+            raise
         cursor = conn.cursor()
         try:
             if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                pass
+                log.warning("[충전전압변경] ptn_df_select 비어있음")
             else:
+                log.info("[충전전압변경] TestID=%s", self.ptn_df_select)
                 for testidcount in self.ptn_df_select:
-                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
                     cursor.execute("SELECT StepID, Vref_Charge FROM Step WHERE TestID = ?", str(testidcount))
                     rows = cursor.fetchall()
+                    log.info("[충전전압변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
+                    update_count = 0
                     for step_id, vref_chg in rows:
                         if vref_chg and int(vref_chg) == int(ptn_chgv_pre):
-                            cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE StepID = ?",
-                                        ptn_chgv_after, step_id)
+                            try:
+                                cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE StepID = ?",
+                                            ptn_chgv_after, step_id)
+                                update_count += 1
+                            except Exception as e:
+                                log.error("[충전전압변경] UPDATE 실패 — StepID=%s, Vref_Charge=%s→%s, 에러: %s",
+                                          step_id, vref_chg, ptn_chgv_after, e, exc_info=True)
+                                raise
+                    log.info("[충전전압변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
+        except Exception as e:
+            log.error("[충전전압변경] 전체 실행 에러: %s", e, exc_info=True)
+            raise
         finally:
             cursor.close()
             conn.close()
+            log.info("[충전전압변경] 연결 종료")
         self.progressBar.setValue(100)
 
     def ptn_change_dchgv_button(self):
@@ -19526,6 +19642,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_dchgv_pre = float(self.ptn_dchgv_pre.text())
         ptn_dchgv_after = float(self.ptn_dchgv_after.text())
+        log = self._get_ptn_logger(ptn_ori_path)
+        log.info("[방전전압변경] 함수 시작 — pre=%s, after=%s", ptn_dchgv_pre, ptn_dchgv_after)
+        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19535,23 +19654,42 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        log.info("[방전전압변경] 연결 시도")
+        try:
+            conn = pyodbc.connect(conn_str, autocommit=True)
+            log.info("[방전전압변경] 연결 성공")
+        except Exception as e:
+            log.error("[방전전압변경] 연결 실패: %s", e, exc_info=True)
+            raise
         cursor = conn.cursor()
         try:
             if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                pass
+                log.warning("[방전전압변경] ptn_df_select 비어있음")
             else:
+                log.info("[방전전압변경] TestID=%s", self.ptn_df_select)
                 for testidcount in self.ptn_df_select:
-                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
                     cursor.execute("SELECT StepID, Vref_DisCharge FROM Step WHERE TestID = ?", str(testidcount))
                     rows = cursor.fetchall()
+                    log.info("[방전전압변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
+                    update_count = 0
                     for step_id, vref_dchg in rows:
                         if vref_dchg and int(vref_dchg) == int(ptn_dchgv_pre):
-                            cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE StepID = ?",
-                                        ptn_dchgv_after, step_id)
+                            try:
+                                cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE StepID = ?",
+                                            ptn_dchgv_after, step_id)
+                                update_count += 1
+                            except Exception as e:
+                                log.error("[방전전압변경] UPDATE 실패 — StepID=%s, Vref_DisCharge=%s→%s, 에러: %s",
+                                          step_id, vref_dchg, ptn_dchgv_after, e, exc_info=True)
+                                raise
+                    log.info("[방전전압변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
+        except Exception as e:
+            log.error("[방전전압변경] 전체 실행 에러: %s", e, exc_info=True)
+            raise
         finally:
             cursor.close()
             conn.close()
+            log.info("[방전전압변경] 연결 종료")
         self.progressBar.setValue(100)
 
     def ptn_change_endv_button(self):
@@ -19560,6 +19698,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_endv_pre = float(self.ptn_endv_pre.text())
         ptn_endv_after = float(self.ptn_endv_after.text())
+        log = self._get_ptn_logger(ptn_ori_path)
+        log.info("[종료전압변경] 함수 시작 — pre=%s, after=%s", ptn_endv_pre, ptn_endv_after)
+        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19569,23 +19710,42 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        log.info("[종료전압변경] 연결 시도")
+        try:
+            conn = pyodbc.connect(conn_str, autocommit=True)
+            log.info("[종료전압변경] 연결 성공")
+        except Exception as e:
+            log.error("[종료전압변경] 연결 실패: %s", e, exc_info=True)
+            raise
         cursor = conn.cursor()
         try:
             if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                pass
+                log.warning("[종료전압변경] ptn_df_select 비어있음")
             else:
+                log.info("[종료전압변경] TestID=%s", self.ptn_df_select)
                 for testidcount in self.ptn_df_select:
-                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
                     cursor.execute("SELECT StepID, EndV FROM Step WHERE TestID = ?", str(testidcount))
                     rows = cursor.fetchall()
+                    log.info("[종료전압변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
+                    update_count = 0
                     for step_id, endv in rows:
                         if endv and int(endv) == int(ptn_endv_pre):
-                            cursor.execute("UPDATE Step SET EndV = ? WHERE StepID = ?",
-                                        ptn_endv_after, step_id)
+                            try:
+                                cursor.execute("UPDATE Step SET EndV = ? WHERE StepID = ?",
+                                            ptn_endv_after, step_id)
+                                update_count += 1
+                            except Exception as e:
+                                log.error("[종료전압변경] UPDATE 실패 — StepID=%s, EndV=%s→%s, 에러: %s",
+                                          step_id, endv, ptn_endv_after, e, exc_info=True)
+                                raise
+                    log.info("[종료전압변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
+        except Exception as e:
+            log.error("[종료전압변경] 전체 실행 에러: %s", e, exc_info=True)
+            raise
         finally:
             cursor.close()
             conn.close()
+            log.info("[종료전압변경] 연결 종료")
         self.progressBar.setValue(100)
 
     def ptn_change_endi_button(self):
@@ -19594,6 +19754,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_endi_pre = float(self.ptn_endi_pre.text())
         ptn_endi_after = float(self.ptn_endi_after.text())
+        log = self._get_ptn_logger(ptn_ori_path)
+        log.info("[종료전류변경] 함수 시작 — pre=%s, after=%s", ptn_endi_pre, ptn_endi_after)
+        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19603,25 +19766,44 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
             r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        log.info("[종료전류변경] 연결 시도")
+        try:
+            conn = pyodbc.connect(conn_str, autocommit=True)
+            log.info("[종료전류변경] 연결 성공")
+        except Exception as e:
+            log.error("[종료전류변경] 연결 실패: %s", e, exc_info=True)
+            raise
         cursor = conn.cursor()
         try:
             if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                pass
+                log.warning("[종료전류변경] ptn_df_select 비어있음")
             else:
                 use_round = self.chk_coincell.isChecked()
+                log.info("[종료전류변경] use_round=%s, TestID=%s", use_round, self.ptn_df_select)
                 for testidcount in self.ptn_df_select:
-                    # Python에서 타입 변환 후 값 교체 (Access SQL 함수+파라미터 호환성 문제 회피)
                     cursor.execute("SELECT StepID, EndI FROM Step WHERE TestID = ?", str(testidcount))
                     rows = cursor.fetchall()
+                    log.info("[종료전류변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
+                    update_count = 0
                     for step_id, endi in rows:
                         cleaned = round(endi, 3) if use_round else int(endi) if endi else endi
                         if cleaned == ptn_endi_pre:
-                            cursor.execute("UPDATE Step SET EndI = ? WHERE StepID = ?",
-                                        ptn_endi_after, step_id)
+                            try:
+                                cursor.execute("UPDATE Step SET EndI = ? WHERE StepID = ?",
+                                            ptn_endi_after, step_id)
+                                update_count += 1
+                            except Exception as e:
+                                log.error("[종료전류변경] UPDATE 실패 — StepID=%s, EndI=%s→%s, 에러: %s",
+                                          step_id, endi, ptn_endi_after, e, exc_info=True)
+                                raise
+                    log.info("[종료전류변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
+        except Exception as e:
+            log.error("[종료전류변경] 전체 실행 에러: %s", e, exc_info=True)
+            raise
         finally:
             cursor.close()
             conn.close()
+            log.info("[종료전류변경] 연결 종료")
         self.progressBar.setValue(100)
 
     def ptn_change_step_button(self):
