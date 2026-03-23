@@ -19432,16 +19432,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if max_value is not None:
                     base_capacity = max_value / ptn_crate
                     real_capacity = ptn_capacity
-                    if self.chk_coincell.isChecked():
-                        cursor.execute("UPDATE Step SET Iref = -round(-Iref /? *?, 3) WHERE TestID =?",
-                                    str(base_capacity), str(real_capacity), str(testidcount))
-                        cursor.execute("UPDATE Step SET EndI = -round(-EndI /? *?, 3) WHERE TestID =?", 
-                                    str(base_capacity), str(real_capacity), str(testidcount))
-                    else:
-                        cursor.execute("UPDATE Step SET Iref = -int(-Iref /? *?) WHERE TestID =?",
-                                    str(base_capacity), str(real_capacity), str(testidcount))
-                        cursor.execute("UPDATE Step SET EndI = -int(-EndI /? *?) WHERE TestID =?", 
-                                    str(base_capacity), str(real_capacity), str(testidcount))
+                    ratio = real_capacity / base_capacity
+                    # Access SQL 함수(int/round)+파라미터 조합이 pyodbc 5.x에서 -3035 오류
+                    # → Python에서 값 계산 후 개별 UPDATE
+                    rows = cursor.execute(
+                        "SELECT StepID, Iref, EndI FROM Step WHERE TestID = ?",
+                        str(testidcount)
+                    ).fetchall()
+                    use_round = self.chk_coincell.isChecked()
+                    for row in rows:
+                        new_iref = (-round(-row.Iref * ratio, 3) if use_round
+                                    else -int(-row.Iref * ratio)) if row.Iref is not None else None
+                        new_endi = (-round(-row.EndI * ratio, 3) if use_round
+                                    else -int(-row.EndI * ratio)) if row.EndI is not None else None
+                        cursor.execute(
+                            "UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
+                            new_iref, new_endi, row.StepID)
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
@@ -19469,17 +19475,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pass
         else:
             for testidcount in self.ptn_df_select:
-                # 문자 인식 문제를 위한 강제 변환
-                if self.chk_coincell.isChecked():
-                    cursor.execute("UPDATE Step SET Iref = round(Iref /? *?, 3) WHERE TestID =?",
-                                str(1), str(1), str(testidcount))
-                    cursor.execute("UPDATE Step SET Iref = ? WHERE Iref = ? AND TestID = ?",
-                                str(ptn_refi_after), str(ptn_refi_pre), str(testidcount))
-                else:
-                    cursor.execute("UPDATE Step SET Iref = int(Iref /? *?) WHERE TestID =?",
-                                str(1), str(1), str(testidcount))
-                    cursor.execute("UPDATE Step SET Iref = ? WHERE Iref = ? AND TestID = ?",
-                                str(ptn_refi_after), str(ptn_refi_pre), str(testidcount))
+                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
+                rows = cursor.execute(
+                    "SELECT StepID, Iref FROM Step WHERE TestID = ?",
+                    str(testidcount)
+                ).fetchall()
+                use_round = self.chk_coincell.isChecked()
+                for row in rows:
+                    if row.Iref is None:
+                        continue
+                    normalized = round(row.Iref, 3) if use_round else int(row.Iref)
+                    target = round(ptn_refi_pre, 3) if use_round else int(ptn_refi_pre)
+                    if normalized == target:
+                        cursor.execute("UPDATE Step SET Iref = ? WHERE StepID = ?",
+                                    ptn_refi_after, row.StepID)
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
@@ -19507,10 +19516,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pass
         else:
             for testidcount in self.ptn_df_select:
-                cursor.execute("UPDATE Step SET Vref_Charge = int(Vref_Charge /? *?) WHERE TestID =?",
-                            str(1), str(1), str(testidcount))
-                cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE Vref_Charge = ? AND TestID =?",
-                            str(ptn_chgv_after), str(ptn_chgv_pre), str(testidcount))
+                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
+                rows = cursor.execute(
+                    "SELECT StepID, Vref_Charge FROM Step WHERE TestID = ?",
+                    str(testidcount)
+                ).fetchall()
+                for row in rows:
+                    if row.Vref_Charge is not None and int(row.Vref_Charge) == int(ptn_chgv_pre):
+                        cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE StepID = ?",
+                                    ptn_chgv_after, row.StepID)
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
@@ -19538,10 +19552,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pass
         else:
             for testidcount in self.ptn_df_select:
-                cursor.execute("UPDATE Step SET Vref_DisCharge = int(Vref_DisCharge /? *?) WHERE TestID = ?",
-                            str(1), str(1), str(testidcount))
-                cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE Vref_DisCharge = ? AND TestID = ?",
-                            str(ptn_dchgv_after), str(ptn_dchgv_pre), str(testidcount))
+                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
+                rows = cursor.execute(
+                    "SELECT StepID, Vref_DisCharge FROM Step WHERE TestID = ?",
+                    str(testidcount)
+                ).fetchall()
+                for row in rows:
+                    if row.Vref_DisCharge is not None and int(row.Vref_DisCharge) == int(ptn_dchgv_pre):
+                        cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE StepID = ?",
+                                    ptn_dchgv_after, row.StepID)
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
@@ -19569,10 +19588,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pass
         else:
             for testidcount in self.ptn_df_select:
-                cursor.execute("UPDATE Step SET EndV = int(EndV /? *?) WHERE TestID = ?",
-                            str(1), str(1), str(testidcount))
-                cursor.execute("UPDATE Step SET EndV = ? WHERE EndV = ? AND TestID = ?",
-                            str(ptn_endv_after), str(ptn_endv_pre), str(testidcount))
+                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
+                rows = cursor.execute(
+                    "SELECT StepID, EndV FROM Step WHERE TestID = ?",
+                    str(testidcount)
+                ).fetchall()
+                for row in rows:
+                    if row.EndV is not None and int(row.EndV) == int(ptn_endv_pre):
+                        cursor.execute("UPDATE Step SET EndV = ? WHERE StepID = ?",
+                                    ptn_endv_after, row.StepID)
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
@@ -19600,17 +19624,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pass
         else:
             for testidcount in self.ptn_df_select:
-                # 문자 인식 문제를 위한 강제 변환
-                if self.chk_coincell.isChecked():
-                    cursor.execute("UPDATE Step SET EndI = round(EndI /? *?, 3) WHERE TestID =?",
-                                str(1), str(1), str(testidcount))
-                    cursor.execute("UPDATE Step SET EndI = ? WHERE EndI = ? AND TestID = ?",
-                                str(ptn_endi_after), str(ptn_endi_pre), str(testidcount))
-                else:
-                    cursor.execute("UPDATE Step SET EndI = int(EndI /? *?) WHERE TestID =?",
-                                str(1), str(1), str(testidcount))
-                    cursor.execute("UPDATE Step SET EndI = ? WHERE EndI = ? AND TestID = ?",
-                                str(ptn_endi_after), str(ptn_endi_pre), str(testidcount))
+                # Python에서 값 비교 후 개별 UPDATE (Access SQL 함수 호환성 문제 회피)
+                rows = cursor.execute(
+                    "SELECT StepID, EndI FROM Step WHERE TestID = ?",
+                    str(testidcount)
+                ).fetchall()
+                use_round = self.chk_coincell.isChecked()
+                for row in rows:
+                    if row.EndI is None:
+                        continue
+                    normalized = round(row.EndI, 3) if use_round else int(row.EndI)
+                    target = round(ptn_endi_pre, 3) if use_round else int(ptn_endi_pre)
+                    if normalized == target:
+                        cursor.execute("UPDATE Step SET EndI = ? WHERE StepID = ?",
+                                    ptn_endi_after, row.StepID)
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
