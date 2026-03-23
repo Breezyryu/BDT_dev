@@ -19418,7 +19418,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행
         cursor = conn.cursor()
@@ -19459,7 +19460,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행
         cursor = conn.cursor()
@@ -19496,7 +19498,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행
         cursor = conn.cursor()
@@ -19526,7 +19529,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행
         cursor = conn.cursor()
@@ -19556,7 +19560,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행
         cursor = conn.cursor()
@@ -19586,7 +19591,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행
         cursor = conn.cursor()
@@ -19623,7 +19629,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
         conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행 (dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
         df = pd.read_sql("SELECT * FROM Step", conn)
@@ -19653,8 +19660,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';')
-        conn =pyodbc.connect(conn_str)
+            r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;')
+        conn = pyodbc.connect(conn_str, autocommit=True)
         # 쿼리 실행 (Pattern 이름 테이블을 dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
         pne_ptn_df = pd.read_sql("SELECT * FROM TestName", conn)
         pne_ptn_folder_name = pd.read_sql("SELECT * FROM BatteryModel", conn)
@@ -20094,9 +20102,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
+            r'Mode=Share Deny None;'
         )
         try:
-            conn = pyodbc.connect(conn_str)
+            conn = pyodbc.connect(conn_str, autocommit=True)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "오류", f"MDB 연결 실패:\n{e}")
             return
