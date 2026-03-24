@@ -15917,15 +15917,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
                 # 상태별 배경색 결정
                 bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음
+                use_val = self.df.loc[i + (j - 1) * num_i, "use"]
+                vol_val = self.df.loc[i + (j - 1) * num_i, "vol"]
                 self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
-                if self.df.loc[i + (j - 1) * num_i,"use"] == "작업정지" or self.df.loc[i + (j - 1) * num_i,"use"] == "완료":
-                    if toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
+                if use_val == "작업정지" or use_val == "완료":
+                    if toyo_num != 3 and vol_val == "-":
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                         bg_level = 1
                     else:
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
                         bg_level = 2
-                elif toyo_num != 3 and self.df.loc[i + (j - 1) * num_i,"vol"] == "-":
+                elif use_val != "작업중" and toyo_num != 3 and vol_val == "-":
                     self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                     bg_level = 1
                 # 코인셀 구분
@@ -16271,10 +16273,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_cycler_combobox()
 
     def filter_all_channels(self) -> None:
-        """전체 충방전기에서 강조 문자가 포함된 채널을 검색하여 층별/충방전기별 그룹으로 출력"""
+        """전체 충방전기에서 검색 조건에 맞는 채널을 층별/충방전기별 그룹으로 출력
+        빈 텍스트: 유휴 채널 필터링 (완료/준비/작업정지)"""
         search_text = str(self.FindText.text()).strip()
-        if not search_text:
-            return
+        # 빈 텍스트 → 유휴 채널 검색 모드
+        is_idle_mode = not search_text
+        if is_idle_mode:
+            search_text = "유휴"
         # 층별 충방전기 매핑 (tb_room 콤보박스와 동일 구조)
         floor_cyclers = [
             ("R5 15F", ["Toyo1", "Toyo2", "Toyo3", "Toyo4", "Toyo5",
@@ -16330,27 +16335,58 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for _, cyclers in floor_cyclers:
             all_cyclers.extend(cyclers)
         # 전체 충방전기를 순회하며 데이터 로드 + 매칭 채널 수집
-        # matched_by_floor: {층이름: {충방전기명: [(채널번호, 테스트명, 상태)]}}
+        # matched_by_floor: {층: {충방전기: [(채널번호, 테스트명, 상태, cyc, vol, cell_path)]}}
         matched_by_floor = {}
+        # cycler_mtime: {충방전기: "YYYY-MM-DD HH:MM"} 최종 업데이트 시간
+        cycler_mtime = {}
         total_matched = 0
+        total_channels = 0
         working_count = 0
+        idle_no_cell = 0   # 대기-셀없음 (유휴 + vol=="-")
+        idle_has_cell = 0  # 대기-셀있음 (유휴 + vol!="-")
         self.progressBar.setValue(0)
+        QtWidgets.QApplication.processEvents()
         total = len(all_cyclers)
         for idx, cycler_text in enumerate(all_cyclers):
             try:
+                mtime_str = ""
                 if cycler_text in toyo_info:
                     num, name = toyo_info[cycler_text]
+                    # 최종 업데이트 시간
+                    cfg_path = "z:\\Working\\" + self.toyo_blk_list[num] + "\\Chpatrn.cfg"
+                    if os.path.isfile(cfg_path):
+                        mtime_str = datetime.fromtimestamp(
+                            os.path.getmtime(cfg_path)).strftime("%m-%d %H:%M")
                     df = self.toyo_data_make(num, name)
                 elif cycler_text in pne_info:
                     num, name = pne_info[cycler_text]
+                    # 최종 업데이트 시간
+                    wp = self.pne_work_path_list[num]
+                    json2 = wp + "\\Module_2_channel_info.json"
+                    json1 = wp + "\\Module_1_channel_info.json"
+                    mtime_path = json2 if os.path.isfile(json2) else json1
+                    if os.path.isfile(mtime_path):
+                        mtime_str = datetime.fromtimestamp(
+                            os.path.getmtime(mtime_path)).strftime("%m-%d %H:%M")
                     df = self.pne_data_make(num, name)
                 else:
                     continue
+                cycler_mtime[cycler_text] = mtime_str
                 if df is None or df.empty:
                     continue
+                total_channels += len(df)
                 for ch_idx in df.index:
                     testname = str(df.loc[ch_idx, "testname"])
                     status = str(df.loc[ch_idx, "use"])
+                    cyc = str(df.loc[ch_idx, "cyc"]) if "cyc" in df.columns else "-"
+                    vol = str(df.loc[ch_idx, "vol"]) if "vol" in df.columns else "-"
+                    # 셀 경로: Toyo=folder, PNE=path
+                    if "path" in df.columns:
+                        cell_path = str(df.loc[ch_idx, "path"])
+                    elif "folder" in df.columns:
+                        cell_path = str(df.loc[ch_idx, "folder"])
+                    else:
+                        cell_path = ""
                     if self.match_filter_text(search_text, testname, status):
                         # 이 충방전기가 속한 층 찾기
                         floor_name = ""
@@ -16363,13 +16399,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if cycler_text not in matched_by_floor[floor_name]:
                             matched_by_floor[floor_name][cycler_text] = []
                         matched_by_floor[floor_name][cycler_text].append(
-                            (ch_idx, testname, status))
+                            (ch_idx, testname, status, cyc, vol, cell_path))
                         total_matched += 1
                         if status in ("작업중", "충전", "방전", "진행", "휴지"):
                             working_count += 1
+                        # 유휴 채널 셀 유무 카운트
+                        if status in ("완료", "준비", "작업정지"):
+                            if vol == "-":
+                                idle_no_cell += 1
+                            else:
+                                idle_has_cell += 1
             except Exception:
                 continue
             self.progressBar.setValue(int(((idx + 1) / total) * 100))
+            QtWidgets.QApplication.processEvents()
         # 테이블 초기화 및 리스트 출력
         self.table_reset()
         if total_matched == 0:
@@ -16389,21 +16432,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             for cycler_text in matched_by_floor[floor_name]:
                 row_count += 1  # 충방전기 헤더
                 row_count += len(matched_by_floor[floor_name][cycler_text])
-        # 4열 리스트: 충방전기 | 채널 | 상태 | 테스트명
-        self.tb_channel.setColumnCount(4)
+        # 7열 리스트: 충방전기 | 채널 | 상태 | Step/Cycle | 전압 | 테스트명 | 셀 경로
+        num_cols = 7
+        self.tb_channel.setColumnCount(num_cols)
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
-        self.tb_channel.setHorizontalHeaderLabels(["충방전기", "채널", "상태", "테스트명"])
+        self.tb_channel.setHorizontalHeaderLabels(
+            ["충방전기", "채널", "상태", "Step/Cycle/총Cycle", "전압", "테스트명", "셀 경로"])
+        for ci in range(5):
+            self.tb_channel.horizontalHeader().setSectionResizeMode(
+                ci, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.tb_channel.horizontalHeader().setSectionResizeMode(
-            0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+            5, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.tb_channel.horizontalHeader().setSectionResizeMode(
-            1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        self.tb_channel.horizontalHeader().setSectionResizeMode(
-            2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        self.tb_channel.horizontalHeader().setSectionResizeMode(
-            3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            6, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        # 행 높이 줄이기
+        self.tb_channel.verticalHeader().setDefaultSectionSize(22)
         self.tb_channel.setUpdatesEnabled(False)
         row = 0
+        # 상태별 행 전체 배경색 정의
+        STATUS_BG = {
+            "작업정지": QtGui.QColor(176, 203, 176),
+            "대기": QtGui.QColor(176, 203, 176),
+            "준비": QtGui.QColor(176, 203, 176),
+            "완료": QtGui.QColor(234, 239, 230),
+            "작업멈춤": QtGui.QColor(214, 155, 154),
+        }
         # floor_cyclers 순서를 유지하여 출력
         for floor_name, floor_cycler_list in floor_cyclers:
             if floor_name not in matched_by_floor:
@@ -16412,13 +16466,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             floor_item = QtWidgets.QTableWidgetItem(f"■ {floor_name}")
             floor_item.setFont(QtGui.QFont("Malgun gothic", 10, QtGui.QFont.Weight.Bold))
             floor_item.setForeground(QtGui.QColor(255, 255, 255))
-            floor_item.setBackground(QtGui.QColor(60, 84, 136))  # THEME navy
+            floor_item.setBackground(QtGui.QColor(60, 84, 136))
             self.tb_channel.setItem(row, 0, floor_item)
-            # 나머지 열도 같은 배경색으로 채우기
             floor_count = sum(len(v) for v in matched_by_floor[floor_name].values())
-            for col in range(1, 4):
+            for col in range(1, num_cols):
                 filler = QtWidgets.QTableWidgetItem(
-                    f"({floor_count}건)" if col == 3 else "")
+                    f"({floor_count}건)" if col == num_cols - 1 else "")
                 filler.setBackground(QtGui.QColor(60, 84, 136))
                 filler.setForeground(QtGui.QColor(255, 255, 255))
                 filler.setFont(QtGui.QFont("Malgun gothic", 9))
@@ -16429,45 +16482,73 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if cycler_text not in matched_by_floor[floor_name]:
                     continue
                 channels = matched_by_floor[floor_name][cycler_text]
-                # ── 충방전기 헤더 행 ──
+                # ── 충방전기 헤더 행 (최종 업데이트 시간 포함) ──
+                mtime_label = cycler_mtime.get(cycler_text, "")
                 cycler_item = QtWidgets.QTableWidgetItem(f"  ▸ {cycler_text}")
                 cycler_item.setFont(QtGui.QFont("Malgun gothic", 9, QtGui.QFont.Weight.Bold))
                 cycler_item.setForeground(QtGui.QColor(60, 84, 136))
                 cycler_item.setBackground(QtGui.QColor(232, 236, 244))
                 self.tb_channel.setItem(row, 0, cycler_item)
-                for col in range(1, 4):
-                    filler = QtWidgets.QTableWidgetItem(
-                        f"({len(channels)}건)" if col == 3 else "")
+                for col in range(1, num_cols):
+                    if col == num_cols - 1:
+                        txt = f"({len(channels)}건)  업데이트: {mtime_label}" if mtime_label else f"({len(channels)}건)"
+                    else:
+                        txt = ""
+                    filler = QtWidgets.QTableWidgetItem(txt)
                     filler.setBackground(QtGui.QColor(232, 236, 244))
                     filler.setForeground(QtGui.QColor(100, 110, 130))
                     filler.setFont(QtGui.QFont("Malgun gothic", 9))
                     self.tb_channel.setItem(row, col, filler)
                 row += 1
                 # ── 데이터 행 ──
-                for ch_no, testname, status in channels:
+                for ch_no, testname, status, cyc, vol, cell_path in channels:
+                    bg_color = STATUS_BG.get(status)
                     item_cycler = QtWidgets.QTableWidgetItem(f"    {cycler_text}")
                     item_cycler.setFont(QtGui.QFont("Malgun gothic", 9))
+                    if bg_color:
+                        item_cycler.setBackground(bg_color)
                     self.tb_channel.setItem(row, 0, item_cycler)
                     item_ch = QtWidgets.QTableWidgetItem(str(ch_no).zfill(3))
                     item_ch.setFont(QtGui.QFont("Malgun gothic", 9))
+                    if bg_color:
+                        item_ch.setBackground(bg_color)
                     self.tb_channel.setItem(row, 1, item_ch)
                     item_status = QtWidgets.QTableWidgetItem(status)
                     item_status.setFont(QtGui.QFont("Malgun gothic", 9))
-                    if status in ("작업정지", "대기", "준비"):
-                        item_status.setBackground(QtGui.QColor(176, 203, 176))
-                    elif status in ("완료",):
-                        item_status.setBackground(QtGui.QColor(234, 239, 230))
-                    elif status == "작업멈춤":
-                        item_status.setBackground(QtGui.QColor(214, 155, 154))
+                    if bg_color:
+                        item_status.setBackground(bg_color)
                     self.tb_channel.setItem(row, 2, item_status)
+                    item_cyc = QtWidgets.QTableWidgetItem(cyc)
+                    item_cyc.setFont(QtGui.QFont("Malgun gothic", 9))
+                    if bg_color:
+                        item_cyc.setBackground(bg_color)
+                    self.tb_channel.setItem(row, 3, item_cyc)
+                    item_vol = QtWidgets.QTableWidgetItem(vol)
+                    item_vol.setFont(QtGui.QFont("Malgun gothic", 9))
+                    if bg_color:
+                        item_vol.setBackground(bg_color)
+                    self.tb_channel.setItem(row, 4, item_vol)
                     item_test = QtWidgets.QTableWidgetItem(testname)
                     item_test.setFont(QtGui.QFont("Malgun gothic", 9))
-                    self.tb_channel.setItem(row, 3, item_test)
+                    if bg_color:
+                        item_test.setBackground(bg_color)
+                    self.tb_channel.setItem(row, 5, item_test)
+                    item_path = QtWidgets.QTableWidgetItem(cell_path)
+                    item_path.setFont(QtGui.QFont("Malgun gothic", 8))
+                    item_path.setForeground(QtGui.QColor(120, 120, 120))
+                    if bg_color:
+                        item_path.setBackground(bg_color)
+                    self.tb_channel.setItem(row, 6, item_path)
                     row += 1
         self.tb_channel.setUpdatesEnabled(True)
         # 요약 정보
-        self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(total_matched)))
-        self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
+        if is_idle_mode:
+            idle_label = f"{idle_no_cell} (대기-셀없음) / {idle_has_cell} (대기-셀있음) / {total_channels} (전체)"
+            self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(idle_label))
+            self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
+        else:
+            self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(total_matched)))
+            self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
         self.progressBar.setValue(100)
 
     def bm_set_profile_button(self):
