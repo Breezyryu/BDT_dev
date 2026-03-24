@@ -4307,6 +4307,26 @@ class Ui_sitool(object):
         self.FindText.setPlaceholderText("스페이스=OR, 쉼표=AND (예: 4879mAh,Rss)")
         self.FindText.setObjectName("FindText")
         self.horizontalLayout_10.addWidget(self.FindText)
+        # 강조 버튼
+        self.btn_highlight = QtWidgets.QPushButton(parent=self.tab)
+        self.btn_highlight.setMinimumSize(QtCore.QSize(60, 40))
+        self.btn_highlight.setMaximumSize(QtCore.QSize(60, 40))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        self.btn_highlight.setFont(font)
+        self.btn_highlight.setObjectName("btn_highlight")
+        self.horizontalLayout_10.addWidget(self.btn_highlight)
+        # 필터링 버튼
+        self.btn_filter = QtWidgets.QPushButton(parent=self.tab)
+        self.btn_filter.setMinimumSize(QtCore.QSize(70, 40))
+        self.btn_filter.setMaximumSize(QtCore.QSize(70, 40))
+        font = QtGui.QFont()
+        font.setFamily("맑은 고딕")
+        font.setPointSize(10)
+        self.btn_filter.setFont(font)
+        self.btn_filter.setObjectName("btn_filter")
+        self.horizontalLayout_10.addWidget(self.btn_filter)
         self.tb_modified_time = QtWidgets.QLabel(parent=self.tab)
         self.tb_modified_time.setMinimumSize(QtCore.QSize(250, 40))
         self.tb_modified_time.setMaximumSize(QtCore.QSize(250, 40))
@@ -4381,7 +4401,7 @@ class Ui_sitool(object):
         item.setForeground(brush)
         self.tableWidget.setItem(0, 3, item)
         item = QtWidgets.QTableWidgetItem()
-        brush = QtGui.QBrush(QtGui.QColor(195, 47, 39))
+        brush = QtGui.QBrush(QtGui.QColor(140, 0, 200))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setForeground(brush)
         self.tableWidget.setItem(0, 4, item)
@@ -10019,6 +10039,8 @@ class Ui_sitool(object):
         self.tb_info.setItemText(8, _translate("sitool", "현재 전압"))
         self.tb_info.setItemText(9, _translate("sitool", "셀 경로"))
         self.label_9.setText(_translate("sitool", "강조할 문자"))
+        self.btn_highlight.setText(_translate("sitool", "강조"))
+        self.btn_filter.setText(_translate("sitool", "필터링"))
         item = self.tb_summary.verticalHeaderItem(0)
         item.setText(_translate("sitool", "사용 가능"))
         item = self.tb_summary.verticalHeaderItem(1)
@@ -10470,6 +10492,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_cycler.currentIndexChanged.connect(self.tb_cycler_combobox)
         self.tb_room.currentIndexChanged.connect(self.tb_room_combobox)
         self.FindText.returnPressed.connect(self.tb_cycler_combobox)
+        self.btn_highlight.clicked.connect(self.tb_cycler_combobox)
+        self.btn_filter.clicked.connect(self.filter_all_channels)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -15913,7 +15937,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
                         # 45도 계열: Toyo1,3 ch>64
                         fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
-                        fg_15 = [(140,0,200), (100,0,160), (100,0,160)][bg_level]
+                        fg_15 = [(0,73,245), (0,55,190), (0,55,190)][bg_level]
                         fg_normal = [(18,21,23), (10,12,14), (10,12,14)][bg_level]
                         if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
@@ -16065,8 +16089,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
                             fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
-                            fg_35 = [(195,47,39), (154,32,24), (154,32,24), (154,32,24)][bg_level]
-                            fg_15 = [(140,0,200), (100,0,160), (100,0,160), (100,0,160)][bg_level]
+                            fg_35 = [(140,0,200), (100,0,160), (100,0,160), (100,0,160)][bg_level]
+                            fg_15 = [(0,73,245), (0,55,190), (0,55,190), (0,55,190)][bg_level]
                             fg_normal = [(18,21,23), (10,12,14), (10,12,14), (10,12,14)][bg_level]
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
@@ -16100,6 +16124,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def table_reset(self):
         self.tb_channel.clear()
+        # 필터링 모드에서 변경된 헤더/컬럼 수를 기본값으로 복원
+        self.tb_channel.setColumnCount(8)
+        self.tb_channel.setRowCount(16)
+        self.tb_channel.horizontalHeader().setVisible(False)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.tb_modified_time.setText("")
 
     def match_highlight_text(self, search_text, testname):
@@ -16201,6 +16230,124 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def tb_info_combobox(self):
         self.tb_cycler_combobox()
+
+    def filter_all_channels(self) -> None:
+        """전체 충방전기에서 강조 문자가 포함된 채널을 검색하여 리스트로 출력"""
+        search_text = str(self.FindText.text()).strip()
+        if not search_text:
+            return
+        # 현재 룸에 속한 모든 충방전기 목록 확보
+        cycler_list = [self.tb_cycler.itemText(i) for i in range(self.tb_cycler.count())]
+        toyo_info = {
+            "Toyo1": (0, self.toyo_cycler_name[0]),
+            "Toyo2": (1, self.toyo_cycler_name[1]),
+            "Toyo3": (2, self.toyo_cycler_name[2]),
+            "Toyo4": (3, self.toyo_cycler_name[3]),
+            "Toyo5": (4, self.toyo_cycler_name[4]),
+        }
+        pne_info = {
+            "PNE1": (0, self.pne_cycler_name[0]),
+            "PNE2": (1, self.pne_cycler_name[1]),
+            "PNE3": (2, self.pne_cycler_name[2]),
+            "PNE4": (3, self.pne_cycler_name[3]),
+            "PNE5": (4, self.pne_cycler_name[4]),
+            "PNE01": (5, self.pne_cycler_name[5]),
+            "PNE02": (6, self.pne_cycler_name[6]),
+            "PNE03": (7, self.pne_cycler_name[7]),
+            "PNE04": (8, self.pne_cycler_name[8]),
+            "PNE05": (9, self.pne_cycler_name[9]),
+            "PNE06": (10, self.pne_cycler_name[10]),
+            "PNE07": (11, self.pne_cycler_name[11]),
+            "PNE08": (12, self.pne_cycler_name[12]),
+            "PNE09": (13, self.pne_cycler_name[13]),
+            "PNE10": (14, self.pne_cycler_name[14]),
+            "PNE11": (15, self.pne_cycler_name[15]),
+            "PNE12": (16, self.pne_cycler_name[16]),
+            "PNE13": (17, self.pne_cycler_name[17]),
+            "PNE14": (18, self.pne_cycler_name[18]),
+            "PNE15": (19, self.pne_cycler_name[19]),
+            "PNE16": (20, self.pne_cycler_name[20]),
+            "PNE17": (21, self.pne_cycler_name[21]),
+            "PNE18": (22, self.pne_cycler_name[22]),
+            "PNE19": (23, self.pne_cycler_name[23]),
+            "PNE20": (24, self.pne_cycler_name[24]),
+            "PNE21": (25, self.pne_cycler_name[25]),
+            "PNE22": (26, self.pne_cycler_name[26]),
+            "PNE23": (27, self.pne_cycler_name[27]),
+            "PNE24": (28, self.pne_cycler_name[28]),
+            "PNE25": (29, self.pne_cycler_name[29]),
+        }
+        # 전체 충방전기를 순회하며 매칭 채널 수집
+        matched_rows = []  # [(충방전기명, 채널번호, 테스트명, 상태)]
+        self.progressBar.setValue(0)
+        total = len(cycler_list)
+        for idx, cycler_text in enumerate(cycler_list):
+            try:
+                if cycler_text in toyo_info:
+                    num, name = toyo_info[cycler_text]
+                    df = self.toyo_data_make(num, name)
+                elif cycler_text in pne_info:
+                    num, name = pne_info[cycler_text]
+                    df = self.pne_data_make(num, name)
+                else:
+                    continue
+                if df is None or df.empty:
+                    continue
+                for ch_idx in df.index:
+                    testname = str(df.loc[ch_idx, "testname"])
+                    if self.match_highlight_text(search_text, testname):
+                        status = str(df.loc[ch_idx, "use"])
+                        matched_rows.append((cycler_text, ch_idx, testname, status))
+            except Exception:
+                continue
+            self.progressBar.setValue(int(((idx + 1) / total) * 100))
+        # tb_channel을 리스트 형식으로 재구성하여 출력
+        self.table_reset()
+        if not matched_rows:
+            self.tb_channel.setRowCount(1)
+            self.tb_channel.setColumnCount(1)
+            item = QtWidgets.QTableWidgetItem("검색 결과 없음")
+            item.setFont(QtGui.QFont("Malgun gothic", 10))
+            item.setForeground(QtGui.QColor(173, 181, 189))
+            self.tb_channel.setItem(0, 0, item)
+            self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem("0"))
+            self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem("0"))
+            return
+        # 4열 리스트: 충방전기 | 채널 | 상태 | 테스트명
+        self.tb_channel.setColumnCount(4)
+        self.tb_channel.setRowCount(len(matched_rows))
+        self.tb_channel.horizontalHeader().setVisible(True)
+        self.tb_channel.setHorizontalHeaderLabels(["충방전기", "채널", "상태", "테스트명"])
+        self.tb_channel.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        for row, (cycler, ch_no, testname, status) in enumerate(matched_rows):
+            item_cycler = QtWidgets.QTableWidgetItem(cycler)
+            item_cycler.setFont(QtGui.QFont("Malgun gothic", 9, QtGui.QFont.Weight.Bold))
+            self.tb_channel.setItem(row, 0, item_cycler)
+            item_ch = QtWidgets.QTableWidgetItem(str(ch_no).zfill(3))
+            item_ch.setFont(QtGui.QFont("Malgun gothic", 9))
+            self.tb_channel.setItem(row, 1, item_ch)
+            item_status = QtWidgets.QTableWidgetItem(status)
+            item_status.setFont(QtGui.QFont("Malgun gothic", 9))
+            # 상태별 배경색
+            if status in ("작업정지", "대기", "준비"):
+                item_status.setBackground(QtGui.QColor(176, 203, 176))
+            elif status in ("완료",):
+                item_status.setBackground(QtGui.QColor(234, 239, 230))
+            elif status == "작업멈춤":
+                item_status.setBackground(QtGui.QColor(214, 155, 154))
+            self.tb_channel.setItem(row, 2, item_status)
+            item_test = QtWidgets.QTableWidgetItem(testname)
+            item_test.setFont(QtGui.QFont("Malgun gothic", 9))
+            self.tb_channel.setItem(row, 3, item_test)
+        # 요약 정보 표시
+        working_count = sum(1 for _, _, _, s in matched_rows if s in ("작업중", "충전", "방전", "진행", "휴지"))
+        total_count = len(matched_rows)
+        self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(total_count)))
+        self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
+        self.progressBar.setValue(100)
 
     def bm_set_profile_button(self):
         self.BMset_battery_status_log_Profile.setDisabled(True)
@@ -19405,120 +19552,48 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # plt.show()
         plt.close()
 
-    # ── 패턴수정 디버깅 로거 ──────────────────────────────────
-    def _get_ptn_logger(self, mdb_path=""):
-        """패턴수정 전용 파일 로거 생성/반환"""
-        logger = logging.getLogger("ptn_debug")
-        if not logger.handlers:
-            logger.setLevel(logging.DEBUG)
-            # 로그 파일 위치: 코드 실행 경로 (Program Files 등 권한 문제 회피)
-            log_dir = os.path.dirname(os.path.abspath(__file__))
-            log_path = os.path.join(log_dir, "ptn_debug.log")
-            fh = logging.FileHandler(log_path, encoding="utf-8", mode="a")
-            fh.setLevel(logging.DEBUG)
-            fmt = logging.Formatter(
-                "[%(asctime)s] %(levelname)s | %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S"
-            )
-            fh.setFormatter(fmt)
-            logger.addHandler(fh)
-        return logger
-
-    def _ptn_log_env(self, logger, mdb_path):
-        """환경정보 기록: pyodbc 버전, 드라이버, 파일 권한, .ldb 존재 여부 등"""
-        import platform
-        logger.info("=" * 70)
-        logger.info("환경정보 수집 시작")
-        logger.info(f"  OS: {platform.platform()}")
-        logger.info(f"  Python: {sys.version}")
-        logger.info(f"  pyodbc: {pyodbc.version}")
-        logger.info(f"  Access Drivers: {[d for d in pyodbc.drivers() if 'Access' in d]}")
-        logger.info(f"  MDB 경로: {mdb_path}")
-        logger.info(f"  MDB 존재: {os.path.isfile(mdb_path)}")
-        if os.path.isfile(mdb_path):
-            logger.info(f"  MDB 크기: {os.path.getsize(mdb_path)} bytes")
-            logger.info(f"  MDB 읽기 가능: {os.access(mdb_path, os.R_OK)}")
-            logger.info(f"  MDB 쓰기 가능: {os.access(mdb_path, os.W_OK)}")
-            # .ldb 잠금 파일 확인
-            ldb_path = mdb_path.rsplit('.', 1)[0] + '.ldb'
-            logger.info(f"  LDB 잠금 파일 존재: {os.path.isfile(ldb_path)}")
-            if os.path.isfile(ldb_path):
-                try:
-                    logger.info(f"  LDB 크기: {os.path.getsize(ldb_path)} bytes")
-                except Exception:
-                    pass
-        logger.info(f"  ptn_df_select: {getattr(self, 'ptn_df_select', 'NOT SET')}")
-        logger.info(f"  chk_coincell: {self.chk_coincell.isChecked()}")
-
     def ptn_change_pattern_button(self):
         # ui에서 데이터 확인
         self.progressBar.setValue(0)
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_crate = float(self.ptn_crate.text())
         ptn_capacity = float(self.ptn_capacity.text())
-        log = self._get_ptn_logger(ptn_ori_path)
-        log.info("[전류일괄변경] 함수 시작 — C-rate=%s, capacity=%s", ptn_crate, ptn_capacity)
-        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
                                                       title="Choose Test files")
             self.ptn_ori_path.setText(str(ptn_ori_path))
-            log.info("[전류일괄변경] 파일 다시 선택됨: %s", ptn_ori_path)
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        log.info("[전류일괄변경] 연결 시도: %s", conn_str)
-        try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
-            log.info("[전류일괄변경] 연결 성공 (autocommit=True)")
-        except Exception as e:
-            log.error("[전류일괄변경] 연결 실패: %s", e, exc_info=True)
-            raise
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
+        # 쿼리 실행
         cursor = conn.cursor()
-        try:
-            if (not hasattr(self, "ptn_df_select")) or (len(self.ptn_df_select) == 0) or (self.ptn_df_select[0] == ""):
-                log.warning("[전류일괄변경] ptn_df_select 비어있음, 작업 건너뜀")
-            else:
-                use_round = self.chk_coincell.isChecked()
-                log.info("[전류일괄변경] use_round=%s, 선택 TestID=%s", use_round, self.ptn_df_select)
-                for testidcount in self.ptn_df_select:
-                    cursor.execute("SELECT MAX(Iref) From Step WHERE TestID = ? AND StepType = 2", str(testidcount))
-                    max_value = cursor.fetchone()[0]
-                    log.info("[전류일괄변경] TestID=%s, MAX(Iref)=%s", testidcount, max_value)
-                    if max_value is not None:
-                        base_capacity = max_value / ptn_crate
-                        real_capacity = ptn_capacity
-                        cursor.execute("SELECT StepID, Iref, EndI FROM Step WHERE TestID = ?", str(testidcount))
-                        rows = cursor.fetchall()
-                        log.info("[전류일괄변경] SELECT 행 수: %d", len(rows))
-                        update_count = 0
-                        for step_id, iref, endi in rows:
-                            if use_round:
-                                new_iref = -round(-iref / base_capacity * real_capacity, 3) if iref else iref
-                                new_endi = -round(-endi / base_capacity * real_capacity, 3) if endi else endi
-                            else:
-                                new_iref = -int(-iref / base_capacity * real_capacity) if iref else iref
-                                new_endi = -int(-endi / base_capacity * real_capacity) if endi else endi
-                            try:
-                                # Access ODBC: PK 미정의 테이블에서 파라미터 바인딩 UPDATE 불가 → 직접 SQL
-                                sql = f"UPDATE Step SET Iref = {float(new_iref)}, EndI = {float(new_endi)} WHERE StepID = {int(step_id)}"
-                                log.debug("[전류일괄변경] SQL: %s", sql)
-                                cursor.execute(sql)
-                                update_count += 1
-                            except Exception as e:
-                                log.error("[전류일괄변경] UPDATE 실패 — StepID=%s, Iref=%s→%s, EndI=%s→%s, 에러: %s",
-                                          step_id, iref, new_iref, endi, new_endi, e, exc_info=True)
-                                raise
-                        log.info("[전류일괄변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
-        except Exception as e:
-            log.error("[전류일괄변경] 전체 실행 에러: %s", e, exc_info=True)
-            raise
-        finally:
-            cursor.close()
-            conn.close()
-            log.info("[전류일괄변경] 연결 종료")
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
+        if (not hasattr(self, "ptn_df_select")) or (len(self.ptn_df_select) == 0) or (self.ptn_df_select[0] == ""):
+            pass
+        else:
+            for testidcount in self.ptn_df_select:
+                cursor.execute("SELECT MAX(Iref) From Step WHERE TestID = ? AND StepType = 2", str(testidcount))
+                max_value = cursor.fetchone()[0]
+                if max_value is not None:
+                    base_capacity = max_value / ptn_crate
+                    real_capacity = ptn_capacity
+                    if self.chk_coincell.isChecked():
+                        cursor.execute("UPDATE Step SET Iref = -round(-Iref /? *?, 3) WHERE TestID =?",
+                                    str(base_capacity), str(real_capacity), str(testidcount))
+                        cursor.execute("UPDATE Step SET EndI = -round(-EndI /? *?, 3) WHERE TestID =?", 
+                                    str(base_capacity), str(real_capacity), str(testidcount))
+                    else:
+                        cursor.execute("UPDATE Step SET Iref = -int(-Iref /? *?) WHERE TestID =?",
+                                    str(base_capacity), str(real_capacity), str(testidcount))
+                        cursor.execute("UPDATE Step SET EndI = -int(-EndI /? *?) WHERE TestID =?", 
+                                    str(base_capacity), str(real_capacity), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
+        # 커서 및 연결 닫기
+        cursor.close()
+        conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_refi_button(self):
@@ -19527,9 +19602,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_refi_pre = float(self.ptn_refi_pre.text())
         ptn_refi_after = float(self.ptn_refi_after.text())
-        log = self._get_ptn_logger(ptn_ori_path)
-        log.info("[Iref변경] 함수 시작 — pre=%s, after=%s", ptn_refi_pre, ptn_refi_after)
-        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19537,47 +19609,31 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        log.info("[Iref변경] 연결 시도")
-        try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
-            log.info("[Iref변경] 연결 성공")
-        except Exception as e:
-            log.error("[Iref변경] 연결 실패: %s", e, exc_info=True)
-            raise
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
+        # 쿼리 실행
         cursor = conn.cursor()
-        try:
-            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                log.warning("[Iref변경] ptn_df_select 비어있음")
-            else:
-                use_round = self.chk_coincell.isChecked()
-                log.info("[Iref변경] use_round=%s, TestID=%s", use_round, self.ptn_df_select)
-                for testidcount in self.ptn_df_select:
-                    cursor.execute("SELECT StepID, Iref FROM Step WHERE TestID = ?", str(testidcount))
-                    rows = cursor.fetchall()
-                    log.info("[Iref변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
-                    update_count = 0
-                    for step_id, iref in rows:
-                        cleaned = round(iref, 3) if use_round else int(iref) if iref else iref
-                        if cleaned == ptn_refi_pre:
-                            try:
-                                sql = f"UPDATE Step SET Iref = {float(ptn_refi_after)} WHERE StepID = {int(step_id)}"
-                                log.debug("[Iref변경] SQL: %s", sql)
-                                cursor.execute(sql)
-                                update_count += 1
-                            except Exception as e:
-                                log.error("[Iref변경] UPDATE 실패 — StepID=%s, Iref=%s→%s, 에러: %s",
-                                          step_id, iref, ptn_refi_after, e, exc_info=True)
-                                raise
-                    log.info("[Iref변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
-        except Exception as e:
-            log.error("[Iref변경] 전체 실행 에러: %s", e, exc_info=True)
-            raise
-        finally:
-            cursor.close()
-            conn.close()
-            log.info("[Iref변경] 연결 종료")
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
+        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+            pass
+        else:
+            for testidcount in self.ptn_df_select:
+                # 문자 인식 문제를 위한 강제 변환
+                if self.chk_coincell.isChecked():
+                    cursor.execute("UPDATE Step SET Iref = round(Iref /? *?, 3) WHERE TestID =?",
+                                str(1), str(1), str(testidcount))
+                    cursor.execute("UPDATE Step SET Iref = ? WHERE Iref = ? AND TestID = ?",
+                                str(ptn_refi_after), str(ptn_refi_pre), str(testidcount))
+                else:
+                    cursor.execute("UPDATE Step SET Iref = int(Iref /? *?) WHERE TestID =?",
+                                str(1), str(1), str(testidcount))
+                    cursor.execute("UPDATE Step SET Iref = ? WHERE Iref = ? AND TestID = ?",
+                                str(ptn_refi_after), str(ptn_refi_pre), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
+        # 커서 및 연결 닫기
+        cursor.close()
+        conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_chgv_button(self):
@@ -19586,9 +19642,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_chgv_pre = float(self.ptn_chgv_pre.text())
         ptn_chgv_after = float(self.ptn_chgv_after.text())
-        log = self._get_ptn_logger(ptn_ori_path)
-        log.info("[충전전압변경] 함수 시작 — pre=%s, after=%s", ptn_chgv_pre, ptn_chgv_after)
-        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19596,45 +19649,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        log.info("[충전전압변경] 연결 시도")
-        try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
-            log.info("[충전전압변경] 연결 성공")
-        except Exception as e:
-            log.error("[충전전압변경] 연결 실패: %s", e, exc_info=True)
-            raise
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
+        # 쿼리 실행
         cursor = conn.cursor()
-        try:
-            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                log.warning("[충전전압변경] ptn_df_select 비어있음")
-            else:
-                log.info("[충전전압변경] TestID=%s", self.ptn_df_select)
-                for testidcount in self.ptn_df_select:
-                    cursor.execute("SELECT StepID, Vref_Charge FROM Step WHERE TestID = ?", str(testidcount))
-                    rows = cursor.fetchall()
-                    log.info("[충전전압변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
-                    update_count = 0
-                    for step_id, vref_chg in rows:
-                        if vref_chg and int(vref_chg) == int(ptn_chgv_pre):
-                            try:
-                                sql = f"UPDATE Step SET Vref_Charge = {float(ptn_chgv_after)} WHERE StepID = {int(step_id)}"
-                                log.debug("[충전전압변경] SQL: %s", sql)
-                                cursor.execute(sql)
-                                update_count += 1
-                            except Exception as e:
-                                log.error("[충전전압변경] UPDATE 실패 — StepID=%s, Vref_Charge=%s→%s, 에러: %s",
-                                          step_id, vref_chg, ptn_chgv_after, e, exc_info=True)
-                                raise
-                    log.info("[충전전압변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
-        except Exception as e:
-            log.error("[충전전압변경] 전체 실행 에러: %s", e, exc_info=True)
-            raise
-        finally:
-            cursor.close()
-            conn.close()
-            log.info("[충전전압변경] 연결 종료")
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
+        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+            pass
+        else:
+            for testidcount in self.ptn_df_select:
+                cursor.execute("UPDATE Step SET Vref_Charge = int(Vref_Charge /? *?) WHERE TestID =?",
+                            str(1), str(1), str(testidcount))
+                cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE Vref_Charge = ? AND TestID =?",
+                            str(ptn_chgv_after), str(ptn_chgv_pre), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
+        # 커서 및 연결 닫기
+        cursor.close()
+        conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_dchgv_button(self):
@@ -19643,9 +19675,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_dchgv_pre = float(self.ptn_dchgv_pre.text())
         ptn_dchgv_after = float(self.ptn_dchgv_after.text())
-        log = self._get_ptn_logger(ptn_ori_path)
-        log.info("[방전전압변경] 함수 시작 — pre=%s, after=%s", ptn_dchgv_pre, ptn_dchgv_after)
-        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19653,45 +19682,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        log.info("[방전전압변경] 연결 시도")
-        try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
-            log.info("[방전전압변경] 연결 성공")
-        except Exception as e:
-            log.error("[방전전압변경] 연결 실패: %s", e, exc_info=True)
-            raise
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
+        # 쿼리 실행
         cursor = conn.cursor()
-        try:
-            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                log.warning("[방전전압변경] ptn_df_select 비어있음")
-            else:
-                log.info("[방전전압변경] TestID=%s", self.ptn_df_select)
-                for testidcount in self.ptn_df_select:
-                    cursor.execute("SELECT StepID, Vref_DisCharge FROM Step WHERE TestID = ?", str(testidcount))
-                    rows = cursor.fetchall()
-                    log.info("[방전전압변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
-                    update_count = 0
-                    for step_id, vref_dchg in rows:
-                        if vref_dchg and int(vref_dchg) == int(ptn_dchgv_pre):
-                            try:
-                                sql = f"UPDATE Step SET Vref_DisCharge = {float(ptn_dchgv_after)} WHERE StepID = {int(step_id)}"
-                                log.debug("[방전전압변경] SQL: %s", sql)
-                                cursor.execute(sql)
-                                update_count += 1
-                            except Exception as e:
-                                log.error("[방전전압변경] UPDATE 실패 — StepID=%s, Vref_DisCharge=%s→%s, 에러: %s",
-                                          step_id, vref_dchg, ptn_dchgv_after, e, exc_info=True)
-                                raise
-                    log.info("[방전전압변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
-        except Exception as e:
-            log.error("[방전전압변경] 전체 실행 에러: %s", e, exc_info=True)
-            raise
-        finally:
-            cursor.close()
-            conn.close()
-            log.info("[방전전압변경] 연결 종료")
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
+        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+            pass
+        else:
+            for testidcount in self.ptn_df_select:
+                cursor.execute("UPDATE Step SET Vref_DisCharge = int(Vref_DisCharge /? *?) WHERE TestID = ?",
+                            str(1), str(1), str(testidcount))
+                cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE Vref_DisCharge = ? AND TestID = ?",
+                            str(ptn_dchgv_after), str(ptn_dchgv_pre), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
+        # 커서 및 연결 닫기
+        cursor.close()
+        conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_endv_button(self):
@@ -19700,9 +19708,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_endv_pre = float(self.ptn_endv_pre.text())
         ptn_endv_after = float(self.ptn_endv_after.text())
-        log = self._get_ptn_logger(ptn_ori_path)
-        log.info("[종료전압변경] 함수 시작 — pre=%s, after=%s", ptn_endv_pre, ptn_endv_after)
-        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19710,45 +19715,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        log.info("[종료전압변경] 연결 시도")
-        try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
-            log.info("[종료전압변경] 연결 성공")
-        except Exception as e:
-            log.error("[종료전압변경] 연결 실패: %s", e, exc_info=True)
-            raise
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
+        # 쿼리 실행
         cursor = conn.cursor()
-        try:
-            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                log.warning("[종료전압변경] ptn_df_select 비어있음")
-            else:
-                log.info("[종료전압변경] TestID=%s", self.ptn_df_select)
-                for testidcount in self.ptn_df_select:
-                    cursor.execute("SELECT StepID, EndV FROM Step WHERE TestID = ?", str(testidcount))
-                    rows = cursor.fetchall()
-                    log.info("[종료전압변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
-                    update_count = 0
-                    for step_id, endv in rows:
-                        if endv and int(endv) == int(ptn_endv_pre):
-                            try:
-                                sql = f"UPDATE Step SET EndV = {float(ptn_endv_after)} WHERE StepID = {int(step_id)}"
-                                log.debug("[종료전압변경] SQL: %s", sql)
-                                cursor.execute(sql)
-                                update_count += 1
-                            except Exception as e:
-                                log.error("[종료전압변경] UPDATE 실패 — StepID=%s, EndV=%s→%s, 에러: %s",
-                                          step_id, endv, ptn_endv_after, e, exc_info=True)
-                                raise
-                    log.info("[종료전압변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
-        except Exception as e:
-            log.error("[종료전압변경] 전체 실행 에러: %s", e, exc_info=True)
-            raise
-        finally:
-            cursor.close()
-            conn.close()
-            log.info("[종료전압변경] 연결 종료")
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
+        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+            pass
+        else:
+            for testidcount in self.ptn_df_select:
+                cursor.execute("UPDATE Step SET EndV = int(EndV /? *?) WHERE TestID = ?",
+                            str(1), str(1), str(testidcount))
+                cursor.execute("UPDATE Step SET EndV = ? WHERE EndV = ? AND TestID = ?",
+                            str(ptn_endv_after), str(ptn_endv_pre), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
+        # 커서 및 연결 닫기
+        cursor.close()
+        conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_endi_button(self):
@@ -19757,9 +19741,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ptn_ori_path = str(self.ptn_ori_path.text())
         ptn_endi_pre = float(self.ptn_endi_pre.text())
         ptn_endi_after = float(self.ptn_endi_after.text())
-        log = self._get_ptn_logger(ptn_ori_path)
-        log.info("[종료전류변경] 함수 시작 — pre=%s, after=%s", ptn_endi_pre, ptn_endi_after)
-        self._ptn_log_env(log, ptn_ori_path)
         # 파일 있는지 확인
         if not os.path.isfile(ptn_ori_path):
             ptn_ori_path = filedialog.askopenfilename(initialdir="c:\\Program Files\\PNE CTSPro\\Database\\Cycler_Schedule_2000.mdbd",
@@ -19767,47 +19748,31 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        log.info("[종료전류변경] 연결 시도")
-        try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
-            log.info("[종료전류변경] 연결 성공")
-        except Exception as e:
-            log.error("[종료전류변경] 연결 실패: %s", e, exc_info=True)
-            raise
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
+        # 쿼리 실행
         cursor = conn.cursor()
-        try:
-            if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
-                log.warning("[종료전류변경] ptn_df_select 비어있음")
-            else:
-                use_round = self.chk_coincell.isChecked()
-                log.info("[종료전류변경] use_round=%s, TestID=%s", use_round, self.ptn_df_select)
-                for testidcount in self.ptn_df_select:
-                    cursor.execute("SELECT StepID, EndI FROM Step WHERE TestID = ?", str(testidcount))
-                    rows = cursor.fetchall()
-                    log.info("[종료전류변경] TestID=%s, SELECT 행 수: %d", testidcount, len(rows))
-                    update_count = 0
-                    for step_id, endi in rows:
-                        cleaned = round(endi, 3) if use_round else int(endi) if endi else endi
-                        if cleaned == ptn_endi_pre:
-                            try:
-                                sql = f"UPDATE Step SET EndI = {float(ptn_endi_after)} WHERE StepID = {int(step_id)}"
-                                log.debug("[종료전류변경] SQL: %s", sql)
-                                cursor.execute(sql)
-                                update_count += 1
-                            except Exception as e:
-                                log.error("[종료전류변경] UPDATE 실패 — StepID=%s, EndI=%s→%s, 에러: %s",
-                                          step_id, endi, ptn_endi_after, e, exc_info=True)
-                                raise
-                    log.info("[종료전류변경] TestID=%s UPDATE 완료: %d건", testidcount, update_count)
-        except Exception as e:
-            log.error("[종료전류변경] 전체 실행 에러: %s", e, exc_info=True)
-            raise
-        finally:
-            cursor.close()
-            conn.close()
-            log.info("[종료전류변경] 연결 종료")
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
+        if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
+            pass
+        else:
+            for testidcount in self.ptn_df_select:
+                # 문자 인식 문제를 위한 강제 변환
+                if self.chk_coincell.isChecked():
+                    cursor.execute("UPDATE Step SET EndI = round(EndI /? *?, 3) WHERE TestID =?",
+                                str(1), str(1), str(testidcount))
+                    cursor.execute("UPDATE Step SET EndI = ? WHERE EndI = ? AND TestID = ?",
+                                str(ptn_endi_after), str(ptn_endi_pre), str(testidcount))
+                else:
+                    cursor.execute("UPDATE Step SET EndI = int(EndI /? *?) WHERE TestID =?",
+                                str(1), str(1), str(testidcount))
+                    cursor.execute("UPDATE Step SET EndI = ? WHERE EndI = ? AND TestID = ?",
+                                str(ptn_endi_after), str(ptn_endi_pre), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
+        # 커서 및 연결 닫기
+        cursor.close()
+        conn.close()
         self.progressBar.setValue(100)
 
     def ptn_change_step_button(self):
@@ -19823,14 +19788,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
         # 쿼리 실행 (dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
         df = pd.read_sql("SELECT * FROM Step", conn)
         # 선택한 Test ID만 기준으로 dataframe에서 변경
         df["Value2"] = df["Value2"].str.replace(str(" " + str(ptn_step_pre) + " "), str(" " + str(ptn_step_pre + ptn_step_after) + " "))
         cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT TestID FROM Step;")
         if (not hasattr(self, "ptn_df_select")) or (self.ptn_df_select[0] == ""):
             pass
         else:
@@ -19838,6 +19803,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for StepIDcount in df["StepID"]:
                     cursor.execute("UPDATE Step SET Value2 = ? WHERE StepID = ? AND TestID = ?",
                                 str(df[df["StepID"] == StepIDcount]["Value2"].values[0]) , str(StepIDcount), str(testidcount))
+        # 변경 사항 저장
+        conn.commit()
         # 커서 및 연결 닫기
         cursor.close()
         conn.close()
@@ -19854,9 +19821,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.ptn_ori_path.setText(str(ptn_ori_path))
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
-            r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;')
-        conn = pyodbc.connect(conn_str, autocommit=True)
+            r'DBQ=' + ptn_ori_path + ';')
+        conn =pyodbc.connect(conn_str)
         # 쿼리 실행 (Pattern 이름 테이블을 dataframe으로 변화, 수정 후 다시 StepID에 맞춰서 변경)
         pne_ptn_df = pd.read_sql("SELECT * FROM TestName", conn)
         pne_ptn_folder_name = pd.read_sql("SELECT * FROM BatteryModel", conn)
@@ -20296,92 +20262,90 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         conn_str = (
             r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};'
             r'DBQ=' + ptn_ori_path + ';'
-            r'Mode=Share Deny None;'
         )
         try:
-            conn = pyodbc.connect(conn_str, autocommit=True)
+            conn = pyodbc.connect(conn_str)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "오류", f"MDB 연결 실패:\n{e}")
             return
 
-        try:
-            results = []
-            for idx, test_id in enumerate(self.ptn_df_select):
-                current_patrn_num = patrn_num + idx
+        results = []
+        for idx, test_id in enumerate(self.ptn_df_select):
+            current_patrn_num = patrn_num + idx
 
-                # Step 데이터 조회
-                steps_df = pd.read_sql(
-                    "SELECT * FROM Step WHERE TestID = ? ORDER BY StepID", conn, params=[str(test_id)]
+            # Step 데이터 조회
+            steps_df = pd.read_sql(
+                f"SELECT * FROM Step WHERE TestID = {test_id} ORDER BY StepID", conn
+            )
+            if steps_df.empty:
+                results.append(f"TestID {test_id}: Step 데이터 없음")
+                continue
+
+            # TestName 조회
+            try:
+                test_info = pd.read_sql(
+                    f"SELECT TestName FROM TestName WHERE TestID = {test_id}", conn
                 )
-                if steps_df.empty:
-                    results.append(f"TestID {test_id}: Step 데이터 없음")
-                    continue
+                pattern_name = test_info.iloc[0]["TestName"] if not test_info.empty else f"Pattern_{test_id}"
+            except Exception:
+                pattern_name = f"Pattern_{test_id}"
 
-                # TestName 조회
-                try:
-                    test_info = pd.read_sql(
-                        "SELECT TestName FROM TestName WHERE TestID = ?", conn, params=[str(test_id)]
-                    )
-                    pattern_name = test_info.iloc[0]["TestName"] if not test_info.empty else f"Pattern_{test_id}"
-                except Exception:
-                    pattern_name = f"Pattern_{test_id}"
+            # PNE → Toyo 변환
+            try:
+                patrn_lines, line_types = self._pne_steps_to_toyo_substeps(steps_df)
+            except Exception as e:
+                results.append(f"TestID {test_id}: 변환 오류 - {e}")
+                continue
 
-                # PNE → Toyo 변환
-                try:
-                    patrn_lines, line_types = self._pne_steps_to_toyo_substeps(steps_df)
-                except Exception as e:
-                    results.append(f"TestID {test_id}: 변환 오류 - {e}")
-                    continue
+            if not patrn_lines:
+                results.append(f"TestID {test_id}: 변환 결과 없음")
+                continue
 
-                if not patrn_lines:
-                    results.append(f"TestID {test_id}: 변환 결과 없음")
-                    continue
+            num_lines = len(patrn_lines)
 
-                num_lines = len(patrn_lines)
+            # 1) PATRN{N}.1 생성
+            header = self._toyo_build_header(pattern_name, num_lines)
+            patrn_content = header + "\n" + "\n".join(patrn_lines) + "\n"
+            patrn_path = os.path.join(output_dir, f"PATRN{current_patrn_num}.1")
+            with open(patrn_path, "w", encoding="cp949") as f:
+                f.write(patrn_content)
 
-                # 1) PATRN{N}.1 생성
-                header = self._toyo_build_header(pattern_name, num_lines)
-                patrn_content = header + "\n" + "\n".join(patrn_lines) + "\n"
-                patrn_path = os.path.join(output_dir, f"PATRN{current_patrn_num}.1")
-                with open(patrn_path, "w", encoding="cp949") as f:
-                    f.write(patrn_content)
+            # 2) Patrn{N}.option 생성
+            option_content = self._toyo_build_option(capacity_mAh)
+            option_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option")
+            with open(option_path, "w", encoding="cp949") as f:
+                f.write(option_content)
 
-                # 2) Patrn{N}.option 생성
-                option_content = self._toyo_build_option(capacity_mAh)
-                option_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option")
-                with open(option_path, "w", encoding="cp949") as f:
-                    f.write(option_content)
+            # 3) Patrn{N}.option2 생성
+            option2_content = self._toyo_build_option2(line_types)
+            option2_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option2")
+            with open(option2_path, "w", encoding="cp949") as f:
+                f.write(option2_content)
 
-                # 3) Patrn{N}.option2 생성
-                option2_content = self._toyo_build_option2(line_types)
-                option2_path = os.path.join(output_dir, f"Patrn{current_patrn_num}.option2")
-                with open(option2_path, "w", encoding="cp949") as f:
-                    f.write(option2_content)
+            # 4) Fld_Puls{N}.DIR 생성
+            puls_content = self._toyo_build_puls_dir(num_lines)
+            puls_path = os.path.join(output_dir, f"Fld_Puls{current_patrn_num}.DIR")
+            with open(puls_path, "w", encoding="cp949") as f:
+                f.write(puls_content)
 
-                # 4) Fld_Puls{N}.DIR 생성
-                puls_content = self._toyo_build_puls_dir(num_lines)
-                puls_path = os.path.join(output_dir, f"Fld_Puls{current_patrn_num}.DIR")
-                with open(puls_path, "w", encoding="cp949") as f:
-                    f.write(puls_content)
+            # 5) Fld_Thermo{N}.DIR 생성 (빈 파일)
+            thermo_path = os.path.join(output_dir, f"Fld_Thermo{current_patrn_num}.DIR")
+            with open(thermo_path, "w", encoding="cp949") as f:
+                f.write("")
 
-                # 5) Fld_Thermo{N}.DIR 생성 (빈 파일)
-                thermo_path = os.path.join(output_dir, f"Fld_Thermo{current_patrn_num}.DIR")
-                with open(thermo_path, "w", encoding="cp949") as f:
+            # 6) THPTNNO.1 생성 (빈 파일, 없으면)
+            thptn_path = os.path.join(output_dir, "THPTNNO.1")
+            if not os.path.exists(thptn_path):
+                with open(thptn_path, "w", encoding="cp949") as f:
                     f.write("")
 
-                # 6) THPTNNO.1 생성 (빈 파일, 없으면)
-                thptn_path = os.path.join(output_dir, "THPTNNO.1")
-                if not os.path.exists(thptn_path):
-                    with open(thptn_path, "w", encoding="cp949") as f:
-                        f.write("")
+            results.append(
+                f"TestID {test_id} → PATRN{current_patrn_num}.1 "
+                f"({num_lines}라인, {len(steps_df)}스텝)"
+            )
+            self.progressBar.setValue(int((idx + 1) / len(self.ptn_df_select) * 100))
 
-                results.append(
-                    f"TestID {test_id} → PATRN{current_patrn_num}.1 "
-                    f"({num_lines}라인, {len(steps_df)}스텝)"
-                )
-                self.progressBar.setValue(int((idx + 1) / len(self.ptn_df_select) * 100))
-        finally:
-            conn.close()
+        conn.close()
 
         # 결과 표시
         msg = "Toyo 패턴 변환 완료\n\n" + "\n".join(results) + f"\n\n저장 위치: {output_dir}"
