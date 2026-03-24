@@ -19502,8 +19502,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 new_iref = -int(-iref / base_capacity * real_capacity) if iref else iref
                                 new_endi = -int(-endi / base_capacity * real_capacity) if endi else endi
                             try:
-                                cursor.execute("UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
-                                            new_iref, new_endi, step_id)
+                                # Access ODBC: PK 미정의 테이블에서 파라미터 바인딩 UPDATE 불가 → 직접 SQL
+                                sql = f"UPDATE Step SET Iref = {float(new_iref)}, EndI = {float(new_endi)} WHERE StepID = {int(step_id)}"
+                                log.debug("[전류일괄변경] SQL: %s", sql)
+                                cursor.execute(sql)
                                 update_count += 1
                             except Exception as e:
                                 log.error("[전류일괄변경] UPDATE 실패 — StepID=%s, Iref=%s→%s, EndI=%s→%s, 에러: %s",
@@ -19560,8 +19562,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cleaned = round(iref, 3) if use_round else int(iref) if iref else iref
                         if cleaned == ptn_refi_pre:
                             try:
-                                cursor.execute("UPDATE Step SET Iref = ? WHERE StepID = ?",
-                                            ptn_refi_after, step_id)
+                                sql = f"UPDATE Step SET Iref = {float(ptn_refi_after)} WHERE StepID = {int(step_id)}"
+                                log.debug("[Iref변경] SQL: %s", sql)
+                                cursor.execute(sql)
                                 update_count += 1
                             except Exception as e:
                                 log.error("[Iref변경] UPDATE 실패 — StepID=%s, Iref=%s→%s, 에러: %s",
@@ -19616,8 +19619,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     for step_id, vref_chg in rows:
                         if vref_chg and int(vref_chg) == int(ptn_chgv_pre):
                             try:
-                                cursor.execute("UPDATE Step SET Vref_Charge = ? WHERE StepID = ?",
-                                            ptn_chgv_after, step_id)
+                                sql = f"UPDATE Step SET Vref_Charge = {float(ptn_chgv_after)} WHERE StepID = {int(step_id)}"
+                                log.debug("[충전전압변경] SQL: %s", sql)
+                                cursor.execute(sql)
                                 update_count += 1
                             except Exception as e:
                                 log.error("[충전전압변경] UPDATE 실패 — StepID=%s, Vref_Charge=%s→%s, 에러: %s",
@@ -19672,8 +19676,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     for step_id, vref_dchg in rows:
                         if vref_dchg and int(vref_dchg) == int(ptn_dchgv_pre):
                             try:
-                                cursor.execute("UPDATE Step SET Vref_DisCharge = ? WHERE StepID = ?",
-                                            ptn_dchgv_after, step_id)
+                                sql = f"UPDATE Step SET Vref_DisCharge = {float(ptn_dchgv_after)} WHERE StepID = {int(step_id)}"
+                                log.debug("[방전전압변경] SQL: %s", sql)
+                                cursor.execute(sql)
                                 update_count += 1
                             except Exception as e:
                                 log.error("[방전전압변경] UPDATE 실패 — StepID=%s, Vref_DisCharge=%s→%s, 에러: %s",
@@ -19728,8 +19733,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     for step_id, endv in rows:
                         if endv and int(endv) == int(ptn_endv_pre):
                             try:
-                                cursor.execute("UPDATE Step SET EndV = ? WHERE StepID = ?",
-                                            ptn_endv_after, step_id)
+                                sql = f"UPDATE Step SET EndV = {float(ptn_endv_after)} WHERE StepID = {int(step_id)}"
+                                log.debug("[종료전압변경] SQL: %s", sql)
+                                cursor.execute(sql)
                                 update_count += 1
                             except Exception as e:
                                 log.error("[종료전압변경] UPDATE 실패 — StepID=%s, EndV=%s→%s, 에러: %s",
@@ -19786,8 +19792,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cleaned = round(endi, 3) if use_round else int(endi) if endi else endi
                         if cleaned == ptn_endi_pre:
                             try:
-                                cursor.execute("UPDATE Step SET EndI = ? WHERE StepID = ?",
-                                            ptn_endi_after, step_id)
+                                sql = f"UPDATE Step SET EndI = {float(ptn_endi_after)} WHERE StepID = {int(step_id)}"
+                                log.debug("[종료전류변경] SQL: %s", sql)
+                                cursor.execute(sql)
                                 update_count += 1
                             except Exception as e:
                                 log.error("[종료전류변경] UPDATE 실패 — StepID=%s, EndI=%s→%s, 에러: %s",

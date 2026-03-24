@@ -1,0 +1,31 @@
+[2026-03-24 07:55:45] INFO | [전류일괄변경] 함수 시작 — C-rate=1.0, capacity=4000.0
+[2026-03-24 07:55:45] INFO | ======================================================================
+[2026-03-24 07:55:45] INFO | 환경정보 수집 시작
+[2026-03-24 07:55:45] INFO |   OS: Windows-11-10.0.26100-SP0
+[2026-03-24 07:55:45] INFO |   Python: 3.12.12 (main, Oct 14 2025, 21:24:50) [MSC v.1944 64 bit (AMD64)]
+[2026-03-24 07:55:45] INFO |   pyodbc: 5.1.0
+[2026-03-24 07:55:45] INFO |   Access Drivers: ['Microsoft Access Driver (*.mdb, *.accdb)', 'Microsoft Access Text Driver (*.txt, *.csv)']
+[2026-03-24 07:55:45] INFO |   MDB 경로: C:\Program Files\PNE CTSPro\DataBase\Cycler_Schedule_2000.mdb
+[2026-03-24 07:55:45] INFO |   MDB 존재: True
+[2026-03-24 07:55:45] INFO |   MDB 크기: 6471680 bytes
+[2026-03-24 07:55:45] INFO |   MDB 읽기 가능: True
+[2026-03-24 07:55:45] INFO |   MDB 쓰기 가능: True
+[2026-03-24 07:55:45] INFO |   LDB 잠금 파일 존재: False
+[2026-03-24 07:55:45] INFO |   ptn_df_select: [np.int64(944)]
+[2026-03-24 07:55:45] INFO |   chk_coincell: False
+[2026-03-24 07:55:45] INFO | [전류일괄변경] 연결 시도: DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=C:\Program Files\PNE CTSPro\DataBase\Cycler_Schedule_2000.mdb;Mode=Share Deny None;
+[2026-03-24 07:55:45] INFO | [전류일괄변경] 연결 성공 (autocommit=True)
+[2026-03-24 07:55:45] INFO | [전류일괄변경] use_round=False, 선택 TestID=[np.int64(944)]
+[2026-03-24 07:55:45] INFO | [전류일괄변경] TestID=944, MAX(Iref)=1000.0
+[2026-03-24 07:55:45] INFO | [전류일괄변경] SELECT 행 수: 212
+[2026-03-24 07:55:45] ERROR | [전류일괄변경] UPDATE 실패 — StepID=86529, Iref=0.0→0.0, EndI=0.0→0.0, 에러: ('HY000', '[HY000] [Microsoft][ODBC Microsoft Access 드라이버] 이 작업에서는 업데이트할 수 있는 쿼리를 사용해야 합니다. (-3035) (SQLExecDirectW)')
+Traceback (most recent call last):
+  File "e:\Work_pc_E\python\BatteryDataTool_dev\BDT_26032402\DataTool_dev\DataTool_optRCD_proto_.py", line 19505, in ptn_change_pattern_button
+    cursor.execute("UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
+pyodbc.Error: ('HY000', '[HY000] [Microsoft][ODBC Microsoft Access 드라이버] 이 작업에서는 업데이트할 수 있는 쿼리를 사용해야 합니다. (-3035) (SQLExecDirectW)')
+[2026-03-24 07:55:45] ERROR | [전류일괄변경] 전체 실행 에러: ('HY000', '[HY000] [Microsoft][ODBC Microsoft Access 드라이버] 이 작업에서는 업데이트할 수 있는 쿼리를 사용해야 합니다. (-3035) (SQLExecDirectW)')
+Traceback (most recent call last):
+  File "e:\Work_pc_E\python\BatteryDataTool_dev\BDT_26032402\DataTool_dev\DataTool_optRCD_proto_.py", line 19505, in ptn_change_pattern_button
+    cursor.execute("UPDATE Step SET Iref = ?, EndI = ? WHERE StepID = ?",
+pyodbc.Error: ('HY000', '[HY000] [Microsoft][ODBC Microsoft Access 드라이버] 이 작업에서는 업데이트할 수 있는 쿼리를 사용해야 합니다. (-3035) (SQLExecDirectW)')
+[2026-03-24 07:55:45] INFO | [전류일괄변경] 연결 종료
