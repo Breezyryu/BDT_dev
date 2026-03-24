@@ -16342,8 +16342,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         total_matched = 0
         total_channels = 0
         working_count = 0
-        idle_no_cell = 0   # 대기-셀없음 (유휴 + vol=="-")
-        idle_has_cell = 0  # 대기-셀있음 (유휴 + vol!="-")
+        done_count = 0       # 완료
+        stopped_count = 0    # 작업멈춤
+        idle_no_cell = 0     # 대기-셀없음 (유휴 + vol=="-")
+        idle_has_cell = 0    # 대기-셀있음 (유휴 + vol!="-")
         self.progressBar.setValue(0)
         QtWidgets.QApplication.processEvents()
         total = len(all_cyclers)
@@ -16380,13 +16382,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     status = str(df.loc[ch_idx, "use"])
                     cyc = str(df.loc[ch_idx, "cyc"]) if "cyc" in df.columns else "-"
                     vol = str(df.loc[ch_idx, "vol"]) if "vol" in df.columns else "-"
-                    # 셀 경로: Toyo=folder, PNE=path
-                    if "path" in df.columns:
+                    # 셀 경로: Toyo=z:\Data\BLKn\folder, PNE=path (Result_Path 변환)
+                    if "path" in df.columns and "Result_Path" in df.columns:
+                        # PNE: change_drive로 변환된 절대 경로
                         cell_path = str(df.loc[ch_idx, "path"])
-                    elif "folder" in df.columns:
-                        cell_path = str(df.loc[ch_idx, "folder"])
+                    elif cycler_text in toyo_info and "folder" in df.columns:
+                        # Toyo: z:\Data\BLKn\folder\ 로 절대 경로 조합
+                        folder_val = str(df.loc[ch_idx, "folder"]).strip()
+                        if folder_val and folder_val != "nan":
+                            cell_path = "z:\\Data\\" + self.toyo_blk_list[toyo_info[cycler_text][0]] + "\\" + folder_val + "\\"
+                        else:
+                            cell_path = ""
                     else:
                         cell_path = ""
+                    # 전체 채널 상태 카운트 (필터 매칭 여부 무관)
+                    if status in ("작업중", "충전", "방전", "진행", "휴지"):
+                        working_count += 1
+                    elif status == "완료":
+                        done_count += 1
+                    elif status == "작업멈춤":
+                        stopped_count += 1
                     if self.match_filter_text(search_text, testname, status):
                         # 이 충방전기가 속한 층 찾기
                         floor_name = ""
@@ -16401,10 +16416,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         matched_by_floor[floor_name][cycler_text].append(
                             (ch_idx, testname, status, cyc, vol, cell_path))
                         total_matched += 1
-                        if status in ("작업중", "충전", "방전", "진행", "휴지"):
-                            working_count += 1
                         # 유휴 채널 셀 유무 카운트
-                        if status in ("완료", "준비", "작업정지"):
+                        if status in ("완료", "준비", "작업정지", "대기"):
                             if vol == "-":
                                 idle_no_cell += 1
                             else:
@@ -16425,8 +16438,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem("0"))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem("0"))
             return
-        # 필요한 행 수 계산: 층 헤더 + 충방전기 헤더 + 데이터 행
-        row_count = 0
+        # 필요한 행 수 계산: 전체 요약행 + 층 헤더 + 충방전기 헤더 + 데이터 행
+        row_count = 1  # 전체 요약 행
         for floor_name in matched_by_floor:
             row_count += 1  # 층 헤더
             for cycler_text in matched_by_floor[floor_name]:
@@ -16447,9 +16460,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_channel.horizontalHeader().setSectionResizeMode(
             6, QtWidgets.QHeaderView.ResizeMode.Stretch)
         # 행 높이 줄이기
-        self.tb_channel.verticalHeader().setDefaultSectionSize(22)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(15)
         self.tb_channel.setUpdatesEnabled(False)
         row = 0
+        # ── 전체 요약 행 (첫 번째 행, 작업멈춤은 빨간 폰트) ──
+        stopped_html = f'<span style="color:#FF4444; font-weight:bold;">작업멈춤: {stopped_count}</span>'
+        summary_html = (
+            f'<span style="color:white; font-family:Malgun Gothic; font-size:9pt; font-weight:bold;">'
+            f'가동중: {working_count}  /  완료: {done_count}  /  {stopped_html}'
+            f'  /  전체 채널: {total_channels}'
+        )
+        if is_idle_mode:
+            summary_html += (
+                f'  |  {idle_no_cell} (대기-셀없음)  /  {idle_has_cell} (대기-셀있음)'
+                f'  /  {total_channels} (전체)'
+            )
+        summary_html += '</span>'
+        summary_label = QtWidgets.QLabel(summary_html)
+        summary_label.setStyleSheet("background-color: rgb(40,40,40); padding-left: 6px;")
+        self.tb_channel.setSpan(row, 0, 1, num_cols)
+        self.tb_channel.setCellWidget(row, 0, summary_label)
+        # span 영역 배경 채우기
+        for col in range(num_cols):
+            filler = QtWidgets.QTableWidgetItem("")
+            filler.setBackground(QtGui.QColor(40, 40, 40))
+            self.tb_channel.setItem(row, col, filler)
+        self.tb_channel.setRowHeight(row, 24)
+        row += 1
         # 상태별 행 전체 배경색 정의
         STATUS_BG = {
             "작업정지": QtGui.QColor(176, 203, 176),
@@ -16542,13 +16579,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     row += 1
         self.tb_channel.setUpdatesEnabled(True)
         # 요약 정보
-        if is_idle_mode:
-            idle_label = f"{idle_no_cell} (대기-셀없음) / {idle_has_cell} (대기-셀있음) / {total_channels} (전체)"
-            self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(idle_label))
-            self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
-        else:
-            self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(total_matched)))
-            self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
+        self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(total_matched)))
+        self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
         self.progressBar.setValue(100)
 
     def bm_set_profile_button(self):
