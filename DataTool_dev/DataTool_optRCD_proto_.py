@@ -1598,6 +1598,13 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
     )
     if accel_pattern:
         result['accel_pattern'] = accel_pattern
+        # 가속수명 전압 조건 변경 트래킹
+        if is_pne:
+            v_changes = _track_accel_voltage_changes_pne(
+                channel_path, capacity, classified,
+            )
+            if v_changes:
+                result['accel_voltage_changes'] = v_changes
 
     return result
 
@@ -2005,6 +2012,79 @@ def _analyze_accel_pattern_pne(
     }
 
 
+def _track_accel_voltage_changes_pne(
+    channel_path: str, capacity: float, classified: list[dict],
+) -> list[dict] | None:
+    """가속수명 사이클 간 충전 압종료 전압 변경 이력을 추적.
+
+    PNE SaveEndData에서 모든 가속수명 사이클의 충전 종료전압을 수집하고,
+    전압이 변경된 시점과 변경 내역을 반환한다.
+
+    Returns
+    -------
+    list[dict] | None
+        변경 없으면 None. 변경 있으면:
+        [{'cycle': int, 'step': int, 'from_V': float, 'to_V': float}, ...]
+    """
+    restore_path = os.path.join(channel_path, 'Restore')
+    if not os.path.isdir(restore_path):
+        return None
+    sed_file = None
+    try:
+        for f in os.listdir(restore_path):
+            if 'SaveEndData' in f and f.endswith('.csv'):
+                sed_file = f
+                break
+    except OSError:
+        return None
+    if not sed_file:
+        return None
+    try:
+        df = pd.read_csv(
+            os.path.join(restore_path, sed_file),
+            header=None, encoding='cp949', on_bad_lines='skip',
+        )
+    except Exception:
+        return None
+    if df.shape[1] < 41:
+        return None
+
+    # 가속수명 사이클 번호 추출
+    accel_cycles = {c['cycle'] for c in classified if c['category'] == '가속수명'}
+    if not accel_cycles:
+        return None
+
+    real = df[df[2] != 8]
+    # 가속수명 사이클의 충전 스텝만 필터
+    accel_chg = real[(real[27].isin(accel_cycles)) & (real[2] == 1)]
+    if accel_chg.empty:
+        return None
+
+    # 사이클별 충전 종료전압 벡터 수집
+    prev_voltages = None
+    prev_cycle = None
+    changes = []
+    for cyc in sorted(accel_cycles):
+        cyc_rows = accel_chg[accel_chg[27] == cyc]
+        if cyc_rows.empty:
+            continue
+        voltages = tuple(round(v / 1e6, 3) for v in cyc_rows[8].values)
+        if prev_voltages is not None and voltages != prev_voltages:
+            # 스텝별 변경 상세
+            for step_idx in range(min(len(prev_voltages), len(voltages))):
+                if prev_voltages[step_idx] != voltages[step_idx]:
+                    changes.append({
+                        'cycle': int(cyc),
+                        'step': step_idx + 1,
+                        'from_V': prev_voltages[step_idx],
+                        'to_V': voltages[step_idx],
+                    })
+        prev_voltages = voltages
+        prev_cycle = cyc
+
+    return changes if changes else None
+
+
 def analyze_accel_pattern(
     channel_path: str, capacity: float,
     classified: list[dict], is_pne: bool,
@@ -2071,14 +2151,26 @@ def _ordinal(n: int) -> str:
 
 
 def _find_sch_file(channel_path: str) -> str | None:
-    """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None."""
+    """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None.
+
+    동일 스케줄에 _000, _001 등 채널별 사본이 있으면
+    접미사 번호가 가장 큰 파일(=최신 패턴)을 선택한다.
+    """
+    _SCH_SUFFIX_RE = re.compile(r'^(.+?)(?:_(\d{3}))\.sch$', re.IGNORECASE)
     try:
-        for f in os.listdir(channel_path):
-            if f.endswith('.sch'):
-                return os.path.join(channel_path, f)
+        sch_files = [f for f in os.listdir(channel_path) if f.lower().endswith('.sch')]
     except OSError:
-        pass
-    return None
+        return None
+    if not sch_files:
+        return None
+    if len(sch_files) == 1:
+        return os.path.join(channel_path, sch_files[0])
+    # 접미사 번호 기준 정렬 → 가장 큰 번호 우선, 접미사 없는 원본은 -1
+    def _sort_key(name):
+        m = _SCH_SUFFIX_RE.match(name)
+        return int(m.group(2)) if m else -1
+    sch_files.sort(key=_sort_key, reverse=True)
+    return os.path.join(channel_path, sch_files[0])
 
 
 def _fmt_step(s: dict) -> str:
@@ -2102,6 +2194,13 @@ def format_accel_pattern(pattern: dict) -> list[str]:
         f'    ▷ 충전 {pattern["n_charge_steps"]}step: {chg}'
         f' | 방전 {pattern["n_discharge_steps"]}step: {dchg}',
     ]
+
+
+def _pattern_signature(pattern: dict) -> str:
+    """패턴 딕셔너리의 고유 서명 문자열 (그룹 간 중복 비교용)."""
+    chg = ' → '.join(_fmt_step(s) for s in pattern['charge_steps'])
+    dchg = ' → '.join(_fmt_step(s) for s in pattern['discharge_steps'])
+    return f'{chg}|{dchg}'
 
 
 def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirate):
@@ -11788,10 +11887,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list, sub_channel_map=None,
-                            classify_info=None, save_context=None):
+                            classify_info=None, classify_by_group=None,
+                            save_context=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
+        classify_by_group: list[list[dict]] — 그룹별 분류 결과 (그룹당 한줄 출력용)
         save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
@@ -11819,7 +11920,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ── 사이클 카테고리 분류 정보 바 ──
         if classify_info:
-            info_label = self._build_classify_info_label(classify_info)
+            info_label = self._build_classify_info_label(classify_info, classify_by_group)
             if info_label:
                 tab_layout.addWidget(info_label)
 
@@ -11835,12 +11936,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
 
     @staticmethod
-    def _build_classify_info_label(classify_info: list[dict]):
+    def _build_classify_info_label(classify_info: list[dict], classify_by_group: list[list[dict]] | None = None):
         """분류 결과 리스트 → 접을 수 있는 충방전 패턴 정보 위젯 생성.
 
-        단일 패턴(또는 모든 채널 동일) → 기존과 동일한 단순 QLabel.
-        여러 상이한 패턴 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 전체 패턴 표시.
-        팝업은 캔버스 위에 오버레이되므로 그래프 크기가 변하지 않는다.
+        사이클 그룹별 패턴을 한 줄씩 표시.
+        모든 그룹의 패턴이 동일하면 하나만 표시 (중복 제거).
+        다를 경우 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 그룹별 패턴 표시.
         """
         from PyQt6.QtWidgets import (QLabel, QWidget, QHBoxLayout,
                                       QPushButton, QFrame, QVBoxLayout)
@@ -11850,25 +11951,52 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if not classify_info:
             return None
 
-        # ── 모든 채널의 accel_pattern 수집 ──
-        patterns: list[tuple[str, str]] = []  # (channel_name, pattern_line)
-        for cr in classify_info:
-            ap = cr.get('accel_pattern')
-            if ap:
-                ch_name = cr.get('channel', '')
-                chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
-                dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
-                line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                        f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
-                patterns.append((ch_name, line))
+        # ── 그룹별 대표 패턴 수집 (그룹당 한 줄) ──
+        # classify_by_group이 있으면 그룹별 첫 패턴 사용, 없으면 채널별 폴백
+        group_patterns: list[tuple[str, str]] = []  # (group_label, pattern_line)
+        voltage_changes_summary: str | None = None  # 전압 변경 요약 (전 그룹 공통)
+        if classify_by_group:
+            for grp_idx, grp_crs in enumerate(classify_by_group):
+                for cr in grp_crs:
+                    ap = cr.get('accel_pattern')
+                    if ap:
+                        ch_count = len(grp_crs)
+                        label = f'그룹{grp_idx}({ch_count}ch)'
+                        chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
+                        dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
+                        line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
+                                f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
+                        group_patterns.append((label, line))
+                        break  # 그룹당 대표 하나만
+                # 전압 변경 정보 (첫 번째 발견 기준)
+                if not voltage_changes_summary:
+                    for cr in grp_crs:
+                        vc = cr.get('accel_voltage_changes')
+                        if vc:
+                            parts = []
+                            for c in vc:
+                                parts.append(f'cyc{c["cycle"]} step{c["step"]}: {c["from_V"]:.3f}→{c["to_V"]:.3f}V')
+                            voltage_changes_summary = '⚡ 압종료전압 변경: ' + ', '.join(parts)
+                            break
+        else:
+            # 폴백: 채널별
+            for cr in classify_info:
+                ap = cr.get('accel_pattern')
+                if ap:
+                    ch_name = cr.get('channel', '')
+                    chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
+                    dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
+                    line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
+                            f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
+                    group_patterns.append((ch_name, line))
 
-        if not patterns:
+        if not group_patterns:
             return None
 
         # ── 동일 패턴끼리 그룹핑 ──
         groups: OrderedDict[str, list[str]] = OrderedDict()
-        for ch_name, line in patterns:
-            groups.setdefault(line, []).append(ch_name)
+        for grp_label, line in group_patterns:
+            groups.setdefault(line, []).append(grp_label)
 
         _BAR_QSS = ('QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
                      'border-radius: 3px; padding: 3px 8px; }')
@@ -11876,15 +12004,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # ── 패턴이 모두 동일 → 단순 QLabel ──
         if len(groups) == 1:
             single_line = next(iter(groups))
-            ch_list = next(iter(groups.values()))
-            suffix = (f'  <span style="color:#8491B4;">({len(ch_list)}채널 동일)</span>'
-                      if len(ch_list) > 1 else '')
+            grp_list = next(iter(groups.values()))
+            suffix = (f'  <span style="color:#8491B4;">({len(grp_list)}그룹 동일)</span>'
+                      if len(grp_list) > 1 else '')
+            vc_html = ''
+            if voltage_changes_summary:
+                vc_html = (f'<br/><span style="color:#E64B35; font-size:10px;">'
+                           f'{voltage_changes_summary}</span>')
             html = (f'<span style="color:#3C5488; font-size:11px;">'
-                    f'{single_line}{suffix}</span>')
+                    f'{single_line}{suffix}{vc_html}</span>')
             label = QLabel(html)
             label.setStyleSheet(_BAR_QSS)
             label.setWordWrap(True)
-            label.setMaximumHeight(24)
+            max_h = 40 if voltage_changes_summary else 24
+            label.setMaximumHeight(max_h)
             return label
 
         # ── 여러 상이한 패턴 → 접기/펼치기 위젯 ──
@@ -11955,6 +12088,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             row_label = QLabel(row_html)
             row_label.setWordWrap(True)
             popup_layout.addWidget(row_label)
+
+        # 전압 변경 이력
+        if voltage_changes_summary:
+            vc_label = QLabel(
+                f'<span style="color:#E64B35; font-size:11px; font-weight:bold;">'
+                f'{voltage_changes_summary}</span>')
+            vc_label.setWordWrap(True)
+            popup_layout.addWidget(vc_label)
 
         popup.adjustSize()
         popup.hide()
@@ -12753,44 +12894,69 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cap_val = g.per_path_capacities[pi]
                         _per_path_caps.append(cap_val)
 
-            loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
-                np.array(all_paths), mincapacity, firstCrate,
-                self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
-                per_path_capacities=_per_path_caps
-            )
+            with PerfSection('데이터 로딩', paths=len(all_paths)):
+                loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
+                    np.array(all_paths), mincapacity, firstCrate,
+                    self.dcirchk.isChecked(), self.dcirchk_2.isChecked(), self.mkdcir.isChecked(),
+                    per_path_capacities=_per_path_caps
+                )
 
             # ── 경로별 사이클 카테고리 분류 ──
-            _classify_results = {}  # {flat_idx: {sub_idx: classify_result}}
-            for fi, subs in subfolder_map.items():
-                _classify_results[fi] = {}
-                cap_val = _per_path_caps[fi] if _per_path_caps and fi < len(_per_path_caps) else 0
-                for sub_idx, ch_path in enumerate(subs):
-                    if 'Pattern' in os.path.basename(ch_path):
-                        continue
-                    try:
-                        cr = classify_channel_path(ch_path, cap_val)
-                        if cr:
-                            cr['channel'] = os.path.basename(ch_path)
-                            _classify_results[fi][sub_idx] = cr
-                    except Exception:
-                        pass
-            # 콘솔 요약 출력
+            with PerfSection('사이클 카테고리 분류'):
+                _classify_results = {}  # {flat_idx: {sub_idx: classify_result}}
+                for fi, subs in subfolder_map.items():
+                    _classify_results[fi] = {}
+                    cap_val = _per_path_caps[fi] if _per_path_caps and fi < len(_per_path_caps) else 0
+                    for sub_idx, ch_path in enumerate(subs):
+                        if 'Pattern' in os.path.basename(ch_path):
+                            continue
+                        try:
+                            cr = classify_channel_path(ch_path, cap_val)
+                            if cr:
+                                cr['channel'] = os.path.basename(ch_path)
+                                _classify_results[fi][sub_idx] = cr
+                        except Exception:
+                            pass
+            # 콘솔 요약 출력 (사이클 그룹별 한 줄)
             _all_cr = [cr for fi_dict in _classify_results.values() for cr in fi_dict.values()]
             if _all_cr:
                 _perf_logger.info('▶ 사이클 카테고리 분류 완료')
-                _pattern_logged = False
-                for cr in _all_cr:
-                    cat_parts = [f'{cat}:{n}' for cat, n in cr['counts'].items() if n > 0]
-                    src_tag = '[sch]' if 'sch_info' in cr else '[csv]'
+                # 그룹별 요약: 같은 패턴이면 채널 목록만 표시
+                _seen_patterns = set()  # 이미 출력한 패턴 문자열
+                for gi, g in enumerate(folder_groups):
+                    _grp_crs = []
+                    for pi in range(len(g.paths)):
+                        fi = flat_idx_of.get((gi, pi), -1)
+                        if fi in _classify_results:
+                            _grp_crs.extend(_classify_results[fi].values())
+                    if not _grp_crs:
+                        continue
+                    # 그룹 대표 정보 (첫 채널 기준)
+                    rep = _grp_crs[0]
+                    cat_parts = [f'{cat}:{n}' for cat, n in rep['counts'].items() if n > 0]
+                    src_tag = '[sch]' if 'sch_info' in rep else '[csv]'
+                    ch_names = [cr.get('channel', '') for cr in _grp_crs]
                     _perf_logger.info(
-                        f'  [{cr["cycler"]}] {cr["channel"]}  '
-                        f'{cr["test_type"]} {src_tag}  총 {cr["total_cycles"]}cyc  {", ".join(cat_parts)}'
+                        f'  그룹{gi} [{rep["cycler"]}] {len(ch_names)}ch  '
+                        f'{rep["test_type"]} {src_tag}  총 {rep["total_cycles"]}cyc  {", ".join(cat_parts)}'
                     )
-                    # 가속수명 패턴: 첫 번째 채널만 한 번 출력
-                    if not _pattern_logged and 'accel_pattern' in cr:
-                        for line in format_accel_pattern(cr['accel_pattern']):
-                            _perf_logger.info(line)
-                        _pattern_logged = True
+                    # 가속수명 패턴: 그룹 간 동일하면 한 번만 출력
+                    ap = rep.get('accel_pattern')
+                    if ap:
+                        pat_key = _pattern_signature(ap)
+                        if pat_key not in _seen_patterns:
+                            for line in format_accel_pattern(ap):
+                                _perf_logger.info(line)
+                            _seen_patterns.add(pat_key)
+                    # 가속수명 전압 변경 이력
+                    vc = rep.get('accel_voltage_changes')
+                    if vc:
+                        _perf_logger.info(f'    ⚡ 충전 압종료 전압 변경 감지 ({len(vc)}건):')
+                        for chg in vc:
+                            _perf_logger.info(
+                                f'      cyc {chg["cycle"]}, step{chg["step"]}: '
+                                f'{chg["from_V"]:.3f}V → {chg["to_V"]:.3f}V'
+                            )
 
             # 탭 할당: 개별=group별, 통합=file_idx별
             if is_individual:
@@ -13190,15 +13356,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                 # 탭 추가
                 if has_valid_data and tab_layout is not None:
-                    # 이 탭에 해당하는 분류 결과 수집
+                    # 이 탭에 해당하는 분류 결과 수집 (그룹별 구분)
                     _tab_classify = []
+                    _tab_classify_by_group = []  # [그룹별 [cr, ...], ...]
                     for gi in group_indices:
                         _g = folder_groups[gi]
+                        _grp_crs = []
                         for _pi in range(len(_g.paths)):
                             _fi = flat_idx_of.get((gi, _pi), -1)
                             if _fi in _classify_results:
                                 for _si, _cr in _classify_results[_fi].items():
                                     _tab_classify.append(_cr)
+                                    _grp_crs.append(_cr)
+                        if _grp_crs:
+                            _tab_classify_by_group.append(_grp_crs)
                     # Figure 저장용 컨텍스트 구성
                     _first_group = folder_groups[group_indices[0]]
                     _save_ctx = {
@@ -13229,6 +13400,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                              channel_map, fig, axes_list, sub_channel_map,
                                              classify_info=_tab_classify if _tab_classify else None,
+                                             classify_by_group=_tab_classify_by_group if _tab_classify_by_group else None,
                                              save_context=_save_ctx)
                     tab_no += 1
                     if suptitle_name:
