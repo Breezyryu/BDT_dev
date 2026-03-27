@@ -143,7 +143,6 @@ def load_cyc_data_to_dataframe(cyc_file_path: str) -> pd.DataFrame:
         parser = CycFileParser(cyc_file_path)
         data = parser.read_all_as_numpy()
         
-        import pandas as pd
         df = pd.DataFrame(data, columns=['field0', 'field1', 'field2', 'field3', 
                                          'field4', 'field5', 'field6', 'field7'])
         
