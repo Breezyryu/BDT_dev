@@ -1244,6 +1244,8 @@ def _classify_single_pne_cycle(group: pd.DataFrame) -> dict:
         cat = 'initial'
     elif action in ('CHG_ONLY', 'DCHG_ONLY'):
         cat = '_pulse'  # GITT 병합 대상
+    elif has_es78 and n_charge >= 2 and n_discharge >= 2:
+        cat = 'DCIR'  # DCIR 용량구분 또는 GITT 측정
     elif has_es78:
         cat = 'Rss'
     elif n_charge >= 2 and n_discharge >= 1:
@@ -1930,13 +1932,23 @@ def _analyze_accel_pattern_pne(
     if df.shape[1] < 41:
         return None
 
-    # 가속수명 사이클 찾기: StepType==8 제외 후 충전 스텝 2개 이상인 첫 TotlCycle
+    # 가속수명 사이클 찾기: 최빈 (n_chg, n_dchg) 패턴 기반
+    # — 단순 "첫 n_chg>=2" 방식은 RPT(0.2C 다단계)를 오인하는 문제 있음
     real = df[df[2] != 8]
-    first_accel_cyc = None
+    from collections import Counter as _Counter
+    _cyc_pats = []  # [(TotlCycle, n_chg, n_dchg)]
     for cyc, group in real.groupby(27):
         n_chg = (group[2] == 1).sum()
         n_dchg = (group[2] == 2).sum()
         if n_chg >= 2 and n_dchg >= 1:
+            _cyc_pats.append((cyc, int(n_chg), int(n_dchg)))
+    if not _cyc_pats:
+        return None
+    _pat_cnt = _Counter((nc, nd) for _, nc, nd in _cyc_pats)
+    _mode_pat = _pat_cnt.most_common(1)[0][0]
+    first_accel_cyc = None
+    for cyc, nc, nd in _cyc_pats:
+        if (nc, nd) == _mode_pat:
             first_accel_cyc = cyc
             break
     if first_accel_cyc is None:
@@ -3283,8 +3295,8 @@ def _process_pne_cycleraw(
     Eff = Dchg / Chg
     Eff2 = ChgCap2 / Dchg
     AvgV = DchgEng / Dchg / mincapacity * 1000
-    # OriCycle 생성
-    OriCycle = pd.Series(Dchg.index)
+    # OriCycle 생성 (Dchg와 동일 인덱스로 concat 시 NaN 방지)
+    OriCycle = pd.Series(Dchg.index.values, index=Dchg.index)
     if chkir and len(OriCycle) == len(dcir):
         df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, dcir, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
         df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "dcir", "Temp", "AvgV", "OriCyc"]
@@ -3367,7 +3379,7 @@ def _process_pne_cycleraw(
         df.NewData = df.NewData.reset_index(drop=True)
 
     # ── 충전/방전 종료 전압 트래킹: ChgVolt(상한 V), DchgVolt(하한 V), ChgSteps ──
-    if hasattr(df, 'NewData') and len(df.NewData) > 0 and 'Ocv' in Cycleraw.columns:
+    if hasattr(df, 'NewData') and len(df.NewData) > 0 and 'Ocv' in Cycleraw.columns and not df.NewData['OriCyc'].isna().any():
         ori_cyc = df.NewData['OriCyc'].astype(int)
         chg_rows = Cycleraw.loc[Cycleraw['Condition'] == 1]
         # 충전 상한 전압: Condition==1 최대 Ocv (CV 설정전압), 10 mV 반올림
@@ -4945,6 +4957,13 @@ class Ui_sitool(object):
         self.btn_save_path.setStyleSheet(_path_btn_qss)
         self.btn_save_path.setObjectName("btn_save_path")
         self._path_btn_layout.addWidget(self.btn_save_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        self.btn_clear_path = QtWidgets.QPushButton(parent=self._path_groupbox)
+        self.btn_clear_path.setFixedSize(QtCore.QSize(24, 24))
+        self.btn_clear_path.setText("🗑")
+        self.btn_clear_path.setToolTip("테이블 내용 삭제")
+        self.btn_clear_path.setStyleSheet(_path_btn_qss)
+        self.btn_clear_path.setObjectName("btn_clear_path")
+        self._path_btn_layout.addWidget(self.btn_clear_path, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         self._path_btn_layout.addStretch(1)
         self.horizontalLayout_119.addLayout(self._path_btn_layout)
         self._path_groupbox_vlayout.addLayout(self.horizontalLayout_119)
@@ -10849,6 +10868,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
         self.btn_load_path.clicked.connect(self._load_path_file_to_table)
         self.btn_save_path.clicked.connect(self._save_table_to_path_file)
+        self.btn_clear_path.clicked.connect(self._clear_table)
         # 셀 편집 시 툴팁 자동 갱신
         self.cycle_path_table.cellChanged.connect(self._update_cell_tooltip)
         # cycle_path_table Ctrl+C / Ctrl+V / Delete 단축키
@@ -12129,13 +12149,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list, sub_channel_map=None,
                             classify_info=None, classify_by_group=None,
-                            save_context=None, voltage_condition_text=None):
+                            save_context=None, voltage_condition_text=None,
+                            group_names=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
         classify_by_group: list[list[dict]] — 그룹별 분류 결과 (그룹당 한줄 출력용)
         save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
-        voltage_condition_text: str | None — '장수명 조건 : ...' 형태 전압 변경 요약
+        voltage_condition_text: str | list[tuple[str, str]] | None — 전압 변경 요약 (str=단일, list=다중 그룹)
+        group_names: list[str] | None — 그룹별 표시명 (패턴 라벨용)
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # save_context에 classify_info 포함
@@ -12164,7 +12186,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if classify_info:
             info_label = self._build_classify_info_label(
                 classify_info, classify_by_group,
-                voltage_condition_text=voltage_condition_text)
+                voltage_condition_text=voltage_condition_text,
+                group_names=group_names)
             if info_label:
                 tab_layout.addWidget(info_label)
 
@@ -12181,13 +12204,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     @staticmethod
     def _build_classify_info_label(classify_info: list[dict], classify_by_group: list[list[dict]] | None = None,
-                                   voltage_condition_text: str | None = None):
+                                   voltage_condition_text: str | list[tuple[str, str]] | None = None,
+                                   group_names: list[str] | None = None):
         """분류 결과 리스트 → 접을 수 있는 충방전 패턴 정보 위젯 생성.
 
         사이클 그룹별 패턴을 한 줄씩 표시.
         모든 그룹의 패턴이 동일하면 하나만 표시 (중복 제거).
         다를 경우 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 그룹별 패턴 표시.
-        voltage_condition_text: '장수명 조건 : ...' 형태로 전압 변경 요약 (None이면 미표시)
+        voltage_condition_text: 전압 변경 요약 (str=단일, list[tuple]=다중 그룹, None=미표시)
+        group_names: list[str] | None — 그룹별 표시명 (None이면 인덱스 폴백)
         """
         from PyQt6.QtWidgets import (QLabel, QWidget, QHBoxLayout,
                                       QPushButton, QFrame, QVBoxLayout)
@@ -12206,11 +12231,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ap = cr.get('accel_pattern')
                     if ap:
                         ch_count = len(grp_crs)
-                        label = f'그룹{grp_idx}({ch_count}ch)'
+                        _gname = (group_names[grp_idx]
+                                  if group_names and grp_idx < len(group_names)
+                                  else f'그룹{grp_idx}')
+                        label = f'{_gname}({ch_count}ch)'
                         chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
                         dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
                         line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                                f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
+                                f'<br/>&nbsp;&nbsp;&nbsp;방전 {ap["n_discharge_steps"]}step: {dchg}')
                         group_patterns.append((label, line))
                         break  # 그룹당 대표 하나만
 
@@ -12223,7 +12251,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
                     dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
                     line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                            f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
+                            f'<br/>&nbsp;&nbsp;&nbsp;방전 {ap["n_discharge_steps"]}step: {dchg}')
                     group_patterns.append((ch_name, line))
 
         if not group_patterns:
@@ -12245,15 +12273,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                       if len(grp_list) > 1 else '')
             vc_html = ''
             if voltage_condition_text:
-                vc_html = (f'<br/><span style="font-size:10px;">'
-                           f'{voltage_condition_text}</span>')
+                if isinstance(voltage_condition_text, list):
+                    _vc_parts = []
+                    for _gl, _vh in voltage_condition_text:
+                        _vc_parts.append(
+                            f'<b style="color:#666; font-size:10px;">'
+                            f'[{_gl}]</b>{_vh}')
+                    vc_html = '<br/>' + ''.join(_vc_parts)
+                else:
+                    vc_html = f'<br/>{voltage_condition_text}'
             html = (f'<span style="color:#3C5488; font-size:11px;">'
-                    f'{single_line}{suffix}{vc_html}</span>')
+                    f'{single_line}{suffix}</span>{vc_html}')
             label = QLabel(html)
             label.setStyleSheet(_BAR_QSS)
             label.setWordWrap(True)
-            max_h = 54 if voltage_condition_text else 24
-            label.setMaximumHeight(max_h)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            # 높이: 패턴 2줄(44px) + 전압 테이블 행수
+            max_h = 44
+            if voltage_condition_text:
+                if isinstance(voltage_condition_text, str):
+                    max_h += max(voltage_condition_text.count('<tr>'), 1) * 18
+                else:
+                    for _, _vh in voltage_condition_text:
+                        max_h += 18 + _vh.count('<tr>') * 18
+            label.setMaximumHeight(min(max_h, 500))
             return label
 
         # ── 여러 상이한 패턴 → 접기/펼치기 위젯 ──
@@ -12268,14 +12311,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         first_chs = next(iter(groups.values()))
         n_other = len(groups) - 1
         ch_tag = f'[{first_chs[0]}] ' if first_chs[0] else ''
+        _header_pat = first_line.replace('<br/>&nbsp;&nbsp;&nbsp;방전', ' | 방전')
         header_html = (
             f'<span style="color:#3C5488; font-size:11px;">'
-            f'{ch_tag}{first_line}  '
+            f'{ch_tag}{_header_pat}  '
             f'<span style="color:#E64B35; font-weight:bold;">'
             f'(+{n_other}개 다른 패턴)</span></span>')
         header_label = QLabel(header_html)
         header_label.setStyleSheet(_BAR_QSS)
         header_label.setMaximumHeight(24)
+        header_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         toggle_btn = QPushButton("▶ 전체")
         toggle_btn.setFixedSize(60, 20)
@@ -12305,6 +12350,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 제목
         title_label = QLabel(
             '<b style="color:#3C5488; font-size:12px;">충방전 패턴 상세</b>')
+        title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         popup_layout.addWidget(title_label)
 
         # 각 패턴 그룹 (PALETTE 색상으로 채널 구분)
@@ -12323,15 +12369,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f'{pat_line}</span>')
             row_label = QLabel(row_html)
             row_label.setWordWrap(True)
+            row_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             popup_layout.addWidget(row_label)
 
         # 장수명 조건 전압 변경
         if voltage_condition_text:
-            vc_label = QLabel(
-                f'<span style="font-size:11px;">'
-                f'{voltage_condition_text}</span>')
-            vc_label.setWordWrap(True)
-            popup_layout.addWidget(vc_label)
+            if isinstance(voltage_condition_text, list):
+                for _gl, _vh in voltage_condition_text:
+                    vc_label = QLabel(
+                        f'<b style="color:#666; font-size:11px;">'
+                        f'[{_gl}]</b>{_vh}')
+                    vc_label.setWordWrap(True)
+                    vc_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                    popup_layout.addWidget(vc_label)
+            else:
+                vc_label = QLabel(voltage_condition_text)
+                vc_label.setWordWrap(True)
+                vc_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                popup_layout.addWidget(vc_label)
 
         popup.adjustSize()
         popup.hide()
@@ -12770,21 +12825,31 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return rows
 
     @staticmethod
-    def _parse_path_file_extended(filepath):
+    def _parse_path_file_extended(filepath, preserve_groups=False):
         """4열 확장 path 파일 파싱 (하위호환: 2열도 지원)
-        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str}, ...]
+        preserve_groups=False: [dict, ...] (빈 행 무시, 기존 호환)
+        preserve_groups=True: ([dict|None, ...], link_mode: bool|None)
+            None = 빈 행(그룹 구분자)
         """
         rows = []
+        link_mode = None
         with open(filepath, 'r', encoding='UTF-8') as f:
             # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
             for raw in f:
                 stripped = raw.strip()
-                if not stripped or stripped.startswith('#'):
+                if not stripped:
+                    continue
+                if stripped.startswith('#link_mode='):
+                    link_mode = stripped.split('=', 1)[1].strip() == '1'
+                    continue
+                if stripped.startswith('#'):
                     continue
                 break  # 헤더 줄 도달 → 스킵 후 탈출
             for line in f:
                 if not line.strip():
-                    continue  # 그룹 구분자(빈 행) 무시
+                    if preserve_groups:
+                        rows.append(None)  # 그룹 구분자
+                    continue
                 parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
                 if len(parts) >= 4:
                     rows.append({'name': parts[0], 'path': parts[1],
@@ -12792,7 +12857,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 elif len(parts) >= 2:
                     rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
                                  'channel': '', 'capacity': ''})
-        return rows
+        if preserve_groups:
+            return rows, link_mode
+        # 기존 호환: None 제거
+        return [r for r in rows if r is not None]
 
     def _build_group_from_lines(self, lines, file_idx):
         """직접입력 줄들로 CycleGroup 생성. .xlsx/.xls=excel, .txt=path파일 재파싱, 나머지=folder"""
@@ -12883,6 +12951,70 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 연결 모드: 빈 행으로 그룹 분리
                 row_groups = self._get_table_row_groups()
                 for grp_idx, grp_rows in enumerate(row_groups):
+                    # .txt/.csv 경로 파일 확장: 파일 내부 경로를 읽어 그룹 생성
+                    if len(grp_rows) == 1:
+                        _tp = grp_rows[0]['path']
+                        if _tp.lower().endswith(('.txt', '.csv')) and os.path.isfile(_tp):
+                            _expanded, _file_link = self._parse_path_file_extended(_tp, preserve_groups=True)
+                            if _expanded:
+                                # link_mode 자동 감지 및 적용
+                                if _file_link is not None and self.chk_link_cycle.isEnabled():
+                                    self.chk_link_cycle.setChecked(_file_link)
+                                # 빈 행 기준 그룹 분리
+                                _file_groups = []
+                                _cur = []
+                                for _r in _expanded:
+                                    if _r is None:
+                                        if _cur:
+                                            _file_groups.append(_cur)
+                                            _cur = []
+                                        continue
+                                    _cur.append(_r)
+                                if _cur:
+                                    _file_groups.append(_cur)
+                                # 각 그룹별 CycleGroup 생성
+                                for _fg in _file_groups:
+                                    # 첫 행의 name을 그룹명으로 사용
+                                    _gname = _fg[0]['name'] or os.path.basename(_fg[0]['path'])
+                                    _cpaths = [x['path'] for x in _fg]
+                                    _cnames = [x['name'] for x in _fg]
+                                    _chs = [_parse_channel_str(x['channel']) for x in _fg]
+                                    _caps = []
+                                    for x in _fg:
+                                        try:
+                                            _caps.append(float(x.get('capacity', '') or 0))
+                                        except ValueError:
+                                            _caps.append(0.0)
+                                    _has_chs = any(c for c in _chs)
+                                    if _has_chs:
+                                        _max_pos = max((len(c) for c in _chs), default=0)
+                                        _lmap = {}
+                                        for _pos in range(_max_pos):
+                                            _ul = None
+                                            for _ri in range(len(_fg)):
+                                                _c = _chs[_ri]
+                                                if _pos < len(_c) and _c[_pos] != '-':
+                                                    _n = _normalize_ch(_c[_pos])
+                                                    if _ul is None:
+                                                        _ul = _n
+                                                    _lmap[_n] = _ul
+                                        _clean = [[_normalize_ch(c) for c in ch if c != '-'] for ch in _chs]
+                                        groups.append(CycleGroup(
+                                            name=_gname, paths=_cpaths, path_names=_cnames,
+                                            is_link=len(_cpaths) > 1, data_type='folder',
+                                            file_idx=0, source_file=_tp,
+                                            per_path_channels=_clean,
+                                            channel_link_map=_lmap,
+                                            per_path_capacities=_caps,
+                                        ))
+                                    else:
+                                        groups.append(CycleGroup(
+                                            name=_gname, paths=_cpaths, path_names=_cnames,
+                                            is_link=len(_cpaths) > 1, data_type='folder',
+                                            file_idx=0, source_file=_tp,
+                                            per_path_capacities=_caps,
+                                        ))
+                                continue  # 아래 일반 처리 건너뜀
                     file_idx = 0  # 테이블은 단일 소스 → 통합 탭 시 1개 탭으로 합침
                     all_paths = [r['path'] for r in grp_rows]
                     all_pnames = [r['name'] for r in grp_rows]
@@ -13636,9 +13768,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         'tab_mode': 'individual' if is_individual else 'overall',
                     }
                     # ── 장수명 조건 전압 변경 요약 (RPT/수명 분리, ChgSteps 기반) ──
-                    _vc_text = None
+                    _vc_items = []  # list[tuple[str, str]] — (그룹라벨, HTML)
                     for gi in group_indices:
                         _g = folder_groups[gi]
+                        _gi_vc_html = None
                         for _pi in range(len(_g.paths)):
                             _fi = flat_idx_of.get((gi, _pi), -1)
                             if _fi not in subfolder_map:
@@ -13713,56 +13846,83 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                 _vc_events.append((_dcy[_i], _dvv[_i], _d, 'dchg'))
                                                 _prev = _dvv[_i]
                                 # HTML 조립
-                                _parts = []
+                                # 전압 조건 → 구조화 데이터 → HTML 테이블
+                                _vc_rows = []  # [(label, value, cycle, delta, color)]
                                 # RPT 전압 범위
                                 if _rpt_dchg is not None and _rpt_chg is not None:
-                                    _parts.append(
-                                        f'<span style="color:#8491B4;">'
-                                        f'RPT{_rpt_crate_s}: {_rpt_dchg:.2f}~{_rpt_chg:.2f}V</span>')
+                                    _vc_rows.append((
+                                        f'RPT{_rpt_crate_s}',
+                                        f'{_rpt_dchg:.2f}~{_rpt_chg:.2f}V',
+                                        '', '', '#8491B4'))
                                 # 수명 초기 전압 범위
                                 if _init_dchg is not None and _init_chg is not None:
-                                    _parts.append(
-                                        f'<span style="color:#333; font-weight:bold;">'
-                                        f'수명: {_init_dchg:.2f}~{_init_chg:.2f}V</span>')
+                                    _vc_rows.append((
+                                        '수명', f'{_init_dchg:.2f}~{_init_chg:.2f}V',
+                                        '', '', '#333'))
                                 elif _init_chg is not None:
-                                    _parts.append(
-                                        f'<span style="color:#333; font-weight:bold;">'
-                                        f'수명 상한: {_init_chg:.2f}V</span>')
+                                    _vc_rows.append((
+                                        '수명 상한', f'{_init_chg:.2f}V',
+                                        '', '', '#333'))
                                 elif _init_dchg is not None:
-                                    _parts.append(
-                                        f'<span style="color:#333; font-weight:bold;">'
-                                        f'수명 하한: {_init_dchg:.2f}V</span>')
+                                    _vc_rows.append((
+                                        '수명 하한', f'{_init_dchg:.2f}V',
+                                        '', '', '#333'))
                                 # 변경 이벤트
                                 if _vc_events:
                                     _vc_events.sort(key=lambda x: x[0])
                                     for _cy, _v, _dm, _k in _vc_events:
                                         if _k == 'chg':
-                                            _arrow = '▼'
-                                            _clr = '#3C5488'
-                                            _tag = '상한'
+                                            _vc_rows.append((
+                                                '상한↓', f'{_v:.2f}V',
+                                                f'{_cy}cy', f'{_dm:+d}mV',
+                                                '#3C5488'))
                                         else:
-                                            _arrow = '▲'
-                                            _clr = '#E64B35'
-                                            _tag = '하한'
-                                        _parts.append(
-                                            f'<span style="color:{_clr}; font-weight:bold;">'
-                                            f'{_tag} {_v:.2f}V</span>'
-                                            f'<span style="color:#888;"> '
-                                            f'({_cy}cy, {_dm:+d}mV{_arrow})</span>')
-                                if len(_parts) > 1:  # RPT + 수명 또는 수명 + 이벤트
-                                    _vc_text = ' ▸ '.join(_parts)
+                                            _vc_rows.append((
+                                                '하한↑', f'{_v:.2f}V',
+                                                f'{_cy}cy', f'{_dm:+d}mV',
+                                                '#E64B35'))
+                                if len(_vc_rows) > 1:
+                                    _td = 'padding:1px 6px 1px 0;'
+                                    _trs = []
+                                    for _lbl, _val, _cyc, _dlt, _lc in _vc_rows:
+                                        _fw = ' font-weight:bold;' if _lc == '#333' else ''
+                                        _trs.append(
+                                            f'<tr>'
+                                            f'<td style="color:{_lc};{_fw} {_td}">{_lbl}</td>'
+                                            f'<td style="color:{_lc};{_fw} {_td}">{_val}</td>'
+                                            f'<td style="color:#888; {_td}">{_cyc}</td>'
+                                            f'<td style="color:#888; {_td}">{_dlt}</td>'
+                                            f'</tr>')
+                                    _gi_vc_html = (
+                                        '<table style="border-collapse:collapse;'
+                                        ' font-size:10px; margin-top:2px;">'
+                                        + ''.join(_trs) + '</table>')
                                     break
-                            if _vc_text:
+                            if _gi_vc_html:
                                 break
-                        if _vc_text:
-                            break
+                        # 그룹 라벨 추출 후 수집
+                        if _gi_vc_html:
+                            _path0 = _g.paths[0] if _g.paths else ''
+                            _m = re.search(r'\d+CY|RT', _path0, re.IGNORECASE)
+                            _glabel = _m.group() if _m else (
+                                Path(_path0).name[:20] if _path0 else f'그룹{gi}')
+                            _vc_items.append((_glabel, _gi_vc_html))
+                    # 후방호환: 단일이면 str, 다중이면 list[tuple]
+                    _vc_text = None
+                    if len(_vc_items) == 1:
+                        _vc_text = _vc_items[0][1]
+                    elif len(_vc_items) > 1:
+                        _vc_text = _vc_items
 
+                    # 그룹 이름 리스트 (패턴 라벨용)
+                    _group_names = [folder_groups[gi].name for gi in group_indices]
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                              channel_map, fig, axes_list, sub_channel_map,
                                              classify_info=_tab_classify if _tab_classify else None,
                                              classify_by_group=_tab_classify_by_group if _tab_classify_by_group else None,
                                              save_context=_save_ctx,
-                                             voltage_condition_text=_vc_text)
+                                             voltage_condition_text=_vc_text,
+                                             group_names=_group_names)
                     tab_no += 1
                     if suptitle_name:
                         output_fig(self.figsaveok, suptitle_name)
@@ -14656,6 +14816,51 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     item.setBackground(sep_bg)
                 elif item:
                     item.setBackground(clear_bg)
+        # ── 연결처리 활성 시: 그룹 내 첫 행만 경로명 유지, 나머지 백업 후 비움 ──
+        if link_mode:
+            if not hasattr(self, '_link_hidden_names'):
+                self._link_hidden_names = {}  # {row: original_name}
+            in_grp = False
+            for r in range(tbl.rowCount()):
+                path = self._get_table_cell(r, 1)
+                if not path:
+                    in_grp = False
+                    continue
+                if not in_grp:
+                    in_grp = True  # 그룹 첫 행 — 경로명 유지
+                    # 이전에 숨겼던 이름이 있으면 복원
+                    if r in self._link_hidden_names:
+                        orig = self._link_hidden_names.pop(r)
+                        cur = self._get_table_cell(r, 0)
+                        if not cur:
+                            item = tbl.item(r, 0)
+                            if item is None:
+                                item = QtWidgets.QTableWidgetItem(orig)
+                                tbl.setItem(r, 0, item)
+                            else:
+                                item.setText(orig)
+                else:
+                    # 그룹 후속 행 — 경로명 백업 후 비움
+                    cur_name = self._get_table_cell(r, 0)
+                    if cur_name:
+                        self._link_hidden_names[r] = cur_name
+                        item = tbl.item(r, 0)
+                        if item:
+                            item.setText('')
+        else:
+            # 연결처리 해제 시: 숨긴 이름 복원
+            if hasattr(self, '_link_hidden_names') and self._link_hidden_names:
+                for r, orig in self._link_hidden_names.items():
+                    if r < tbl.rowCount():
+                        cur = self._get_table_cell(r, 0)
+                        if not cur:
+                            item = tbl.item(r, 0)
+                            if item is None:
+                                item = QtWidgets.QTableWidgetItem(orig)
+                                tbl.setItem(r, 0, item)
+                            else:
+                                item.setText(orig)
+                self._link_hidden_names.clear()
         tbl.blockSignals(False)
 
     def _push_table_undo(self):
