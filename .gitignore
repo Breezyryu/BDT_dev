@@ -17,5 +17,5 @@ vault/
 .agent
 .vscode/
 .github/
-
+analysis_dev_env/
 .gitignore

@@ -7,6 +7,7 @@ import logging
 import functools
 import warnings
 import json
+import struct
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1598,13 +1599,6 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
     )
     if accel_pattern:
         result['accel_pattern'] = accel_pattern
-        # 가속수명 전압 조건 변경 트래킹
-        if is_pne:
-            v_changes = _track_accel_voltage_changes_pne(
-                channel_path, capacity, classified,
-            )
-            if v_changes:
-                result['accel_voltage_changes'] = v_changes
 
     return result
 
@@ -2010,79 +2004,6 @@ def _analyze_accel_pattern_pne(
         'n_charge_steps': len(charge_steps),
         'n_discharge_steps': len(discharge_steps),
     }
-
-
-def _track_accel_voltage_changes_pne(
-    channel_path: str, capacity: float, classified: list[dict],
-) -> list[dict] | None:
-    """가속수명 사이클 간 충전 압종료 전압 변경 이력을 추적.
-
-    PNE SaveEndData에서 모든 가속수명 사이클의 충전 종료전압을 수집하고,
-    전압이 변경된 시점과 변경 내역을 반환한다.
-
-    Returns
-    -------
-    list[dict] | None
-        변경 없으면 None. 변경 있으면:
-        [{'cycle': int, 'step': int, 'from_V': float, 'to_V': float}, ...]
-    """
-    restore_path = os.path.join(channel_path, 'Restore')
-    if not os.path.isdir(restore_path):
-        return None
-    sed_file = None
-    try:
-        for f in os.listdir(restore_path):
-            if 'SaveEndData' in f and f.endswith('.csv'):
-                sed_file = f
-                break
-    except OSError:
-        return None
-    if not sed_file:
-        return None
-    try:
-        df = pd.read_csv(
-            os.path.join(restore_path, sed_file),
-            header=None, encoding='cp949', on_bad_lines='skip',
-        )
-    except Exception:
-        return None
-    if df.shape[1] < 41:
-        return None
-
-    # 가속수명 사이클 번호 추출
-    accel_cycles = {c['cycle'] for c in classified if c['category'] == '가속수명'}
-    if not accel_cycles:
-        return None
-
-    real = df[df[2] != 8]
-    # 가속수명 사이클의 충전 스텝만 필터
-    accel_chg = real[(real[27].isin(accel_cycles)) & (real[2] == 1)]
-    if accel_chg.empty:
-        return None
-
-    # 사이클별 충전 종료전압 벡터 수집
-    prev_voltages = None
-    prev_cycle = None
-    changes = []
-    for cyc in sorted(accel_cycles):
-        cyc_rows = accel_chg[accel_chg[27] == cyc]
-        if cyc_rows.empty:
-            continue
-        voltages = tuple(round(v / 1e6, 3) for v in cyc_rows[8].values)
-        if prev_voltages is not None and voltages != prev_voltages:
-            # 스텝별 변경 상세
-            for step_idx in range(min(len(prev_voltages), len(voltages))):
-                if prev_voltages[step_idx] != voltages[step_idx]:
-                    changes.append({
-                        'cycle': int(cyc),
-                        'step': step_idx + 1,
-                        'from_V': prev_voltages[step_idx],
-                        'to_V': voltages[step_idx],
-                    })
-        prev_voltages = voltages
-        prev_cycle = cyc
-
-    return changes if changes else None
 
 
 def analyze_accel_pattern(
@@ -3021,6 +2942,454 @@ def pne_cyc_continue_data(raw_file_path):
                                                 header=None, encoding="cp949", on_bad_lines='skip')
     return df
 
+
+# ── .cyc 바이너리 파서 유틸리티 (PNE .cyc → Cycleraw 재구성) ──────────
+
+# .cyc 헤더 오프셋 상수
+_CYC_HDR_N_FIELDS = 0x148   # uint32 LE: 필드 수
+_CYC_HDR_FIDS     = 0x14C   # uint16 LE × n_fields: FieldID 배열
+_CYC_DATA_START   = 0x1B0   # 데이터 시작 오프셋 (고정)
+
+
+def _parse_cyc_header(cyc_path: str) -> dict:
+    """CYC 바이너리 파일 헤더 파싱.
+
+    Returns
+    -------
+    dict
+        n_fields, fids, data_start, rec_size, total_records
+    """
+    file_size = os.path.getsize(cyc_path)
+    with open(cyc_path, 'rb') as f:
+        f.seek(_CYC_HDR_N_FIELDS)
+        n_fields = struct.unpack('<I', f.read(4))[0]
+        f.seek(_CYC_HDR_FIDS)
+        fids = list(struct.unpack(f'<{n_fields}H', f.read(n_fields * 2)))
+    rec_size = n_fields * 4
+    total_records = (file_size - _CYC_DATA_START) // rec_size
+    return {
+        'n_fields': n_fields, 'fids': fids,
+        'data_start': _CYC_DATA_START,
+        'rec_size': rec_size, 'total_records': total_records,
+    }
+
+
+def _read_cyc_records(cyc_path: str, start: int = 0,
+                      count: int | None = None) -> np.ndarray:
+    """CYC 레코드를 numpy float32 배열로 로딩.
+
+    Returns
+    -------
+    np.ndarray
+        shape (N, n_fields) float32
+    """
+    hdr = _parse_cyc_header(cyc_path)
+    n_fields = hdr['n_fields']
+    data_start = hdr['data_start']
+    rec_size = hdr['rec_size']
+    total = hdr['total_records']
+    if count is None:
+        count = total - start
+    with open(cyc_path, 'rb') as f:
+        f.seek(data_start + start * rec_size)
+        raw = f.read(count * rec_size)
+    return np.frombuffer(raw, dtype='<f4').reshape(count, n_fields)
+
+
+def _build_fid_pos(fids: list[int]) -> dict[int, int]:
+    """FieldID → 레코드 내 float32 인덱스 매핑 (첫 등장 우선)."""
+    pos = {}
+    for i, fid in enumerate(fids):
+        if fid not in pos:
+            pos[fid] = i
+    return pos
+
+
+def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
+    """CYC 바이너리 → pne_cycle_data Cycleraw 등가 DataFrame 재구성.
+
+    .cyc 파일을 파싱하여 SaveEndData.csv와 동일한 13개 컬럼 DataFrame을 생성.
+    imp는 스텝별 시계열에서 10초 DC 내부저항으로 계산 (|V_ocv - V@10s| / |I@10s| × 1e6).
+
+    Parameters
+    ----------
+    cyc_path : str
+        .cyc 파일 경로
+
+    Returns
+    -------
+    pd.DataFrame
+        컬럼: TotlCycle, Condition, chgCap, DchgCap, Ocv, imp, volmax,
+              DchgEngD, steptime, Curr, Temp, AvgV, EndState
+        단위: CSV SaveEndData와 동일 (uV, uA, uAh, cs, mC, Wh, µΩ)
+    """
+    hdr = _parse_cyc_header(cyc_path)
+    fids = hdr['fids']
+    fid_pos = _build_fid_pos(fids)
+
+    _COLS = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp",
+             "volmax", "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
+
+    data = _read_cyc_records(cyc_path)
+    N = len(data)
+    if N == 0:
+        return pd.DataFrame(columns=_COLS)
+
+    # 필수/옵션 FieldID 인덱스
+    p_time = fid_pos[6]       # StepTime (sec)
+    p_volt = fid_pos[1]       # 전압 (mV)
+    p_curr = fid_pos[2]       # 전류 (mA)
+    p_dchg = fid_pos[27]      # 방전용량 (mAh)
+    p_chg = fid_pos.get(26)   # 충전용량 (mAh)
+    p_temp = fid_pos.get(12)  # Temp1 (°C)
+    p_temp4 = fid_pos.get(49) # Temp4 (col[24])
+    p_volmax = fid_pos.get(45)  # volmax (uV)
+    p_avgv = fid_pos.get(24)    # AvgVolt (mV)
+    p_deng = fid_pos.get(35)    # DchgEngD (Wh)
+
+    # Temp4 단위 자동 감지: °C(소수) vs mC(정수)
+    _t4_scale = 1000
+    if p_temp4 is not None:
+        sample = data[:min(200, N), p_temp4]
+        nz = sample[sample != 0.0]
+        if len(nz) > 0 and abs(float(nz[0])) > 200:
+            _t4_scale = 1  # 이미 mC 단위
+
+    fid6 = data[:, p_time]
+    step_starts = np.where(fid6 == 0.0)[0].tolist()
+    boundaries = step_starts + [N]
+
+    _CC_CV_RATIO = 0.05
+    _LOOP_JUMP = 300.0
+
+    rows = []
+    totl_cycle = 1
+
+    for k in range(len(step_starts)):
+        s = boundaries[k]
+        e = boundaries[k + 1]
+        seg = data[s:e]
+        if len(seg) == 0:
+            continue
+        M = len(seg)
+        seg_t = seg[:, p_time]
+
+        # ── 루프 마커 감지 ──
+        has_loop = False
+        if M >= 2:
+            cond_a = (float(seg_t[-1]) - float(seg_t[-2])) > _LOOP_JUMP
+            main_curr = float(np.mean(np.abs(seg[:-1, p_curr])))
+            main_dmed = float(np.median(seg[:-1, p_dchg]))
+            last_d = float(seg[-1, p_dchg])
+            cond_b = (main_curr < 20.0 and main_dmed == 0.0 and last_d > 100.0)
+            has_loop = cond_a or cond_b
+
+        main_seg = seg[:-1] if has_loop else seg
+        loop_rec = seg[-1] if has_loop else None
+        if len(main_seg) == 0:
+            continue
+
+        last = main_seg[-1]
+        n_main = len(main_seg)
+
+        # ── StepType 추론 ──
+        mean_c = float(np.mean(main_seg[:, p_curr]))
+        if mean_c > 10.0:
+            stype = 1   # 충전
+        elif mean_c < -10.0:
+            stype = 2   # 방전
+        else:
+            stype = 3   # 휴지
+
+        # ── EndState 추론 (CC/CV 상대 변동률 기반) ──
+        tail_n = max(n_main // 3, min(n_main, 3))
+        tail_c = main_seg[-tail_n:, p_curr]
+        t_std = float(np.std(tail_c))
+        t_abs = float(np.mean(np.abs(tail_c)))
+        if stype in (1, 2):
+            es = 66 if t_std / max(t_abs, 1.0) > _CC_CV_RATIO else 65
+        else:
+            es = 64
+
+        # ── imp 계산 (충방전 스텝, 10초 DC 내부저항) ──
+        imp_val = 0
+        if stype in (1, 2) and n_main >= 2:
+            v_ocv = float(main_seg[0, p_volt])  # mV
+            times = main_seg[:, p_time]
+            idx10 = int(np.searchsorted(times, 10.0))
+            if idx10 < n_main:
+                t_act = float(times[idx10])
+                if abs(t_act - 10.0) <= 2.0:
+                    v10 = float(main_seg[idx10, p_volt])
+                    i10 = float(main_seg[idx10, p_curr])
+                    if abs(i10) > 0.1:
+                        imp_val = int(abs(v_ocv - v10) / abs(i10) * 1e6)
+
+        # ── 값 추출 (CSV 단위 변환 적용) ──
+        volt_uv = int(float(last[p_volt]) * 1000)
+        curr_ua = int(float(last[p_curr]) * 1000)
+        dchg_uah = int(float(last[p_dchg]) * 1000)
+        chg_uah = int(float(last[p_chg]) * 1000) if p_chg is not None else 0
+        time_cs = int(round(float(last[p_time]) * 100))
+        if p_temp4 is not None:
+            temp_mc = int(float(last[p_temp4]) * _t4_scale)
+        elif p_temp is not None:
+            temp_mc = int(float(last[p_temp]) * 1000)
+        else:
+            temp_mc = 0
+        vmax = int(float(last[p_volmax])) if p_volmax is not None else 0
+        avgv = int(float(last[p_avgv]) * 1000) if p_avgv is not None else 0
+        deng = float(last[p_deng]) if p_deng is not None else 0.0
+
+        rows.append({
+            'TotlCycle': totl_cycle, 'Condition': stype,
+            'chgCap': chg_uah, 'DchgCap': dchg_uah,
+            'Ocv': volt_uv, 'imp': imp_val,
+            'volmax': vmax, 'DchgEngD': deng,
+            'steptime': time_cs, 'Curr': curr_ua,
+            'Temp': temp_mc, 'AvgV': avgv, 'EndState': es,
+        })
+
+        # ── 루프 마커 ──
+        if has_loop and loop_rec is not None:
+            lr = loop_rec
+            lv = int(float(lr[p_volt]) * 1000)
+            li = int(float(lr[p_curr]) * 1000)
+            ld = int(float(lr[p_dchg]) * 1000)
+            lch = int(float(lr[p_chg]) * 1000) if p_chg is not None else 0
+            lt = int(round(float(lr[p_time]) * 100))
+            if p_temp4 is not None:
+                ltemp = int(float(lr[p_temp4]) * _t4_scale)
+            elif p_temp is not None:
+                ltemp = int(float(lr[p_temp]) * 1000)
+            else:
+                ltemp = 0
+            lvmax = int(float(lr[p_volmax])) if p_volmax is not None else 0
+            lavg = int(float(lr[p_avgv]) * 1000) if p_avgv is not None else 0
+            ldeng = float(lr[p_deng]) if p_deng is not None else 0.0
+
+            rows.append({
+                'TotlCycle': totl_cycle, 'Condition': 8,
+                'chgCap': lch, 'DchgCap': ld,
+                'Ocv': lv, 'imp': 0,
+                'volmax': lvmax, 'DchgEngD': ldeng,
+                'steptime': lt, 'Curr': li,
+                'Temp': ltemp, 'AvgV': lavg, 'EndState': 64,
+            })
+            totl_cycle += 1
+
+    return pd.DataFrame(rows, columns=_COLS)
+
+
+def _process_pne_cycleraw(
+    Cycleraw: pd.DataFrame,
+    df: pd.DataFrame,
+    raw_file_path: str,
+    mincapacity: int,
+    chkir: bool,
+    chkir2: bool,
+    mkdcir: bool,
+) -> None:
+    """Cycleraw → df.NewData 변환 (DCIR 계산, pivot, 사이클 지표).
+
+    Parameters
+    ----------
+    Cycleraw : pd.DataFrame
+        SaveEndData 등가 스텝-종료 데이터 (13 컬럼)
+    df : pd.DataFrame
+        결과를 df.NewData 속성에 저장
+    raw_file_path : str
+        채널 폴더 경로 (코인셀 판별용)
+    mincapacity : int
+        최소 용량 (mAh)
+    chkir : bool
+        일반 DCIR 모드
+    chkir2 : bool
+        DCIR 보조 옵션
+    mkdcir : bool
+        MK DCIR 모드
+    """
+    # 코인셀 단위 변환
+    if is_micro_unit(raw_file_path):
+        Cycleraw.DchgCap = Cycleraw.DchgCap / 1000
+        Cycleraw.chgCap = Cycleraw.chgCap / 1000
+        Cycleraw.Curr = Cycleraw.Curr / 1000
+    if chkir:
+        dcirtemp = Cycleraw[(Cycleraw["Condition"] == 2) & (Cycleraw["volmax"] > 4100000)]
+        dcirtemp.index = dcirtemp["TotlCycle"]
+        dcir = dcirtemp.imp / 1000
+        dcir = dcir[~dcir.index.duplicated()]
+    # 1s pulse, RSS DCIR
+    elif mkdcir:
+        # dcirtemp1 - SOC 종료로 끝나는 Step 중에 0.15C 이상 충방전 C-rate 기준으로 선정 (RSS CCV)
+        dcirtemp1 = Cycleraw.loc[(Cycleraw['EndState'] == 78)
+                                 & (Cycleraw['Curr'].abs() >= 0.15 * mincapacity * 1000)]
+        # dcirtemp2 - 1s 충방전 DCIR을 위한 pulse CCV 선정
+        dcirtemp2 = Cycleraw.loc[(Cycleraw["steptime"] == 100)
+                                 & (Cycleraw["EndState"] == 64)
+                                 & (Cycleraw["Condition"].isin([1, 2]))]
+        # dcirtemp3 - pulse 후 rest 전압 산정 (RSS OCV)
+        dcirtemp3 = Cycleraw.loc[(Cycleraw['steptime'].isin([90000, 180000, 186000, 546000]))
+                                 & (Cycleraw['EndState'] == 64)
+                                 & (Cycleraw['Condition'] == 3)]
+        # dcri 계산 - dcirtemp2.imp - 1s pulse, dcirtemp1.imp - RSS
+        min_dcir_count = min(len(dcirtemp1), len(dcirtemp2), len(dcirtemp3))
+        dcirtemp1 = dcirtemp1.iloc[:min_dcir_count].copy()
+        dcirtemp2 = dcirtemp2.iloc[:min_dcir_count].copy()
+        dcirtemp3 = dcirtemp3.iloc[:min_dcir_count].copy()
+
+        # [수정] int64 컬럼에 float 할당 오류 방지 - 컬럼명으로 접근하여 타입 변환
+        dcirtemp1[dcirtemp1.columns[5]] = dcirtemp1.iloc[:, 5].astype(float)
+        dcirtemp2[dcirtemp2.columns[5]] = dcirtemp2.iloc[:, 5].astype(float)
+        dcirtemp3[dcirtemp3.columns[5]] = dcirtemp3.iloc[:, 5].astype(float)
+
+        if (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
+            for i in range(0, min_dcir_count):
+                current1 = dcirtemp1.iloc[i, 9]
+                current2 = dcirtemp2.iloc[i, 9]
+                if current1 != 0 and (current1 - current2) != 0:  # 0으로 나누는 것 방지
+                    dcirtemp1.iloc[i, 5] = abs((dcirtemp3.iloc[i, 4] - dcirtemp1.iloc[i, 4]) / current1 * 1000)
+                    dcirtemp2.iloc[i, 5] = abs((dcirtemp2.iloc[i, 4] - dcirtemp1.iloc[i, 4]) / (current1 - current2) * 1000)
+                else:
+                    dcirtemp1.iloc[i, 5] = None  # 또는 다른 기본값 설정
+                    dcirtemp2.iloc[i, 5] = None
+    # SOC5,50 10s pulse DCIR
+    else:
+        # pulse 기준, 1분 이하 pulse 기준으로 산정
+        dcirtemp = Cycleraw[(Cycleraw["Condition"] == 2) & (Cycleraw["steptime"] <= 6000)]
+        dcirtemp["dcir"] = dcirtemp.imp / 1000
+    # 필요한 모든 값을 한 번에 계산
+    pivot_data = Cycleraw.pivot_table(
+        index="TotlCycle",
+        columns="Condition",
+        values=["DchgCap", "DchgEngD", "chgCap", "Ocv", "Temp"],
+        aggfunc={
+            "DchgCap": "sum",
+            "DchgEngD": "sum",
+            "chgCap": "sum",
+            "Ocv": "min",
+            "Temp": "max"
+        }
+    )
+    # 각 계산 결과를 추출
+    Dchg = pivot_data["DchgCap"][2] / mincapacity / 1000
+    DchgEng = pivot_data["DchgEngD"][2] / 1000
+    Chg = pivot_data["chgCap"][1] / mincapacity / 1000
+    Ocv = pivot_data["Ocv"][3] / 1000000
+    Temp = pivot_data["Temp"][2] / 1000
+    # ChgCap2 계산
+    ChgCap2 = Chg.shift(periods=-1)
+    # Eff, Eff2, AvgV 계산
+    Eff = Dchg / Chg
+    Eff2 = ChgCap2 / Dchg
+    AvgV = DchgEng / Dchg / mincapacity * 1000
+    # OriCycle 생성
+    OriCycle = pd.Series(Dchg.index)
+    if chkir and len(OriCycle) == len(dcir):
+        df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, dcir, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
+        df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "dcir", "Temp", "AvgV", "OriCyc"]
+    if chkir:
+        df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
+        df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+        df.NewData.loc[0, "dcir"] = 0
+    elif mkdcir and (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0):
+        if chkir2:
+            cyccal = range(1, len(dcirtemp1)+1)
+        # dcir - RSS, dcir2 - 1s pulse
+        if (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
+            dcirtemp1 = same_add(dcirtemp1, "TotlCycle")
+            dcir = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "dcir_raw2": dcirtemp1["imp"]})
+            dcir = dcir.set_index(dcir["Cyc"])
+            dcirtemp2 = same_add(dcirtemp2, "TotlCycle")
+            dcir2 = pd.DataFrame({"Cyc": dcirtemp2["TotlCycle_add"], "dcir_raw": dcirtemp2["imp"]})
+            dcir2 = dcir2.set_index(dcir2["Cyc"])
+            dcirtemp3 = same_add(dcirtemp3, "TotlCycle")
+            df_rssocv = pd.DataFrame({"Cyc": dcirtemp3["TotlCycle_add"], "rssocv": dcirtemp3["Ocv"]/1000000})
+            df_rssocv = df_rssocv.set_index(dcir["Cyc"])
+            df_rssccv = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "rssccv": dcirtemp1["Ocv"]/1000000})
+            df_rssccv = df_rssccv.set_index(dcir["Cyc"])
+            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
+            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+            if hasattr(dcir2, "dcir_raw"):
+                df.NewData["dcir"] = dcir["dcir_raw2"]
+                df.NewData["dcir2"] = dcir2["dcir_raw"]
+                df.NewData["rssocv"] = df_rssocv["rssocv"]
+                df.NewData["rssccv"] = df_rssccv["rssccv"]
+            else:
+                df.NewData.loc[0, "dcir"] = 0
+                df.NewData.loc[0, "dcir2"] = 0
+                df.NewData.loc[0, "rssocv"] = 0
+                df.NewData.loc[0, "rssccv"] = 0
+            soc70_dcir = df.NewData.dcir2.dropna(axis=0)
+            soc70_rss_dcir = df.NewData.dcir.dropna(axis=0)
+            # 사이클당 실제 SOC 포인트 수로 판별
+            soc_count = dcirtemp2.groupby("TotlCycle").size().mode().iloc[0]
+            if soc_count >= 6:
+                # 6개 중에 4번째 것만 추출
+                soc70_dcir = soc70_dcir[3:][::6]
+                soc70_rss_dcir = soc70_rss_dcir[3:][::6]
+            else:
+                # 4개 중에 1번째 것만 추출
+                soc70_dcir = soc70_dcir[::4]
+                soc70_rss_dcir = soc70_rss_dcir[::4]
+            df.NewData["soc70_dcir"] = soc70_dcir
+            df.NewData["soc70_rss_dcir"] = soc70_rss_dcir
+    else:
+        if ('dcirtemp' in locals()):
+            if not chkir2:
+                n = 1
+                cyccal = []
+                if len(dcirtemp) != 0:
+                    dcirstep = max(1, int(len(Dchg) / len(dcirtemp) * 2 / 10) * 10)
+                    for i in range(len(dcirtemp)):
+                        cyccal.append(n)
+                        n += 1 if i % 2 == 0 else dcirstep - 1
+            else:
+                cyccal = range(1, len(dcirtemp)+1)
+            if hasattr(dcirtemp, "dcir") and not dcirtemp.dcir.empty:
+                dcir = pd.DataFrame({"Cyc": cyccal, "dcir_raw": dcirtemp.dcir})
+                dcir = dcir.set_index(dcir["Cyc"])
+            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
+            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+            if isinstance(dcir, pd.Series) and hasattr(dcir, "dcir_raw") and not dcir.dcir_raw.empty:
+                df.NewData["dcir"] = dcir["dcir_raw"]
+            elif isinstance(dcir, pd.Series):
+                df.NewData["dcir"] = dcir
+            else:
+                df.NewData.loc[0, "dcir"] = 0
+        else:
+            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
+            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+            df.NewData.loc[0, "dcir"] = 0
+    # 충·방전 쌍이 없는 사이클 제거 (출하상태 방전 등)
+    if hasattr(df, 'NewData'):
+        df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
+        df.NewData = df.NewData.reset_index(drop=True)
+
+    # ── 충전/방전 종료 전압 트래킹: ChgVolt(상한 V), DchgVolt(하한 V), ChgSteps ──
+    if hasattr(df, 'NewData') and len(df.NewData) > 0 and 'Ocv' in Cycleraw.columns:
+        ori_cyc = df.NewData['OriCyc'].astype(int)
+        chg_rows = Cycleraw.loc[Cycleraw['Condition'] == 1]
+        # 충전 상한 전압: Condition==1 최대 Ocv (CV 설정전압), 10 mV 반올림
+        if len(chg_rows) > 0:
+            chg_v = chg_rows.groupby('TotlCycle')['Ocv'].max() / 1_000_000
+            chg_v = (chg_v * 100).round() / 100
+            df.NewData['ChgVolt'] = chg_v.reindex(ori_cyc.values).values
+            # 충전 스텝 수 (사이클당 Condition==1 행 수): RPT/수명 구분용
+            chg_step_cnt = chg_rows.groupby('TotlCycle').size()
+            df.NewData['ChgSteps'] = chg_step_cnt.reindex(ori_cyc.values).fillna(0).astype(int).values
+        # 방전 하한 전압: Condition==2 최소 Ocv, 10 mV 반올림
+        dchg_rows = Cycleraw.loc[Cycleraw['Condition'] == 2]
+        if len(dchg_rows) > 0:
+            dchg_v = dchg_rows.groupby('TotlCycle')['Ocv'].min() / 1_000_000
+            dchg_v = (dchg_v * 100).round() / 100
+            df.NewData['DchgVolt'] = dchg_v.reindex(ori_cyc.values).values
+            # 방전 CC 전류(A): RPT C-rate 계산용, CC 방전 끝 전류 = 설정 전류
+            dchg_curr = dchg_rows.groupby('TotlCycle')['Curr'].apply(
+                lambda x: x.iloc[0]).abs() / 1_000_000
+            df.NewData['DchgCurr'] = dchg_curr.reindex(ori_cyc.values).values
+
+
 # PNE channel No., mincapacity 산정 기본 처리
 def pne_min_cap(raw_file_path, mincapacity, ini_crate):
     # 용량 산정
@@ -3186,173 +3555,45 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
     if (raw_file_path[-4:-1]) != "ter":
         # PNE 채널, 용량 산정
         mincapacity = pne_min_cap(raw_file_path, mincapacity, ini_crate)
-        # data 기본 처리 (csv data loading)
+        # data 기본 처리: CSV → .cyc 보충/대체 → Cycleraw 생성
+        Cycleraw = None
         if os.path.isdir(raw_file_path + "\\Restore\\"):
             subfile = [f for f in os.listdir(raw_file_path + "\\Restore\\") if f.endswith('.csv')]
             for files in subfile:
                 if "SaveEndData.csv" in files:
-                    if os.stat(raw_file_path + "\\Restore\\" + files).st_size > 0 and mincapacity is not None:
-                        Cycleraw = pd.read_csv(raw_file_path + "\\Restore\\" + files, sep=",", skiprows=0, engine="c",
+                    csv_file = raw_file_path + "\\Restore\\" + files
+                    if os.stat(csv_file).st_size > 0 and mincapacity is not None:
+                        Cycleraw = pd.read_csv(csv_file, sep=",", skiprows=0, engine="c",
                                                header=None, encoding="cp949", on_bad_lines='skip')
                         Cycleraw = Cycleraw[[27, 2, 10, 11, 8, 20, 45, 15, 17, 9, 24, 29, 6]]
                         Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp", "volmax",
                                             "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
-                        # PNE 기본 DCIR (연속 기준 10s pulse, 10s 이내 시간의 경우 단순 pulse 기준 끝나는 시간 기준)
-                        if is_micro_unit(raw_file_path):
-                            Cycleraw.DchgCap = Cycleraw.DchgCap/1000
-                            Cycleraw.chgCap = Cycleraw.chgCap/1000
-                            Cycleraw.Curr = Cycleraw.Curr/1000
-                        if chkir:
-                            dcirtemp = Cycleraw[(Cycleraw["Condition"] == 2) & (Cycleraw["volmax"] > 4100000)]
-                            dcirtemp.index = dcirtemp["TotlCycle"]
-                            dcir = dcirtemp.imp/1000
-                            dcir = dcir[~dcir.index.duplicated()]
-                        # 1s pulse, RSS DCIR
-                        elif mkdcir:
-                            # dcirtemp1 - SOC 종료로 끝나는 Step 중에 0.15C 이상 충방전 C-rate 기준으로 선정 (RSS CCV)
-                            dcirtemp1 = Cycleraw.loc[(Cycleraw['EndState'] == 78) 
-                                                     & (Cycleraw['Curr'].abs() >= 0.15 * mincapacity * 1000)]
-                            # dcirtemp2 - 1s 충방전 DCIR을 위한 pulse CCV 선정
-                            dcirtemp2 = Cycleraw.loc[(Cycleraw["steptime"] == 100) 
-                                                     & (Cycleraw["EndState"] == 64)
-                                                     & (Cycleraw["Condition"].isin([1, 2]))]
-                            # dcirtemp3 - pulse 후 rest 전압 산정 (RSS OCV)
-                            dcirtemp3 = Cycleraw.loc[(Cycleraw['steptime'].isin([90000, 180000, 186000, 546000])) 
-                                                     & (Cycleraw['EndState'] == 64) 
-                                                     & (Cycleraw['Condition'] == 3)]
-                            # dcri 계산 - dcirtemp2.imp - 1s pulse, dcirtemp1.imp - RSS
-                            min_dcir_count = min(len(dcirtemp1), len(dcirtemp2), len(dcirtemp3))
-                            dcirtemp1 = dcirtemp1.iloc[:min_dcir_count].copy()
-                            dcirtemp2 = dcirtemp2.iloc[:min_dcir_count].copy()
-                            dcirtemp3 = dcirtemp3.iloc[:min_dcir_count].copy()
-
-                            # [수정] int64 컬럼에 float 할당 오류 방지 - 컬럼명으로 접근하여 타입 변환
-                            dcirtemp1[dcirtemp1.columns[5]] = dcirtemp1.iloc[:, 5].astype(float)
-                            dcirtemp2[dcirtemp2.columns[5]] = dcirtemp2.iloc[:, 5].astype(float)
-                            dcirtemp3[dcirtemp3.columns[5]] = dcirtemp3.iloc[:, 5].astype(float)
-
-                            if (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
-                                for i in range(0, min_dcir_count):
-                                    current1 = dcirtemp1.iloc[i, 9]
-                                    current2 = dcirtemp2.iloc[i, 9]
-                                    if current1 != 0 and (current1 - current2) != 0:  # 0으로 나누는 것 방지
-                                        dcirtemp1.iloc[i, 5] = abs((dcirtemp3.iloc[i, 4] - dcirtemp1.iloc[i, 4]) / current1 * 1000)
-                                        dcirtemp2.iloc[i, 5] = abs((dcirtemp2.iloc[i, 4] - dcirtemp1.iloc[i, 4]) / (current1 - current2) * 1000)
-                                    else:
-                                        dcirtemp1.iloc[i, 5] = None  # 또는 다른 기본값 설정
-                                        dcirtemp2.iloc[i, 5] = None
-                        # SOC5,50 10s pulse DCIR
-                        else:
-                            # pulse 기준, 1분 이하 pulse 기준으로 산정
-                            dcirtemp = Cycleraw[(Cycleraw["Condition"] == 2) & (Cycleraw["steptime"] <= 6000)]
-                            dcirtemp["dcir"] = dcirtemp.imp/1000
-                        # 필요한 모든 값을 한 번에 계산
-                        pivot_data = Cycleraw.pivot_table(
-                            index="TotlCycle",
-                            columns="Condition",
-                            values=["DchgCap", "DchgEngD", "chgCap", "Ocv", "Temp"],
-                            aggfunc={
-                                "DchgCap": "sum",
-                                "DchgEngD": "sum",
-                                "chgCap": "sum",
-                                "Ocv": "min",
-                                "Temp": "max"
-                            }
-                        )
-                        # 각 계산 결과를 추출
-                        Dchg = pivot_data["DchgCap"][2] / mincapacity / 1000
-                        DchgEng = pivot_data["DchgEngD"][2] / 1000
-                        Chg = pivot_data["chgCap"][1] / mincapacity / 1000
-                        Ocv = pivot_data["Ocv"][3] / 1000000
-                        Temp = pivot_data["Temp"][2] / 1000
-                        # ChgCap2 계산
-                        ChgCap2 = Chg.shift(periods=-1)
-                        # Eff, Eff2, AvgV 계산
-                        Eff = Dchg / Chg
-                        Eff2 = ChgCap2 / Dchg
-                        AvgV = DchgEng / Dchg / mincapacity * 1000
-                        # OriCycle 생성
-                        OriCycle = pd.Series(Dchg.index)
-                        if chkir and len(OriCycle) == len(dcir):
-                            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, dcir, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-                            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "dcir", "Temp", "AvgV", "OriCyc"]
-                        if chkir:
-                            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-                            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
-                            df.NewData.loc[0, "dcir"] = 0
-                        elif mkdcir and (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0):
-                            if chkir2:
-                                cyccal = range(1, len(dcirtemp1)+1)
-                            # dcir - RSS, dcir2 - 1s pulse 
-                            if (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
-                                dcirtemp1 = same_add(dcirtemp1, "TotlCycle")
-                                dcir = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "dcir_raw2": dcirtemp1["imp"]})
-                                dcir = dcir.set_index(dcir["Cyc"])
-                                dcirtemp2 = same_add(dcirtemp2, "TotlCycle")
-                                dcir2 = pd.DataFrame({"Cyc": dcirtemp2["TotlCycle_add"], "dcir_raw": dcirtemp2["imp"]})
-                                dcir2 = dcir2.set_index(dcir2["Cyc"])
-                                dcirtemp3 = same_add(dcirtemp3, "TotlCycle")
-                                df_rssocv = pd.DataFrame({"Cyc": dcirtemp3["TotlCycle_add"], "rssocv": dcirtemp3["Ocv"]/1000000})
-                                df_rssocv = df_rssocv.set_index(dcir["Cyc"])
-                                df_rssccv = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "rssccv": dcirtemp1["Ocv"]/1000000})
-                                df_rssccv = df_rssccv.set_index(dcir["Cyc"])
-                                df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-                                df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
-                                if hasattr(dcir2, "dcir_raw"):
-                                    df.NewData["dcir"] = dcir["dcir_raw2"]
-                                    df.NewData["dcir2"] = dcir2["dcir_raw"]
-                                    df.NewData["rssocv"] = df_rssocv["rssocv"]
-                                    df.NewData["rssccv"] = df_rssccv["rssccv"]
-                                else:
-                                    df.NewData.loc[0, "dcir"] = 0
-                                    df.NewData.loc[0, "dcir2"] = 0
-                                    df.NewData.loc[0, "rssocv"] = 0
-                                    df.NewData.loc[0, "rssccv"] = 0
-                                soc70_dcir = df.NewData.dcir2.dropna(axis=0)
-                                soc70_rss_dcir = df.NewData.dcir.dropna(axis=0)
-                                # 사이클당 실제 SOC 포인트 수로 판별
-                                soc_count = dcirtemp2.groupby("TotlCycle").size().mode().iloc[0]
-                                if soc_count >= 6:
-                                    # 6개 중에 4번째 것만 추출
-                                    soc70_dcir = soc70_dcir[3:][::6]
-                                    soc70_rss_dcir = soc70_rss_dcir[3:][::6]
-                                else:
-                                    # 4개 중에 1번째 것만 추출
-                                    soc70_dcir = soc70_dcir[::4]
-                                    soc70_rss_dcir = soc70_rss_dcir[::4]
-                                df.NewData["soc70_dcir"] = soc70_dcir
-                                df.NewData["soc70_rss_dcir"] = soc70_rss_dcir
-                        else:
-                            if ('dcirtemp' in locals()):
-                                if not chkir2:
-                                    n = 1
-                                    cyccal = []
-                                    if len(dcirtemp) != 0:
-                                        dcirstep = max(1, int(len(Dchg) / len(dcirtemp) * 2 / 10) * 10)
-                                        for i in range(len(dcirtemp)):
-                                            cyccal.append(n)
-                                            n += 1 if i % 2 == 0 else dcirstep - 1
-                                else:
-                                    cyccal = range(1, len(dcirtemp)+1)
-                                if hasattr(dcirtemp, "dcir") and not dcirtemp.dcir.empty:
-                                    dcir = pd.DataFrame({"Cyc": cyccal, "dcir_raw": dcirtemp.dcir})
-                                    dcir = dcir.set_index(dcir["Cyc"])
-                                df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-                                df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
-                                if isinstance(dcir, pd.Series) and hasattr(dcir, "dcir_raw") and not dcir.dcir_raw.empty:
-                                    df.NewData["dcir"] = dcir["dcir_raw"]
-                                elif isinstance(dcir, pd.Series):
-                                    df.NewData["dcir"] = dcir
-                                else:
-                                    df.NewData.loc[0, "dcir"] = 0
-                            else:
-                                df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-                                df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
-                                df.NewData.loc[0, "dcir"] = 0
-                        # 충·방전 쌍이 없는 사이클 제거 (출하상태 방전 등)
-                        if hasattr(df, 'NewData'):
-                            df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
-                            df.NewData = df.NewData.reset_index(drop=True)
+                    break
+        # .cyc 보충/대체 로직
+        cyc_files = [os.path.join(raw_file_path, f) for f in os.listdir(raw_file_path) if f.endswith('.cyc')]
+        cyc_path = cyc_files[0] if cyc_files else None
+        if Cycleraw is not None and cyc_path is not None:
+            # (A) CSV + .cyc 실시간 보충: CSV 최신 사이클 이후 데이터 추가
+            try:
+                cyc_df = _cyc_to_cycle_df(cyc_path)
+                if len(cyc_df) > 0:
+                    csv_max_cycle = Cycleraw["TotlCycle"].max()
+                    supplement = cyc_df[cyc_df["TotlCycle"] > csv_max_cycle]
+                    if len(supplement) > 0:
+                        Cycleraw = pd.concat([Cycleraw, supplement], ignore_index=True)
+            except Exception:
+                pass  # .cyc 보충 실패 시 CSV만 사용
+        elif Cycleraw is None and cyc_path is not None and mincapacity is not None:
+            # (B) .cyc 단독 재구성 (CSV 미존재)
+            try:
+                Cycleraw = _cyc_to_cycle_df(cyc_path)
+                if len(Cycleraw) == 0:
+                    Cycleraw = None
+            except Exception:
+                Cycleraw = None
+        # Cycleraw 처리 (DCIR + pivot + df.NewData)
+        if Cycleraw is not None and mincapacity is not None:
+            _process_pne_cycleraw(Cycleraw, df, raw_file_path, mincapacity, chkir, chkir2, mkdcir)
     return [mincapacity, df]
 
 # PNE Step charge Profile data 처리 class
@@ -11888,12 +12129,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
                             channel_map, fig, axes_list, sub_channel_map=None,
                             classify_info=None, classify_by_group=None,
-                            save_context=None):
+                            save_context=None, voltage_condition_text=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
         classify_by_group: list[list[dict]] — 그룹별 분류 결과 (그룹당 한줄 출력용)
         save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
+        voltage_condition_text: str | None — '장수명 조건 : ...' 형태 전압 변경 요약
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # save_context에 classify_info 포함
@@ -11920,7 +12162,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ── 사이클 카테고리 분류 정보 바 ──
         if classify_info:
-            info_label = self._build_classify_info_label(classify_info, classify_by_group)
+            info_label = self._build_classify_info_label(
+                classify_info, classify_by_group,
+                voltage_condition_text=voltage_condition_text)
             if info_label:
                 tab_layout.addWidget(info_label)
 
@@ -11936,12 +12180,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
 
     @staticmethod
-    def _build_classify_info_label(classify_info: list[dict], classify_by_group: list[list[dict]] | None = None):
+    def _build_classify_info_label(classify_info: list[dict], classify_by_group: list[list[dict]] | None = None,
+                                   voltage_condition_text: str | None = None):
         """분류 결과 리스트 → 접을 수 있는 충방전 패턴 정보 위젯 생성.
 
         사이클 그룹별 패턴을 한 줄씩 표시.
         모든 그룹의 패턴이 동일하면 하나만 표시 (중복 제거).
         다를 경우 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 그룹별 패턴 표시.
+        voltage_condition_text: '장수명 조건 : ...' 형태로 전압 변경 요약 (None이면 미표시)
         """
         from PyQt6.QtWidgets import (QLabel, QWidget, QHBoxLayout,
                                       QPushButton, QFrame, QVBoxLayout)
@@ -11954,7 +12200,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # ── 그룹별 대표 패턴 수집 (그룹당 한 줄) ──
         # classify_by_group이 있으면 그룹별 첫 패턴 사용, 없으면 채널별 폴백
         group_patterns: list[tuple[str, str]] = []  # (group_label, pattern_line)
-        voltage_changes_summary: str | None = None  # 전압 변경 요약 (전 그룹 공통)
         if classify_by_group:
             for grp_idx, grp_crs in enumerate(classify_by_group):
                 for cr in grp_crs:
@@ -11968,16 +12213,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 f' | 방전 {ap["n_discharge_steps"]}step: {dchg}')
                         group_patterns.append((label, line))
                         break  # 그룹당 대표 하나만
-                # 전압 변경 정보 (첫 번째 발견 기준)
-                if not voltage_changes_summary:
-                    for cr in grp_crs:
-                        vc = cr.get('accel_voltage_changes')
-                        if vc:
-                            parts = []
-                            for c in vc:
-                                parts.append(f'cyc{c["cycle"]} step{c["step"]}: {c["from_V"]:.3f}→{c["to_V"]:.3f}V')
-                            voltage_changes_summary = '⚡ 압종료전압 변경: ' + ', '.join(parts)
-                            break
+
         else:
             # 폴백: 채널별
             for cr in classify_info:
@@ -12008,15 +12244,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             suffix = (f'  <span style="color:#8491B4;">({len(grp_list)}그룹 동일)</span>'
                       if len(grp_list) > 1 else '')
             vc_html = ''
-            if voltage_changes_summary:
-                vc_html = (f'<br/><span style="color:#E64B35; font-size:10px;">'
-                           f'{voltage_changes_summary}</span>')
+            if voltage_condition_text:
+                vc_html = (f'<br/><span style="font-size:10px;">'
+                           f'{voltage_condition_text}</span>')
             html = (f'<span style="color:#3C5488; font-size:11px;">'
                     f'{single_line}{suffix}{vc_html}</span>')
             label = QLabel(html)
             label.setStyleSheet(_BAR_QSS)
             label.setWordWrap(True)
-            max_h = 40 if voltage_changes_summary else 24
+            max_h = 54 if voltage_condition_text else 24
             label.setMaximumHeight(max_h)
             return label
 
@@ -12089,11 +12325,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             row_label.setWordWrap(True)
             popup_layout.addWidget(row_label)
 
-        # 전압 변경 이력
-        if voltage_changes_summary:
+        # 장수명 조건 전압 변경
+        if voltage_condition_text:
             vc_label = QLabel(
-                f'<span style="color:#E64B35; font-size:11px; font-weight:bold;">'
-                f'{voltage_changes_summary}</span>')
+                f'<span style="font-size:11px;">'
+                f'{voltage_condition_text}</span>')
             vc_label.setWordWrap(True)
             popup_layout.addWidget(vc_label)
 
@@ -12105,8 +12341,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 popup.hide()
                 toggle_btn.setText("▶ 전체")
             else:
-                # 헤더 바 바로 아래에 팝업 배치
+                # 헤더 바 바로 아래에 팝업 배치, 너비를 헤더 바와 동일하게 유지
                 pos = container.mapToGlobal(container.rect().bottomLeft())
+                popup.setFixedWidth(container.width())
                 popup.move(pos.x(), pos.y() + 2)
                 popup.adjustSize()
                 popup.show()
@@ -12499,6 +12736,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
             output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+        # 충전/방전 종료 전압 시트 (컬럼 존재 시)
+        if "ChgVolt" in nd.columns:
+            cyctempchg = nd[["OriCyc", "ChgVolt"]].dropna(subset=["ChgVolt"])
+            output_data(cyctempchg, "충전전압", writecolno, start_row, "OriCyc", cyc_head)
+            output_data(cyctempchg, "충전전압", _dc, start_row, "ChgVolt", ["ChgVolt(V)"])
+        if "DchgVolt" in nd.columns:
+            cyctempdchg = nd[["OriCyc", "DchgVolt"]].dropna(subset=["DchgVolt"])
+            output_data(cyctempdchg, "방전전압", writecolno, start_row, "OriCyc", cyc_head)
+            output_data(cyctempdchg, "방전전압", _dc, start_row, "DchgVolt", ["DchgVolt(V)"])
 
     # ═══════════════════════════════════════════════════════════════
     # 통합 Cycle 분석 관련 메서드
@@ -12948,15 +13194,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             for line in format_accel_pattern(ap):
                                 _perf_logger.info(line)
                             _seen_patterns.add(pat_key)
-                    # 가속수명 전압 변경 이력
-                    vc = rep.get('accel_voltage_changes')
-                    if vc:
-                        _perf_logger.info(f'    ⚡ 충전 압종료 전압 변경 감지 ({len(vc)}건):')
-                        for chg in vc:
-                            _perf_logger.info(
-                                f'      cyc {chg["cycle"]}, step{chg["step"]}: '
-                                f'{chg["from_V"]:.3f}V → {chg["to_V"]:.3f}V'
-                            )
+
 
             # 탭 할당: 개별=group별, 통합=file_idx별
             if is_individual:
@@ -13397,11 +13635,134 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         'mkdcir': self.mkdcir.isChecked(),
                         'tab_mode': 'individual' if is_individual else 'overall',
                     }
+                    # ── 장수명 조건 전압 변경 요약 (RPT/수명 분리, ChgSteps 기반) ──
+                    _vc_text = None
+                    for gi in group_indices:
+                        _g = folder_groups[gi]
+                        for _pi in range(len(_g.paths)):
+                            _fi = flat_idx_of.get((gi, _pi), -1)
+                            if _fi not in subfolder_map:
+                                continue
+                            for _si in range(len(subfolder_map[_fi])):
+                                if (_fi, _si) not in loaded_data:
+                                    continue
+                                _, _ct = loaded_data[(_fi, _si)]
+                                if _ct is None or _ct[1] is None:
+                                    continue
+                                if not hasattr(_ct[1], 'NewData'):
+                                    continue
+                                _nd = _ct[1].NewData
+                                _has_chg = 'ChgVolt' in _nd.columns
+                                _has_dchg = 'DchgVolt' in _nd.columns
+                                _has_steps = 'ChgSteps' in _nd.columns
+                                if not (_has_chg or _has_dchg) or len(_nd) < 2:
+                                    continue
+                                # RPT/수명 사이클 분리 (ChgSteps <= 2: RPT, >= 3: 수명)
+                                if _has_steps:
+                                    _is_life = _nd['ChgSteps'] >= 3
+                                    # 수명 사이클 중 mode 스텝 수만 포함 (불완전 사이클 제외)
+                                    _life_raw = _nd[_is_life]
+                                    if len(_life_raw) > 0:
+                                        _life_mode = _life_raw['ChgSteps'].mode().iloc[0]
+                                        _is_life = _nd['ChgSteps'] == _life_mode
+                                else:
+                                    _is_life = pd.Series(True, index=_nd.index)
+                                _rpt = _nd[(_nd['ChgSteps'] <= 2) if _has_steps else ~_is_life]
+                                _life = _nd[_is_life]
+                                if len(_life) < 2:
+                                    continue
+                                # RPT 전압 범위 (고정값)
+                                _rpt_chg = _rpt['ChgVolt'].dropna().mode().iloc[0] if _has_chg and len(_rpt) > 0 and _rpt['ChgVolt'].dropna().size > 0 else None
+                                _rpt_dchg = _rpt['DchgVolt'].dropna().mode().iloc[0] if _has_dchg and len(_rpt) > 0 and _rpt['DchgVolt'].dropna().size > 0 else None
+                                # RPT C-rate: 방전 CC 전류 / mincapacity 로 계산
+                                _rpt_crate_s = ''
+                                if mincapacity > 0 and 'DchgCurr' in _nd.columns and len(_rpt) > 0:
+                                    _rpt_curr = _rpt['DchgCurr'].dropna()
+                                    if len(_rpt_curr) > 0:
+                                        _cr = _rpt_curr.median() / (mincapacity / 1000)
+                                        _cr_r = round(_cr * 10) / 10  # 0.1C 단위 반올림
+                                        if _cr_r > 0:
+                                            _rpt_crate_s = f'({_cr_r:g}C)'
+                                # 수명 사이클 전압 변경 이벤트
+                                _vc_events = []  # [(cycle, voltage, delta_mV, kind)]
+                                _init_chg = _init_dchg = None
+                                # 충전상한: 감소 방향만
+                                if _has_chg:
+                                    _cdf = _life[['OriCyc', 'ChgVolt']].dropna(subset=['ChgVolt'])
+                                    if len(_cdf) > 0:
+                                        _cvv = _cdf['ChgVolt'].values
+                                        _ccy = _cdf['OriCyc'].astype(int).values
+                                        _init_chg = _cvv[0]
+                                        _prev = _cvv[0]
+                                        for _i in range(1, len(_cvv)):
+                                            if _cvv[_i] < _prev:
+                                                _d = round((_cvv[_i] - _prev) * 1000)
+                                                _vc_events.append((_ccy[_i], _cvv[_i], _d, 'chg'))
+                                                _prev = _cvv[_i]
+                                # 방전하한: 증가 방향만
+                                if _has_dchg:
+                                    _ddf = _life[['OriCyc', 'DchgVolt']].dropna(subset=['DchgVolt'])
+                                    if len(_ddf) > 0:
+                                        _dvv = _ddf['DchgVolt'].values
+                                        _dcy = _ddf['OriCyc'].astype(int).values
+                                        _init_dchg = _dvv[0]
+                                        _prev = _dvv[0]
+                                        for _i in range(1, len(_dvv)):
+                                            if _dvv[_i] > _prev:
+                                                _d = round((_dvv[_i] - _prev) * 1000)
+                                                _vc_events.append((_dcy[_i], _dvv[_i], _d, 'dchg'))
+                                                _prev = _dvv[_i]
+                                # HTML 조립
+                                _parts = []
+                                # RPT 전압 범위
+                                if _rpt_dchg is not None and _rpt_chg is not None:
+                                    _parts.append(
+                                        f'<span style="color:#8491B4;">'
+                                        f'RPT{_rpt_crate_s}: {_rpt_dchg:.2f}~{_rpt_chg:.2f}V</span>')
+                                # 수명 초기 전압 범위
+                                if _init_dchg is not None and _init_chg is not None:
+                                    _parts.append(
+                                        f'<span style="color:#333; font-weight:bold;">'
+                                        f'수명: {_init_dchg:.2f}~{_init_chg:.2f}V</span>')
+                                elif _init_chg is not None:
+                                    _parts.append(
+                                        f'<span style="color:#333; font-weight:bold;">'
+                                        f'수명 상한: {_init_chg:.2f}V</span>')
+                                elif _init_dchg is not None:
+                                    _parts.append(
+                                        f'<span style="color:#333; font-weight:bold;">'
+                                        f'수명 하한: {_init_dchg:.2f}V</span>')
+                                # 변경 이벤트
+                                if _vc_events:
+                                    _vc_events.sort(key=lambda x: x[0])
+                                    for _cy, _v, _dm, _k in _vc_events:
+                                        if _k == 'chg':
+                                            _arrow = '▼'
+                                            _clr = '#3C5488'
+                                            _tag = '상한'
+                                        else:
+                                            _arrow = '▲'
+                                            _clr = '#E64B35'
+                                            _tag = '하한'
+                                        _parts.append(
+                                            f'<span style="color:{_clr}; font-weight:bold;">'
+                                            f'{_tag} {_v:.2f}V</span>'
+                                            f'<span style="color:#888;"> '
+                                            f'({_cy}cy, {_dm:+d}mV{_arrow})</span>')
+                                if len(_parts) > 1:  # RPT + 수명 또는 수명 + 이벤트
+                                    _vc_text = ' ▸ '.join(_parts)
+                                    break
+                            if _vc_text:
+                                break
+                        if _vc_text:
+                            break
+
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                              channel_map, fig, axes_list, sub_channel_map,
                                              classify_info=_tab_classify if _tab_classify else None,
                                              classify_by_group=_tab_classify_by_group if _tab_classify_by_group else None,
-                                             save_context=_save_ctx)
+                                             save_context=_save_ctx,
+                                             voltage_condition_text=_vc_text)
                     tab_no += 1
                     if suptitle_name:
                         output_fig(self.figsaveok, suptitle_name)
