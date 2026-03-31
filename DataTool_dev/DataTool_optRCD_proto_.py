@@ -1060,6 +1060,19 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                     result["AveVolt[V]"] = result["Pow[mWh]"] / result["Cap[mAh]"]
             return result
         
+        # 병합 전: merge_group 기반 충전 PeakVolt max 및 스텝 수 저장
+        _chg_pre = Cycleraw[Cycleraw['Condition'] == 1]
+        _mg_chg = merge_group[_chg_pre.index]
+        if 'PeakVolt[V]' in _chg_pre.columns and len(_chg_pre) > 0:
+            _peak_by_mg = _chg_pre.groupby(_mg_chg)['PeakVolt[V]'].max()
+            _peak_by_mg = (_peak_by_mg * 100).round() / 100
+            _steps_by_mg = _chg_pre.groupby(_mg_chg).size()
+            _last_tc = _chg_pre.groupby(_mg_chg)['TotlCycle'].last()
+            _chg_volt_map = pd.Series(_peak_by_mg.values, index=_last_tc.values)
+            _chg_steps_map = pd.Series(_steps_by_mg.values, index=_last_tc.values)
+        else:
+            _chg_volt_map = pd.Series(dtype=float)
+            _chg_steps_map = pd.Series(dtype=int)
         # 그룹별로 병합 수행
         Cycleraw = Cycleraw.groupby(merge_group, group_keys=False).apply(merge_rows, include_groups=False)
         Cycleraw = Cycleraw.reset_index(drop=True)
@@ -1068,6 +1081,9 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                            & (Cycleraw["Finish"] != "Volt") & (Cycleraw["Cap[mAh]"] > (mincapacity/60))]
         chgdata.index = chgdata["TotlCycle"]
         Chg = chgdata["Cap[mAh]"]
+        # 충전 전압/스텝: chgdata 인덱스(TotlCycle)에 맞춰 조회
+        _ChgVolt = _chg_volt_map.reindex(chgdata.index)
+        _ChgSteps = _chg_steps_map.reindex(chgdata.index).fillna(0).astype(int)
         # Rest End Voltage 추출
         Ocv = chgdata["Ocv"]
         # Cycle raw index 변경
@@ -1127,10 +1143,12 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                 DchgEng = DchgEng.iloc[1:]
                 AvgV = AvgV.iloc[1:]
                 OriCycle = OriCycle.iloc[1:]
-            # Chg/Ocv를 Dchg 인덱스에 위치 기반 재정렬
+            # Chg/Ocv/ChgVolt/ChgSteps를 Dchg 인덱스에 위치 기반 재정렬
             _nmin = min(len(Chg), len(Dchg))
             Chg = pd.Series(Chg.values[:_nmin], index=Dchg.index[:_nmin])
             Ocv = pd.Series(Ocv.values[:_nmin], index=Dchg.index[:_nmin])
+            _ChgVolt = pd.Series(_ChgVolt.values[:_nmin], index=Dchg.index[:_nmin])
+            _ChgSteps = pd.Series(_ChgSteps.values[:_nmin], index=Dchg.index[:_nmin])
             Dchg = Dchg.iloc[:_nmin]
             Temp = Temp.iloc[:_nmin]
             DchgEng = DchgEng.iloc[:_nmin]
@@ -1153,6 +1171,11 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         else:
             df.NewData.loc[0, "dcir"] = 0
         df.NewData = df.NewData.drop("TotlCycle", axis=1)
+        # ── 충전 상한 전압 트래킹: ChgVolt, ChgSteps (위치 기반 정렬) ──
+        if len(df.NewData) > 0 and len(_ChgVolt.dropna()) > 0:
+            _n = min(len(_ChgVolt), len(df.NewData))
+            df.NewData.loc[df.NewData.index[:_n], 'ChgVolt'] = _ChgVolt.values[:_n]
+            df.NewData.loc[df.NewData.index[:_n], 'ChgSteps'] = _ChgSteps.values[:_n]
     else:
         sys.exit()
     return [mincapacity, df]
@@ -1712,6 +1735,217 @@ def _snap_voltage(raw: float) -> float:
     return float(Decimal(str(raw)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#   Toyo PTN 파일 파서
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+def _find_ptn_file(channel_path: str) -> str | None:
+    """채널 폴더에서 .PTN 메인 파일 경로를 반환. 없으면 None.
+
+    _Option.PTN, _Option2.PTN 은 제외한다.
+    """
+    try:
+        for f in os.listdir(channel_path):
+            if f.upper().endswith('.PTN') and '_Option' not in f:
+                return os.path.join(channel_path, f)
+    except OSError:
+        pass
+    return None
+
+
+def _read_ptn_option_capacity(channel_path: str) -> float:
+    """_Option.PTN 에서 BaseCellCapacity(mAh) 읽기. 실패 시 0."""
+    try:
+        for f in os.listdir(channel_path):
+            if '_Option.PTN' in f and 'Option2' not in f:
+                opt_path = os.path.join(channel_path, f)
+                with open(opt_path, 'r', encoding='utf-8', errors='replace') as fh:
+                    for line in fh:
+                        if 'BaseCellCapacity=' in line:
+                            val = line.split('=', 1)[1].strip()
+                            return float(val)
+    except (OSError, ValueError):
+        pass
+    return 0.0
+
+
+def _parse_ptn_step(line: str) -> dict:
+    """PTN 스텝 라인(543+ chars) 파싱 → 충전/방전/루프 정보 딕셔너리.
+
+    Toyo PTN 고정폭 필드 위치 (검증 완료):
+      충전측: mode[1:4] cur[5:15] cv_v[17:23] cc_endv[32:39] cutoff[55:63] rest[106:111]
+      방전측: mode[262:266] cur[268:276] endv[311:318] rest[361:366]
+      루프:   loop_to[535:539] loop_count[539:543]
+      모드코드: 00=CC, 10=CCCV, 30=Rest
+    """
+    def _f(s: str) -> float:
+        """공백/대시 제거 후 float 변환. 실패 시 0."""
+        v = s.strip().replace('-', '')
+        try:
+            return float(v) if v else 0.0
+        except ValueError:
+            return 0.0
+
+    chg_mode_raw = line[1:4].strip()
+    dchg_mode_raw = line[262:266].strip()
+
+    # 모드 해석
+    _MODE = {'00': 'CC', '10': 'CCCV', '30': 'Rest'}
+    chg_mode = _MODE.get(chg_mode_raw, 'Unknown')
+    dchg_mode = _MODE.get(dchg_mode_raw, 'Unknown')
+
+    return {
+        'chg_mode': chg_mode,
+        'chg_current_mA': _f(line[5:15]),
+        'chg_cv_voltage': _f(line[17:23]),
+        'chg_cc_endvolt': _f(line[32:39]),
+        'chg_cutoff_mA': _f(line[55:63]),
+        'chg_rest_min': _f(line[106:111]),
+        'dchg_mode': dchg_mode,
+        'dchg_current_mA': _f(line[268:276]),
+        'dchg_endvolt': _f(line[311:318]),
+        'dchg_rest_min': _f(line[361:366]),
+        'loop_to': int(_f(line[535:539])),
+        'loop_count': int(_f(line[539:543])),
+    }
+
+
+def _parse_toyo_ptn(
+    channel_path: str, capacity: float,
+) -> dict | None:
+    """Toyo .PTN 파일에서 가속수명 충방전 패턴 정보 추출.
+
+    PTN 파일의 루프 구간을 식별하여 첫 번째 루프 그룹의
+    충전/방전 스텝별 CC/CCCV 모드, C-rate, cutoff 전압/전류를 반환한다.
+    복수 루프 그룹(전압 step-down)이 있으면 전압 변경 정보도 포함.
+
+    Parameters
+    ----------
+    channel_path : str
+        채널 폴더 경로 (.PTN 파일이 있는 폴더)
+    capacity : float
+        공칭 용량 (mAh)
+
+    Returns
+    -------
+    dict | None
+        analyze_accel_pattern 호환 형식:
+        {
+            'charge_steps': [...],
+            'discharge_steps': [...],
+            'n_charge_steps': int,
+            'n_discharge_steps': int,
+            'voltage_schedule': [(loop_idx, chg_max_v, loop_count), ...],
+        }
+    """
+    ptn_file = _find_ptn_file(channel_path)
+    if not ptn_file:
+        return None
+
+    try:
+        with open(ptn_file, 'r', encoding='utf-8', errors='replace') as fh:
+            lines = fh.readlines()
+    except OSError:
+        return None
+    if len(lines) < 3:
+        return None
+
+    # Option 파일에서 용량 읽기 (인자 capacity가 0이면 대체)
+    ptn_cap = _read_ptn_option_capacity(channel_path)
+    if ptn_cap > 0:
+        capacity = ptn_cap
+
+    # 모든 스텝 파싱
+    steps: list[dict] = []
+    for line in lines[1:]:
+        if len(line) < 100:
+            continue
+        steps.append(_parse_ptn_step(line))
+
+    if not steps:
+        return None
+
+    # 루프 그룹 식별: loop_to > 0 인 스텝이 루프 종점
+    # 루프 범위 = [loop_to, current_step] (1-based → 0-based 보정)
+    loop_groups: list[tuple[int, int, int]] = []  # (start_idx, end_idx, loop_count)
+    for i, s in enumerate(steps):
+        if s['loop_to'] > 0:
+            start = s['loop_to'] - 1  # 1-based → 0-based
+            loop_groups.append((start, i, s['loop_count']))
+
+    if not loop_groups:
+        return None
+
+    # 첫 번째 루프 그룹에서 충전/방전 스텝 추출
+    lg_start, lg_end, _ = loop_groups[0]
+    accel_steps = steps[lg_start:lg_end + 1]
+
+    charge_steps: list[dict] = []
+    discharge_steps: list[dict] = []
+    chg_idx = 0
+    dchg_idx = 0
+
+    for s in accel_steps:
+        # 충전 스텝 추출 (CC 또는 CCCV, Rest 제외)
+        if s['chg_mode'] in ('CC', 'CCCV'):
+            chg_idx += 1
+            if s['chg_mode'] == 'CCCV':
+                voltage = s['chg_cv_voltage']
+                charge_steps.append({
+                    'step': chg_idx,
+                    'mode': 'CCCV',
+                    'crate': round(s['chg_current_mA'] / capacity, 2) if capacity else 0,
+                    'current_mA': round(s['chg_current_mA'], 1),
+                    'voltage_cutoff': round(voltage, 3),
+                    'current_cutoff_crate': round(s['chg_cutoff_mA'] / capacity, 2) if capacity else 0,
+                    'current_cutoff_mA': round(s['chg_cutoff_mA'], 1),
+                })
+            else:
+                voltage = s['chg_cc_endvolt']
+                charge_steps.append({
+                    'step': chg_idx,
+                    'mode': 'CC',
+                    'crate': round(s['chg_current_mA'] / capacity, 2) if capacity else 0,
+                    'current_mA': round(s['chg_current_mA'], 1),
+                    'voltage_cutoff': round(voltage, 3),
+                })
+
+        # 방전 스텝 추출 (CC만, Rest 제외)
+        if s['dchg_mode'] == 'CC' and s['dchg_current_mA'] > 0:
+            dchg_idx += 1
+            discharge_steps.append({
+                'step': dchg_idx,
+                'mode': 'CC',
+                'crate': round(s['dchg_current_mA'] / capacity, 2) if capacity else 0,
+                'current_mA': round(s['dchg_current_mA'], 1),
+                'voltage_cutoff': round(s['dchg_endvolt'], 3),
+            })
+
+    if not charge_steps:
+        return None
+
+    # 복수 루프 그룹 전압 스케줄 (전압 step-down 패턴 추출)
+    voltage_schedule: list[tuple[int, float, int]] = []
+    for lg_idx, (lg_s, lg_e, lg_cnt) in enumerate(loop_groups):
+        # 해당 루프 그룹 내 충전 최대 CV 전압
+        max_chg_v = 0.0
+        for s in steps[lg_s:lg_e + 1]:
+            if s['chg_mode'] == 'CCCV' and s['chg_cv_voltage'] > max_chg_v:
+                max_chg_v = s['chg_cv_voltage']
+            elif s['chg_mode'] == 'CC' and s['chg_cc_endvolt'] > max_chg_v:
+                max_chg_v = s['chg_cc_endvolt']
+        voltage_schedule.append((lg_idx, round(max_chg_v, 3), lg_cnt))
+
+    return {
+        'charge_steps': charge_steps,
+        'discharge_steps': discharge_steps,
+        'n_charge_steps': len(charge_steps),
+        'n_discharge_steps': len(discharge_steps),
+        'voltage_schedule': voltage_schedule,
+    }
+
+
 def _snap_accel_pattern(pattern: dict) -> dict:
     """패턴 분석 결과의 C-rate/전압을 표준값으로 일괄 스냅."""
     for step in pattern['charge_steps']:
@@ -2058,7 +2292,10 @@ def analyze_accel_pattern(
         if result is None:
             result = _analyze_accel_pattern_pne(channel_path, capacity)
     else:
-        result = _analyze_accel_pattern_toyo(channel_path, capacity)
+        # PTN 파서 우선 → capacity.log 폴백
+        result = _parse_toyo_ptn(channel_path, capacity)
+        if result is None:
+            result = _analyze_accel_pattern_toyo(channel_path, capacity)
     # C-rate / 전압 표준값 스냅 (충방전기 미세 오차 보정)
     if result:
         result = _snap_accel_pattern(result)
@@ -2114,7 +2351,7 @@ def _fmt_step(s: dict) -> str:
     if s['mode'] == 'CCCV':
         if 'current_cutoff_crate' in s:
             icut = _fmt_crate(s['current_cutoff_crate'])
-            return f'[{ord_str}] CCCV {cr}C/{vcut}V/cut{icut}C'
+            return f'[{ord_str}] CCCV {cr}C/{vcut}V/{icut}C cutoff'
         return f'[{ord_str}] CCCV {cr}C/{vcut}V'
     return f'[{ord_str}] CC {cr}C/{vcut}V'
 
@@ -5471,6 +5708,23 @@ class Ui_sitool(object):
         font.setPointSize(10)
         self.cycle_tab.setFont(font)
         self.cycle_tab.setObjectName("cycle_tab")
+        # 미선택 탭은 축소, 선택 탭은 확대
+        self.cycle_tab.setStyleSheet("""
+            QTabBar::tab {
+                padding: 3px 6px;
+                min-width: 28px;
+                max-width: 50px;
+                font-size: 9pt;
+            }
+            QTabBar::tab:selected {
+                padding: 4px 10px;
+                min-width: 40px;
+                max-width: 200px;
+                font-weight: bold;
+                font-size: 10pt;
+            }
+        """)
+        self.cycle_tab.setUsesScrollButtons(True)
         self.horizontalLayout_112.addWidget(self.cycle_tab, 0)
         self.horizontalLayout_172.addLayout(self.horizontalLayout_112)
         self.tabWidget.addTab(self.CycTab, "")
@@ -12150,7 +12404,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             channel_map, fig, axes_list, sub_channel_map=None,
                             classify_info=None, classify_by_group=None,
                             save_context=None, voltage_condition_text=None,
-                            group_names=None):
+                            group_names=None, tab_name=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
@@ -12158,6 +12412,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
         voltage_condition_text: str | list[tuple[str, str]] | None — 전압 변경 요약 (str=단일, list=다중 그룹)
         group_names: list[str] | None — 그룹별 표시명 (패턴 라벨용)
+        tab_name: str | None — 탭 표시명 (None이면 tab_no 사용)
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # save_context에 classify_info 포함
@@ -12192,7 +12447,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 tab_layout.addWidget(info_label)
 
         tab_layout.addWidget(canvas)
-        self.cycle_tab.addTab(tab, str(tab_no))
+        _display_name = tab_name if tab_name else str(tab_no)
+        self.cycle_tab.addTab(tab, _display_name)
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
         # 범례가 figure 오른쪽 외부에 있으면 여백 확보
@@ -12238,7 +12494,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
                         dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
                         line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                                f'<br/>&nbsp;&nbsp;&nbsp;방전 {ap["n_discharge_steps"]}step: {dchg}')
+                                f'<br/>▷ 방전 {ap["n_discharge_steps"]}step: {dchg}')
                         group_patterns.append((label, line))
                         break  # 그룹당 대표 하나만
 
@@ -12251,7 +12507,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chg = ' → '.join(_fmt_step(s) for s in ap['charge_steps'])
                     dchg = ' → '.join(_fmt_step(s) for s in ap['discharge_steps'])
                     line = (f'▷ 충전 {ap["n_charge_steps"]}step: {chg}'
-                            f'<br/>&nbsp;&nbsp;&nbsp;방전 {ap["n_discharge_steps"]}step: {dchg}')
+                            f'<br/>▷ 방전 {ap["n_discharge_steps"]}step: {dchg}')
                     group_patterns.append((ch_name, line))
 
         if not group_patterns:
@@ -12282,14 +12538,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     vc_html = '<br/>' + ''.join(_vc_parts)
                 else:
                     vc_html = f'<br/>{voltage_condition_text}'
+            grp_tag = ', '.join(grp_list)
             html = (f'<span style="color:#3C5488; font-size:11px;">'
-                    f'{single_line}{suffix}</span>{vc_html}')
+                    f'[{grp_tag}]{suffix}<br/>'
+                    f'{single_line}</span>{vc_html}')
             label = QLabel(html)
             label.setStyleSheet(_BAR_QSS)
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            # 높이: 패턴 2줄(44px) + 전압 테이블 행수
-            max_h = 44
+            # 높이: 그룹명 1줄(14px) + 패턴 2줄(44px) + 전압 테이블 행수
+            max_h = 58
             if voltage_condition_text:
                 if isinstance(voltage_condition_text, str):
                     max_h += max(voltage_condition_text.count('<tr>'), 1) * 18
@@ -12311,7 +12569,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         first_chs = next(iter(groups.values()))
         n_other = len(groups) - 1
         ch_tag = f'[{first_chs[0]}] ' if first_chs[0] else ''
-        _header_pat = first_line.replace('<br/>&nbsp;&nbsp;&nbsp;방전', ' | 방전')
+        _header_pat = first_line.replace('<br/>▷ 방전', ' | 방전')
         header_html = (
             f'<span style="color:#3C5488; font-size:11px;">'
             f'{ch_tag}{_header_pat}  '
@@ -12344,8 +12602,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             'QFrame { background: #F0F4F8; '
             'border: 1px solid #B0B8C0; border-radius: 5px; }')
         popup_layout = QVBoxLayout(popup)
-        popup_layout.setContentsMargins(10, 8, 10, 8)
-        popup_layout.setSpacing(3)
+        popup_layout.setContentsMargins(8, 4, 8, 4)
+        popup_layout.setSpacing(1)
 
         # 제목
         title_label = QLabel(
@@ -12361,7 +12619,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if ch_str:
                 row_html = (
                     f'<span style="font-size:11px;">'
-                    f'<b style="color:{color};">[{ch_str}]</b> '
+                    f'<b style="color:{color};">[{ch_str}]</b><br/>'
                     f'<span style="color:#3C5488;">{pat_line}</span></span>')
             else:
                 row_html = (
@@ -12822,6 +13080,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
                 if len(parts) >= 2:
                     rows.append((' '.join(parts[:-1]), parts[-1]))
+                elif len(parts) == 1 and parts[0]:
+                    # 탭 구분 없는 레거시 형식 → 드라이브 문자 패턴으로 분리
+                    fb_name, fb_path = WindowClass._split_name_path_fallback(
+                        line.rstrip('\n\r'))
+                    if fb_path:
+                        rows.append((fb_name, fb_path))
         return rows
 
     @staticmethod
@@ -12857,6 +13121,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 elif len(parts) >= 2:
                     rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
                                  'channel': '', 'capacity': ''})
+                elif len(parts) == 1 and parts[0]:
+                    # 탭 구분 없는 레거시 형식 → 드라이브 문자 패턴으로 분리
+                    fb_name, fb_path = WindowClass._split_name_path_fallback(
+                        line.rstrip('\n\r'))
+                    if fb_path:
+                        rows.append({'name': fb_name, 'path': fb_path,
+                                     'channel': '', 'capacity': ''})
         if preserve_groups:
             return rows, link_mode
         # 기존 호환: None 제거
@@ -12891,6 +13162,82 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             is_link=len(all_paths) > 1, data_type=data_type,
             file_idx=file_idx, source_file=source_file
         )
+
+    def _expand_txt_to_groups(self, txt_path: str, file_idx: int) -> list:
+        """txt 경로 파일 1개를 파싱하여 CycleGroup 리스트로 확장
+
+        Parameters
+        ----------
+        txt_path : str
+            경로 파일(.txt/.csv) 절대 경로
+        file_idx : int
+            탭 구분용 소스 파일 인덱스
+
+        Returns
+        -------
+        list[CycleGroup]
+        """
+        result = []
+        _expanded, _file_link = self._parse_path_file_extended(txt_path, preserve_groups=True)
+        if not _expanded:
+            return result
+        # link_mode 자동 감지 및 적용
+        if _file_link is not None and self.chk_link_cycle.isEnabled():
+            self.chk_link_cycle.setChecked(_file_link)
+        # 빈 행 기준 그룹 분리
+        _file_groups: list[list[dict]] = []
+        _cur: list[dict] = []
+        for _r in _expanded:
+            if _r is None:
+                if _cur:
+                    _file_groups.append(_cur)
+                    _cur = []
+                continue
+            _cur.append(_r)
+        if _cur:
+            _file_groups.append(_cur)
+        # 각 그룹별 CycleGroup 생성
+        for _fg in _file_groups:
+            _gname = _fg[0]['name'] or os.path.basename(_fg[0]['path'])
+            _cpaths = [x['path'] for x in _fg]
+            _cnames = [x['name'] for x in _fg]
+            _chs = [_parse_channel_str(x['channel']) for x in _fg]
+            _caps = []
+            for x in _fg:
+                try:
+                    _caps.append(float(x.get('capacity', '') or 0))
+                except ValueError:
+                    _caps.append(0.0)
+            _has_chs = any(c for c in _chs)
+            if _has_chs:
+                _max_pos = max((len(c) for c in _chs), default=0)
+                _lmap = {}
+                for _pos in range(_max_pos):
+                    _ul = None
+                    for _ri in range(len(_fg)):
+                        _c = _chs[_ri]
+                        if _pos < len(_c) and _c[_pos] != '-':
+                            _n = _normalize_ch(_c[_pos])
+                            if _ul is None:
+                                _ul = _n
+                            _lmap[_n] = _ul
+                _clean = [[_normalize_ch(c) for c in ch if c != '-'] for ch in _chs]
+                result.append(CycleGroup(
+                    name=_gname, paths=_cpaths, path_names=_cnames,
+                    is_link=len(_cpaths) > 1, data_type='folder',
+                    file_idx=file_idx, source_file=txt_path,
+                    per_path_channels=_clean,
+                    channel_link_map=_lmap,
+                    per_path_capacities=_caps,
+                ))
+            else:
+                result.append(CycleGroup(
+                    name=_gname, paths=_cpaths, path_names=_cnames,
+                    is_link=len(_cpaths) > 1, data_type='folder',
+                    file_idx=file_idx, source_file=txt_path,
+                    per_path_capacities=_caps,
+                ))
+        return result
 
     def _parse_cycle_input(self):
         """입력 모드를 판별하여 list[CycleGroup] 반환
@@ -12946,128 +13293,83 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ))
 
         elif self._has_table_data():
-            # 테이블에서 읽기
+            # 테이블에서 읽기 — txt/csv 파일은 자동 확장, 각 소스에 고유 file_idx 부여
+            _next_file_idx = 0  # 소스 파일별 고유 인덱스 (탭 분리용)
+
             if link_mode:
                 # 연결 모드: 빈 행으로 그룹 분리
                 row_groups = self._get_table_row_groups()
                 for grp_idx, grp_rows in enumerate(row_groups):
-                    # .txt/.csv 경로 파일 확장: 파일 내부 경로를 읽어 그룹 생성
-                    if len(grp_rows) == 1:
-                        _tp = grp_rows[0]['path']
+                    # 그룹 내 txt/csv 파일 행과 일반 폴더 행 분리
+                    _txt_rows = []
+                    _folder_rows = []
+                    for r in grp_rows:
+                        _tp = r['path']
                         if _tp.lower().endswith(('.txt', '.csv')) and os.path.isfile(_tp):
-                            _expanded, _file_link = self._parse_path_file_extended(_tp, preserve_groups=True)
-                            if _expanded:
-                                # link_mode 자동 감지 및 적용
-                                if _file_link is not None and self.chk_link_cycle.isEnabled():
-                                    self.chk_link_cycle.setChecked(_file_link)
-                                # 빈 행 기준 그룹 분리
-                                _file_groups = []
-                                _cur = []
-                                for _r in _expanded:
-                                    if _r is None:
-                                        if _cur:
-                                            _file_groups.append(_cur)
-                                            _cur = []
-                                        continue
-                                    _cur.append(_r)
-                                if _cur:
-                                    _file_groups.append(_cur)
-                                # 각 그룹별 CycleGroup 생성
-                                for _fg in _file_groups:
-                                    # 첫 행의 name을 그룹명으로 사용
-                                    _gname = _fg[0]['name'] or os.path.basename(_fg[0]['path'])
-                                    _cpaths = [x['path'] for x in _fg]
-                                    _cnames = [x['name'] for x in _fg]
-                                    _chs = [_parse_channel_str(x['channel']) for x in _fg]
-                                    _caps = []
-                                    for x in _fg:
-                                        try:
-                                            _caps.append(float(x.get('capacity', '') or 0))
-                                        except ValueError:
-                                            _caps.append(0.0)
-                                    _has_chs = any(c for c in _chs)
-                                    if _has_chs:
-                                        _max_pos = max((len(c) for c in _chs), default=0)
-                                        _lmap = {}
-                                        for _pos in range(_max_pos):
-                                            _ul = None
-                                            for _ri in range(len(_fg)):
-                                                _c = _chs[_ri]
-                                                if _pos < len(_c) and _c[_pos] != '-':
-                                                    _n = _normalize_ch(_c[_pos])
-                                                    if _ul is None:
-                                                        _ul = _n
-                                                    _lmap[_n] = _ul
-                                        _clean = [[_normalize_ch(c) for c in ch if c != '-'] for ch in _chs]
-                                        groups.append(CycleGroup(
-                                            name=_gname, paths=_cpaths, path_names=_cnames,
-                                            is_link=len(_cpaths) > 1, data_type='folder',
-                                            file_idx=0, source_file=_tp,
-                                            per_path_channels=_clean,
-                                            channel_link_map=_lmap,
-                                            per_path_capacities=_caps,
-                                        ))
-                                    else:
-                                        groups.append(CycleGroup(
-                                            name=_gname, paths=_cpaths, path_names=_cnames,
-                                            is_link=len(_cpaths) > 1, data_type='folder',
-                                            file_idx=0, source_file=_tp,
-                                            per_path_capacities=_caps,
-                                        ))
-                                continue  # 아래 일반 처리 건너뜀
-                    file_idx = 0  # 테이블은 단일 소스 → 통합 탭 시 1개 탭으로 합침
-                    all_paths = [r['path'] for r in grp_rows]
-                    all_pnames = [r['name'] for r in grp_rows]
-                    all_channels = [_parse_channel_str(r['channel']) for r in grp_rows]
-                    # 테이블 용량 수집 (per-path)
-                    all_caps = []
-                    for r in grp_rows:
-                        try:
-                            all_caps.append(float(r.get('capacity', '') or 0))
-                        except ValueError:
-                            all_caps.append(0.0)
-                    has_channels = any(chs for chs in all_channels)
-                    _src = ''
-                    for r in grp_rows:
-                        if 'mAh' in r.get('path', '') or 'mAh' in r.get('name', ''):
-                            _src = r['path']
-                            break
+                            _txt_rows.append(r)
+                        else:
+                            _folder_rows.append(r)
 
-                    if has_channels:
-                        # 채널 위치 기반 매핑: 같은 위치의 채널은 첫 번째 채널로 통합
-                        max_pos = max((len(chs) for chs in all_channels), default=0)
-                        link_map = {}  # {norm_ch: unified_sub_label}
-                        for pos in range(max_pos):
-                            unified_label = None
-                            for row_idx in range(len(grp_rows)):
-                                chs = all_channels[row_idx]
-                                if pos < len(chs) and chs[pos] != '-':
-                                    norm = _normalize_ch(chs[pos])
-                                    if unified_label is None:
-                                        unified_label = norm
-                                    link_map[norm] = unified_label
-                        # '-' 제거한 per_path_channels 구성
-                        clean_channels = []
-                        for chs in all_channels:
-                            clean_channels.append([_normalize_ch(ch) for ch in chs if ch != '-'])
-                        groups.append(CycleGroup(
-                            name=all_pnames[0] or os.path.basename(all_paths[0]),
-                            paths=all_paths, path_names=all_pnames,
-                            is_link=len(all_paths) > 1, data_type='folder',
-                            file_idx=file_idx, source_file=_src,
-                            per_path_channels=clean_channels,
-                            channel_link_map=link_map,
-                            per_path_capacities=all_caps,
-                        ))
-                    else:
-                        # 채널 미지정: 그룹 내 모든 경로를 연결
-                        groups.append(CycleGroup(
-                            name=all_pnames[0] or os.path.basename(all_paths[0]),
-                            paths=all_paths, path_names=all_pnames,
-                            is_link=len(all_paths) > 1, data_type='folder',
-                            file_idx=file_idx, source_file=_src,
-                            per_path_capacities=all_caps,
-                        ))
+                    # txt 파일 행 확장: 각 txt 파일별 고유 file_idx 부여
+                    for _tr in _txt_rows:
+                        _tp = _tr['path']
+                        _expanded_groups = self._expand_txt_to_groups(_tp, _next_file_idx)
+                        if _expanded_groups:
+                            groups.extend(_expanded_groups)
+                            _next_file_idx += 1
+
+                    # 일반 폴더 행 처리 (기존 로직)
+                    if _folder_rows:
+                        file_idx = _next_file_idx
+                        _next_file_idx += 1
+                        all_paths = [r['path'] for r in _folder_rows]
+                        all_pnames = [r['name'] for r in _folder_rows]
+                        all_channels = [_parse_channel_str(r['channel']) for r in _folder_rows]
+                        all_caps = []
+                        for r in _folder_rows:
+                            try:
+                                all_caps.append(float(r.get('capacity', '') or 0))
+                            except ValueError:
+                                all_caps.append(0.0)
+                        has_channels = any(chs for chs in all_channels)
+                        _src = ''
+                        for r in _folder_rows:
+                            if 'mAh' in r.get('path', '') or 'mAh' in r.get('name', ''):
+                                _src = r['path']
+                                break
+
+                        if has_channels:
+                            max_pos = max((len(chs) for chs in all_channels), default=0)
+                            link_map = {}
+                            for pos in range(max_pos):
+                                unified_label = None
+                                for row_idx in range(len(_folder_rows)):
+                                    chs = all_channels[row_idx]
+                                    if pos < len(chs) and chs[pos] != '-':
+                                        norm = _normalize_ch(chs[pos])
+                                        if unified_label is None:
+                                            unified_label = norm
+                                        link_map[norm] = unified_label
+                            clean_channels = []
+                            for chs in all_channels:
+                                clean_channels.append([_normalize_ch(ch) for ch in chs if ch != '-'])
+                            groups.append(CycleGroup(
+                                name=all_pnames[0] or os.path.basename(all_paths[0]),
+                                paths=all_paths, path_names=all_pnames,
+                                is_link=len(all_paths) > 1, data_type='folder',
+                                file_idx=file_idx, source_file=_src,
+                                per_path_channels=clean_channels,
+                                channel_link_map=link_map,
+                                per_path_capacities=all_caps,
+                            ))
+                        else:
+                            groups.append(CycleGroup(
+                                name=all_pnames[0] or os.path.basename(all_paths[0]),
+                                paths=all_paths, path_names=all_pnames,
+                                is_link=len(all_paths) > 1, data_type='folder',
+                                file_idx=file_idx, source_file=_src,
+                                per_path_capacities=all_caps,
+                            ))
             else:
                 # 개별 모드: 빈 행 무시, 각 행 = 개별 그룹
                 table_rows = self._get_table_rows()
@@ -13076,7 +13378,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ext = os.path.splitext(path)[1].lower()
                     channels = _parse_channel_str(row['channel'])
                     valid_chs = [ch for ch in channels if ch != '-']
-                    # 테이블 용량
                     try:
                         _cap = float(row.get('capacity', '') or 0)
                     except ValueError:
@@ -13087,19 +13388,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         groups.append(CycleGroup(
                             name=row['name'] or os.path.splitext(os.path.basename(path))[0],
                             paths=[path], path_names=[row['name']],
-                            data_type='excel', file_idx=0, source_file=path,
+                            data_type='excel', file_idx=_next_file_idx, source_file=path,
                             per_path_capacities=_caps,
                         ))
-                    elif ext in ('.txt', '.csv'):
-                        groups.append(self._build_group_from_lines([path], file_idx=0))
+                        _next_file_idx += 1
+                    elif ext in ('.txt', '.csv') and os.path.isfile(path):
+                        # txt 파일 확장: 파일 내부 경로를 읽어 그룹 생성
+                        _expanded_groups = self._expand_txt_to_groups(path, _next_file_idx)
+                        if _expanded_groups:
+                            groups.extend(_expanded_groups)
+                            _next_file_idx += 1
                     else:
                         groups.append(CycleGroup(
                             name=row['name'] or os.path.basename(path),
                             paths=[path], path_names=[row['name']],
-                            data_type='folder', file_idx=0, source_file='',
+                            data_type='folder', file_idx=_next_file_idx, source_file='',
                             per_path_channels=[valid_chs] if valid_chs else [],
                             per_path_capacities=_caps,
                         ))
+                        _next_file_idx += 1
 
         else:
             # 폴더 선택
@@ -13328,14 +13635,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _seen_patterns.add(pat_key)
 
 
-            # 탭 할당: 개별=group별, 통합=file_idx별
+            # 탭 할당: 개별=group별, 통합=전체 합산
             if is_individual:
                 tab_units = [[gi] for gi in range(len(folder_groups))]
             else:
-                by_file = OrderedDict()
-                for gi, g in enumerate(folder_groups):
-                    by_file.setdefault(g.file_idx, []).append(gi)
-                tab_units = list(by_file.values())
+                # 통합 모드: 모든 그룹을 하나의 탭에 합침 (다중 소스도 동일)
+                tab_units = [list(range(len(folder_groups)))]
+
+            # 탭 이름: 넘버링
+            _tab_names: list[str] = [str(i) for i in range(len(tab_units))]
 
             total_tabs = len(tab_units)
             # 사용자 원본 설정 보존 (탭 단위 리셋용)
@@ -13916,13 +14224,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                     # 그룹 이름 리스트 (패턴 라벨용)
                     _group_names = [folder_groups[gi].name for gi in group_indices]
+                    _current_tab_name = _tab_names[tab_idx] if tab_idx < len(_tab_names) else str(tab_no)
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                              channel_map, fig, axes_list, sub_channel_map,
                                              classify_info=_tab_classify if _tab_classify else None,
                                              classify_by_group=_tab_classify_by_group if _tab_classify_by_group else None,
                                              save_context=_save_ctx,
                                              voltage_condition_text=_vc_text,
-                                             group_names=_group_names)
+                                             group_names=_group_names,
+                                             tab_name=_current_tab_name)
                     tab_no += 1
                     if suptitle_name:
                         output_fig(self.figsaveok, suptitle_name)
@@ -14259,6 +14569,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             mapping['path'] = 0
         return mapping
 
+    @staticmethod
+    def _split_name_path_fallback(text: str) -> tuple[str, str]:
+        """탭 구분이 없는 줄에서 cyclename/cyclepath를 드라이브 문자 패턴으로 분리.
+
+        따옴표 포함 경로, UNC 경로도 처리.
+        패턴 미감지 시 ('', stripped_text) 반환.
+        """
+        text = text.strip()
+        if not text:
+            return '', ''
+        # 따옴표+드라이브 문자 패턴: "C:\ 또는 'C:\
+        m = re.search(r'(?:(?<=\s)|^)["\'][A-Za-z]:\\', text)
+        if m:
+            name = text[:m.start()].strip()
+            path = text[m.start():].strip().strip('"').strip("'")
+            return name, path
+        # 드라이브 문자 패턴: C:\ (공백 뒤 또는 줄 시작)
+        m = re.search(r'(?:(?<=\s)|^)[A-Za-z]:\\', text)
+        if m:
+            name = text[:m.start()].strip()
+            path = text[m.start():].strip().strip('"').strip("'")
+            return name, path
+        # UNC 경로: \\server\share
+        m = re.search(r'(?:(?<=\s)|^)\\\\', text)
+        if m:
+            name = text[:m.start()].strip()
+            path = text[m.start():].strip().strip('"').strip("'")
+            return name, path
+        # 패턴 미감지 → 전체를 path로 간주
+        return '', text.strip('"').strip("'")
+
     def _load_path_file_to_table(self):
         """Path 파일(.txt)을 읽어 테이블에 채움
         헤더 기반 열 자동 감지로 모든 이전 형식 지원:
@@ -14299,6 +14640,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 name = parts[col_map['name']] if col_map['name'] is not None and col_map['name'] < len(parts) else ''
                 channel = parts[col_map['channel']] if col_map['channel'] is not None and col_map['channel'] < len(parts) else ''
                 capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
+                # 탭 구분 부족 → 드라이브 문자 패턴으로 name/path 분리 시도
+                if not path and len(parts) <= 1:
+                    fb_name, fb_path = self._split_name_path_fallback(
+                        line.rstrip('\n\r'))
+                    if fb_path:
+                        name, path = fb_name, fb_path
                 if path:
                     rows.append({'name': name, 'path': path,
                                  'channel': channel, 'capacity': capacity})
