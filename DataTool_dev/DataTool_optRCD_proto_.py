@@ -1531,6 +1531,7 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
     if not capacity:
         capacity = _extract_capacity_from_path(parent_path)
 
+    _raw_df = None  # CSV 원본 (analyze_accel_pattern 재사용)
     if is_pne:
         # PNE: SaveEndData.csv 로딩
         restore_path = os.path.join(channel_path, 'Restore')
@@ -1548,12 +1549,12 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
             return None
         fp = os.path.join(restore_path, save_end_file)
         try:
-            df = pd.read_csv(fp, header=None, encoding='cp949', on_bad_lines='skip')
+            _raw_df = pd.read_csv(fp, header=None, encoding='cp949', on_bad_lines='skip')
         except Exception:
             return None
-        if df.shape[1] < 28:
+        if _raw_df.shape[1] < 28:
             return None
-        summary = df[[27, 2, 6, 9, 10, 11, 17]].copy()
+        summary = _raw_df[[27, 2, 6, 9, 10, 11, 17]].copy()
         summary.columns = ['TotlCycle', 'StepType', 'EndState', 'Current', 'ChgCap', 'DchgCap', 'StepTime']
         classified = classify_pne_cycles(summary, int(capacity))
     else:
@@ -1568,13 +1569,13 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
             else:
                 return None
         try:
-            df = pd.read_csv(cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip')
+            _raw_df = pd.read_csv(cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip')
         except Exception:
             return None
         needed = ['Condition', 'TotlCycle', 'Cap[mAh]']
-        if not all(c in df.columns for c in needed):
+        if not all(c in _raw_df.columns for c in needed):
             return None
-        classified = classify_toyo_cycles(df[['Condition', 'TotlCycle', 'Cap[mAh]']].copy(), int(capacity))
+        classified = classify_toyo_cycles(_raw_df[['Condition', 'TotlCycle', 'Cap[mAh]']].copy(), int(capacity))
 
     if not classified:
         return None
@@ -1618,9 +1619,9 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
             'schedule_type': sch_struct['schedule_type'],
         }
 
-    # 가속수명 충방전 패턴 분석 (.sch_struct 있으면 .sch 파싱 재사용)
+    # 가속수명 충방전 패턴 분석 (이미 로딩한 CSV 재사용)
     accel_pattern = analyze_accel_pattern(
-        channel_path, capacity, classified, is_pne,
+        channel_path, capacity, classified, is_pne, raw_df=_raw_df,
     )
     if accel_pattern:
         result['accel_pattern'] = accel_pattern
@@ -1995,27 +1996,32 @@ def _extract_toyo_step_currents(
 
 def _analyze_accel_pattern_toyo(
     channel_path: str, capacity: float,
+    raw_df: pd.DataFrame | None = None,
 ) -> dict | None:
     """Toyo capacity.log 기반 가속수명 충방전 패턴 분석.
 
     첫 번째 가속수명 사이클의 충전/방전 스텝별
     C-rate, CC/CCCV 모드, voltage/current cutoff 정보를 추출한다.
     """
-    cap_log_path = os.path.join(channel_path, 'capacity.log')
-    if not os.path.isfile(cap_log_path):
-        for f in os.listdir(channel_path):
-            if f.upper() == 'CAPACITY.LOG':
-                cap_log_path = os.path.join(channel_path, f)
-                break
-        else:
-            return None
+    # 이미 로딩된 DataFrame 재사용 (없으면 파일 로딩)
+    if raw_df is not None:
+        df = raw_df.copy()
+    else:
+        cap_log_path = os.path.join(channel_path, 'capacity.log')
+        if not os.path.isfile(cap_log_path):
+            for f in os.listdir(channel_path):
+                if f.upper() == 'CAPACITY.LOG':
+                    cap_log_path = os.path.join(channel_path, f)
+                    break
+            else:
+                return None
 
-    try:
-        df = pd.read_csv(
-            cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip',
-        )
-    except Exception:
-        return None
+        try:
+            df = pd.read_csv(
+                cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip',
+            )
+        except Exception:
+            return None
 
     # 컬럼명 통일
     col_map = {
@@ -2127,6 +2133,7 @@ def _analyze_accel_pattern_toyo(
 
 def _analyze_accel_pattern_pne(
     channel_path: str, capacity: float,
+    raw_df: pd.DataFrame | None = None,
 ) -> dict | None:
     """PNE SaveEndData 기반 가속수명 충방전 패턴 분석.
 
@@ -2141,28 +2148,32 @@ def _analyze_accel_pattern_pne(
       [39] CC구간 용량 (μAh)
       [40] CV구간 용량 (μAh)
     """
-    restore_path = os.path.join(channel_path, 'Restore')
-    if not os.path.isdir(restore_path):
-        return None
+    # 이미 로딩된 DataFrame 재사용 (없으면 파일 로딩)
+    if raw_df is not None:
+        df = raw_df
+    else:
+        restore_path = os.path.join(channel_path, 'Restore')
+        if not os.path.isdir(restore_path):
+            return None
 
-    sed_file = None
-    try:
-        for f in os.listdir(restore_path):
-            if 'SaveEndData' in f and f.endswith('.csv'):
-                sed_file = f
-                break
-    except OSError:
-        return None
-    if not sed_file:
-        return None
+        sed_file = None
+        try:
+            for f in os.listdir(restore_path):
+                if 'SaveEndData' in f and f.endswith('.csv'):
+                    sed_file = f
+                    break
+        except OSError:
+            return None
+        if not sed_file:
+            return None
 
-    try:
-        df = pd.read_csv(
-            os.path.join(restore_path, sed_file),
-            header=None, encoding='cp949', on_bad_lines='skip',
-        )
-    except Exception:
-        return None
+        try:
+            df = pd.read_csv(
+                os.path.join(restore_path, sed_file),
+                header=None, encoding='cp949', on_bad_lines='skip',
+            )
+        except Exception:
+            return None
     if df.shape[1] < 41:
         return None
 
@@ -2255,6 +2266,7 @@ def _analyze_accel_pattern_pne(
 def analyze_accel_pattern(
     channel_path: str, capacity: float,
     classified: list[dict], is_pne: bool,
+    raw_df: pd.DataFrame | None = None,
 ) -> dict | None:
     """가속수명 사이클의 충방전 패턴(스텝 수, C-rate, cutoff) 분석.
 
@@ -2268,6 +2280,8 @@ def analyze_accel_pattern(
         classify_*_cycles 결과
     is_pne : bool
         PNE 여부
+    raw_df : pd.DataFrame | None
+        이미 로딩한 원본 CSV (재사용하여 파일 재로딩 방지)
 
     Returns
     -------
@@ -2290,12 +2304,12 @@ def analyze_accel_pattern(
             if sch_file:
                 result = extract_accel_pattern_from_sch(sch_file, capacity)
         if result is None:
-            result = _analyze_accel_pattern_pne(channel_path, capacity)
+            result = _analyze_accel_pattern_pne(channel_path, capacity, raw_df=raw_df)
     else:
         # PTN 파서 우선 → capacity.log 폴백
         result = _parse_toyo_ptn(channel_path, capacity)
         if result is None:
-            result = _analyze_accel_pattern_toyo(channel_path, capacity)
+            result = _analyze_accel_pattern_toyo(channel_path, capacity, raw_df=raw_df)
     # C-rate / 전압 표준값 스냅 (충방전기 미세 오차 보정)
     if result:
         result = _snap_accel_pattern(result)
@@ -2320,11 +2334,13 @@ def _ordinal(n: int) -> str:
     return f'{n}th'
 
 
+@functools.lru_cache(maxsize=128)
 def _find_sch_file(channel_path: str) -> str | None:
     """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None.
 
     동일 스케줄에 _000, _001 등 채널별 사본이 있으면
     접미사 번호가 가장 큰 파일(=최신 패턴)을 선택한다.
+    lru_cache: 같은 경로 중복 탐색 방지 (classify + analyze_accel 2회 호출).
     """
     _SCH_SUFFIX_RE = re.compile(r'^(.+?)(?:_(\d{3}))\.sch$', re.IGNORECASE)
     try:
@@ -13558,17 +13574,29 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     per_path_capacities=_per_path_caps
                 )
 
-            # ── 경로별 사이클 카테고리 분류 ──
+            # ── 경로별 사이클 카테고리 분류 (병렬) ──
             with PerfSection('사이클 카테고리 분류'):
                 _classify_results = {}  # {flat_idx: {sub_idx: classify_result}}
+                _classify_tasks = []  # (fi, sub_idx, ch_path, cap_val)
                 for fi, subs in subfolder_map.items():
                     _classify_results[fi] = {}
                     cap_val = _per_path_caps[fi] if _per_path_caps and fi < len(_per_path_caps) else 0
                     for sub_idx, ch_path in enumerate(subs):
                         if 'Pattern' in os.path.basename(ch_path):
                             continue
+                        _classify_tasks.append((fi, sub_idx, ch_path, cap_val))
+
+                _cls_workers = calc_optimal_workers(len(_classify_tasks))
+                _perf_logger.info(f'  분류 병렬화: tasks={len(_classify_tasks)}, workers={_cls_workers}')
+                with ThreadPoolExecutor(max_workers=_cls_workers) as _cls_ex:
+                    _cls_futures = {
+                        _cls_ex.submit(classify_channel_path, t[2], t[3]): t
+                        for t in _classify_tasks
+                    }
+                    for future in as_completed(_cls_futures):
+                        fi, sub_idx, ch_path, _ = _cls_futures[future]
                         try:
-                            cr = classify_channel_path(ch_path, cap_val)
+                            cr = future.result()
                             if cr:
                                 cr['channel'] = os.path.basename(ch_path)
                                 _classify_results[fi][sub_idx] = cr
