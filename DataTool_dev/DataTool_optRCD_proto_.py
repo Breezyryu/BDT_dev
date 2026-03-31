@@ -14409,6 +14409,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             groups.append(current_group)
         return groups
 
+    def _get_table_rows_ffill(self) -> list[dict]:
+        """테이블의 모든 행을 dict 리스트로 반환 (빈 경로/경로명 forward-fill).
+
+        ECT 모드에서 중복 경로 공란 처리된 행을 복원하여 반환.
+        채널/용량 열에 값이 있는 행만 포함.
+        """
+        rows = []
+        last_path = ''
+        last_name = ''
+        for r in range(self.cycle_path_table.rowCount()):
+            path = self._get_table_cell(r, 1)
+            name = self._get_table_cell(r, 0)
+            channel = self._get_table_cell(r, 2)
+            capacity = self._get_table_cell(r, 3)
+            # forward-fill: 빈 경로/경로명은 직전 유효값 사용
+            if path:
+                last_path = path
+                last_name = name
+            else:
+                path = last_path
+                if not name:
+                    name = last_name
+            # 경로도 채널도 없으면 완전 빈 행 → 건너뛰기
+            if not path and not channel:
+                continue
+            rows.append({
+                'name': name, 'path': path,
+                'channel': channel, 'capacity': capacity,
+            })
+        return rows
+
     def _autofill_table_empty_cells(self):
         """사이클 분석 시 테이블 셀 자동 채우기
         경로(col1)를 기준으로 경로명(col0), 채널(col2), 용량(col3) 유추
@@ -14544,12 +14575,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.clearContents()
 
     # 인식 가능한 헤더 키워드 (소문자)
+    # ECT 형식: path/cycle/cd/save 도 인식
     _HEADER_ALIASES = {
-        'cyclename': 'name', 'name': 'name',
+        'cyclename': 'name', 'name': 'name', 'save': 'name',
         'cyclepath': 'path', 'path': 'path',
-        'channel': 'channel', 'ch': 'channel',
-        'capacity': 'capacity', 'cap': 'capacity',
+        'channel': 'channel', 'ch': 'channel', 'cycle': 'channel',
+        'capacity': 'capacity', 'cap': 'capacity', 'cd': 'capacity',
     }
+    # ECT 형식 판별용 키워드 (이 3개가 모두 존재하면 ECT)
+    _ECT_HEADER_KEYS = {'cycle', 'cd', 'save'}
 
     @staticmethod
     def _detect_path_columns(header_line: str) -> tuple[dict, bool]:
@@ -14626,12 +14660,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             all_lines = f.readlines()
         # 메타데이터 수집 + 첫 번째 비어있지 않은 줄(헤더 후보) 탐색
         header_idx = None
+        ect_mode = None  # ECT 형식 메타데이터
         for i, raw in enumerate(all_lines):
             stripped = raw.strip()
             if not stripped:
                 continue
             if stripped.startswith('#link_mode='):
                 link_mode = stripped.split('=', 1)[1].strip() == '1'
+                continue
+            if stripped.startswith('#ect_mode='):
+                ect_mode = stripped.split('=', 1)[1].strip() == '1'
                 continue
             if stripped.startswith('#'):
                 continue
@@ -14683,13 +14721,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 연결처리 체크박스 복원
         if link_mode is not None and self.chk_link_cycle.isEnabled():
             self.chk_link_cycle.setChecked(link_mode)
+        # ECT 형식 감지: 헤더에 ECT 전용 키워드(cycle, cd, save)가 모두 있으면 ECT
+        _header_cols_lower = set(
+            c.strip().lower() for c in header_line.rstrip('\n\r').split('\t'))
+        is_ect = (ect_mode is True) or (
+            is_header and self._ECT_HEADER_KEYS.issubset(_header_cols_lower))
+        if is_ect:
+            self.chk_ectpath.setChecked(True)
+            # 연속 동일 경로 중복 제거 (시각적 정리)
+            prev_path = None
+            for row in rows:
+                if row is None:
+                    prev_path = None
+                    continue
+                if prev_path and row['path'] == prev_path:
+                    row['path'] = ''
+                    row['name'] = ''
+                else:
+                    prev_path = row['path']
+        else:
+            self.chk_ectpath.setChecked(False)
         if rows:
             self._set_table_rows(rows)
 
     def _save_table_to_path_file(self):
         """테이블 내용을 4열 탭구분 Path 파일로 저장
-        - 연결처리 상태를 메타데이터로 보존
+        - 연결처리 / ECT 상태를 메타데이터로 보존
         - 빈 행(그룹 구분자)도 함께 저장
+        - ECT 모드: forward-fill로 경로 복원 후 ECT 원본 헤더로 저장
         """
         if not self._has_table_data():
             return
@@ -14702,24 +14761,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if not fp:
             return
         link_mode = self.chk_link_cycle.isChecked()
+        ect_mode = self.chk_ectpath.isChecked()
         with open(fp, 'w', encoding='UTF-8') as f:
             f.write("\n")  # DRM 회피용 공란
             f.write(f"#link_mode={int(link_mode)}\n")
-            f.write("cyclename\tcyclepath\tchannel\tcapacity\n")
-            # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
-            last_data_row = -1
-            for r in range(self.cycle_path_table.rowCount()):
-                if self._get_table_cell(r, 1):
-                    last_data_row = r
-            for r in range(last_data_row + 1):
-                name = self._get_table_cell(r, 0)
-                path = self._get_table_cell(r, 1)
-                ch = self._get_table_cell(r, 2)
-                cap = self._get_table_cell(r, 3)
-                if path:
-                    f.write(f"{name}\t{path}\t{ch}\t{cap}\n")
-                elif link_mode:
-                    f.write("\n")  # 그룹 구분자 (빈 행)
+            f.write(f"#ect_mode={int(ect_mode)}\n")
+            if ect_mode:
+                # ECT 원본 헤더 형식으로 저장 (forward-fill 복원)
+                f.write("path\tcycle\tCD\tsave\n")
+                table_rows = self._get_table_rows_ffill()
+                for r in table_rows:
+                    f.write(f"{r['path']}\t{r['channel']}\t"
+                            f"{r['capacity']}\t{r['name']}\n")
+            else:
+                f.write("cyclename\tcyclepath\tchannel\tcapacity\n")
+                # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
+                last_data_row = -1
+                for r in range(self.cycle_path_table.rowCount()):
+                    if self._get_table_cell(r, 1):
+                        last_data_row = r
+                for r in range(last_data_row + 1):
+                    name = self._get_table_cell(r, 0)
+                    path = self._get_table_cell(r, 1)
+                    ch = self._get_table_cell(r, 2)
+                    cap = self._get_table_cell(r, 3)
+                    if path:
+                        f.write(f"{name}\t{path}\t{ch}\t{cap}\n")
+                    elif link_mode:
+                        f.write("\n")  # 그룹 구분자 (빈 행)
 
     def _cycle_table_copy(self):
         """선택 셀 → 클립보드 (탭 구분, 여러 행/열 지원)"""
@@ -16386,11 +16455,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 용량 선정 관련
         global writer
         write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
-        root = Tk()
-        root.withdraw()
-        datafilepath = filedialog.askopenfilename(initialdir="d://", title="Choose Test files")
-        if datafilepath:
-            cycle_path = pd.read_csv(datafilepath, sep="\t", engine="c", encoding="UTF-8", skiprows=1, on_bad_lines='skip')
+        # 테이블에 데이터 있으면 테이블에서 읽기, 없으면 파일 선택
+        if self._has_table_data():
+            # ECT 테이블 매핑: name→save, path→path, channel→cycle, capacity→CD
+            table_rows = self._get_table_rows_ffill()
+            ect_path = np.array([r['path'] for r in table_rows])
+            ect_cycle = np.array([r['channel'] for r in table_rows])
+            ect_CD = np.array([r['capacity'] for r in table_rows])
+            ect_save = np.array([r['name'] for r in table_rows])
+        else:
+            root = Tk()
+            root.withdraw()
+            datafilepath = filedialog.askopenfilename(
+                initialdir="d://", title="Choose Test files")
+            if not datafilepath:
+                self.ContinueConfirm.setEnabled(True)
+                return
+            cycle_path = pd.read_csv(
+                datafilepath, sep="\t", engine="c", encoding="UTF-8",
+                skiprows=1, on_bad_lines='skip')
             ect_path = np.array(cycle_path.path.tolist())
             ect_cycle = np.array(cycle_path.cycle.tolist())
             ect_CD = np.array(cycle_path.CD.tolist())
@@ -16400,7 +16483,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.ContinueConfirm.setEnabled(True)
         tab_no = 0
         for i, cyclefolder in enumerate(ect_path):
-            chg_dchg_dcir_no = list((ect_cycle[i].split(" ")))
+            # 사이클 범위 파싱 (스페이스/콤마 모두 지원: "1, 15-21, 4-233" 또는 "1 15-21 4-233")
+            _cycle_str = str(ect_cycle[i]).strip()
+            chg_dchg_dcir_no = [s.strip() for s in re.split(r'[,\s]+', _cycle_str) if s.strip()]
             if os.path.isdir(cyclefolder):
                 subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
                 foldercountmax = len(ect_path)
