@@ -5112,7 +5112,7 @@ class Ui_sitool(object):
         self.chk_cyclepath.setFont(font)
         self.chk_cyclepath.setChecked(True)
         self.chk_cyclepath.setObjectName("chk_cyclepath")
-        self.horizontalLayout_108.addWidget(self.chk_cyclepath)
+        self.chk_cyclepath.setVisible(False)  # UI에서 숨김 (기능은 동적으로 대체)
         self.chk_link_cycle = QtWidgets.QCheckBox(parent=self._path_groupbox)
         self.chk_link_cycle.setMinimumSize(QtCore.QSize(120, 30))
         self.chk_link_cycle.setMaximumSize(QtCore.QSize(160, 30))
@@ -5142,7 +5142,7 @@ class Ui_sitool(object):
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
         self.cycle_path_table = QtWidgets.QTableWidget(5, 4, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["경로명", "경로", "채널", "용량"])
+        self.cycle_path_table.setHorizontalHeaderLabels(["경로명", "경로(필수입력)", "채널", "용량"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -5702,29 +5702,13 @@ class Ui_sitool(object):
         self._left_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.horizontalLayout_112.addWidget(self._left_scroll, 1)
         self.cycle_tab = QtWidgets.QTabWidget(parent=self.CycTab)
-        self.cycle_tab.setFixedSize(QtCore.QSize(1350, 830))
+        self.cycle_tab.setMinimumSize(QtCore.QSize(1350, 830))
+        self.cycle_tab.setMaximumSize(QtCore.QSize(1350, 830))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
-        font.setPointSize(10)
+        font.setPointSize(9)
         self.cycle_tab.setFont(font)
         self.cycle_tab.setObjectName("cycle_tab")
-        # 미선택 탭은 축소, 선택 탭은 확대
-        self.cycle_tab.setStyleSheet("""
-            QTabBar::tab {
-                padding: 3px 6px;
-                min-width: 28px;
-                max-width: 50px;
-                font-size: 9pt;
-            }
-            QTabBar::tab:selected {
-                padding: 4px 10px;
-                min-width: 40px;
-                max-width: 200px;
-                font-weight: bold;
-                font-size: 10pt;
-            }
-        """)
-        self.cycle_tab.setUsesScrollButtons(True)
         self.horizontalLayout_112.addWidget(self.cycle_tab, 0)
         self.horizontalLayout_172.addLayout(self.horizontalLayout_112)
         self.tabWidget.addTab(self.CycTab, "")
@@ -11120,6 +11104,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.unmount_all.clicked.connect(self.unmount_all_button)
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
+        # 탭 전환 시 충방전 패턴 팝업 자동 접기
+        self.cycle_tab.currentChanged.connect(
+            lambda _: self._collapse_all_classify_popups())
         self.btn_load_path.clicked.connect(self._load_path_file_to_table)
         self.btn_save_path.clicked.connect(self._save_table_to_path_file)
         self.btn_clear_path.clicked.connect(self._clear_table)
@@ -11150,8 +11137,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.customContextMenuRequested.connect(self._cycle_table_context_menu)
         # 연결처리 토글 시 그룹 구분선 갱신
         self.chk_link_cycle.toggled.connect(self._update_group_separators)
-        self.chk_cyclepath.toggled.connect(self._on_cyclepath_toggled)
-        self._on_cyclepath_toggled(self.chk_cyclepath.isChecked())  # 초기 상태 반영
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
         self.RateConfirm.clicked.connect(self.rate_confirm_button)
@@ -11398,7 +11383,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _btn_border = "#666" if _is_dark else "#ccc"
         
         # ── 토글 버튼 (컴팩트, toolbar 옆에 배치) ──
-        toggle_btn = QPushButton("▶ CH")
+        toggle_btn = QPushButton("▶ 범")
         toggle_btn.setFixedSize(50, 22)
         toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.setStyleSheet(
@@ -12404,7 +12389,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             channel_map, fig, axes_list, sub_channel_map=None,
                             classify_info=None, classify_by_group=None,
                             save_context=None, voltage_condition_text=None,
-                            group_names=None, tab_name=None):
+                            group_names=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
@@ -12412,7 +12397,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
         voltage_condition_text: str | list[tuple[str, str]] | None — 전압 변경 요약 (str=단일, list=다중 그룹)
         group_names: list[str] | None — 그룹별 표시명 (패턴 라벨용)
-        tab_name: str | None — 탭 표시명 (None이면 tab_no 사용)
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # save_context에 classify_info 포함
@@ -12445,10 +12429,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 group_names=group_names)
             if info_label:
                 tab_layout.addWidget(info_label)
+                # 자동 접기용 팝업 참조 등록
+                if not hasattr(self, '_classify_popups'):
+                    self._classify_popups = []
+                if hasattr(info_label, '_collapse_popup'):
+                    self._classify_popups.append(info_label._collapse_popup)
 
         tab_layout.addWidget(canvas)
-        _display_name = tab_name if tab_name else str(tab_no)
-        self.cycle_tab.addTab(tab, _display_name)
+        self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
         # 범례가 figure 오른쪽 외부에 있으면 여백 확보
@@ -12462,11 +12450,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _build_classify_info_label(classify_info: list[dict], classify_by_group: list[list[dict]] | None = None,
                                    voltage_condition_text: str | list[tuple[str, str]] | None = None,
                                    group_names: list[str] | None = None):
-        """분류 결과 리스트 → 접을 수 있는 충방전 패턴 정보 위젯 생성.
+        """분류 결과 리스트 → 항상 한 줄 접음 상태의 충방전 패턴 위젯 생성.
 
-        사이클 그룹별 패턴을 한 줄씩 표시.
-        모든 그룹의 패턴이 동일하면 하나만 표시 (중복 제거).
-        다를 경우 → 헤더 바 + '▶전체' 버튼 → 클릭 시 팝업으로 그룹별 패턴 표시.
+        접음 상태: 한 줄 요약 (50자 제한) + ▶ 상세 버튼
+        펼침 상태: 플로팅 팝업으로 그룹별 패턴 + 장수명 전압 정보 표시
         voltage_condition_text: 전압 변경 요약 (str=단일, list[tuple]=다중 그룹, None=미표시)
         group_names: list[str] | None — 그룹별 표시명 (None이면 인덱스 폴백)
         """
@@ -12474,12 +12461,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                       QPushButton, QFrame, QVBoxLayout)
         from PyQt6.QtCore import Qt
         from collections import OrderedDict
+        import re as _re
 
         if not classify_info:
             return None
 
         # ── 그룹별 대표 패턴 수집 (그룹당 한 줄) ──
-        # classify_by_group이 있으면 그룹별 첫 패턴 사용, 없으면 채널별 폴백
         group_patterns: list[tuple[str, str]] = []  # (group_label, pattern_line)
         if classify_by_group:
             for grp_idx, grp_crs in enumerate(classify_by_group):
@@ -12497,9 +12484,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 f'<br/>▷ 방전 {ap["n_discharge_steps"]}step: {dchg}')
                         group_patterns.append((label, line))
                         break  # 그룹당 대표 하나만
-
         else:
-            # 폴백: 채널별
             for cr in classify_info:
                 ap = cr.get('accel_pattern')
                 if ap:
@@ -12521,66 +12506,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _BAR_QSS = ('QLabel { background: #F0F4F8; border: 1px solid #D0D8E0; '
                      'border-radius: 3px; padding: 3px 8px; }')
 
-        # ── 패턴이 모두 동일 → 단순 QLabel ──
-        if len(groups) == 1:
-            single_line = next(iter(groups))
-            grp_list = next(iter(groups.values()))
-            suffix = (f'  <span style="color:#8491B4;">({len(grp_list)}그룹 동일)</span>'
-                      if len(grp_list) > 1 else '')
-            vc_html = ''
-            if voltage_condition_text:
-                if isinstance(voltage_condition_text, list):
-                    _vc_parts = []
-                    for _gl, _vh in voltage_condition_text:
-                        _vc_parts.append(
-                            f'<b style="color:#666; font-size:10px;">'
-                            f'[{_gl}]</b>{_vh}')
-                    vc_html = '<br/>' + ''.join(_vc_parts)
-                else:
-                    vc_html = f'<br/>{voltage_condition_text}'
-            grp_tag = ', '.join(grp_list)
-            html = (f'<span style="color:#3C5488; font-size:11px;">'
-                    f'[{grp_tag}]{suffix}<br/>'
-                    f'{single_line}</span>{vc_html}')
-            label = QLabel(html)
-            label.setStyleSheet(_BAR_QSS)
-            label.setWordWrap(True)
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            # 높이: 그룹명 1줄(14px) + 패턴 2줄(44px) + 전압 테이블 행수
-            max_h = 58
-            if voltage_condition_text:
-                if isinstance(voltage_condition_text, str):
-                    max_h += max(voltage_condition_text.count('<tr>'), 1) * 18
-                else:
-                    for _, _vh in voltage_condition_text:
-                        max_h += 18 + _vh.count('<tr>') * 18
-            label.setMaximumHeight(min(max_h, 500))
-            return label
+        # ── 접음 헤더: 첫 패턴 한 줄 요약 (50자 제한) ──
+        first_line = next(iter(groups))
+        first_chs = next(iter(groups.values()))
+        # HTML → plain text 변환 후 50자 제한
+        _plain = _re.sub(r'<[^>]+>', '', first_line.replace('<br/>', ' | '))
+        _summary = (_plain[:50] + '...') if len(_plain) > 50 else _plain
+        ch_tag = f'[{first_chs[0]}]' if first_chs[0] else ''
+        n_groups = len(groups)
+        if n_groups == 1 and len(first_chs) > 1:
+            _extra = f'  ({len(first_chs)}그룹 동일)'
+        elif n_groups > 1:
+            _extra = f'  (+{n_groups - 1}개 다른 패턴)'
+        else:
+            _extra = ''
+        header_html = (
+            f'<span style="color:#3C5488; font-size:11px;">'
+            f'{ch_tag} {_summary}'
+            f'<span style="color:#E64B35; font-weight:bold;">{_extra}</span>'
+            f'</span>')
 
-        # ── 여러 상이한 패턴 → 접기/펼치기 위젯 ──
+        # ── 컨테이너 (항상 한 줄 24px) ──
         container = QWidget()
         container.setFixedHeight(24)
         h_layout = QHBoxLayout(container)
         h_layout.setContentsMargins(0, 0, 0, 0)
         h_layout.setSpacing(4)
 
-        # 헤더 바: 첫 번째 패턴 + "(+N개 다른 패턴)"
-        first_line = next(iter(groups))
-        first_chs = next(iter(groups.values()))
-        n_other = len(groups) - 1
-        ch_tag = f'[{first_chs[0]}] ' if first_chs[0] else ''
-        _header_pat = first_line.replace('<br/>▷ 방전', ' | 방전')
-        header_html = (
-            f'<span style="color:#3C5488; font-size:11px;">'
-            f'{ch_tag}{_header_pat}  '
-            f'<span style="color:#E64B35; font-weight:bold;">'
-            f'(+{n_other}개 다른 패턴)</span></span>')
         header_label = QLabel(header_html)
         header_label.setStyleSheet(_BAR_QSS)
         header_label.setMaximumHeight(24)
-        header_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        header_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        toggle_btn = QPushButton("▶ 전체")
+        toggle_btn = QPushButton("▶ 상세")
         toggle_btn.setFixedSize(60, 20)
         toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.setStyleSheet(
@@ -12592,7 +12551,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         h_layout.addWidget(header_label, stretch=1)
         h_layout.addWidget(toggle_btn, stretch=0)
 
-        # ── 펼침 팝업 (Tool 플로팅 윈도우 — 캔버스 위 오버레이) ──
+        # ── 펼침 팝업 (Tool 플로팅 — 그래프 크기 영향 없음) ──
         popup = QFrame(container)
         popup.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
@@ -12605,13 +12564,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         popup_layout.setContentsMargins(8, 4, 8, 4)
         popup_layout.setSpacing(1)
 
-        # 제목
+        # 제목 (높이 최소화)
         title_label = QLabel(
-            '<b style="color:#3C5488; font-size:12px;">충방전 패턴 상세</b>')
-        title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            '<b style="color:#3C5488; font-size:11px;">충방전 패턴 상세</b>')
+        title_label.setFixedHeight(16)
+        title_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
         popup_layout.addWidget(title_label)
 
-        # 각 패턴 그룹 (PALETTE 색상으로 채널 구분)
+        # 각 패턴 그룹 (PALETTE 색상으로 구분)
         palette = THEME['PALETTE']
         for idx, (pat_line, ch_names) in enumerate(groups.items()):
             color = palette[idx % len(palette)]
@@ -12627,23 +12588,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f'{pat_line}</span>')
             row_label = QLabel(row_html)
             row_label.setWordWrap(True)
-            row_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
             popup_layout.addWidget(row_label)
 
-        # 장수명 조건 전압 변경
+        # ── 장수명 전압 변경 (다중 그룹 → 가로 배치) ──
         if voltage_condition_text:
             if isinstance(voltage_condition_text, list):
-                for _gl, _vh in voltage_condition_text:
-                    vc_label = QLabel(
-                        f'<b style="color:#666; font-size:11px;">'
+                vc_row = QWidget()
+                vc_h = QHBoxLayout(vc_row)
+                vc_h.setContentsMargins(0, 2, 0, 0)
+                vc_h.setSpacing(12)
+                for vc_idx, (_gl, _vh) in enumerate(voltage_condition_text):
+                    _color = palette[vc_idx % len(palette)]
+                    vc_grp = QLabel(
+                        f'<b style="color:{_color}; font-size:10px;">'
                         f'[{_gl}]</b>{_vh}')
-                    vc_label.setWordWrap(True)
-                    vc_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                    popup_layout.addWidget(vc_label)
+                    vc_grp.setWordWrap(True)
+                    vc_grp.setTextInteractionFlags(
+                        Qt.TextInteractionFlag.TextSelectableByMouse)
+                    vc_h.addWidget(vc_grp)
+                popup_layout.addWidget(vc_row)
             else:
                 vc_label = QLabel(voltage_condition_text)
                 vc_label.setWordWrap(True)
-                vc_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                vc_label.setTextInteractionFlags(
+                    Qt.TextInteractionFlag.TextSelectableByMouse)
                 popup_layout.addWidget(vc_label)
 
         popup.adjustSize()
@@ -12652,9 +12622,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         def _toggle():
             if popup.isVisible():
                 popup.hide()
-                toggle_btn.setText("▶ 전체")
+                toggle_btn.setText("▶ 상세")
             else:
-                # 헤더 바 바로 아래에 팝업 배치, 너비를 헤더 바와 동일하게 유지
+                # 헤더 바 바로 아래에 팝업 배치
                 pos = container.mapToGlobal(container.rect().bottomLeft())
                 popup.setFixedWidth(container.width())
                 popup.move(pos.x(), pos.y() + 2)
@@ -12663,6 +12633,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 toggle_btn.setText("▼ 접기")
 
         toggle_btn.clicked.connect(_toggle)
+
+        # 외부에서 자동 접기 호출용 콜백 저장
+        def _collapse():
+            if popup.isVisible():
+                popup.hide()
+                toggle_btn.setText("▶ 상세")
+        container._collapse_popup = _collapse
+
         return container
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
@@ -13257,14 +13235,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _parse_cycle_input(self):
         """입력 모드를 판별하여 list[CycleGroup] 반환
-        우선순위: 1) 지정Path 체크 → 파일 대화상자
-                 2) 테이블에 데이터 있음 → 테이블에서 읽기
-                 3) 폴더 선택 대화상자
+        우선순위: 1) 테이블에 데이터 있음 → 테이블에서 읽기
+                 2) 테이블 비어있음 → 파일 선택 대화상자
+                 3) 파일 미선택 → 폴더 선택 대화상자
         """
         groups = []
         link_mode = self.chk_link_cycle.isChecked()
 
-        if self.chk_cyclepath.isChecked():
+        if not self._has_table_data():
             # 지정Path: 다중 파일 선택
             root = Tk()
             root.withdraw()
@@ -13308,7 +13286,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         data_type='folder', file_idx=file_idx, source_file=fp
                     ))
 
-        elif self._has_table_data():
+        else:
             # 테이블에서 읽기 — txt/csv 파일은 자동 확장, 각 소스에 고유 file_idx 부여
             _next_file_idx = 0  # 소스 파일별 고유 인덱스 (탭 분리용)
 
@@ -13423,28 +13401,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             per_path_capacities=_caps,
                         ))
                         _next_file_idx += 1
-
-        else:
-            # 폴더 선택
-            root = Tk()
-            root.withdraw()
-            folders = multi_askopendirnames()
-            root.destroy()
-            if link_mode and len(folders) > 1:
-                # 연결 모드: 선택한 모든 폴더를 하나의 연결 그룹으로
-                groups.append(CycleGroup(
-                    name=os.path.basename(folders[0]),
-                    paths=list(folders),
-                    path_names=[os.path.basename(fp) for fp in folders],
-                    is_link=True, data_type='folder',
-                    file_idx=0, source_file=''
-                ))
-            else:
-                for fp in folders:
-                    groups.append(CycleGroup(
-                        name=os.path.basename(fp), paths=[fp], path_names=[''],
-                        data_type='folder', file_idx=0, source_file=''
-                    ))
 
         return groups
 
@@ -14224,12 +14180,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     break
                             if _gi_vc_html:
                                 break
-                        # 그룹 라벨 추출 후 수집
+                        # 그룹명을 패턴 그룹명과 동일하게 사용
                         if _gi_vc_html:
-                            _path0 = _g.paths[0] if _g.paths else ''
-                            _m = re.search(r'\d+CY|RT', _path0, re.IGNORECASE)
-                            _glabel = _m.group() if _m else (
-                                Path(_path0).name[:20] if _path0 else f'그룹{gi}')
+                            _glabel = _g.name if _g.name else f'그룹{gi}'
                             _vc_items.append((_glabel, _gi_vc_html))
                     # 후방호환: 단일이면 str, 다중이면 list[tuple]
                     _vc_text = None
@@ -14240,15 +14193,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                     # 그룹 이름 리스트 (패턴 라벨용)
                     _group_names = [folder_groups[gi].name for gi in group_indices]
-                    _current_tab_name = _tab_names[tab_idx] if tab_idx < len(_tab_names) else str(tab_no)
                     self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                              channel_map, fig, axes_list, sub_channel_map,
                                              classify_info=_tab_classify if _tab_classify else None,
                                              classify_by_group=_tab_classify_by_group if _tab_classify_by_group else None,
                                              save_context=_save_ctx,
                                              voltage_condition_text=_vc_text,
-                                             group_names=_group_names,
-                                             tab_name=_current_tab_name)
+                                             group_names=_group_names)
                     tab_no += 1
                     if suptitle_name:
                         output_fig(self.figsaveok, suptitle_name)
@@ -14313,8 +14264,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         all_data_name = []
         all_data_folder = []
         datafilepath = []
-        # path file이 있을 경우
-        if self.chk_cyclepath.isChecked():
+        # 테이블에 데이터 있으면 테이블에서 읽기, 없으면 파일 선택
+        if self._has_table_data():
+            table_rows = self._get_table_rows()
+            datafilepath = [r['path'] for r in table_rows]
+            all_data_folder = np.array(datafilepath)
+            names = [r['name'] for r in table_rows if r['name']]
+            if names:
+                all_data_name = np.array([r['name'] for r in table_rows])
+        else:
             datafilepath = filedialog.askopenfilename(initialdir="d://", title="Choose Test files")
             if datafilepath:
                 # 가변 컬럼 수 지원: cyclepath=마지막 탭 필드, cyclename=나머지 합침
@@ -14339,22 +14297,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     all_data_folder = multi_askopendirnames()
             else:
                 all_data_folder = multi_askopendirnames()
-        elif self._has_table_data():
-            table_rows = self._get_table_rows()
-            datafilepath = [r['path'] for r in table_rows]
-            all_data_folder = np.array(datafilepath)
-            names = [r['name'] for r in table_rows if r['name']]
-            if names:
-                all_data_name = np.array([r['name'] for r in table_rows])
-        else:
-            all_data_folder = multi_askopendirnames()
-            datafilepath = all_data_folder
         return [all_data_folder, all_data_name, datafilepath]
 
     def cycle_tab_reset_confirm_button(self):
+        self._collapse_all_classify_popups()
+        self._classify_popups = []
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
         self.cycle_tab_reset.setEnabled(False)
+
+    def _collapse_all_classify_popups(self):
+        """열린 충방전 패턴 팝업을 모두 접기."""
+        for cb in getattr(self, '_classify_popups', []):
+            try:
+                cb()
+            except RuntimeError:
+                pass  # 위젯 이미 삭제됨
 
     def _update_cell_tooltip(self, row: int, col: int) -> None:
         """셀 편집 시 툴팁 자동 갱신 + 경로 존재 여부 + 그룹 구분선"""
