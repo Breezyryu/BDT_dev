@@ -13067,25 +13067,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _parse_path_file(filepath):
         """단일 .txt path 파일을 파싱하여 [(cyclename, cyclepath), ...] 반환"""
         rows = []
-        with open(filepath, 'r', encoding='UTF-8') as f:
-            # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
-            for raw in f:
-                stripped = raw.strip()
-                if not stripped or stripped.startswith('#'):
-                    continue
-                break  # 헤더 줄 도달 → 스킵 후 탈출
-            for line in f:
-                if not line.strip():
-                    continue  # 그룹 구분자(빈 행) 무시
-                parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
-                if len(parts) >= 2:
-                    rows.append((' '.join(parts[:-1]), parts[-1]))
-                elif len(parts) == 1 and parts[0]:
-                    # 탭 구분 없는 레거시 형식 → 드라이브 문자 패턴으로 분리
-                    fb_name, fb_path = WindowClass._split_name_path_fallback(
-                        line.rstrip('\n\r'))
-                    if fb_path:
-                        rows.append((fb_name, fb_path))
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            all_lines = f.readlines()
+        # 메타데이터(#) + 빈 줄 스킵 → 첫 번째 비어있지 않은 줄 탐색
+        data_start = 0
+        for i, raw in enumerate(all_lines):
+            stripped = raw.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            # 헤더 인식 → 건너뛰기, 미인식 → 데이터로 포함
+            tokens = {c.strip().lower() for c in stripped.split('\t')}
+            if tokens & set(WindowClass._HEADER_ALIASES):
+                data_start = i + 1
+            else:
+                data_start = i
+            break
+        for line in all_lines[data_start:]:
+            if not line.strip():
+                continue  # 그룹 구분자(빈 행) 무시
+            parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
+            if len(parts) >= 2:
+                rows.append((' '.join(parts[:-1]), parts[-1]))
+            elif len(parts) == 1 and parts[0]:
+                # 탭 구분 없는 레거시 형식 → 드라이브 문자 패턴으로 분리
+                fb_name, fb_path = WindowClass._split_name_path_fallback(
+                    line.rstrip('\n\r'))
+                if fb_path:
+                    rows.append((fb_name, fb_path))
         return rows
 
     @staticmethod
@@ -13097,37 +13105,45 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         rows = []
         link_mode = None
-        with open(filepath, 'r', encoding='UTF-8') as f:
-            # DRM 회피용 공란 + 메타데이터(#) + 헤더 스킵
-            for raw in f:
-                stripped = raw.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith('#link_mode='):
-                    link_mode = stripped.split('=', 1)[1].strip() == '1'
-                    continue
-                if stripped.startswith('#'):
-                    continue
-                break  # 헤더 줄 도달 → 스킵 후 탈출
-            for line in f:
-                if not line.strip():
-                    if preserve_groups:
-                        rows.append(None)  # 그룹 구분자
-                    continue
-                parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
-                if len(parts) >= 4:
-                    rows.append({'name': parts[0], 'path': parts[1],
-                                 'channel': parts[2], 'capacity': parts[3]})
-                elif len(parts) >= 2:
-                    rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            all_lines = f.readlines()
+        # 메타데이터 수집 + 헤더/데이터 시작 위치 결정
+        data_start = 0
+        for i, raw in enumerate(all_lines):
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if stripped.startswith('#link_mode='):
+                link_mode = stripped.split('=', 1)[1].strip() == '1'
+                continue
+            if stripped.startswith('#'):
+                continue
+            # 헤더 인식 → 건너뛰기, 미인식 → 데이터로 포함
+            tokens = {c.strip().lower() for c in stripped.split('\t')}
+            if tokens & set(WindowClass._HEADER_ALIASES):
+                data_start = i + 1
+            else:
+                data_start = i
+            break
+        for line in all_lines[data_start:]:
+            if not line.strip():
+                if preserve_groups:
+                    rows.append(None)  # 그룹 구분자
+                continue
+            parts = [p.strip().strip('"').strip("'") for p in line.rstrip('\n\r').split('\t')]
+            if len(parts) >= 4:
+                rows.append({'name': parts[0], 'path': parts[1],
+                             'channel': parts[2], 'capacity': parts[3]})
+            elif len(parts) >= 2:
+                rows.append({'name': ' '.join(parts[:-1]), 'path': parts[-1],
+                             'channel': '', 'capacity': ''})
+            elif len(parts) == 1 and parts[0]:
+                # 탭 구분 없는 레거시 형식 → 드라이브 문자 패턴으로 분리
+                fb_name, fb_path = WindowClass._split_name_path_fallback(
+                    line.rstrip('\n\r'))
+                if fb_path:
+                    rows.append({'name': fb_name, 'path': fb_path,
                                  'channel': '', 'capacity': ''})
-                elif len(parts) == 1 and parts[0]:
-                    # 탭 구분 없는 레거시 형식 → 드라이브 문자 패턴으로 분리
-                    fb_name, fb_path = WindowClass._split_name_path_fallback(
-                        line.rstrip('\n\r'))
-                    if fb_path:
-                        rows.append({'name': fb_name, 'path': fb_path,
-                                     'channel': '', 'capacity': ''})
         if preserve_groups:
             return rows, link_mode
         # 기존 호환: None 제거
@@ -14541,33 +14557,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.setRowCount(5)
         self.cycle_path_table.clearContents()
 
+    # 인식 가능한 헤더 키워드 (소문자)
+    _HEADER_ALIASES = {
+        'cyclename': 'name', 'name': 'name',
+        'cyclepath': 'path', 'path': 'path',
+        'channel': 'channel', 'ch': 'channel',
+        'capacity': 'capacity', 'cap': 'capacity',
+    }
+
     @staticmethod
-    def _detect_path_columns(header_line):
+    def _detect_path_columns(header_line: str) -> tuple[dict, bool]:
         """헤더 줄에서 열 이름 → 위치 매핑 반환.
-        지원 헤더 형식:
-          cyclename\tcyclepath\tchannel\tcapacity  (4열 신규)
-          cyclename\tcyclepath                      (2열 이전1/2)
-          cyclepath\tchannel\tcapacity              (3열 이전3)
-          cyclepath                                 (1열 이전4)
-        Returns: {'name': int|None, 'path': int, 'channel': int|None, 'capacity': int|None}
+
+        Returns
+        -------
+        tuple[dict, bool]
+            (col_map, is_header)
+            col_map: {'name': int|None, 'path': int, 'channel': int|None, 'capacity': int|None}
+            is_header: 알려진 헤더 키워드가 1개 이상 매칭되면 True
         """
         cols = [c.strip().lower() for c in header_line.rstrip('\n\r').split('\t')]
         mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None}
-        # 알려진 별명 → 키 매핑
-        alias = {
-            'cyclename': 'name', 'name': 'name',
-            'cyclepath': 'path', 'path': 'path',
-            'channel': 'channel', 'ch': 'channel',
-            'capacity': 'capacity', 'cap': 'capacity',
-        }
+        matched = False
         for idx, col in enumerate(cols):
-            key = alias.get(col)
+            key = WindowClass._HEADER_ALIASES.get(col)
             if key:
                 mapping[key] = idx
+                matched = True
         # path 열이 감지되지 않으면 → 첫 번째 열을 path로 간주
         if mapping['path'] is None:
             mapping['path'] = 0
-        return mapping
+        return mapping, matched
 
     @staticmethod
     def _split_name_path_fallback(text: str) -> tuple[str, str]:
@@ -14604,6 +14624,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """Path 파일(.txt)을 읽어 테이블에 채움
         헤더 기반 열 자동 감지로 모든 이전 형식 지원:
           4열(신규), 2열(이전1/2), 3열(이전3), 1열(이전4)
+        헤더가 없는 레거시 파일도 자동 감지하여 처리.
         """
         root = Tk()
         root.withdraw()
@@ -14614,45 +14635,65 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return
         rows = []  # dict 또는 None(빈 행)
         link_mode = None
-        with open(fp, 'r', encoding='UTF-8') as f:
-            # DRM 회피용 공란 + 메타데이터 스킵 → 헤더 줄 캡처
-            header_line = None
-            for raw in f:
-                stripped = raw.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith('#link_mode='):
-                    link_mode = stripped.split('=', 1)[1].strip() == '1'
-                    continue
-                header_line = raw  # 헤더 줄 보존
-                break
-            if header_line is None:
-                return
-            col_map = self._detect_path_columns(header_line)
-            # 데이터 줄 파싱
-            for line in f:
-                if not line.strip():
-                    rows.append(None)  # 그룹 구분자 (빈 행)
-                    continue
-                parts = [p.strip().strip('"').strip("'")
-                         for p in line.rstrip('\n\r').split('\t')]
-                path = parts[col_map['path']] if col_map['path'] < len(parts) else ''
-                name = parts[col_map['name']] if col_map['name'] is not None and col_map['name'] < len(parts) else ''
-                channel = parts[col_map['channel']] if col_map['channel'] is not None and col_map['channel'] < len(parts) else ''
-                capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
-                # 탭 구분 부족 → 드라이브 문자 패턴으로 name/path 분리 시도
-                if not path and len(parts) <= 1:
-                    fb_name, fb_path = self._split_name_path_fallback(
-                        line.rstrip('\n\r'))
-                    if fb_path:
-                        name, path = fb_name, fb_path
-                if path:
-                    rows.append({'name': name, 'path': path,
-                                 'channel': channel, 'capacity': capacity})
-                elif name or channel or capacity:
-                    # path 비어있지만 다른 열에 값 있으면 → 데이터 행
-                    rows.append({'name': name, 'path': '',
-                                 'channel': channel, 'capacity': capacity})
+        # utf-8-sig: BOM 자동 제거
+        with open(fp, 'r', encoding='utf-8-sig') as f:
+            all_lines = f.readlines()
+        # 메타데이터 수집 + 첫 번째 비어있지 않은 줄(헤더 후보) 탐색
+        header_idx = None
+        for i, raw in enumerate(all_lines):
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if stripped.startswith('#link_mode='):
+                link_mode = stripped.split('=', 1)[1].strip() == '1'
+                continue
+            if stripped.startswith('#'):
+                continue
+            header_idx = i
+            break
+        if header_idx is None:
+            return
+        header_line = all_lines[header_idx]
+        col_map, is_header = self._detect_path_columns(header_line)
+        if is_header:
+            data_start = header_idx + 1  # 헤더 줄 건너뛰기
+        else:
+            # 헤더 미인식 → header_line도 데이터로 처리
+            data_start = header_idx
+            # 첫 데이터 줄에서 path 열 위치 추론 (드라이브 문자 탐색)
+            parts = header_line.rstrip('\n\r').split('\t')
+            if len(parts) >= 2:
+                for j, p in enumerate(parts):
+                    if re.search(r'[A-Za-z]:\\|\\\\',
+                                 p.strip().strip('"').strip("'")):
+                        col_map['path'] = j
+                        if j > 0:
+                            col_map['name'] = 0
+                        break
+        # 데이터 줄 파싱
+        for line in all_lines[data_start:]:
+            if not line.strip():
+                rows.append(None)  # 그룹 구분자 (빈 행)
+                continue
+            parts = [p.strip().strip('"').strip("'")
+                     for p in line.rstrip('\n\r').split('\t')]
+            path = parts[col_map['path']] if col_map['path'] < len(parts) else ''
+            name = parts[col_map['name']] if col_map['name'] is not None and col_map['name'] < len(parts) else ''
+            channel = parts[col_map['channel']] if col_map['channel'] is not None and col_map['channel'] < len(parts) else ''
+            capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
+            # 탭 구분 부족 → 드라이브 문자 패턴으로 name/path 분리 시도
+            if not path and len(parts) <= 1:
+                fb_name, fb_path = self._split_name_path_fallback(
+                    line.rstrip('\n\r'))
+                if fb_path:
+                    name, path = fb_name, fb_path
+            if path:
+                rows.append({'name': name, 'path': path,
+                             'channel': channel, 'capacity': capacity})
+            elif name or channel or capacity:
+                # path 비어있지만 다른 열에 값 있으면 → 데이터 행
+                rows.append({'name': name, 'path': '',
+                             'channel': channel, 'capacity': capacity})
         # 연결처리 체크박스 복원
         if link_mode is not None and self.chk_link_cycle.isEnabled():
             self.chk_link_cycle.setChecked(link_mode)
