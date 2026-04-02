@@ -406,6 +406,118 @@ def is_micro_unit(raw_file_path):
     """PNE21/22 또는 코인셀 모드에서 μA/μAh 단위 사용 여부 판별"""
     return ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path) or _coincell_mode
 
+
+# ── Phase 2: 채널별 파일 I/O 캐시 ──────────────────────────────
+_channel_cache: dict[str, dict] = {}
+
+
+def clear_channel_cache():
+    """전체 채널 캐시 초기화 (새 데이터 로드 시작 시 호출)."""
+    _channel_cache.clear()
+
+
+def _get_channel_cache(raw_file_path: str) -> dict:
+    """채널 경로별 캐시 딕셔너리 반환. 없으면 빈 dict 생성."""
+    if raw_file_path not in _channel_cache:
+        _channel_cache[raw_file_path] = {}
+    return _channel_cache[raw_file_path]
+
+
+def _cached_pne_restore_files(raw_file_path: str) -> tuple:
+    """PNE Restore 폴더의 SaveEndData, file_index, subfile 목록을 캐싱하여 반환.
+
+    Returns
+    -------
+    tuple
+        (save_end_data: pd.DataFrame | None,
+         file_index_list: list[int] | None,
+         subfile: list[str])
+    """
+    cache = _get_channel_cache(raw_file_path)
+    if 'pne_restore' not in cache:
+        rawdir = raw_file_path + "\\Restore\\"
+        save_end_data = None
+        file_index_list = None
+        subfile = []
+        if os.path.isdir(rawdir):
+            subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
+            for files in subfile:
+                if "SaveEndData" in files:
+                    save_end_data = pd.read_csv(
+                        rawdir + files, sep=",", skiprows=0, engine="c",
+                        header=None, encoding="cp949", on_bad_lines='skip')
+                if files == "savingFileIndex_start.csv":
+                    df2 = pd.read_csv(
+                        rawdir + files, sep=r"\s+", skiprows=0, engine="c",
+                        header=None, encoding="cp949", on_bad_lines='skip')
+                    file_index_list = df2[3].str.replace(',', '').astype(int).tolist()
+        cache['pne_restore'] = (save_end_data, file_index_list, subfile)
+    return cache['pne_restore']
+
+
+def _pne_normalize_profile(df: pd.DataFrame, mincapacity: int,
+                           raw_file_path: str, *,
+                           cap_col: str = "Chgcap",
+                           negate_current: bool = False) -> pd.DataFrame:
+    """PNE 프로파일 원시 DataFrame 단위 변환 (in-place 수정 후 반환).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        컬럼에 PassTime[Sec], Voltage[V], Current[mA], Temp1[Deg], cap_col 필요
+    mincapacity : int
+        공칭 용량 (mAh)
+    raw_file_path : str
+        경로 (is_micro_unit 판별용)
+    cap_col : str
+        용량 컬럼명 ("Chgcap" 또는 "Dchgcap")
+    negate_current : bool
+        True이면 전류 부호 반전 (방전용)
+    """
+    is_micro = is_micro_unit(raw_file_path)
+    unit_divisor = mincapacity * 1_000_000 if is_micro else mincapacity * 1_000
+    df["PassTime[Sec]"] = df["PassTime[Sec]"] / 100 / 60
+    df["Voltage[V]"] = df["Voltage[V]"] / 1_000_000
+    if negate_current:
+        df["Current[mA]"] = df["Current[mA]"] / unit_divisor * (-1)
+    else:
+        df["Current[mA]"] = df["Current[mA]"] / unit_divisor
+    df[cap_col] = df[cap_col] / unit_divisor
+    df["Temp1[Deg]"] = df["Temp1[Deg]"] / 1_000
+    return df
+
+
+def _merge_step_profiles(df: pd.DataFrame, cap_col: str = "Chgcap") -> pd.DataFrame:
+    """멀티스텝 프로파일 데이터를 시간·용량 연속으로 연결하여 반환.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        "step", "PassTime[Sec]", cap_col 컬럼 필요
+    cap_col : str
+        누적할 용량 컬럼명 ("Chgcap" 또는 "Dchgcap")
+
+    Returns
+    -------
+    pd.DataFrame
+        연결된 DataFrame (stepdiv==0이면 원본 그대로)
+    """
+    stepmin = df["step"].min()
+    stepmax = df["step"].max()
+    stepdiv = stepmax - stepmin
+    if np.isnan(stepdiv):
+        return df
+    if stepdiv == 0:
+        return df
+    parts = [df.loc[df["step"] == stepmin]]
+    for si in range(1, int(stepdiv) + 1):
+        part = df.loc[df["step"] == stepmin + si].copy()
+        part["PassTime[Sec]"] += parts[-1]["PassTime[Sec]"].max()
+        part[cap_col] += parts[-1][cap_col].max()
+        parts.append(part)
+    return pd.concat(parts)
+
+
 # 주어진 문자열을 리스트로 변환
 def convert_steplist(input_str):
     output_list = []
@@ -956,6 +1068,10 @@ def generate_simulation_full(ca_ccv_raw, an_ccv_raw, real_raw, ca_mass, ca_slip,
 # 토요 데이터 csv 확인/ 폴더, cycle 순으로 입력
 def toyo_read_csv(*args): 
     if len(args) == 1:
+        # capacity.log — 캐시 적용
+        cache = _get_channel_cache(args[0])
+        if 'capacity_log' in cache:
+            return cache['capacity_log']
         filepath = args[0] + "\\capacity.log"
         skiprows = 0
     else:
@@ -964,6 +1080,8 @@ def toyo_read_csv(*args):
     if os.path.isfile(filepath):
         # read the csv file into a pandas dataframe
         dataraw = pd.read_csv(filepath, sep=",", skiprows=skiprows, engine="c", encoding="cp949", on_bad_lines='skip')
+        if len(args) == 1:
+            cache['capacity_log'] = dataraw
         return dataraw
 
 # Data 처리
@@ -1004,13 +1122,17 @@ def toyo_cycle_import(raw_file_path):
 
 # Toyo min. cap 산정하기 (첫 사이클 전류와 C-rate 이용)
 def toyo_min_cap(raw_file_path, mincapacity, inirate):
-    # 용량 산정 (첫 사이클을 0.2C로 가정)
+    # 캐시 확인 (동일 경로에 대해 이미 산정된 용량 재사용)
     if mincapacity == 0:
+        cache = _get_channel_cache(raw_file_path)
+        if 'min_cap' in cache:
+            return cache['min_cap']
         if "mAh" in raw_file_path: # 파일 이름에 용량 관련 문자 있을 때
             mincap = name_capacity(raw_file_path)
         else:
             inicapraw = toyo_read_csv(raw_file_path, 1) # 첫 사이클 기준으로 3번째 줄을 C-rate로 가정하여 용량 환산
             mincap = int(round(inicapraw["Current[mA]"].max()/inirate))
+        cache['min_cap'] = mincap
     else: # 표기된 숫자를 용량으로 지정
         mincap = mincapacity
     return mincap    
@@ -1533,24 +1655,9 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
 
     _raw_df = None  # CSV 원본 (analyze_accel_pattern 재사용)
     if is_pne:
-        # PNE: SaveEndData.csv 로딩
-        restore_path = os.path.join(channel_path, 'Restore')
-        if not os.path.isdir(restore_path):
-            return None
-        save_end_file = None
-        try:
-            for f in os.listdir(restore_path):
-                if 'SaveEndData' in f and f.endswith('.csv'):
-                    save_end_file = f
-                    break
-        except OSError:
-            return None
-        if not save_end_file:
-            return None
-        fp = os.path.join(restore_path, save_end_file)
-        try:
-            _raw_df = pd.read_csv(fp, header=None, encoding='cp949', on_bad_lines='skip')
-        except Exception:
+        # PNE: SaveEndData.csv 로딩 — 캐시 사용
+        _raw_df, _, _ = _cached_pne_restore_files(channel_path)
+        if _raw_df is None:
             return None
         if _raw_df.shape[1] < 28:
             return None
@@ -1558,20 +1665,21 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
         summary.columns = ['TotlCycle', 'StepType', 'EndState', 'Current', 'ChgCap', 'DchgCap', 'StepTime']
         classified = classify_pne_cycles(summary, int(capacity))
     else:
-        # Toyo: capacity.log 로딩
-        cap_log_path = os.path.join(channel_path, 'capacity.log')
-        if not os.path.isfile(cap_log_path):
-            # 대소문자 차이 허용
+        # Toyo: capacity.log 로딩 — 캐시 사용
+        _raw_df = toyo_read_csv(channel_path)
+        if _raw_df is None:
+            # 대소문자 차이 허용 (capacity.log가 아닌 경우)
+            cap_log_path = os.path.join(channel_path, 'capacity.log')
             for f in os.listdir(channel_path):
                 if f.upper() == 'CAPACITY.LOG':
                     cap_log_path = os.path.join(channel_path, f)
                     break
             else:
                 return None
-        try:
-            _raw_df = pd.read_csv(cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip')
-        except Exception:
-            return None
+            try:
+                _raw_df = pd.read_csv(cap_log_path, sep=',', encoding='cp949', on_bad_lines='skip')
+            except Exception:
+                return None
         needed = ['Condition', 'TotlCycle', 'Cap[mAh]']
         if not all(c in _raw_df.columns for c in needed):
             return None
@@ -2148,31 +2256,12 @@ def _analyze_accel_pattern_pne(
       [39] CC구간 용량 (μAh)
       [40] CV구간 용량 (μAh)
     """
-    # 이미 로딩된 DataFrame 재사용 (없으면 파일 로딩)
+    # 이미 로딩된 DataFrame 재사용 (없으면 캐시에서 로딩)
     if raw_df is not None:
         df = raw_df
     else:
-        restore_path = os.path.join(channel_path, 'Restore')
-        if not os.path.isdir(restore_path):
-            return None
-
-        sed_file = None
-        try:
-            for f in os.listdir(restore_path):
-                if 'SaveEndData' in f and f.endswith('.csv'):
-                    sed_file = f
-                    break
-        except OSError:
-            return None
-        if not sed_file:
-            return None
-
-        try:
-            df = pd.read_csv(
-                os.path.join(restore_path, sed_file),
-                header=None, encoding='cp949', on_bad_lines='skip',
-            )
-        except Exception:
+        df, _, _ = _cached_pne_restore_files(channel_path)
+        if df is None:
             return None
     if df.shape[1] < 41:
         return None
@@ -2443,78 +2532,13 @@ def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
     """
     PNE 프로파일: 인덱스 파일/원시 데이터를 1회 loading 후, 메모리에서 사이클별 데이터 분배.
     """
+    mincapacity, all_raw, is_pne21_22 = _pne_load_profile_raw(
+        raw_file_path, min(cycle_list), max(cycle_list) + 1, mincapacity, inirate)
     results = {}
-    if (raw_file_path[-4:-1]) == "ter":
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # min_cap은 1회만 계산
-    mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-    
-    rawdir = raw_file_path + "\\Restore\\"
-    if not os.path.isdir(rawdir):
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # 인덱스 파일 1회 읽기 (SaveEndData, savingFileIndex_start)
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    save_end_data = None
-    file_index_list = None
-    for files in subfile:
-        if "SaveEndData" in files:
-            save_end_data = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                         header=None, encoding="cp949", on_bad_lines='skip')
-        if files == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(rawdir + files, sep=r"\s+", skiprows=0, engine="c",
-                               header=None, encoding="cp949", on_bad_lines='skip')
-            file_index_list = [int(element.replace(',', '')) for element in df2.loc[:, 3].tolist()]
-    
-    if save_end_data is None or file_index_list is None:
-        for cyc in cycle_list:
-            results[cyc] = [mincapacity, pd.DataFrame()]
-        return results
-    
-    # 전체 사이클 범위에서 필요한 SaveData 파일 범위 산정 (1회)
-    min_cyc = min(cycle_list)
-    max_cyc = max(cycle_list) + 1
-    if min_cyc != 1:
-        index_min = save_end_data.loc[(save_end_data.loc[:, 27] == (min_cyc - 1)), 0].tolist()
-    else:
-        index_min = [0]
-    index_max = save_end_data.loc[(save_end_data.loc[:, 27] == max_cyc), 0].tolist()
-    if not index_max:
-        index_max = save_end_data.loc[(save_end_data.loc[:, 27] == save_end_data.loc[:, 27].max()), 0].tolist()
-    
-    if len(index_min) == 0:
-        file_start = 0
-    else:
-        file_start = binary_search(file_index_list, index_min[-1] + 1) - 1
-    file_end = binary_search(file_index_list, index_max[-1]) - 1
-    if file_start < 0:
-        file_start = 0
-    
-    # 필요한 SaveData 파일 전체를 1회 로딩
-    all_raw = None
-    for files in subfile[file_start:(file_end + 1)]:
-        if "SaveData" in files:
-            chunk = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                header=None, encoding="cp949", on_bad_lines='skip')
-            if all_raw is None:
-                all_raw = chunk
-            else:
-                all_raw = pd.concat([all_raw, chunk], ignore_index=True)
-    
     if all_raw is None:
         for cyc in cycle_list:
             results[cyc] = [mincapacity, pd.DataFrame()]
         return results
-    
-    # PNE21/22/코인셀 단위 변환 계수 결정
-    is_pne21_22 = is_micro_unit(raw_file_path)
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
     
     # 사이클별 데이터 분배 (메모리에서)
     for inicycle in cycle_list:
@@ -2523,26 +2547,8 @@ def pne_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
         if len(cycle_raw) > 0:
             cycle_raw = cycle_raw[[17, 8, 9, 21, 10, 7]].copy()
             cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            # 단위 변환
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.stepchg = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.stepchg = pd.concat(Profiles)
+            _pne_normalize_profile(cycle_raw, mincapacity, raw_file_path, cap_col="Chgcap")
+            df.stepchg = _merge_step_profiles(cycle_raw, cap_col="Chgcap")
             # cut-off 및 컬럼 정리
             if hasattr(df, "stepchg"):
                 df.stepchg = df.stepchg[(df.stepchg["Current[mA]"] >= cutoff)]
@@ -2567,17 +2573,8 @@ def _pne_load_profile_raw(raw_file_path, min_cycle, max_cycle, mincapacity, inir
     if not os.path.isdir(rawdir):
         return (mincapacity, None, False)
 
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    save_end_data = None
-    file_index_list = None
-    for files in subfile:
-        if "SaveEndData" in files:
-            save_end_data = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
-                                         header=None, encoding="cp949", on_bad_lines='skip')
-        if files == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(rawdir + files, sep=r"\s+", skiprows=0, engine="c",
-                               header=None, encoding="cp949", on_bad_lines='skip')
-            file_index_list = df2[3].str.replace(',', '').astype(int).tolist()
+    # 캐시에서 SaveEndData, file_index, subfile 조회
+    save_end_data, file_index_list, subfile = _cached_pne_restore_files(raw_file_path)
 
     if save_end_data is None or file_index_list is None:
         return (mincapacity, None, False)
@@ -2633,20 +2630,13 @@ def pne_rate_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
             results[cyc] = [mincapacity, pd.DataFrame()]
         return results
 
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
     for inicycle in cycle_list:
         df = pd.DataFrame()
         cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))].copy()
         if len(cycle_raw) > 0:
             cycle_raw = cycle_raw[[17, 8, 9, 21, 10, 7]]
             cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
+            _pne_normalize_profile(cycle_raw, mincapacity, raw_file_path, cap_col="Chgcap")
             cycle_raw = cycle_raw[(cycle_raw["Current[mA]"] >= cutoff)]
             df.rateProfile = cycle_raw[["PassTime[Sec]", "Chgcap", "Voltage[V]", "Current[mA]", "Temp1[Deg]"]]
             df.rateProfile.columns = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
@@ -2674,34 +2664,14 @@ def pne_chg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inirat
             results[cyc] = [mincapacity, pd.DataFrame()]
         return results
 
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
     for inicycle in cycle_list:
         df = pd.DataFrame()
         cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 1]))].copy()
         if len(cycle_raw) > 0:
             cycle_raw = cycle_raw[[17, 8, 9, 10, 14, 21, 7]]
             cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Chgcap", "Chgwh", "Temp1[Deg]", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor
-            cycle_raw["Chgcap"] = cycle_raw["Chgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.Profile = pd.concat(Profiles)
+            _pne_normalize_profile(cycle_raw, mincapacity, raw_file_path, cap_col="Chgcap")
+            df.Profile = _merge_step_profiles(cycle_raw, cap_col="Chgcap")
             if hasattr(df, "Profile"):
                 df.Profile = df.Profile.reset_index()
                 df.Profile = df.Profile[(df.Profile["Current[mA]"] >= cutoff)]
@@ -2737,34 +2707,15 @@ def pne_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
             results[cyc] = [mincapacity, pd.DataFrame()]
         return results
 
-    current_divisor = mincapacity * 1000000 if is_pne21_22 else mincapacity * 1000
-    cap_divisor = current_divisor
-
     for inicycle in cycle_list:
         df = pd.DataFrame()
         cycle_raw = all_raw[(all_raw[27] == inicycle) & (all_raw[2].isin([9, 2]))].copy()
         if len(cycle_raw) > 0:
             cycle_raw = cycle_raw[[17, 8, 9, 11, 15, 21, 7]]
             cycle_raw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Dchgcap", "Dchgwh", "Temp1[Deg]", "step"]
-            cycle_raw["PassTime[Sec]"] = cycle_raw["PassTime[Sec]"] / 100 / 60
-            cycle_raw["Voltage[V]"] = cycle_raw["Voltage[V]"] / 1000000
-            cycle_raw["Current[mA]"] = cycle_raw["Current[mA]"] / current_divisor * (-1)
-            cycle_raw["Dchgcap"] = cycle_raw["Dchgcap"] / cap_divisor
-            cycle_raw["Temp1[Deg]"] = cycle_raw["Temp1[Deg]"] / 1000
-            # 스텝 연결 처리
-            stepmin = cycle_raw.step.min()
-            stepmax = cycle_raw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = cycle_raw
-                else:
-                    Profiles = [cycle_raw.loc[cycle_raw.step == stepmin]]
-                    for si in range(1, int(stepdiv) + 1):
-                        Profiles.append(cycle_raw.loc[cycle_raw.step == stepmin + si])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Dchgcap"] += Profiles[-2]["Dchgcap"].max()
-                    df.Profile = pd.concat(Profiles)
+            _pne_normalize_profile(cycle_raw, mincapacity, raw_file_path,
+                                   cap_col="Dchgcap", negate_current=True)
+            df.Profile = _merge_step_profiles(cycle_raw, cap_col="Dchgcap")
             if hasattr(df, 'Profile'):
                 df.Profile = df.Profile.reset_index()
                 df.Profile = df.Profile[(df.Profile["Voltage[V]"] >= cutoff)]
@@ -3126,21 +3077,9 @@ def pne_search_cycle(rawdir, start, end):
     if not os.path.isdir(rawdir):
         return [-1, -1]
     
-    save_end = None
-    file_index = None
-    subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-    for fname in subfile:
-        if "SaveEndData" in fname:
-            save_end = pd.read_csv(
-                rawdir + fname, sep=",", skiprows=0, engine="c",
-                header=None, encoding="cp949", on_bad_lines='skip'
-            )
-        if fname == "savingFileIndex_start.csv":
-            df2 = pd.read_csv(
-                rawdir + fname, sep=r"\s+", skiprows=0, engine="c",
-                header=None, encoding="cp949", on_bad_lines='skip'
-            )
-            file_index = df2[3].str.replace(',', '').astype(int).tolist()
+    # 캐시에서 SaveEndData, file_index 조회 (rawdir → raw_file_path 역산)
+    raw_file_path = rawdir.rstrip("\\").removesuffix("Restore").rstrip("\\")
+    save_end, file_index, _ = _cached_pne_restore_files(raw_file_path)
     
     if save_end is None or file_index is None:
         return [-1, -1]
@@ -3194,17 +3133,10 @@ def pne_continue_data(raw_file_path, inicycle, endcycle):
 
 def pne_cyc_continue_data(raw_file_path):
     df = pd.DataFrame()
-    if os.path.isdir(raw_file_path + "\\Restore\\"):
-        rawdir = raw_file_path + "\\Restore\\"
-        # Profile에 사용할 파일 선정
-        if os.path.isdir(rawdir):
-            subfile = [f for f in os.listdir(rawdir) if f.endswith(".csv")]
-            # for files in subfile:
-            for files in subfile:
-                # SaveData가 있는 파일을 순서대로 확인하면 Profile 작성
-                if "SaveEndData" in files:
-                    df.Cycrawtemp = pd.read_csv((rawdir + files), sep=",", skiprows=0, engine="c",
-                                                header=None, encoding="cp949", on_bad_lines='skip')
+    # 캐시에서 SaveEndData 조회
+    save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
+    if save_end_cached is not None:
+        df.Cycrawtemp = save_end_cached
     return df
 
 
@@ -3657,8 +3589,11 @@ def _process_pne_cycleraw(
 
 # PNE channel No., mincapacity 산정 기본 처리
 def pne_min_cap(raw_file_path, mincapacity, ini_crate):
-    # 용량 산정
+    # 캐시 확인 (동일 경로에 대해 이미 산정된 용량 재사용)
     if mincapacity == 0:
+        cache = _get_channel_cache(raw_file_path)
+        if 'min_cap' in cache:
+            return cache['min_cap']
         if "mAh" in raw_file_path:
             mincapacity = name_capacity(raw_file_path)
         elif os.path.isdir(raw_file_path + "\\Restore\\"):
@@ -3670,6 +3605,8 @@ def pne_min_cap(raw_file_path, mincapacity, ini_crate):
                                                 header=None, encoding="cp949", on_bad_lines='skip')
                         if len(inicapraw) > 2:
                             mincapacity = int(round(abs(inicapraw.iloc[1, 9]/1000))/ini_crate)
+        if mincapacity != 0:
+            cache['min_cap'] = mincapacity
     return mincapacity
 
 # PNE Cycle data 처리
@@ -3691,16 +3628,11 @@ def pne_simul_cycle_data(raw_file_path, min_capacity, ini_crate):
     if (raw_file_path[-4:-1]) != "ter":
         # PNE 채널, 용량 산정
         mincapacity = pne_min_cap(raw_file_path, min_capacity, ini_crate)
-        # data 기본 처리 (csv data loading)
-        if os.path.isdir(raw_file_path + "\\Restore\\"):
-            subfile = [f for f in os.listdir(raw_file_path + "\\Restore\\") if f.endswith('.csv')]
-            for files in subfile:
-                if "SaveEndData.csv" in files:
-                    if os.stat(raw_file_path + "\\Restore\\" + files).st_size != 0:
-                        Cycleraw = pd.read_csv(raw_file_path + "\\Restore\\" + files, sep=",", skiprows=0, engine="c",
-                                               header=None, encoding="cp949", on_bad_lines='skip')
-                        Cycleraw = Cycleraw[[27, 2, 11, 9, 24, 6, 8]]
-                        Cycleraw.columns = ["TotlCycle", "Condition", "DchgCap", "Curr", "Temp", "EndState", "Vol"]
+        # data 기본 처리 (csv data loading) — 캐시 사용
+        save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
+        if save_end_cached is not None:
+            Cycleraw = save_end_cached[[27, 2, 11, 9, 24, 6, 8]].copy()
+            Cycleraw.columns = ["TotlCycle", "Condition", "DchgCap", "Curr", "Temp", "EndState", "Vol"]
         # Cycleraw["OriCycle"] = Cycleraw["TotlCycle"]
         # condition을 기준으로 8을 대표로 해서 용량 산정
         # 전류의 경우 min을 기준으로 산정
@@ -3822,18 +3754,12 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
         mincapacity = pne_min_cap(raw_file_path, mincapacity, ini_crate)
         # data 기본 처리: CSV → .cyc 보충/대체 → Cycleraw 생성
         Cycleraw = None
-        if os.path.isdir(raw_file_path + "\\Restore\\"):
-            subfile = [f for f in os.listdir(raw_file_path + "\\Restore\\") if f.endswith('.csv')]
-            for files in subfile:
-                if "SaveEndData.csv" in files:
-                    csv_file = raw_file_path + "\\Restore\\" + files
-                    if os.stat(csv_file).st_size > 0 and mincapacity is not None:
-                        Cycleraw = pd.read_csv(csv_file, sep=",", skiprows=0, engine="c",
-                                               header=None, encoding="cp949", on_bad_lines='skip')
-                        Cycleraw = Cycleraw[[27, 2, 10, 11, 8, 20, 45, 15, 17, 9, 24, 29, 6]]
-                        Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp", "volmax",
-                                            "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
-                    break
+        # 캐시에서 SaveEndData 조회
+        save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
+        if save_end_cached is not None and mincapacity is not None:
+            Cycleraw = save_end_cached[[27, 2, 10, 11, 8, 20, 45, 15, 17, 9, 24, 29, 6]].copy()
+            Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp", "volmax",
+                                "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
         # .cyc 보충/대체 로직
         cyc_files = [os.path.join(raw_file_path, f) for f in os.listdir(raw_file_path) if f.endswith('.cyc')]
         cyc_path = cyc_files[0] if cyc_files else None
@@ -3876,29 +3802,8 @@ def pne_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
                                                             & (profile_raw.Profileraw[2].isin([9, 1]))]
             profile_raw.Profileraw = profile_raw.Profileraw[[17, 8, 9, 21, 10, 7]]
             profile_raw.Profileraw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            # 충전 단위 변환
-            profile_raw.Profileraw["PassTime[Sec]"] = profile_raw.Profileraw["PassTime[Sec]"]/100/60
-            profile_raw.Profileraw["Voltage[V]"] = profile_raw.Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
-                profile_raw.Profileraw["Current[mA]"] = profile_raw.Profileraw["Current[mA]"]/mincapacity/1000000
-                profile_raw.Profileraw["Chgcap"] = profile_raw.Profileraw["Chgcap"]/mincapacity/1000000
-            else:
-                profile_raw.Profileraw["Current[mA]"] = profile_raw.Profileraw["Current[mA]"]/mincapacity/1000
-                profile_raw.Profileraw["Chgcap"] = profile_raw.Profileraw["Chgcap"]/mincapacity/1000
-            profile_raw.Profileraw["Temp1[Deg]"] = profile_raw.Profileraw["Temp1[Deg]"]/1000
-            stepmin = profile_raw.Profileraw.step.min()
-            stepmax = profile_raw.Profileraw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.stepchg = profile_raw.Profileraw
-                else:
-                    Profiles = [profile_raw.Profileraw.loc[profile_raw.Profileraw.step == stepmin]]
-                    for i in range(1, stepdiv + 1):
-                        Profiles.append(profile_raw.Profileraw.loc[profile_raw.Profileraw.step == stepmin + i])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.stepchg = pd.concat(Profiles)
+            _pne_normalize_profile(profile_raw.Profileraw, mincapacity, raw_file_path, cap_col="Chgcap")
+            df.stepchg = _merge_step_profiles(profile_raw.Profileraw, cap_col="Chgcap")
         # 전류 cut-off 설정
         if hasattr(df, "stepchg"):
             df.stepchg = df.stepchg[(df.stepchg["Current[mA]"] >= cutoff)]
@@ -3921,16 +3826,7 @@ def pne_rate_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate)
             Profileraw = Profileraw.loc[(Profileraw[27] == inicycle) & (Profileraw[2].isin([9, 1]))]
             Profileraw = Profileraw[[17, 8, 9, 21, 10, 7]]
             Profileraw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]", "Chgcap", "step"]
-            # 충전 단위 변환
-            Profileraw["PassTime[Sec]"] = Profileraw["PassTime[Sec]"]/100/60
-            Profileraw["Voltage[V]"] = Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
-                Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000000
-                Profileraw["Chgcap"] = Profileraw["Chgcap"]/mincapacity/1000000
-            else:
-                Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000
-                Profileraw["Chgcap"] = Profileraw["Chgcap"]/mincapacity/1000
-            Profileraw["Temp1[Deg]"] = Profileraw["Temp1[Deg]"]/1000
+            _pne_normalize_profile(Profileraw, mincapacity, raw_file_path, cap_col="Chgcap")
             df.rateProfile = Profileraw
             # cut-off
             if hasattr(df, "rateProfile"):
@@ -3952,29 +3848,8 @@ def pne_chg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate, 
             df.Profileraw = df.Profileraw.loc[(df.Profileraw[27] == inicycle) & (df.Profileraw[2].isin([9, 1]))]
             df.Profileraw = df.Profileraw[[17, 8, 9, 10, 14, 21, 7]]
             df.Profileraw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Chgcap", "Chgwh", "Temp1[Deg]", "step"]
-            # 충전 단위 변환
-            df.Profileraw["PassTime[Sec]"] = df.Profileraw["PassTime[Sec]"]/100/60
-            df.Profileraw["Voltage[V]"] = df.Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
-                df.Profileraw["Current[mA]"] = df.Profileraw["Current[mA]"]/mincapacity/1000000
-                df.Profileraw["Chgcap"] = df.Profileraw["Chgcap"]/mincapacity/1000000
-            else:
-                df.Profileraw["Current[mA]"] = df.Profileraw["Current[mA]"]/mincapacity/1000
-                df.Profileraw["Chgcap"] = df.Profileraw["Chgcap"]/mincapacity/1000
-            df.Profileraw["Temp1[Deg]"] = df.Profileraw["Temp1[Deg]"]/1000
-            stepmin = df.Profileraw.step.min()
-            stepmax = df.Profileraw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = df.Profileraw
-                else:
-                    Profiles = [df.Profileraw.loc[df.Profileraw.step == stepmin]]
-                    for i in range(1, stepdiv + 1):
-                        Profiles.append(df.Profileraw.loc[df.Profileraw.step == stepmin + i])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Chgcap"] += Profiles[-2]["Chgcap"].max()
-                    df.Profile = pd.concat(Profiles)
+            _pne_normalize_profile(df.Profileraw, mincapacity, raw_file_path, cap_col="Chgcap")
+            df.Profile = _merge_step_profiles(df.Profileraw, cap_col="Chgcap")
         if hasattr(df, "Profile"):
             df.Profile = df.Profile.reset_index()
             # cut-off
@@ -4009,29 +3884,9 @@ def pne_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate,
             Profileraw = Profileraw.loc[(Profileraw[27] == inicycle) & (Profileraw[2].isin([9, 2]))]
             Profileraw = Profileraw[[17, 8, 9, 11, 15, 21, 7]]
             Profileraw.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Dchgcap", "Dchgwh", "Temp1[Deg]", "step"]
-            # 충전 단위 변환
-            Profileraw["PassTime[Sec]"] = Profileraw["PassTime[Sec]"]/100/60
-            Profileraw["Voltage[V]"] = Profileraw["Voltage[V]"]/1000000
-            if is_micro_unit(raw_file_path):
-                Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000000 * (-1)
-                Profileraw["Dchgcap"] = Profileraw["Dchgcap"]/mincapacity/1000000
-            else:
-                Profileraw["Current[mA]"] = Profileraw["Current[mA]"]/mincapacity/1000 * (-1)
-                Profileraw["Dchgcap"] = Profileraw["Dchgcap"]/mincapacity/1000
-            Profileraw["Temp1[Deg]"] = Profileraw["Temp1[Deg]"]/1000
-            stepmin = Profileraw.step.min()
-            stepmax = Profileraw.step.max()
-            stepdiv = stepmax - stepmin
-            if not np.isnan(stepdiv):
-                if stepdiv == 0:
-                    df.Profile = Profileraw
-                else:
-                    Profiles = [Profileraw.loc[Profileraw.step == stepmin]]
-                    for i in range(1, stepdiv + 1):
-                        Profiles.append(Profileraw.loc[Profileraw.step == stepmin + i])
-                        Profiles[-1]["PassTime[Sec]"] += Profiles[-2]["PassTime[Sec]"].max()
-                        Profiles[-1]["Dchgcap"] += Profiles[-2]["Dchgcap"].max()
-                    df.Profile = pd.concat(Profiles)
+            _pne_normalize_profile(Profileraw, mincapacity, raw_file_path,
+                                   cap_col="Dchgcap", negate_current=True)
+            df.Profile = _merge_step_profiles(Profileraw, cap_col="Dchgcap")
         if hasattr(df, 'Profile'):
             df.Profile = df.Profile.reset_index()
             # cut-off
@@ -12774,6 +12629,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩 (채널 단위 배치)
         """
+        clear_channel_cache()  # 새 로드 시작 시 캐시 초기화
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
@@ -12855,6 +12711,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         모든 폴더의 프로파일 데이터를 병렬로 로딩 (범용).
         profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
         """
+        clear_channel_cache()  # 새 로드 시작 시 캐시 초기화
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
@@ -12958,6 +12815,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
           - results: {(folder_idx, subfolder_idx): (folder_path, cyctemp)}
           - subfolder_map: {folder_idx: [subfolder_path, ...]}
         """
+        clear_channel_cache()  # 새 로드 시작 시 캐시 초기화
         tasks = []
         subfolder_map = {}  # 폴더별 subfolder 캐시 (os.scandir 1회만)
         for i, cyclefolder in enumerate(all_data_folder):
