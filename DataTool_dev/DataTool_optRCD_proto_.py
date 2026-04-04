@@ -1293,13 +1293,15 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         else:
             df.NewData.loc[0, "dcir"] = 0
         df.NewData = df.NewData.drop("TotlCycle", axis=1)
+        # 재정의 사이클 번호 (충방전 쌍 기준 1, 2, 3, ...)
+        df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
         # ── 충전 상한 전압 트래킹: ChgVolt, ChgSteps (위치 기반 정렬) ──
         if len(df.NewData) > 0 and len(_ChgVolt.dropna()) > 0:
             _n = min(len(_ChgVolt), len(df.NewData))
             df.NewData.loc[df.NewData.index[:_n], 'ChgVolt'] = _ChgVolt.values[:_n]
             df.NewData.loc[df.NewData.index[:_n], 'ChgSteps'] = _ChgSteps.values[:_n]
     else:
-        sys.exit()
+        pass
     return [mincapacity, df]
 
 
@@ -1313,7 +1315,7 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
         return {}, mincapacity
 
     Cycleraw = tempdata.dataraw.copy()
-    Cycleraw["OriCycle"] = Cycleraw["TotlCycle"].copy()
+    Cycleraw["OriCycle"] = Cycleraw["TotlCycle"]
 
     # 방전 시작 시 data 변경 (toyo_cycle_data와 동일)
     if Cycleraw.iloc[0]["Condition"] == 2 and len(Cycleraw) > 2:
@@ -2495,6 +2497,7 @@ def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inir
                 df.stepchg = tempdata.dataraw
                 df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
                 lasttime = df.stepchg["PassTime[Sec]"].max()
+                _frames = [df.stepchg]
                 maxcon = 1
                 while maxcon == 1:
                     stepcyc = stepcyc + 1
@@ -2502,8 +2505,10 @@ def toyo_step_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inir
                     maxcon = int(tempdata.dataraw["Condition"].max())
                     tempdata.dataraw = tempdata.dataraw[(tempdata.dataraw["Condition"] == 1)]
                     tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
-                    df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
-                    lasttime = df.stepchg["PassTime[Sec]"].max()
+                    _frames.append(tempdata.dataraw)
+                    if not tempdata.dataraw.empty:
+                        lasttime = tempdata.dataraw["PassTime[Sec]"].max()
+                df.stepchg = pd.concat(_frames)
             else:
                 df.stepchg = tempdata.dataraw
                 df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
@@ -2597,15 +2602,13 @@ def _pne_load_profile_raw(raw_file_path, min_cycle, max_cycle, mincapacity, inir
         file_start = 0
 
     # SaveData 일괄 로딩
-    all_raw = None
+    _chunks = []
     for files in subfile[file_start:(file_end + 1)]:
         if "SaveData" in files:
             chunk = pd.read_csv(rawdir + files, sep=",", skiprows=0, engine="c",
                                 header=None, encoding="cp949", on_bad_lines='skip')
-            if all_raw is None:
-                all_raw = chunk
-            else:
-                all_raw = pd.concat([all_raw, chunk], ignore_index=True)
+            _chunks.append(chunk)
+    all_raw = pd.concat(_chunks, ignore_index=True) if _chunks else None
 
     is_pne21_22 = is_micro_unit(raw_file_path)
     return (mincapacity, all_raw, is_pne21_22)
@@ -2773,6 +2776,7 @@ def toyo_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
             df.stepchg = tempdata.dataraw
             df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
             lasttime = df.stepchg["PassTime[Sec]"].max()
+            _frames = [df.stepchg]
             maxcon = 1
             while maxcon == 1:
                 stepcyc = stepcyc + 1
@@ -2780,8 +2784,10 @@ def toyo_step_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
                 maxcon = int(tempdata.dataraw["Condition"].max())
                 tempdata.dataraw = tempdata.dataraw[(tempdata.dataraw["Condition"] == 1)]
                 tempdata.dataraw["PassTime[Sec]"] = tempdata.dataraw["PassTime[Sec]"] + lasttime
-                df.stepchg = pd.concat([df.stepchg, tempdata.dataraw])
-                lasttime = df.stepchg["PassTime[Sec]"].max()
+                _frames.append(tempdata.dataraw)
+                if not tempdata.dataraw.empty:
+                    lasttime = tempdata.dataraw["PassTime[Sec]"].max()
+            df.stepchg = pd.concat(_frames)
         else:
             df.stepchg = tempdata.dataraw
             df.stepchg = df.stepchg[(df.stepchg["Condition"] == 1)]
@@ -3441,15 +3447,21 @@ def _process_pne_cycleraw(
         dcirtemp3[dcirtemp3.columns[5]] = dcirtemp3.iloc[:, 5].astype(float)
 
         if (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
-            for i in range(0, min_dcir_count):
-                current1 = dcirtemp1.iloc[i, 9]
-                current2 = dcirtemp2.iloc[i, 9]
-                if current1 != 0 and (current1 - current2) != 0:  # 0으로 나누는 것 방지
-                    dcirtemp1.iloc[i, 5] = abs((dcirtemp3.iloc[i, 4] - dcirtemp1.iloc[i, 4]) / current1 * 1000)
-                    dcirtemp2.iloc[i, 5] = abs((dcirtemp2.iloc[i, 4] - dcirtemp1.iloc[i, 4]) / (current1 - current2) * 1000)
-                else:
-                    dcirtemp1.iloc[i, 5] = None  # 또는 다른 기본값 설정
-                    dcirtemp2.iloc[i, 5] = None
+            # 벡터화 DCIR 계산 (for 루프 대체)
+            _c1 = dcirtemp1.iloc[:, 9].values.astype(float)
+            _c2 = dcirtemp2.iloc[:, 9].values.astype(float)
+            _v1 = dcirtemp1.iloc[:, 4].values.astype(float)
+            _v2 = dcirtemp2.iloc[:, 4].values.astype(float)
+            _v3 = dcirtemp3.iloc[:, 4].values.astype(float)
+            _valid = (_c1 != 0) & ((_c1 - _c2) != 0)
+            _safe_c1 = np.where(_c1 != 0, _c1, 1.0)
+            _safe_diff = np.where((_c1 - _c2) != 0, _c1 - _c2, 1.0)
+            _rss = np.abs((_v3 - _v1) / _safe_c1 * 1000)
+            _pulse = np.abs((_v2 - _v1) / _safe_diff * 1000)
+            _rss[~_valid] = np.nan
+            _pulse[~_valid] = np.nan
+            dcirtemp1.iloc[:, 5] = _rss
+            dcirtemp2.iloc[:, 5] = _pulse
     # SOC5,50 10s pulse DCIR
     else:
         # pulse 기준, 1분 이하 pulse 기준으로 산정
@@ -3486,8 +3498,7 @@ def _process_pne_cycleraw(
         df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, dcir, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
         df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "dcir", "Temp", "AvgV", "OriCyc"]
     if chkir:
-        df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-        df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+        df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
         df.NewData.loc[0, "dcir"] = 0
     elif mkdcir and (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0):
         if chkir2:
@@ -3505,8 +3516,7 @@ def _process_pne_cycleraw(
             df_rssocv = df_rssocv.set_index(dcir["Cyc"])
             df_rssccv = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "rssccv": dcirtemp1["Ocv"]/1000000})
             df_rssccv = df_rssccv.set_index(dcir["Cyc"])
-            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             if hasattr(dcir2, "dcir_raw"):
                 df.NewData["dcir"] = dcir["dcir_raw2"]
                 df.NewData["dcir2"] = dcir2["dcir_raw"]
@@ -3546,22 +3556,22 @@ def _process_pne_cycleraw(
             if hasattr(dcirtemp, "dcir") and not dcirtemp.dcir.empty:
                 dcir = pd.DataFrame({"Cyc": cyccal, "dcir_raw": dcirtemp.dcir})
                 dcir = dcir.set_index(dcir["Cyc"])
-            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
-            if isinstance(dcir, pd.Series) and hasattr(dcir, "dcir_raw") and not dcir.dcir_raw.empty:
+            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
+            if 'dcir' in locals() and isinstance(dcir, pd.DataFrame) and "dcir_raw" in dcir.columns:
                 df.NewData["dcir"] = dcir["dcir_raw"]
-            elif isinstance(dcir, pd.Series):
+            elif 'dcir' in locals() and isinstance(dcir, pd.Series):
                 df.NewData["dcir"] = dcir
             else:
                 df.NewData.loc[0, "dcir"] = 0
         else:
-            df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-            df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "Temp", "AvgV", "OriCyc"]
+            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             df.NewData.loc[0, "dcir"] = 0
     # 충·방전 쌍이 없는 사이클 제거 (출하상태 방전 등)
     if hasattr(df, 'NewData'):
         df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
         df.NewData = df.NewData.reset_index(drop=True)
+        # 재정의 사이클 번호 (충방전 쌍 기준 1, 2, 3, ...)
+        df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
 
     # ── 충전/방전 종료 전압 트래킹: ChgVolt(상한 V), DchgVolt(하한 V), ChgSteps ──
     if hasattr(df, 'NewData') and len(df.NewData) > 0 and 'Ocv' in Cycleraw.columns and not df.NewData['OriCyc'].isna().any():
@@ -12662,7 +12672,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         for cyc_no, temp in batch_results.items():
                             results[(folder_idx, subfolder_idx, cyc_no)] = temp
                 completed += 1
-                self.progressBar.setValue(int(completed / total_tasks * 50))
+                if completed % 3 == 0 or completed == total_tasks:
+                    self.progressBar.setValue(int(completed / total_tasks * 50))
         
         return results
     
@@ -12743,7 +12754,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         for key, data in batch_results.items():
                             results[(folder_idx, subfolder_idx, key)] = data
                 completed += 1
-                self.progressBar.setValue(int(completed / total_tasks * 50))
+                if completed % 3 == 0 or completed == total_tasks:
+                    self.progressBar.setValue(int(completed / total_tasks * 50))
 
         return results
 
@@ -12853,7 +12865,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     results[(folder_idx, subfolder_idx)] = (folder_path, cyctemp)
                 completed += 1
                 # 진행률 업데이트 (50%까지만 - 나머지 50%는 그래프 생성)
-                self.progressBar.setValue(int(completed / total_tasks * 50))
+                if completed % 3 == 0 or completed == total_tasks:
+                    self.progressBar.setValue(int(completed / total_tasks * 50))
         
         return results, subfolder_map
     

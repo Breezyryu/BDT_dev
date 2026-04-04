@@ -19,3 +19,4 @@ vault/
 .github/
 analysis_dev_env/
 .gitignore
+data/
