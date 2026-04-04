@@ -9,7 +9,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "openpyxl>=3.1.5",
     "pandas>=3.0.0",
-    "pyinstaller>=6.18.0",ㅕㅍ ㅔㅑ
+    "pyinstaller>=6.18.0",
     "pyodbc==5.1.0",
     "pybamm>=24.11",
     "pyqt6>=6.10.2",
@@ -18,4 +18,21 @@ dependencies = [
     "xlsxwriter>=3.2.9",
     "polars>=1.39.0",
     "xlrd>=2.0.2",
+    "pytest>=9.0.2",
+    "pytest-qt>=4.5.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gui: GUI 필요 테스트 (pytest-qt, Windows)",
+    "slow: 대용량 데이터 또는 오래 걸리는 테스트",
+]
+# Level A 기본 실행: GUI 테스트 제외
+addopts = "-m 'not gui' -v"
