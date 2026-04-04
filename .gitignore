@@ -20,3 +20,5 @@ vault/
 analysis_dev_env/
 .gitignore
 data/
+.claude/
+CLAUDE.md
