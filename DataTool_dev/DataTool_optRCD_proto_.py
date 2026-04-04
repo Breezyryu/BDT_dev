@@ -389,10 +389,88 @@ def disconnect_change(button):
     button.setStyleSheet(f"color: {color.name()}")
 
 # 충방전기 구분 (패턴 폴더 유무로 구분)
-def check_cycler(raw_file_path): 
+def check_cycler(raw_file_path):
     # 충방전기 데이터 폴더에 패턴 폴더 유무로 PNE와 Toyo 구분, PNE이면 True, Toyo이면 False
     cycler = os.path.isdir(raw_file_path + "\\Pattern")
     return cycler
+
+def _quick_max_cycle(data_path: str, mincapacity: float = 0) -> int | None:
+    """경로의 첫 채널 폴더에서 최대 **논리 사이클** 수를 빠르게 추정
+
+    논리 사이클 = 유효 방전(Condition==2, Cap > mincapacity/60) 1회 = 1 사이클
+
+    Toyo: capacity.log를 읽어 toyo_cycle_data()와 동일한 병합 로직 적용
+      1) 연속 동일 Condition 행을 하나의 이벤트로 병합 (다단 CC 충전 등)
+      2) 병합 후 Condition==2(방전) 중 Cap > mincapacity/60 만 카운트
+      3) mincapacity가 없으면 경로명에서 추출, 그래도 없으면 첫 사이클에서 추정
+    PNE: SaveEndData.csv의 Total Cycle 최대값 (col 27, 이미 논리 사이클)
+
+    Parameters
+    ----------
+    data_path : str
+        데이터 루트 경로 (채널 폴더들의 상위)
+    mincapacity : float
+        셀 용량 (mAh). 0이면 경로명/첫사이클에서 자동 추정
+
+    Returns
+    -------
+    int | None
+        추정 최대 논리 사이클 수, 판별 불가 시 None
+    """
+    if not os.path.isdir(data_path):
+        return None
+    # 첫 채널 폴더 탐색
+    subs = sorted(
+        [f.path for f in os.scandir(data_path)
+         if f.is_dir() and "Pattern" not in f.name
+         and _is_channel_folder(f.name)])
+    if not subs:
+        return None
+    ch_path = subs[0]
+    try:
+        if check_cycler(data_path):
+            # PNE: SaveEndData col 27 = TotlCycle (루프 기반, 이미 논리 사이클)
+            save_end, _, _ = _cached_pne_restore_files(ch_path)
+            if save_end is not None and not save_end.empty and save_end.shape[1] > 27:
+                return int(save_end.iloc[:, 27].max())
+        else:
+            # Toyo: capacity.log에서 논리 사이클 추정
+            # toyo_read_csv(ch_path)는 캐시됨 — 이후 분석에서도 재사용
+            df_cap = toyo_read_csv(ch_path)
+            if df_cap is None or df_cap.empty:
+                return None
+            # 컬럼명 호환 (BLK3600 vs BLK5200)
+            cap_col = ("Cap[mAh]" if "Cap[mAh]" in df_cap.columns
+                       else "Capacity[mAh]" if "Capacity[mAh]" in df_cap.columns
+                       else None)
+            if "Condition" not in df_cap.columns or cap_col is None:
+                return None
+            # mincapacity 미제공 시 자동 추정 (toyo_min_cap과 동일 경로)
+            if not mincapacity:
+                mincapacity = name_capacity(data_path)
+            if not mincapacity:
+                mincapacity = toyo_min_cap(ch_path, 0, 0.2)
+            if not mincapacity:
+                return None
+            # ── toyo_cycle_data()와 동일한 병합 로직 ──
+            # Step 1: 연속 동일 Condition 그룹화 (다단 CC충전 → 1개 이벤트)
+            cond = df_cap["Condition"]
+            merge_group = ((cond != cond.shift())
+                           | (~cond.isin([1, 2]))).cumsum()
+            # Step 2: 그룹별 Condition + Cap 합산
+            grouped = df_cap.groupby(merge_group).agg(
+                Condition=("Condition", "first"),
+                Cap=(cap_col, "sum"),
+            )
+            # Step 3: 방전 그룹 중 유효 방전만 카운트
+            # toyo_cycle_data() line 1303과 동일 기준: Cap > mincapacity/60
+            threshold = mincapacity / 60
+            valid_dchg = grouped[(grouped["Condition"] == 2)
+                                 & (grouped["Cap"] > threshold)]
+            return len(valid_dchg) if len(valid_dchg) > 0 else None
+    except Exception:
+        pass
+    return None
 
 # 코인셀/PNE21·22 μA 단위 사용 여부 판별
 _coincell_mode = False
@@ -5030,17 +5108,21 @@ class Ui_sitool(object):
         self.horizontalLayout_119.setSpacing(4)
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
-        self.cycle_path_table = QtWidgets.QTableWidget(5, 4, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["경로명", "경로(필수입력)", "채널", "용량"])
+        self.cycle_path_table = QtWidgets.QTableWidget(5, 6, parent=self._path_groupbox)
+        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "모드"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         _hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        _hdr.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        _hdr.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.cycle_path_table.setColumnWidth(0, 55)
         self.cycle_path_table.setColumnWidth(2, 70)
         self.cycle_path_table.setColumnWidth(3, 55)
+        self.cycle_path_table.setColumnWidth(4, 55)
+        self.cycle_path_table.setColumnWidth(5, 50)
         self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
         self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
         _table_font = QtGui.QFont()
@@ -5094,55 +5176,8 @@ class Ui_sitool(object):
         self.horizontalLayout_119.addLayout(self._path_btn_layout)
         self._path_groupbox_vlayout.addLayout(self.horizontalLayout_119)
         self.verticalLayout_6.addWidget(self._path_groupbox, stretch=0)
-        self.capacitygroup = QtWidgets.QGroupBox(parent=self.CycTab)
-        self.capacitygroup.setMinimumSize(QtCore.QSize(400, 60))
-        self.capacitygroup.setMaximumSize(QtCore.QSize(16777215, 80))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.capacitygroup.setFont(font)
-        self.capacitygroup.setObjectName("capacitygroup")
-        self.horizontalLayout_122 = QtWidgets.QHBoxLayout(self.capacitygroup)
-        self.horizontalLayout_122.setObjectName("horizontalLayout_122")
-        # 용량 안내 라벨
-        self._cap_info_label = QtWidgets.QLabel(parent=self.capacitygroup)
-        self._cap_info_label.setFont(font)
-        self._cap_info_label.setText("용량: 테이블 입력 또는 자동파싱(빈칸)")
-        self.horizontalLayout_122.addWidget(self._cap_info_label)
-        self.horizontalLayout_122.addStretch(1)
-        # C-rate 입력
-        self._crate_label = QtWidgets.QLabel("C-rate:", parent=self.capacitygroup)
-        self._crate_label.setFont(font)
-        self.horizontalLayout_122.addWidget(self._crate_label)
-        self.ratetext = QtWidgets.QLineEdit(parent=self.capacitygroup)
-        self.ratetext.setMinimumSize(QtCore.QSize(120, 25))
-        self.ratetext.setMaximumSize(QtCore.QSize(120, 25))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.ratetext.setFont(font)
-        self.ratetext.setInputMethodHints(QtCore.Qt.InputMethodHint.ImhFormattedNumbersOnly)
-        self.ratetext.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.ratetext.setObjectName("ratetext")
-        self.horizontalLayout_122.addWidget(self.ratetext)
-        self._rate_unit_label = QtWidgets.QLabel("C", parent=self.capacitygroup)
-        self._rate_unit_label.setFont(font)
-        self.horizontalLayout_122.addWidget(self._rate_unit_label)
-        # 하위 호환용 숨김 위젯 (inicaprate, inicaptype, capacitytext 참조 유지)
-        self.inicaprate = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaprate.setChecked(True)
-        self.inicaprate.setVisible(False)
-        self.inicaptype = QtWidgets.QRadioButton(parent=self.capacitygroup)
-        self.inicaptype.setChecked(False)
-        self.inicaptype.setVisible(False)
-        self.capacitytext = QtWidgets.QLineEdit(parent=self.capacitygroup)
-        self.capacitytext.setVisible(False)
-        self.capacitytext.setObjectName("capacitytext")
-        self.verticalLayout_6.addWidget(self.capacitygroup, stretch=0)
+        # [제거됨] capacitygroup (C-rate 설정) — 기본값 0.2 하드코딩으로 대체
+        # 경로 테이블 용량 컬럼 + name_capacity() 자동파싱으로 충분
         self.tabWidget_2 = QtWidgets.QTabWidget(parent=self.CycTab)
         self.tabWidget_2.setMinimumSize(QtCore.QSize(400, 400))
         self.tabWidget_2.setMaximumSize(QtCore.QSize(16777215, 16777215))
@@ -10570,9 +10605,6 @@ class Ui_sitool(object):
         self.chk_ectpath.setText(_translate("sitool", "ECT path 사용"))
         self.chk_coincell_cyc.setText(_translate("sitool", "코인셀"))
         self.cycle_tab_reset.setText(_translate("sitool", "초기화"))
-        self.capacitygroup.setTitle(_translate("sitool", "2. 용량 · C-rate 설정"))
-        self.ratetext.setText(_translate("sitool", "0.2"))
-        self.capacitytext.setText(_translate("sitool", "0"))
         self.dcirchk.setText(_translate("sitool", "PNE 설비 DCIR (SOC100 10s 방전 Pulse)"))
         self.pulsedcir.setText(_translate("sitool", "PNE 10s DCIR (SOC5, 50 10s 방전 Pulse)"))
         self.mkdcir.setText(_translate("sitool", "PNE DCIR (SOC 30/50/70 충전, SOC 70/50/30 방전, 1s Pulse/RSS)\n"
@@ -10952,7 +10984,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycparameter.setText("d:/!cyc_parameter_trend/para_data_Gen4 SDI MP1 업체 02C 수명 241212.txt")
         self.cycparameter2.setText("d:/!cyc_parameter_trend/para_data_Gen4 SDI MP1 업체 05C 수명 241212.txt")
         # UI 기준 초기치 설정 set-up
-        self.firstCrate = float(self.ratetext.text())
+        self.firstCrate = 0.2  # 기본 C-rate (capacitygroup UI 제거됨)
         self.mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
         self.xscale = int(self.tcyclerng.text())
         self.setxscale = int(self.setcyclexscale.text())
@@ -11026,6 +11058,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.customContextMenuRequested.connect(self._cycle_table_context_menu)
         # 연결처리 토글 시 그룹 구분선 갱신
         self.chk_link_cycle.toggled.connect(self._update_group_separators)
+        # ECT 경로 체크 토글 시 사이클·모드 열 편집 가능 여부 갱신
+        self.chk_ectpath.toggled.connect(self._update_ect_columns_state)
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
         self.RateConfirm.clicked.connect(self.rate_confirm_button)
@@ -11190,8 +11224,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             connect_change(self.mount_pne_5)
         else:
             disconnect_change(self.mount_pne_5)
+        # 초기 ECT 열 상태 설정 (chk_ectpath 기본값 = 체크 안 됨 → 비활성)
+        self._update_ect_columns_state()
 
-   
+
     def _init_confirm_button(self, button_widget):
         """
         초기화
@@ -14399,7 +14435,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def cyc_ini_set(self):
         set_coincell_mode(self.chk_coincell_cyc.isChecked())
         # UI 기준 초기 설정 데이터
-        firstCrate = float(self.ratetext.text())
+        firstCrate = 0.2  # 기본 C-rate
         mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
         xscale = int(self.tcyclerng.text())
         ylimithigh = float(self.tcyclerngyhl.text())
@@ -14409,7 +14445,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def Profile_ini_set(self):
         # UI 기준 초기 설정 데이터
-        firstCrate = float(self.ratetext.text())
+        firstCrate = 0.2  # 기본 C-rate
         mincapacity = 0  # 테이블 용량 열 입력 또는 자동파싱(빈칸)
         CycleNo = convert_steplist(self.stepnum.toPlainText())
         smoothdegree = int(self.smooth.text())
@@ -14428,12 +14464,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     #종료이벤트 발생시 종료
     def closeEvent(self, QCloseEvent):
         sys.exit()
-
-    def inicaprate_on(self):
-        pass  # 하위 호환 유지 (용량 테이블 통합으로 더 이상 사용하지 않음)
-
-    def inicaptype_on(self):
-        pass  # 하위 호환 유지 (용량 테이블 통합으로 더 이상 사용하지 않음)
 
     def pne_path_setting(self):
         all_data_name = []
@@ -14496,10 +14526,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         item = self.cycle_path_table.item(row, col)
         if item:
             item.setToolTip(item.text())
-        # 경로 컬럼(1) 변경 시 존재 여부 시각 표시 및 구분선 갱신
+        # 경로 컬럼(1) 변경 시 존재 여부 시각 표시 및 구분선 갱신 + 자동 채우기
         if col == 1:
             self._highlight_path_cell(row)
             self._update_group_separators()
+            # 경로 입력 시 자동 채우기 (디바운스: 300ms)
+            if hasattr(self, '_autofill_timer'):
+                self._autofill_timer.stop()
+            else:
+                self._autofill_timer = QtCore.QTimer(self)
+                self._autofill_timer.setSingleShot(True)
+                self._autofill_timer.timeout.connect(
+                    self._autofill_table_empty_cells)
+            self._autofill_timer.start(300)
 
     # ── 테이블 ↔ 데이터 유틸리티 ──
 
@@ -14510,7 +14549,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _get_table_rows(self):
         """테이블의 모든 행을 dict 리스트로 반환 (빈 행 제외)
-        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str}, ...]
+        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str, 'cycle': str, 'mode': str}, ...]
         """
         rows = []
         for r in range(self.cycle_path_table.rowCount()):
@@ -14522,6 +14561,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'path': path,
                 'channel': self._get_table_cell(r, 2),
                 'capacity': self._get_table_cell(r, 3),
+                'cycle': self._get_table_cell(r, 4),
+                'mode': self._get_table_cell(r, 5),
             })
         return rows
 
@@ -14551,6 +14592,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'path': path,
                 'channel': self._get_table_cell(r, 2),
                 'capacity': self._get_table_cell(r, 3),
+                'cycle': self._get_table_cell(r, 4),
+                'mode': self._get_table_cell(r, 5),
             })
         if current_group:
             groups.append(current_group)
@@ -14570,6 +14613,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             name = self._get_table_cell(r, 0)
             channel = self._get_table_cell(r, 2)
             capacity = self._get_table_cell(r, 3)
+            cycle = self._get_table_cell(r, 4)
+            mode = self._get_table_cell(r, 5)
             # forward-fill: 빈 경로/경로명은 직전 유효값 사용
             if path:
                 last_path = path
@@ -14584,6 +14629,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rows.append({
                 'name': name, 'path': path,
                 'channel': channel, 'capacity': capacity,
+                'cycle': cycle, 'mode': mode,
             })
         return rows
 
@@ -14633,7 +14679,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     auto_cap = name_capacity(path)
                 if not auto_cap and os.path.isdir(path):
                     try:
-                        first_crate = float(self.ratetext.text())
+                        first_crate = 0.2  # 기본 C-rate
                         subs = sorted([f.path for f in os.scandir(path)
                                        if f.is_dir() and "Pattern" not in f.name])
                         if subs:
@@ -14644,8 +14690,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     except Exception:
                         auto_cap = None
                 auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
+                # 최대 사이클 수 (빠른 추정)
+                # 사용자가 용량 열(col3)에 직접 입력한 값 우선 사용
+                user_cap = self._get_table_cell(r, 3)
+                try:
+                    cap_for_cycle = float(user_cap) if user_cap else 0
+                except ValueError:
+                    cap_for_cycle = 0
+                if not cap_for_cycle:
+                    cap_for_cycle = auto_cap if auto_cap else 0
+                max_cyc = _quick_max_cycle(path, cap_for_cycle)
+                auto_cyc_str = str(max_cyc) if max_cyc else ""
                 auto_vals.append({
-                    'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str})
+                    'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+                    'cycle': auto_cyc_str})
 
             # ── Pass 2: 셀 채우기 (연결 모드 시 그룹 내 중복 제거) ──
             grp_first = None  # 그룹 첫 행의 auto값 dict
@@ -14662,6 +14720,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     (0, auto['name'], grp_first['name']),
                     (2, auto['ch'],   grp_first['ch']),
                     (3, auto['cap'],  grp_first['cap']),
+                    (5, '',           ''),  # 모드(ECT): 자동 채움 없음 (사용자 수동 입력)
                 ]
                 for col, auto_val, first_val in cols:
                     existing = self._get_table_cell(r, col)
@@ -14692,6 +14751,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 font.setBold(
                                     existing.strip() != auto_val.strip())
                                 item.setFont(font)
+                # ── col 4 (사이클): max cycle을 회색 힌트로 표시 ──
+                cyc_existing = self._get_table_cell(r, 4)
+                cyc_auto = auto.get('cycle', '')
+                if cyc_auto and not cyc_existing:
+                    # 사용자 입력 없으면 max cycle을 회색 폰트로 표시
+                    item = tbl.item(r, 4)
+                    if item is None:
+                        item = QtWidgets.QTableWidgetItem(cyc_auto)
+                        tbl.setItem(r, 4, item)
+                    else:
+                        item.setText(cyc_auto)
+                    item.setForeground(QtGui.QColor(160, 160, 160))
+                    item.setToolTip(f"최대 사이클 (자동 감지): {cyc_auto}")
         finally:
             tbl.blockSignals(False)
         # 경로 하이라이트 갱신
@@ -14707,10 +14779,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for r, row in enumerate(rows):
             if row is None:
                 # 그룹 구분자: 빈 행
-                for col in range(4):
+                for col in range(6):
                     self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
                 continue
-            for col, key in enumerate(['name', 'path', 'channel', 'capacity']):
+            for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'mode']):
                 val = row.get(key, '')
                 item = QtWidgets.QTableWidgetItem(val)
                 item.setToolTip(val)
@@ -14719,15 +14791,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _clear_table(self):
         """테이블 내용 초기화"""
         self.cycle_path_table.setRowCount(5)
+        self.cycle_path_table.setColumnCount(6)
         self.cycle_path_table.clearContents()
+        self._update_ect_columns_state()
 
     # 인식 가능한 헤더 키워드 (소문자)
     # ECT 형식: path/cycle/cd/save 도 인식
     _HEADER_ALIASES = {
         'cyclename': 'name', 'name': 'name', 'save': 'name',
         'cyclepath': 'path', 'path': 'path',
-        'channel': 'channel', 'ch': 'channel', 'cycle': 'channel',
-        'capacity': 'capacity', 'cap': 'capacity', 'cd': 'capacity',
+        'channel': 'channel', 'ch': 'channel',
+        'cycle': 'cycle', '사이클': 'cycle',
+        'cd': 'mode', 'mode': 'mode', '모드': 'mode',
+        'capacity': 'capacity', 'cap': 'capacity',
     }
     # ECT 형식 판별용 키워드 (이 3개가 모두 존재하면 ECT)
     _ECT_HEADER_KEYS = {'cycle', 'cd', 'save'}
@@ -14744,7 +14820,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             is_header: 알려진 헤더 키워드가 1개 이상 매칭되면 True
         """
         cols = [c.strip().lower() for c in header_line.rstrip('\n\r').split('\t')]
-        mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None}
+        mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None, 'cycle': None, 'mode': None}
         matched = False
         for idx, col in enumerate(cols):
             key = WindowClass._HEADER_ALIASES.get(col)
@@ -14852,6 +14928,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             name = parts[col_map['name']] if col_map['name'] is not None and col_map['name'] < len(parts) else ''
             channel = parts[col_map['channel']] if col_map['channel'] is not None and col_map['channel'] < len(parts) else ''
             capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
+            cycle = parts[col_map['cycle']] if col_map['cycle'] is not None and col_map['cycle'] < len(parts) else ''
+            mode = parts[col_map['mode']] if col_map['mode'] is not None and col_map['mode'] < len(parts) else ''
             # 탭 구분 부족 → 드라이브 문자 패턴으로 name/path 분리 시도
             if not path and len(parts) <= 1:
                 fb_name, fb_path = self._split_name_path_fallback(
@@ -14860,11 +14938,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     name, path = fb_name, fb_path
             if path:
                 rows.append({'name': name, 'path': path,
-                             'channel': channel, 'capacity': capacity})
-            elif name or channel or capacity:
+                             'channel': channel, 'capacity': capacity,
+                             'cycle': cycle, 'mode': mode})
+            elif name or channel or capacity or cycle or mode:
                 # path 비어있지만 다른 열에 값 있으면 → 데이터 행
                 rows.append({'name': name, 'path': '',
-                             'channel': channel, 'capacity': capacity})
+                             'channel': channel, 'capacity': capacity,
+                             'cycle': cycle, 'mode': mode})
         # 연결처리 체크박스 복원
         if link_mode is not None and self.chk_link_cycle.isEnabled():
             self.chk_link_cycle.setChecked(link_mode)
@@ -14890,6 +14970,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.chk_ectpath.setChecked(False)
         if rows:
             self._set_table_rows(rows)
+        # 파일 로드 후 ECT 열 상태 명시적 갱신 (새 셀 생성으로 flag 초기화됨)
+        self._update_ect_columns_state()
+        # 경로 파일 로드 후 자동 채우기 (경로명, 채널, 용량, 최대사이클)
+        self._autofill_table_empty_cells()
 
     def _save_table_to_path_file(self):
         """테이블 내용을 4열 탭구분 Path 파일로 저장
@@ -14915,13 +14999,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             f.write(f"#ect_mode={int(ect_mode)}\n")
             if ect_mode:
                 # ECT 원본 헤더 형식으로 저장 (forward-fill 복원)
-                f.write("path\tcycle\tCD\tsave\n")
+                f.write("path\tcycle\tcd\tsave\n")
                 table_rows = self._get_table_rows_ffill()
                 for r in table_rows:
-                    f.write(f"{r['path']}\t{r['channel']}\t"
-                            f"{r['capacity']}\t{r['name']}\n")
+                    f.write(f"{r['path']}\t{r['cycle']}\t"
+                            f"{r['mode']}\t{r['name']}\n")
             else:
-                f.write("cyclename\tcyclepath\tchannel\tcapacity\n")
+                f.write("cyclename\tcyclepath\tchannel\tcapacity\t사이클\t모드\n")
                 # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
                 last_data_row = -1
                 for r in range(self.cycle_path_table.rowCount()):
@@ -14932,8 +15016,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     path = self._get_table_cell(r, 1)
                     ch = self._get_table_cell(r, 2)
                     cap = self._get_table_cell(r, 3)
+                    cyc = self._get_table_cell(r, 4)
+                    mode = self._get_table_cell(r, 5)
                     if path:
-                        f.write(f"{name}\t{path}\t{ch}\t{cap}\n")
+                        f.write(f"{name}\t{path}\t{ch}\t{cap}\t{cyc}\t{mode}\n")
                     elif link_mode:
                         f.write("\n")  # 그룹 구분자 (빈 행)
 
@@ -15453,6 +15539,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self._link_hidden_names.clear()
         tbl.blockSignals(False)
 
+    def _update_ect_columns_state(self):
+        """chk_ectpath 체크 여부에 따라 사이클(col4)·모드(col5) 편집 가능 여부 토글.
+
+        체크됨 → 두 열 편집 가능(기본 배경)
+        체크 안 됨 → 두 열 읽기 전용(회색 배경)
+        """
+        tbl = self.cycle_path_table
+        enabled = self.chk_ectpath.isChecked()
+        disabled_bg = QtGui.QColor('#D5D8DC')   # 회색 — 비활성 시각적 표시
+        clear_bg = QtGui.QBrush()               # 기본 배경
+
+        tbl.blockSignals(True)
+        for r in range(tbl.rowCount()):
+            for c in (4, 5):
+                item = tbl.item(r, c)
+                if item is None:
+                    item = QtWidgets.QTableWidgetItem('')
+                    tbl.setItem(r, c, item)
+                if enabled:
+                    item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                    item.setBackground(clear_bg)
+                else:
+                    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                    item.setBackground(disabled_bg)
+        tbl.blockSignals(False)
+
     def _push_table_undo(self):
         """현재 테이블 상태를 Undo 스택에 저장"""
         tbl = self.cycle_path_table
@@ -15636,7 +15748,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             Ratetemp = temp
             rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6 = axes
             rp = Ratetemp[1].rateProfile
-            self.capacitytext.setText(str(Ratetemp[0]))
+            # [제거됨] capacitytext 표시 (숨김 위젯이었으므로 불필요)
             _artists = []
             _artists.append(graph_step(rp.TimeMin, rp.Vol, rate_ax1,
                             self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -15723,7 +15835,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             """충전 프로필 개별 플롯 — SOC 기반 graph_profile + dQ/dV 토글"""
             ax1, ax2, ax3, ax4, ax5, ax6 = axes
             p = temp[1].Profile
-            self.capacitytext.setText(str(temp[0]))
+            # [제거됨] capacitytext 표시
             _artists = []
             _artists.append(graph_profile(p.SOC, p.Vol, ax1,
                             -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -15820,7 +15932,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             """방전 프로필 개별 플롯 — DOD 기반 graph_profile"""
             ax1, ax2, ax3, ax4, ax5, ax6 = axes
             p = temp[1].Profile
-            self.capacitytext.setText(str(temp[0]))
+            # [제거됨] capacitytext 표시
             _artists = []
             _artists.append(graph_profile(p.SOC, p.Vol, ax1,
                             -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -15901,11 +16013,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
         # 테이블에 데이터 있으면 테이블에서 읽기, 없으면 파일 선택
         if self._has_table_data():
-            # ECT 테이블 매핑: name→save, path→path, channel→cycle, capacity→CD
+            # ECT 테이블 매핑: name→save, path→path, cycle→사이클, mode→CD
             table_rows = self._get_table_rows_ffill()
             ect_path = np.array([r['path'] for r in table_rows])
-            ect_cycle = np.array([r['channel'] for r in table_rows])
-            ect_CD = np.array([r['capacity'] for r in table_rows])
+            ect_cycle = np.array([r['cycle'] for r in table_rows])
+            ect_CD = np.array([r['mode'] for r in table_rows])
             ect_save = np.array([r['name'] for r in table_rows])
         else:
             root = Tk()
@@ -15961,9 +16073,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 temp_lgnd = ""
                             else:	
                                 temp_lgnd = all_data_name[i]
+                            channel_map = {}
                             if hasattr(temp[1], "stepchg"):
                                 if len(temp[1].stepchg) > 2:
-                                    self.capacitytext.setText(str(temp[0]))
+                                    # [제거됨] capacitytext 표시
                                     _artists = []
                                     _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd))
                                     _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4, 2.0, 4.8, 0.2, "Time(min)", "Voltage(V)",temp_lgnd))
@@ -15973,7 +16086,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6, -15, 60, 5, "Time(min)", "Temp.", lgnd))
                                     ch_label = temp_lgnd or lgnd
                                     _color = mcolors.to_hex(_artists[0].get_color())
-                                    channel_map = {}
                                     channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                     # Data output option
                                     continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
@@ -15982,11 +16094,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
                                     continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
                                     continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
-                                    continue_df.to_csv(("D:\\" + ect_save[i] + ".csv"), index=False, sep=',',
-                                                        header=["time(s)",
-                                                                "Voltage(V)",
-                                                                "Current(A)",
-                                                                "Temp."])
+                                    _ect_csv_dir = os.path.dirname(cyclefolder)
+                                    _ect_csv_path = os.path.join(_ect_csv_dir, ect_save[i] + ".csv")
+                                    if os.path.isdir(_ect_csv_dir):
+                                        continue_df.to_csv(_ect_csv_path, index=False, sep=',',
+                                                            header=["time(s)",
+                                                                    "Voltage(V)",
+                                                                    "Current(A)",
+                                                                    "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
@@ -16105,7 +16220,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
                         if hasattr(temp[1], "stepchg"):
                             if len(temp[1].stepchg) > 2:
-                                self.capacitytext.setText(str(temp[0]))
+                                # [제거됨] capacitytext 표시
                                 has_ocv = "OCV" in temp[1].stepchg.columns
                                 _artists = []
                                 _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
@@ -16276,7 +16391,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     temp = pne_dcir_Profile_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate)
                                     if (temp is not None) and hasattr(temp[1], "AccCap"):
                                         if len(temp[1]) > 2:
-                                            self.capacitytext.setText(str(temp[0]))
+                                            # [제거됨] capacitytext 표시
                                             graph_soc_continue(temp[1].SOC, temp[1].OCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "OCV", "o")
                                             graph_soc_continue(temp[1].SOC, temp[1].rOCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV", "rOCV", "o")
                                             graph_soc_continue(temp[1].SOC, temp[1].CCV, step_ax1, 2.0, 4.8, 0.2, "SOC", "OCV/CCV","CCV", "o")
@@ -19101,7 +19216,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyctemp = pne_simul_cycle_data(FolderBase, mincapacity, firstCrate)
                         # print(FolderBase)
                         if isinstance(cyctemp[1], pd.DataFrame) and hasattr(cyctemp[1], "Dchg"):
-                            self.capacitytext.setText(str(cyctemp[0]))
+                            # [제거됨] capacitytext 표시
                             if self.cyc_long_life.isChecked() and hasattr(cyctemp[1], "long_acc"):
                                 cyctemp[1]["Dchg"] = cyctemp[1]["Dchg"] - cyctemp[1]["long_acc"]
                             y1 = cyctemp[1]["Dchg"]
@@ -19248,7 +19363,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             tab_layout = QtWidgets.QVBoxLayout(tab)
                             canvas = FigureCanvas(fig)
                             toolbar = NavigationToolbar(canvas, None)
-                            self.capacitytext.setText(str(cyctemp[0]))
+                            # [제거됨] capacitytext 표시
                             if self.cyc_long_life.isChecked() and hasattr(cyctemp[1], "long_acc"):
                                 cyctemp[1]["Dchg"] = cyctemp[1]["Dchg"] - cyctemp[1]["long_acc"]
                             y1 = cyctemp[1]["Dchg"]

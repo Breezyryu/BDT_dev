@@ -1,0 +1,3 @@
+{
+  "tests/test_path_parsing.py::TestDetectPathColumns::test_ect_header": true
+}

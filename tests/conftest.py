@@ -33,7 +33,7 @@ def pytest_configure(config):
 
 
 # ══════════════════════════════════════════════
-# Level A: 헤드리스 픽스처
+# Level A: 헤드리스 픽스처 — 디렉토리/파일
 # ══════════════════════════════════════════════
 
 @pytest.fixture
@@ -58,6 +58,12 @@ def sample_path_files(datapath_dir):
     }
 
 
+# ══════════════════════════════════════════════
+# 실험 데이터 폴더 픽스처
+# ══════════════════════════════════════════════
+
+# ── Toyo 폴더 ──
+
 @pytest.fixture
 def toyo_folder(exp_data_dir):
     """Toyo 사이클러 데이터 폴더 (Pattern 폴더 없음)"""
@@ -69,6 +75,43 @@ def toyo_folder(exp_data_dir):
             return c
     pytest.skip("Toyo 테스트 데이터 폴더 없음")
 
+
+@pytest.fixture
+def toyo_folder_2nd(exp_data_dir):
+    """Toyo Q7M 101-200cyc (연결처리 2번째 경로용)"""
+    p = exp_data_dir / "250219_250319_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 101-200cyc"
+    if not p.is_dir():
+        pytest.skip("Toyo 2nd 폴더 없음")
+    return p
+
+
+@pytest.fixture
+def toyo_ch30(toyo_folder):
+    """Toyo Q7M 30번 채널 폴더
+
+    실제 폴더명은 '30' (선행 0 없음).
+    datapath 파일에서 '030'으로 기재하지만 실제 폴더는 '30'.
+    """
+    ch = toyo_folder / "30"
+    if not ch.is_dir():
+        # 대체: 폴더 내 숫자 이름 서브폴더 중 첫 번째
+        for d in sorted(toyo_folder.iterdir()):
+            if d.is_dir() and d.name.isdigit():
+                return d
+        pytest.skip("Toyo 채널 폴더 없음")
+    return ch
+
+
+@pytest.fixture
+def toyo_ch31(toyo_folder):
+    """Toyo Q7M 31번 채널 폴더"""
+    ch = toyo_folder / "31"
+    if not ch.is_dir():
+        pytest.skip("Toyo ch31 폴더 없음")
+    return ch
+
+
+# ── PNE 폴더 ──
 
 @pytest.fixture
 def pne_folder(exp_data_dir):
@@ -84,21 +127,314 @@ def pne_folder(exp_data_dir):
 
 
 @pytest.fixture
-def window_class():
-    """WindowClass 가져오기 (GUI 초기화 없이 static method 접근용)
+def pne_ch008(pne_folder):
+    """PNE Q8 008 채널 폴더"""
+    candidates = ["M01Ch008[008]", "008"]
+    for name in candidates:
+        ch = pne_folder / name
+        if ch.is_dir():
+            return ch
+    # 대체: Pattern 아닌 첫 번째 서브폴더
+    for d in sorted(pne_folder.iterdir()):
+        if d.is_dir() and d.name != "Pattern":
+            return d
+    pytest.skip("PNE 채널 폴더 없음")
 
-    WindowClass 임포트가 실패하면 (PyQt6 없는 환경 등) skip.
+
+@pytest.fixture
+def pne_continue_pa1_folder(exp_data_dir):
+    """PNE PA1 연속저장 DCIR 폴더 (빈 SaveEndData 포함)"""
+    p = exp_data_dir / "260226_260228_05_문현규_3885mAh_PA1 연속저장 DCIR"
+    if not p.is_dir():
+        pytest.skip("PA1 연속저장 폴더 없음")
+    return p
+
+
+@pytest.fixture
+def pne_continue_ps_folder(exp_data_dir):
+    """PNE PS 연속저장 DCIR 폴더"""
+    p = exp_data_dir / "260226_260228_05_문현규_3876mAh_PS 연속저장 DCIR"
+    if not p.is_dir():
+        pytest.skip("PS 연속저장 폴더 없음")
+    return p
+
+
+@pytest.fixture
+def pne_halfcell_folder(exp_data_dir):
+    """PNE Half cell 폴더 (소용량, GITT)"""
+    candidates = [
+        exp_data_dir / "250905_250915_00_류성택_4-187mAh_M2-SDI-open-ca-half-14pi-GITT-0.1C-T23",
+        exp_data_dir / "251218_251230_00_박민희_3-45mAh_M1 ATL Cathode Half T23",
+    ]
+    for c in candidates:
+        if c.is_dir() and (c / "Pattern").is_dir():
+            return c
+    pytest.skip("Half cell 테스트 데이터 없음")
+
+
+@pytest.fixture
+def pne_dcir_folder(exp_data_dir):
+    """PNE SOC별 DCIR 폴더"""
+    candidates = [
+        exp_data_dir / "240919 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450V-SOC별DCIR-15도",
+        exp_data_dir / "260306_260318_05_현혜정_6330mAh_LWN 25P(after LT100cy) SOC별 DCIR 신규",
+    ]
+    for c in candidates:
+        if c.is_dir() and (c / "Pattern").is_dir():
+            return c
+    pytest.skip("SOC별 DCIR 테스트 데이터 없음")
+
+
+# ══════════════════════════════════════════════
+# 경로 케이스 픽스처 (7가지)
+# ══════════════════════════════════════════════
+
+@pytest.fixture
+def path_case_c1(exp_data_dir):
+    """C1: Toyo 단일경로, 연결처리 Off
+
+    Q7M 1-100cyc, ch030, 1689mAh
     """
+    folder = exp_data_dir / "250207_250307_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 1-100cyc"
+    if not folder.is_dir():
+        pytest.skip("C1 데이터 없음")
+    return {
+        'case': 'C1_toyo_single',
+        'cycler': 'toyo',
+        'link_mode': False,
+        'rows': [
+            {'name': 'ATL Q7M Inner 2C 상온수명 1-100cyc',
+             'path': str(folder), 'channel': '030', 'capacity': '1689'},
+        ],
+        'capacity': 1689.0,
+        'crate': 2.0,
+        'cycles': '1 50 100',
+    }
+
+
+@pytest.fixture
+def path_case_c2(exp_data_dir):
+    """C2: Toyo 연결처리 On
+
+    Q7M 1-100cyc + 101-200cyc 연결, ch030
+    """
+    f1 = exp_data_dir / "250207_250307_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 1-100cyc"
+    f2 = exp_data_dir / "250219_250319_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 101-200cyc"
+    if not f1.is_dir() or not f2.is_dir():
+        pytest.skip("C2 데이터 없음")
+    return {
+        'case': 'C2_toyo_linked',
+        'cycler': 'toyo',
+        'link_mode': True,
+        'rows': [
+            {'name': 'ATL Q7M Inner 2C 상온수명', 'path': str(f1),
+             'channel': '030', 'capacity': '1689'},
+            {'name': '', 'path': str(f2), 'channel': '030', 'capacity': ''},
+        ],
+        'capacity': 1689.0,
+        'crate': 2.0,
+        'cycles': '1 50 100 150',
+    }
+
+
+@pytest.fixture
+def path_case_c3(exp_data_dir):
+    """C3: PNE 단일경로, 연결처리 Off
+
+    Q8 ATL RT @1-1202, ch008, 2335mAh
+    """
+    folder = exp_data_dir / "251028_260428_05_나무늬_2335mAh_Q8 ATL 선상 SEU4 RT @1-1202"
+    if not folder.is_dir():
+        pytest.skip("C3 데이터 없음")
+    return {
+        'case': 'C3_pne_single',
+        'cycler': 'pne',
+        'link_mode': False,
+        'rows': [
+            {'name': 'Q8 ATL 선상 SEU4 RT @1-1202',
+             'path': str(folder), 'channel': '008', 'capacity': '2335'},
+        ],
+        'capacity': 2335.0,
+        'crate': 0.2,
+        'cycles': '1 50 100',
+    }
+
+
+@pytest.fixture
+def path_case_c4(exp_data_dir):
+    """C4: PNE 연결처리 On
+
+    Q8 RT + HT 연결
+    """
+    f1 = exp_data_dir / "251028_260428_05_나무늬_2335mAh_Q8 ATL 선상 SEU4 RT @1-1202"
+    f2 = exp_data_dir / "251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 HT @1-801"
+    if not f1.is_dir() or not f2.is_dir():
+        pytest.skip("C4 데이터 없음")
+    return {
+        'case': 'C4_pne_linked',
+        'cycler': 'pne',
+        'link_mode': True,
+        'rows': [
+            {'name': 'Q8 ATL RT', 'path': str(f1),
+             'channel': '008', 'capacity': '2335'},
+            {'name': '', 'path': str(f2), 'channel': '008', 'capacity': ''},
+        ],
+        'capacity': 2335.0,
+        'crate': 0.2,
+        'cycles': '1 50 100',
+    }
+
+
+@pytest.fixture
+def path_case_c5(exp_data_dir):
+    """C5: PNE 연속저장 (Restore)
+
+    PA1 연속저장 DCIR — continue_confirm_button용
+    """
+    folder = exp_data_dir / "260226_260228_05_문현규_3885mAh_PA1 연속저장 DCIR"
+    if not folder.is_dir():
+        pytest.skip("C5 데이터 없음")
+    # Restore 있는 채널 찾기
+    channels = []
+    for d in sorted(folder.iterdir()):
+        if d.is_dir() and d.name != "Pattern" and (d / "Restore").is_dir():
+            channels.append(d.name)
+    if not channels:
+        pytest.skip("C5 Restore 채널 없음")
+    return {
+        'case': 'C5_pne_continue',
+        'cycler': 'pne',
+        'link_mode': False,
+        'rows': [
+            {'name': 'PA1 연속저장 DCIR', 'path': str(folder),
+             'channel': channels[0].split('[')[-1].rstrip(']') if '[' in channels[0] else channels[0],
+             'capacity': '3885'},
+        ],
+        'capacity': 3885.0,
+        'crate': 0.2,
+        'cycles': '1 5',
+        'restore_channels': channels,
+    }
+
+
+@pytest.fixture
+def path_case_c6(exp_data_dir):
+    """C6: Half cell (소용량, GITT)
+
+    M2-SDI ca-half GITT, 4.187mAh
+    """
+    folder = exp_data_dir / "250905_250915_00_류성택_4-187mAh_M2-SDI-open-ca-half-14pi-GITT-0.1C-T23"
+    if not folder.is_dir():
+        pytest.skip("C6 데이터 없음")
+    # 첫 번째 채널 폴더 찾기
+    ch_name = None
+    for d in sorted(folder.iterdir()):
+        if d.is_dir() and d.name != "Pattern":
+            ch_name = d.name
+            break
+    if not ch_name:
+        pytest.skip("C6 채널 없음")
+    ch_num = ch_name.split('[')[-1].rstrip(']') if '[' in ch_name else ch_name
+    return {
+        'case': 'C6_halfcell',
+        'cycler': 'pne',
+        'link_mode': False,
+        'rows': [
+            {'name': 'M2-SDI ca-half GITT', 'path': str(folder),
+             'channel': ch_num, 'capacity': '4.187'},
+        ],
+        'capacity': 4.187,
+        'crate': 0.1,
+        'cycles': '1 2',
+    }
+
+
+@pytest.fixture
+def path_case_c7(exp_data_dir):
+    """C7: 다채널 (multi-channel)
+
+    Q7M ch030,031 동시 처리
+    """
+    folder = exp_data_dir / "250207_250307_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 1-100cyc"
+    if not folder.is_dir():
+        pytest.skip("C7 데이터 없음")
+    return {
+        'case': 'C7_multichannel',
+        'cycler': 'toyo',
+        'link_mode': False,
+        'rows': [
+            {'name': 'ATL Q7M Inner 2C 다채널',
+             'path': str(folder), 'channel': '030,031', 'capacity': '1689'},
+        ],
+        'capacity': 1689.0,
+        'crate': 2.0,
+        'cycles': '1 50',
+    }
+
+
+# ══════════════════════════════════════════════
+# datapath 파일 픽스처
+# ══════════════════════════════════════════════
+
+@pytest.fixture
+def pathfile_basic_4col(datapath_dir):
+    """4열 기본 경로파일 (cyclename/cyclepath/channel/capacity)"""
+    p = datapath_dir / "경로저장test.txt"
+    if not p.exists():
+        pytest.skip("경로저장test.txt 없음")
+    return p
+
+
+@pytest.fixture
+def pathfile_linked(datapath_dir):
+    """연결처리 경로파일 (#link_mode=1)"""
+    p = datapath_dir / "경로저장_연결처리_test.txt"
+    if not p.exists():
+        pytest.skip("연결처리 경로파일 없음")
+    return p
+
+
+@pytest.fixture
+def pathfile_2col(datapath_dir):
+    """2열 경로파일 (cyclename/cyclepath만)"""
+    p = datapath_dir / "Q7M.txt"
+    if not p.exists():
+        pytest.skip("2열 경로파일 없음")
+    return p
+
+
+@pytest.fixture
+def pathfile_3col(datapath_dir):
+    """3열 경로파일 (cyclepath/channel/capacity, 이름 없음)"""
+    p = datapath_dir / "Q7M_저장 - 이전3.txt"
+    if not p.exists():
+        pytest.skip("3열 경로파일 없음")
+    return p
+
+
+@pytest.fixture
+def pathfile_q8_linked(datapath_dir):
+    """Q8 연결처리 경로파일 (PNE 다채널)"""
+    p = datapath_dir / "경로저장_Q8_ATL_RT_최신.txt"
+    if not p.exists():
+        pytest.skip("Q8 연결처리 파일 없음")
+    return p
+
+
+# ══════════════════════════════════════════════
+# Level A: window_class (static method 추출용)
+# ══════════════════════════════════════════════
+
+@pytest.fixture
+def window_class():
+    """WindowClass static method 접근용 (GUI 없이)"""
     try:
-        # proto_ 파일에서 WindowClass를 직접 임포트하지 않고,
-        # staticmethod만 추출하기 위해 ast로 파싱하여 접근
         from types import SimpleNamespace
         import re
 
         proto_path = DATATOOL_DEV / "DataTool_optRCD_proto_.py"
         src = proto_path.read_text(encoding='utf-8-sig')
 
-        # _HEADER_ALIASES dict 추출 (정규식)
         ha_match = re.search(
             r'_HEADER_ALIASES\s*=\s*\{([^}]+)\}', src, re.DOTALL)
         ect_match = re.search(
@@ -107,7 +443,6 @@ def window_class():
         header_aliases = eval('{' + ha_match.group(1) + '}') if ha_match else {}
         ect_keys = eval('{' + ect_match.group(1) + '}') if ect_match else set()
 
-        # _detect_path_columns 재현
         def _detect_path_columns(header_line: str):
             cols = [c.strip().lower() for c in header_line.rstrip('\n\r').split('\t')]
             mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None}
@@ -121,7 +456,6 @@ def window_class():
                 mapping['path'] = 0
             return mapping, matched
 
-        # _split_name_path_fallback 재현
         def _split_name_path_fallback(text: str):
             text = text.strip()
             if not text:
@@ -171,7 +505,6 @@ def proto_module():
         import sys
         from PyQt6.QtWidgets import QApplication
 
-        # PyQt6 클래스 정의에 QApplication 객체 필요 (화면은 표시 안 됨)
         _app = QApplication.instance() or QApplication(sys.argv[:1])
 
         spec = importlib.util.spec_from_file_location(
@@ -184,96 +517,30 @@ def proto_module():
         pytest.skip(f"proto 모듈 로딩 실패: {e}")
 
 
-# ── 채널 폴더 픽스처 ──
-
-@pytest.fixture
-def toyo_ch30(toyo_folder):
-    """Toyo Q7M 30 채널 폴더 (숫자 파일들 포함).
-
-    실제 폴더명은 '30' (선행 0 없음). datapath 파일에서 '030' 으로 표기되는 것은
-    BDT 내부 _normalize_ch() 처리 결과이며, 파일시스템 이름과 다름.
-    """
-    ch = toyo_folder / "30"
-    if not ch.is_dir():
-        pytest.skip("30 채널 폴더 없음")
-    return ch
-
-
-@pytest.fixture
-def toyo_ch31(toyo_folder):
-    """Toyo Q7M 31 채널 폴더"""
-    ch = toyo_folder / "31"
-    if not ch.is_dir():
-        pytest.skip("31 채널 폴더 없음")
-    return ch
-
-
-@pytest.fixture
-def pne_ch008(pne_folder):
-    """PNE Q8 M01Ch008[008] 채널 폴더 (.cyc 포함)"""
-    ch = pne_folder / "M01Ch008[008]"
-    if not ch.is_dir():
-        pytest.skip("M01Ch008[008] 채널 폴더 없음")
-    return ch
-
-
-@pytest.fixture
-def pne_continue_pa1_folder(exp_data_dir):
-    """PA1 연속저장 DCIR 폴더 — 빈 SaveEndData 회귀 테스트용"""
-    folder = exp_data_dir / "260226_260228_05_문현규_3885mAh_PA1 연속저장 DCIR"
-    if not folder.is_dir():
-        pytest.skip("PA1 연속저장 DCIR 폴더 없음")
-    return folder
-
-
-@pytest.fixture
-def pne_continue_ps_folder(exp_data_dir):
-    """PS 연속저장 DCIR 폴더"""
-    folder = exp_data_dir / "260226_260228_05_문현규_3876mAh_PS 연속저장 DCIR"
-    if not folder.is_dir():
-        pytest.skip("PS 연속저장 DCIR 폴더 없음")
-    return folder
-
-
 # ══════════════════════════════════════════════
-# Level B: GUI 픽스처 (pytest-qt 필요)
+# Level B: GUI 픽스처
 # ══════════════════════════════════════════════
 
 @pytest.fixture
 def app_window(request):
-    """실제 BDT 앱 윈도우 인스턴스 (pytest-qt 필요)
+    """WindowClass 인스턴스 생성 (GUI 스모크 테스트용).
 
-    pytest-qt 미설치 시 자동 skip.
-
-    사용:
-      @pytest.mark.gui
-      def test_something(app_window):
-          app_window.StepConfirm.click()
+    pytest-qt 필요. 없으면 skip.
     """
-    # pytest-qt 미설치 방어 — qtbot 픽스처를 동적으로 요청
     try:
         qtbot = request.getfixturevalue("qtbot")
     except pytest.FixtureLookupError:
-        pytest.skip(
-            "pytest-qt 미설치. 설치: pip install pytest-qt"
-        )
+        pytest.skip("pytest-qt 미설치. 설치: pip install pytest-qt")
 
-    try:
-        # proto_ 파일의 WindowClass를 직접 임포트
-        os.chdir(str(DATATOOL_DEV))
-        sys.path.insert(0, str(DATATOOL_DEV))
+    from PyQt6.QtWidgets import QApplication
+    import importlib.util
 
-        import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bdt_proto_gui", DATATOOL_DEV / "DataTool_optRCD_proto_.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
 
-        spec = importlib.util.spec_from_file_location(
-            "proto", DATATOOL_DEV / "DataTool_optRCD_proto_.py")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-
-        window = mod.WindowClass()
-        qtbot.addWidget(window)
-        window.show()
-        return window
-
-    except Exception as e:
-        pytest.skip(f"앱 윈도우 생성 실패: {e}")
+    window = mod.WindowClass()
+    qtbot.addWidget(window)
+    window.show()
+    return window
