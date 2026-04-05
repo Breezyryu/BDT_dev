@@ -376,6 +376,211 @@ def path_case_c7(exp_data_dir):
 # datapath 파일 픽스처
 # ══════════════════════════════════════════════
 
+# ══════════════════════════════════════════════
+# 프로필 분석 테스트용 — 전체 실험 데이터 카탈로그
+# ══════════════════════════════════════════════
+
+# 각 항목: (폴더명, 용량mAh, C-rate, 사이클러, 비고)
+ALL_EXP_DATA = [
+    # ── PNE GITT / DCIR ──
+    ("240821 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450V-GITT-15도",
+     422, 0.2, "pne", "GITT"),
+    ("240919 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450V-SOC별DCIR-15도",
+     422, 0.2, "pne", "SOC별DCIR"),
+
+    # ── Toyo 수명 시리즈 (Q7M) ──
+    ("250207_250307_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 1-100cyc",
+     1689, 2.0, "toyo", "수명1-100"),
+    ("250219_250319_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 101-200cyc",
+     1689, 2.0, "toyo", "수명101-200"),
+    ("250304_250404_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 201-300cyc",
+     1689, 2.0, "toyo", "수명201-300"),
+    ("250317_251231_3_김동진_1689mAh_ATL Q7M Inner 2C 상온수명 301-400cyc",
+     1689, 2.0, "toyo", "수명301-400"),
+
+    # ── PNE DCIR 신규 ──
+    ("250513_250526_05_나무늬_2610mAh_Gen5+B SDI MP1 DoE SBR 0.7 DCIR",
+     2610, 0.2, "pne", "DCIR"),
+    ("250513_250526_05_나무늬_2610mAh_Gen5+B SDI MP1 Main SBR 0.9 DCIR",
+     2610, 0.2, "pne", "DCIR"),
+
+    # ── PNE Half-cell GITT ──
+    ("250905_250915_00_류성택_4-187mAh_M2-SDI-open-ca-half-14pi-GITT-0.1C-T23",
+     4.187, 0.1, "pne", "half-ca-GITT"),
+    ("250905_250915_00_류성택_4-376mAh_M2-SDI-open-an-half-14pi-GITT-0.1C-T23",
+     4.376, 0.1, "pne", "half-an-GITT"),
+
+    # ── PNE RatedCh half ──
+    ("251002_251010_00_박민희_4-19mAh_RatedCh half ca 4.19mAh SDI",
+     4.19, 0.2, "pne", "half-rated"),
+
+    # ── PNE Q8 수명 시리즈 ──
+    ("251028_260428_05_나무늬_2335mAh_Q8 ATL 선상 SEU4 RT @1-1202",
+     2335, 0.2, "pne", "Q8-RT-장기"),
+    ("251029_251229_05_나무늬_2335mAh_Q8 선상 ATL SEU4 LT @1-401",
+     2335, 0.2, "pne", "Q8-LT"),
+    ("251029_251229_05_나무늬_2935mAh_Q8 선상 ATL SEU4 LT @1-401 - 복사본",
+     2935, 0.2, "pne", "Q8-LT-복사본"),
+    ("251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 50CY HT @1-801",
+     2335, 0.2, "pne", "Q8-HT-50CY"),
+    ("251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 75CY HT @1-801",
+     2335, 0.2, "pne", "Q8-HT-75CY"),
+    ("251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 HT @1-801",
+     2335, 0.2, "pne", "Q8-HT"),
+    ("251029_260429_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 30CY @1-1202",
+     2335, 0.2, "pne", "Q8-30CY"),
+    ("251029_260429_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 50CY @1-1202",
+     2335, 0.2, "pne", "Q8-50CY"),
+    ("251029_260429_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 75CY @1-1202",
+     2335, 0.2, "pne", "Q8-75CY"),
+    ("251029_260429_05_나무늬_Q8 선상 ATL SEU4 2.9V 30CY @1-1202 - 복사본",
+     2335, 0.2, "pne", "Q8-30CY-복사본"),
+    ("251113_260113_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 50CY LT @1-401",
+     2335, 0.2, "pne", "Q8-50CY-LT"),
+    ("251113_260213_05_나무늬_2335mAh_Q8 선상 ATL 2.9V 30CY HT @1-801",
+     2335, 0.2, "pne", "Q8-30CY-HT"),
+
+    # ── PNE 율별 / Pulse / Hysteresis ──
+    ("251209_251213_05_현혜정_6490mAh_LWN Si25P SPL 율별방전Profile",
+     6490, 0.2, "pne", "율별방전"),
+    ("251209_260209_05_나무늬_2335mAh_Q8 선상 ATL SEU4 HT @301-801",
+     2335, 0.2, "pne", "Q8-HT-301"),
+    ("251218_251230_00_박민희_3-45mAh_M1 ATL Cathode Half T23",
+     3.45, 0.2, "pne", "half-ca-M1"),
+    ("251218_251230_00_박민희_4-04mAh_M1 ATL Anode Half T23",
+     4.04, 0.2, "pne", "half-an-M1"),
+    ("251224_260110_00_박민희_3-45mAh_M1 ATL Cathode Half T23 GITT 0.1C",
+     3.45, 0.1, "pne", "half-ca-GITT"),
+    ("251224_260110_00_박민희_4-04mAh_M1 ATL Anode Half T23 GITT 0.1C",
+     4.04, 0.1, "pne", "half-an-GITT"),
+    ("251224_260110_00_박민희_4-04mAh_M1 ATL Anode Half T23 GITT 0.05C 3.0V",
+     4.04, 0.05, "pne", "half-an-GITT-slow"),
+
+    # ── PNE 기타 ──
+    ("260102_260630_03_홍승기_2335mAh_Q8 선상 ATL 2.9V 30Cy LT @1-400",
+     2335, 0.2, "pne", "Q8-30Cy-LT"),
+    ("260109_260112_05_이근준_5000mAh_Gen5P Si5 ATL T2 3M 보관 용량 측정 4cycle SOC 30 setting ch7 to 12",
+     5000, 0.2, "pne", "보관용량"),
+    ("260115_260630_02_홍승기_2335mAh_Q8 선상 ATL SEU4 HT@1-802",
+     2335, 0.2, "pne", "Q8-HT-802"),
+    ("260119_260616_03_홍승기_2369mAh_Q8 ATL Main 2.0C Rss RT",
+     2369, 2.0, "pne", "Q8-Main-Rss"),
+    ("260119_260616_03_홍승기_2485mAh_Q8 ATL Sub 2.0C Rss RT",
+     2485, 2.0, "pne", "Q8-Sub-Rss"),
+    ("260119_260616_03_홍승기_2485mAh_Q8 ATL Sub 2C 2.9V 100Cy",
+     2485, 2.0, "pne", "Q8-Sub-100Cy"),
+
+    # ── Toyo 기타 ──
+    ("260126_260630_3_홍승기_2485mAh_Q8 ATL Sub 2_9V 100cy test HT 1to100cy-2",
+     2485, 2.0, "toyo", "Q8-HT-Toyo"),
+
+    # ── PNE RE / CH32 ──
+    ("260130_260630_03_홍승기_2369mAh_Q8 Main 2C Rss RT CH32 57Cy-RE",
+     2369, 2.0, "pne", "RE-2369"),
+    ("260130_260630_03_홍승기_3456mAh_Q8 Main 2C Rss RT CH32 57Cy-RE",
+     3456, 2.0, "pne", "RE-3456"),
+    ("260130_260630_03_홍승기_Q8 Main 2C Rss RT CH32 57Cy-RE",
+     2369, 2.0, "pne", "RE-noCAP"),
+
+    # ── PNE 율별용량 / Cosmx ──
+    ("260202_260226_05_문현규_5075mAh_Cosmx 25Si 율별용량+Hybrid ch54",
+     5075, 0.2, "pne", "Cosmx-25Si"),
+    ("260204_260226_05_문현규_4900mAh_Cosmx gen5 율별용량 ch61",
+     4900, 0.2, "pne", "Cosmx-gen5"),
+    ("260204_260226_05_문현규_5070mAh_Cosmx Gen5P 율별용량",
+     5070, 0.2, "pne", "Cosmx-Gen5P"),
+
+    # ── Toyo 수명 ──
+    ("260209_260630_2_홍승기_2485mAh_Q8 ATL Sub 2_9V 100cy test HT 100to199cy re3",
+     2485, 2.0, "toyo", "Q8-HT-Toyo-re3"),
+
+    # ── PNE Pulse ──
+    ("260211_260310_05_문현규_3885mAh_POR 40C pulse PA1 ATL",
+     3885, 0.2, "pne", "pulse-PA1-ATL"),
+    ("260211_260310_05_문현규_3885mAh_POR 40C pulse PA1 SDI",
+     3885, 0.2, "pne", "pulse-PA1-SDI"),
+    ("260211_260310_05_문현규_4855mAh_POR 40C pulse PA3 ATL",
+     4855, 0.2, "pne", "pulse-PA3-ATL"),
+    ("260211_260310_05_문현규_4855mAh_POR 40C pulse PA3 SDI",
+     4855, 0.2, "pne", "pulse-PA3-SDI"),
+
+    # ── PNE DCIR ──
+    ("260212_260215_05_한지영_5432mAh_SDI Phase2 MP2 Fresh DCIR SOC10",
+     5432, 0.2, "pne", "DCIR-Fresh"),
+    ("260212_260215_05_한지영_5432mAh_SDI Phase2 MP2 고온수명후 DCIR SOC10",
+     5432, 0.2, "pne", "DCIR-고온후"),
+
+    # ── PNE 연속저장 DCIR ──
+    ("260226_260228_05_문현규_3876mAh_PS 연속저장 DCIR",
+     3876, 0.2, "pne", "연속-PS"),
+    ("260226_260228_05_문현규_3885mAh_PA1 연속저장 DCIR",
+     3885, 0.2, "pne", "연속-PA1"),
+
+    # ── 혼합 (Toyo 폴더지만 PNE 채널명 구조) ──
+    ("260303_260305_05_문현규_3561mAh_iphone17 basic 고온저장 75도 5일 SOC100 ATL",
+     3561, 0.2, "toyo", "고온저장"),
+
+    # ── PNE SOC별 DCIR / Hysteresis ──
+    ("260306_260318_05_현혜정_6330mAh_LWN 25P(after LT100cy) SOC별 DCIR 신규",
+     6330, 0.2, "pne", "SOC-DCIR-LT100"),
+    ("260310_260312_05_이근준_4991mAh_Gen5P ATL MP1 8M Fresh 보관 용량 측정 2cycle SOC30 setting",
+     4991, 0.2, "pne", "보관-8M"),
+    ("260316_260320_05_현혜정_6330mAh_LWN 25P(after LT50cy) 0.5C-10min volt hysteresis",
+     6330, 0.5, "pne", "hysteresis-05C"),
+    ("260316_270318_00_이성일_5882mAh_M47 ATL ECT GITT",
+     5882, 0.2, "pne", "ECT-GITT"),
+    ("260317_260325_05_현혜정_4986mAh_SDI Gen5+ MP1 0.2C-10min volt hysteresis",
+     4986, 0.2, "pne", "hysteresis-SDI"),
+    ("260319_260326_05_현혜정_6330mAh_LWN 25P(after LT50cy) 0.2C-10min volt hysteresis",
+     6330, 0.2, "pne", "hysteresis-02C"),
+
+    # ── PNE ECT parameter GITT ──
+    ("260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter11 GITT",
+     4860, 0.2, "pne", "A17-ATL-GITT"),
+    ("260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter11 GITT",
+     4860, 0.2, "pne", "A17-SDI-GITT"),
+
+    # ── PNE A1 시리즈 ──
+    ("A1_MP1_4500mAh_T23_1", 4500, 0.2, "pne", "A1-1"),
+    ("A1_MP1_4500mAh_T23_2", 4500, 0.2, "pne", "A1-2"),
+    ("A1_MP1_4500mAh_T23_3", 4500, 0.2, "pne", "A1-3"),
+]
+
+
+@pytest.fixture(params=ALL_EXP_DATA, ids=lambda x: x[4])
+def all_exp_entry(request, exp_data_dir):
+    """모든 실험 데이터 경로에 대한 parametrize fixture.
+
+    Returns
+    -------
+    dict
+        folder, capacity, crate, cycler, tag, channel_path (첫 채널)
+    """
+    folder_name, capacity, crate, cycler, tag = request.param
+    folder = exp_data_dir / folder_name
+    if not folder.is_dir():
+        pytest.skip(f"데이터 없음: {folder_name}")
+
+    # 첫 번째 유효 채널 폴더 찾기
+    ch_path = None
+    for d in sorted(folder.iterdir()):
+        if d.is_dir() and d.name != "Pattern" and d.name != "processed_data":
+            ch_path = d
+            break
+    if ch_path is None:
+        pytest.skip(f"채널 없음: {folder_name}")
+
+    return {
+        "folder": folder,
+        "folder_name": folder_name,
+        "capacity": capacity,
+        "crate": crate,
+        "cycler": cycler,
+        "tag": tag,
+        "channel_path": ch_path,
+    }
+
+
 @pytest.fixture
 def pathfile_basic_4col(datapath_dir):
     """4열 기본 경로파일 (cyclename/cyclepath/channel/capacity)"""

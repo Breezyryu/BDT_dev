@@ -29,14 +29,7 @@ import glob
 import xlwings as xw
 from pathlib import Path
 
-try:
-    from parse_pne_schedule import (
-        extract_accel_pattern_from_sch,
-        extract_schedule_structure_from_sch,
-    )
-    HAS_SCH_PARSER = True
-except ImportError:
-    HAS_SCH_PARSER = False
+HAS_SCH_PARSER = True  # 내장 .sch 파서 사용 (외부 모듈 불필요)
 
 # PyInstaller exe 실행 시 필요 Pybamm casadi DLL 경로 등록
 # 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
@@ -390,20 +383,45 @@ def disconnect_change(button):
 
 # 충방전기 구분 (패턴 폴더 유무로 구분)
 def check_cycler(raw_file_path):
-    # 충방전기 데이터 폴더에 패턴 폴더 유무로 PNE와 Toyo 구분, PNE이면 True, Toyo이면 False
-    cycler = os.path.isdir(raw_file_path + "\\Pattern")
-    return cycler
+    """충방전기 데이터 폴더로 PNE와 Toyo를 구분한다.
+
+    판별 기준 (우선순위):
+    1. Pattern 폴더 존재 → PNE
+    2. Restore 폴더 내 SaveData CSV 존재 → PNE (Pattern 없는 GITT 등 대응)
+    3. 그 외 → Toyo
+
+    Returns
+    -------
+    bool
+        True=PNE, False=Toyo
+    """
+    # 1차: Pattern 폴더 유무 (기존 기준)
+    if os.path.isdir(raw_file_path + "\\Pattern"):
+        return True
+    # 2차: Restore/SaveData 존재 여부 (Pattern 없는 PNE 데이터 fallback)
+    restore_dir = raw_file_path + "\\Restore"
+    if os.path.isdir(restore_dir):
+        try:
+            files = os.listdir(restore_dir)
+            if any("SaveData" in f for f in files):
+                return True
+        except OSError:
+            pass
+    return False
 
 def _quick_max_cycle(data_path: str, mincapacity: float = 0) -> int | None:
     """경로의 첫 채널 폴더에서 최대 **논리 사이클** 수를 빠르게 추정
 
-    논리 사이클 = 유효 방전(Condition==2, Cap > mincapacity/60) 1회 = 1 사이클
+    논리 사이클 = cycle_map 기반 매핑 결과의 사이클 수
 
+    PNE: pne_build_cycle_map()으로 논리사이클 매핑 후 len(cycle_map) 반환
+      - 일반 시험: 충방전 쌍이 있는 유효 TotlCycle 수
+      - 스윕 시험(GITT 등): 방향 기반 그룹핑 후 논리사이클 수
+      - cycle_map 실패 시 폴백: SaveEndData TotlCycle 최대값
     Toyo: capacity.log를 읽어 toyo_cycle_data()와 동일한 병합 로직 적용
       1) 연속 동일 Condition 행을 하나의 이벤트로 병합 (다단 CC 충전 등)
       2) 병합 후 Condition==2(방전) 중 Cap > mincapacity/60 만 카운트
       3) mincapacity가 없으면 경로명에서 추출, 그래도 없으면 첫 사이클에서 추정
-    PNE: SaveEndData.csv의 Total Cycle 최대값 (col 27, 이미 논리 사이클)
 
     Parameters
     ----------
@@ -429,7 +447,11 @@ def _quick_max_cycle(data_path: str, mincapacity: float = 0) -> int | None:
     ch_path = subs[0]
     try:
         if check_cycler(data_path):
-            # PNE: SaveEndData col 27 = TotlCycle (루프 기반, 이미 논리 사이클)
+            # PNE: cycle_map 기반 논리사이클 수 반환 — .sch 힌트 포함
+            cycle_map, _ = _get_pne_cycle_map(ch_path, mincapacity, 0.2)
+            if cycle_map:
+                return len(cycle_map)
+            # cycle_map 실패 시 폴백: SaveEndData TotlCycle 최대값
             save_end, _, _ = _cached_pne_restore_files(ch_path)
             if save_end is not None and not save_end.empty and save_end.shape[1] > 27:
                 return int(save_end.iloc[:, 27].max())
@@ -604,10 +626,1245 @@ def _merge_step_profiles(df: pd.DataFrame, cap_col: str = "Chgcap") -> pd.DataFr
     return pd.concat(parts)
 
 
+# ============================================================================
+# Unified Profile Core — 통합 프로필 파싱 엔진
+# ============================================================================
+# 기존 5개 Profile 파싱 함수(step/rate/chg/dchg/continue)를 하나로 통합.
+# 4개 옵션(data_scope, axis_mode, continuity, include_rest)으로 모든 조합 지원.
+# ============================================================================
+
+@dataclass
+class UnifiedProfileResult:
+    """통합 프로필 파싱 결과 컨테이너.
+
+    Attributes
+    ----------
+    df : pd.DataFrame
+        프로필 데이터. 컬럼은 옵션에 따라 가변.
+    mincapacity : float
+        공칭 용량 (mAh).
+    columns : list[str]
+        df에 포함된 컬럼 목록.
+    cycfile_soc : pd.DataFrame | None
+        OCV/CCV 테이블 (사이클 모드 + 이어서일 때만 생성).
+    metadata : dict
+        부가 정보 (cycler_type, cycle_range, options 등).
+    """
+    df: pd.DataFrame
+    mincapacity: float
+    columns: list = field(default_factory=list)
+    cycfile_soc: pd.DataFrame | None = None
+    metadata: dict = field(default_factory=dict)
+
+
+def _unified_pne_load_raw(
+    raw_file_path: str,
+    cycle_start: int,
+    cycle_end: int,
+    cycle_map: dict | None = None,
+) -> pd.DataFrame | None:
+    """PNE SaveData에서 원시 프로필 데이터 로딩.
+
+    Parameters
+    ----------
+    raw_file_path : str
+        PNE 채널 경로 (Restore 하위 폴더 포함).
+    cycle_start : int
+        시작 논리사이클 번호 (cycle_map이 있으면 논리, 없으면 TotlCycle).
+    cycle_end : int
+        종료 논리사이클 번호 (포함).
+    cycle_map : dict | None
+        논리사이클 → TotlCycle 값 매핑. None이면 TotlCycle 직접 사용.
+
+    Returns
+    -------
+    pd.DataFrame | None
+        표준 컬럼 구조의 원시 데이터. Restore 폴더 없으면 None.
+
+    Notes
+    -----
+    PNE SaveData 컬럼 인덱스:
+      [0]=Index, [2]=StepType(1:충전,2:방전,3:휴지),
+      [7]=StepNo, [8]=Voltage(μV), [9]=Current(μA),
+      [10]=ChgCap(μAh), [11]=DchgCap(μAh),
+      [14]=ChgWh, [15]=DchgWh,
+      [17]=StepTime(/100s), [18]=TotTime(day), [19]=TotTime(/100s),
+      [21]=Temp1, [27]=TotalCycle
+    cycle_map 사용 시 논리사이클 번호가 Cycle 컬럼에 부여된다.
+    """
+    restore_dir = os.path.join(raw_file_path, "Restore")
+    if not os.path.isdir(restore_dir):
+        return None
+
+    # cycle_map이 있으면 논리사이클 → TotlCycle로 변환
+    if cycle_map:
+        # 요청된 논리사이클 범위에 해당하는 TotlCycle 값들 수집
+        # cycle_map 값: int(단일 TC) 또는 tuple(시작TC, 끝TC) 스윕 범위
+        totl_cycles_set: set[int] = set()
+        logical_to_totl: dict[int, int] = {}  # 역매핑: TotlCycle → 논리사이클
+        for logical_cyc in range(cycle_start, cycle_end + 1):
+            if logical_cyc in cycle_map:
+                val = cycle_map[logical_cyc]
+                if isinstance(val, tuple):
+                    # 스윕 범위: (시작TC, 끝TC) → 범위 내 모든 TC 포함
+                    tc_start, tc_end = val
+                    for tc in range(tc_start, tc_end + 1):
+                        totl_cycles_set.add(tc)
+                        logical_to_totl[tc] = logical_cyc
+                else:
+                    # 단일 TC
+                    totl_cycles_set.add(val)
+                    logical_to_totl[val] = logical_cyc
+        totl_cycles = sorted(totl_cycles_set)
+        if not totl_cycles:
+            return None
+        # TotlCycle 범위로 파일 검색 (최소~최대 범위 로딩)
+        tc_min, tc_max = totl_cycles[0], totl_cycles[-1]
+    else:
+        tc_min, tc_max = cycle_start, cycle_end
+        logical_to_totl = None
+
+    # 파일 범위 결정
+    subfile = [f for f in os.listdir(restore_dir) if f.endswith(".csv")]
+    filepos = pne_search_cycle(restore_dir, tc_min, tc_max)
+
+    if filepos[0] != -1:
+        file_slice = subfile[filepos[0]:(filepos[1] + 1)]
+    elif filepos[0] == -1 and tc_min == 1:
+        file_slice = subfile[0:(filepos[1] + 1)]
+    else:
+        file_slice = []
+
+    dfs = []
+    for fname in file_slice:
+        if "SaveData" in fname:
+            fpath = os.path.join(restore_dir, fname)
+            dfs.append(pd.read_csv(
+                fpath, sep=",", skiprows=0, engine="c",
+                header=None, encoding="cp949", on_bad_lines='skip',
+            ))
+
+    if not dfs:
+        return None
+
+    raw = pd.concat(dfs, ignore_index=True)
+
+    # 사이클 범위 필터
+    if cycle_map and totl_cycles:
+        # cycle_map 사용 시: 유효한 TotlCycle 값만 필터 (set으로 빠른 검색)
+        raw = raw.loc[raw[27].isin(totl_cycles_set)]
+    else:
+        raw = raw.loc[(raw[27] >= tc_min) & (raw[27] <= tc_max)]
+
+    # 표준 컬럼 구조로 변환
+    cols_needed = [0, 2, 7, 8, 9, 10, 11, 14, 15, 17, 18, 19, 21, 27]
+    cols_present = [c for c in cols_needed if c in raw.columns]
+    result = raw[cols_present].copy()
+
+    # 컬럼명 매핑
+    col_map = {
+        0: "Index", 2: "Condition", 7: "Step", 8: "Voltage_raw",
+        9: "Current_raw", 10: "ChgCap_raw", 11: "DchgCap_raw",
+        14: "ChgWh_raw", 15: "DchgWh_raw", 17: "StepTime_raw",
+        18: "TotTime_Day", 19: "TotTime_Sec_raw", 21: "Temp_raw",
+        27: "Cycle",
+    }
+    result = result.rename(columns={c: col_map[c] for c in cols_present if c in col_map})
+
+    # cycle_map이 있으면 Cycle 컬럼을 논리사이클 번호로 교체
+    if logical_to_totl and "Cycle" in result.columns:
+        result["PhysicalCycle"] = result["Cycle"].copy()  # 원본 TotlCycle 보존
+        result["Cycle"] = result["Cycle"].map(logical_to_totl)
+        # 매핑 안 되는 행 제거 (cycle_map에 없는 TotlCycle)
+        result = result.dropna(subset=["Cycle"])
+        result["Cycle"] = result["Cycle"].astype(int)
+
+    # 누락 컬럼 보충 (ChgWh, DchgWh는 없을 수 있음)
+    for col in ["ChgWh_raw", "DchgWh_raw", "TotTime_Day", "TotTime_Sec_raw"]:
+        if col not in result.columns:
+            result[col] = 0
+
+    result["CyclerType"] = "PNE"
+    return result
+
+
+def _unified_toyo_load_raw(
+    raw_file_path: str,
+    cycle_start: int,
+    cycle_end: int,
+    cycle_map: dict | None = None,
+) -> pd.DataFrame | None:
+    """Toyo CSV에서 원시 프로필 데이터 로딩.
+
+    Parameters
+    ----------
+    raw_file_path : str
+        Toyo 채널 경로.
+    cycle_start : int
+        시작 논리사이클 번호 (cycle_map이 있으면 논리, 없으면 물리).
+    cycle_end : int
+        종료 논리사이클 번호 (포함).
+    cycle_map : dict | None
+        논리사이클 → (시작파일, 끝파일) 매핑. None이면 물리번호 직접 사용.
+
+    Returns
+    -------
+    pd.DataFrame | None
+        표준 컬럼 구조의 원시 데이터. 파일 없으면 None.
+
+    Notes
+    -----
+    Toyo는 사이클별 개별 파일 (000001, 000002, ...).
+    충전(Condition==1), 방전(Condition==2). 휴지는 Condition==0.
+    cycle_map 사용 시 논리사이클 번호가 Cycle 컬럼에 부여된다.
+    """
+    frames = []
+    file_boundaries = []  # (시작 인덱스, 사이클 번호)
+    total_rows = 0
+
+    if cycle_map:
+        # 논리사이클 → 물리파일 변환: 각 논리사이클별로 해당 물리파일들을 로드
+        for logical_cyc in range(cycle_start, cycle_end + 1):
+            if logical_cyc not in cycle_map:
+                continue
+            first_file, last_file = cycle_map[logical_cyc]
+            for phys_cyc in range(first_file, last_file + 1):
+                fpath = os.path.join(raw_file_path, "%06d" % phys_cyc)
+                if not os.path.isfile(fpath):
+                    continue
+                tempdata = toyo_Profile_import(raw_file_path, phys_cyc)
+                if hasattr(tempdata, 'dataraw') and not tempdata.dataraw.empty:
+                    df_cyc = tempdata.dataraw.copy()
+                    # 논리사이클 번호 부여 (동일 논리사이클에 속하는 물리파일은 같은 번호)
+                    df_cyc["Cycle"] = logical_cyc
+                    df_cyc["PhysicalCycle"] = phys_cyc
+                    file_boundaries.append((total_rows, phys_cyc))
+                    total_rows += len(df_cyc)
+                    frames.append(df_cyc)
+    else:
+        # 기존 동작: 물리파일 번호 직접 사용
+        for cyc in range(cycle_start, cycle_end + 1):
+            fpath = os.path.join(raw_file_path, "%06d" % cyc)
+            if not os.path.isfile(fpath):
+                continue
+            tempdata = toyo_Profile_import(raw_file_path, cyc)
+            if hasattr(tempdata, 'dataraw') and not tempdata.dataraw.empty:
+                df_cyc = tempdata.dataraw.copy()
+                df_cyc["Cycle"] = cyc
+                file_boundaries.append((total_rows, cyc))
+                total_rows += len(df_cyc)
+                frames.append(df_cyc)
+
+    if not frames:
+        return None
+
+    raw = pd.concat(frames, ignore_index=True)
+
+    # Toyo Condition 매핑: 0=휴지, 1=충전, 2=방전
+    # PNE와 통일: 1=충전, 2=방전, 3=휴지
+    raw["Condition"] = raw["Condition"].replace({0: 3})
+
+    # 표준 컬럼 구조로 변환
+    result = pd.DataFrame()
+    result["Condition"] = raw["Condition"]
+    result["Voltage_raw"] = raw["Voltage[V]"]       # 이미 V 단위
+    result["Current_raw"] = raw["Current[mA]"]       # 이미 mA 단위
+    result["Temp_raw"] = raw["Temp1[Deg]"]           # 이미 °C 단위
+    result["PassTime_raw"] = raw["PassTime[Sec]"]    # 이미 초 단위
+    result["Cycle"] = raw["Cycle"]
+    result["Step"] = 0  # Toyo는 Step 구분 없음
+    # 물리사이클 번호 보존 (cycle_map 사용 시)
+    if "PhysicalCycle" in raw.columns:
+        result["PhysicalCycle"] = raw["PhysicalCycle"]
+
+    # Toyo 전용 플래그
+    result["CyclerType"] = "TOYO"
+    result["_file_boundaries"] = 0  # 추후 시간 보정용
+    for start_idx, cyc_no in file_boundaries:
+        if start_idx < len(result):
+            result.loc[start_idx, "_file_boundaries"] = cyc_no
+
+    return result
+
+
+def _unified_normalize_pne(
+    df: pd.DataFrame,
+    mincapacity: float,
+    raw_file_path: str,
+) -> pd.DataFrame:
+    """PNE 원시 데이터를 물리 단위로 정규화.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        _unified_pne_load_raw()의 출력.
+    mincapacity : float
+        공칭 용량 (mAh).
+    raw_file_path : str
+        is_micro_unit 판별용 경로.
+
+    Returns
+    -------
+    pd.DataFrame
+        정규화된 컬럼: Time_s, Voltage, Current_mA, Crate,
+        ChgCap, DchgCap, ChgWh, DchgWh, Temp, Step, Condition, Cycle
+    """
+    is_micro = is_micro_unit(raw_file_path)
+    cap_divisor = mincapacity * 1_000_000 if is_micro else mincapacity * 1_000
+
+    result = pd.DataFrame()
+    result["Condition"] = df["Condition"].values
+    result["Cycle"] = df["Cycle"].values
+    result["Step"] = df["Step"].values
+
+    # 시간: PNE TotTime 사용 (멀티사이클) 또는 StepTime (단일사이클)
+    if "TotTime_Day" in df.columns and "TotTime_Sec_raw" in df.columns:
+        tot_day = df["TotTime_Day"].values * 8640000  # day → /100s 환산
+        tot_sec = (df["TotTime_Sec_raw"].values + tot_day) / 100  # /100s → s
+        result["Time_s"] = tot_sec
+    else:
+        result["Time_s"] = df["StepTime_raw"].values / 100  # /100s → s
+
+    # 전압: μV → V
+    result["Voltage"] = df["Voltage_raw"].values / 1_000_000
+
+    # 전류: μA (또는 mA) → mA (부호 유지, 방전 반전은 후속 단계)
+    if is_micro:
+        result["Current_mA"] = df["Current_raw"].values / 1_000_000  # μA → A → ... 아님
+    else:
+        result["Current_mA"] = df["Current_raw"].values / 1_000  # μA→mA 또는 mA→A
+
+    # Crate = Current / mincapacity (정규화)
+    result["Crate"] = df["Current_raw"].values / cap_divisor
+
+    # 용량: μAh (또는 mAh) → 정규화 (0~1)
+    result["ChgCap"] = df["ChgCap_raw"].values / cap_divisor
+    result["DchgCap"] = df["DchgCap_raw"].values / cap_divisor
+
+    # 에너지
+    result["ChgWh"] = df["ChgWh_raw"].values / cap_divisor if "ChgWh_raw" in df.columns else 0
+    result["DchgWh"] = df["DchgWh_raw"].values / cap_divisor if "DchgWh_raw" in df.columns else 0
+
+    # 온도: mK → °C (또는 m°C → °C)
+    result["Temp"] = df["Temp_raw"].values / 1_000
+
+    return result
+
+
+def _unified_normalize_toyo(
+    df: pd.DataFrame,
+    mincapacity: float,
+) -> pd.DataFrame:
+    """Toyo 원시 데이터를 물리 단위로 정규화.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        _unified_toyo_load_raw()의 출력.
+    mincapacity : float
+        공칭 용량 (mAh).
+
+    Returns
+    -------
+    pd.DataFrame
+        PNE 정규화 결과와 동일한 컬럼 구조.
+    """
+    result = pd.DataFrame()
+    result["Condition"] = df["Condition"].values
+    result["Cycle"] = df["Cycle"].values
+    result["Step"] = df["Step"].values
+
+    # 시간: PassTime 리셋 보정 (파일 경계에서 음수 diff → 0으로 클리핑)
+    time_raw = df["PassTime_raw"].values.copy()
+    time_diffs = np.diff(time_raw, prepend=time_raw[0])
+    time_diffs[time_diffs < 0] = 0
+    time_diffs[0] = 0
+    result["Time_s"] = np.cumsum(time_diffs)
+
+    # 전압: 이미 V 단위
+    result["Voltage"] = df["Voltage_raw"].values
+
+    # 전류: 이미 mA 단위
+    result["Current_mA"] = df["Current_raw"].values
+    result["Crate"] = df["Current_raw"].values / mincapacity
+
+    # 온도: 이미 °C 단위
+    result["Temp"] = df["Temp_raw"].values
+
+    # 용량: 시간적분 (Toyo는 장비가 용량을 직접 제공하지 않으므로 계산)
+    dt = np.diff(result["Time_s"].values, prepend=result["Time_s"].values[0])
+    dt[0] = 0
+    current_a = df["Current_raw"].values / 1000  # mA → A
+
+    # 충전/방전 용량 분리 계산
+    chg_mask = (df["Condition"].values == 1)
+    dchg_mask = (df["Condition"].values == 2)
+
+    chg_increments = np.where(chg_mask, np.abs(current_a) * dt / 3600, 0)
+    dchg_increments = np.where(dchg_mask, np.abs(current_a) * dt / 3600, 0)
+
+    result["ChgCap"] = np.cumsum(chg_increments) / (mincapacity / 1000)  # → 정규화
+    result["DchgCap"] = np.cumsum(dchg_increments) / (mincapacity / 1000)
+
+    # 에너지 (간이 계산)
+    chg_energy = np.where(chg_mask, np.abs(current_a) * df["Voltage_raw"].values * dt / 3600, 0)
+    dchg_energy = np.where(dchg_mask, np.abs(current_a) * df["Voltage_raw"].values * dt / 3600, 0)
+    result["ChgWh"] = np.cumsum(chg_energy) / (mincapacity / 1000)
+    result["DchgWh"] = np.cumsum(dchg_energy) / (mincapacity / 1000)
+
+    return result
+
+
+def _unified_filter_condition(
+    df: pd.DataFrame,
+    data_scope: str,
+    include_rest: bool,
+    *,
+    is_sweep: bool = False,
+    mincapacity: float = 0,
+) -> pd.DataFrame:
+    """Condition 기반 필터링 (전류 부호 기반 CC 재분류 + 보충전 제외).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        정규화된 프로필 데이터 (Condition, Current_mA 컬럼 필요).
+    data_scope : str
+        "charge" | "discharge" | "cycle"
+    include_rest : bool
+        True이면 휴지(Condition==3) 포함.
+    is_sweep : bool
+        True이면 스윕 시험 (GITT/DCIR). 보충전/보방전 필터링 활성화.
+    mincapacity : float
+        공칭 용량(mAh). 보충전 판별 threshold 산출용.
+
+    Returns
+    -------
+    pd.DataFrame
+        필터링된 데이터.
+
+    Notes
+    -----
+    PNE Condition: 1=충전(CCCV), 2=방전, 3=휴지, 9=CC (방향 미구분)
+    Toyo Condition: 1=충전, 2=방전, 3=휴지 (9 없음)
+
+    Condition=9(CC)는 전류 부호만으로 충전/방전을 구분할 수 없으므로,
+    Current_mA 부호 기반으로 재분류한다:
+      - Current_mA > 0 인 CC 구간 → Condition=1 (충전)으로 재분류
+      - Current_mA < 0 인 CC 구간 → Condition=2 (방전)으로 재분류
+      - Current_mA == 0 인 CC 구간 → Condition=3 (휴지)으로 재분류
+
+    보충전/보방전 필터링 (is_sweep=True, charge/discharge scope):
+      스윕 시험에서 보충전(DCIR 후 소량 recharge)이나 보방전이
+      단방향 필터에 포함되지 않도록 StepTime 기반으로 제외한다.
+      threshold: 공칭 용량의 2% 이상을 차지하는 스텝만 유지.
+    """
+    df = df.copy()
+
+    # --- Condition=9 재분류: 전류 부호 기반 ---
+    if "Current_mA" in df.columns:
+        cc_mask = df["Condition"] == 9
+        if cc_mask.any():
+            curr = df.loc[cc_mask, "Current_mA"]
+            df.loc[cc_mask & (curr > 0).values, "Condition"] = 1   # CC 충전
+            df.loc[cc_mask & (curr < 0).values, "Condition"] = 2   # CC 방전
+            df.loc[cc_mask & (curr == 0).values, "Condition"] = 3  # 전류 0 → 휴지
+
+    # --- 필터 적용 ---
+    if data_scope == "charge":
+        cond_values = [1]
+    elif data_scope == "discharge":
+        cond_values = [2]
+    elif data_scope == "cycle":
+        cond_values = [1, 2]
+    else:
+        raise ValueError(f"지원하지 않는 data_scope: {data_scope}")
+
+    if include_rest:
+        cond_values.append(3)
+
+    filtered = df.loc[df["Condition"].isin(cond_values)].copy()
+
+    # --- 보충전/보방전 제외 (스윕 시험 + 단방향 scope) ---
+    if is_sweep and data_scope in ("charge", "discharge") and "Step" in filtered.columns:
+        _target_cond = 1 if data_scope == "charge" else 2
+        _cap_col = "ChgCap_raw" if data_scope == "charge" else "DchgCap_raw"
+
+        if _cap_col in filtered.columns and "Cycle" in filtered.columns:
+            # 사이클별 스텝별 최대 용량으로 보충전/보방전 판별
+            # threshold: 공칭 용량의 2% (μAh 단위) 또는 사이클 내 최대 스텝 용량의 5%
+            _abs_threshold = mincapacity * 1000 * 0.02 if mincapacity > 0 else 0
+            _target = filtered[filtered["Condition"] == _target_cond].copy()
+            if not _target.empty:
+                # 스텝별 최대 용량: 같은 (Cycle, Step) 그룹의 max 용량
+                _step_cap = _target.groupby(["Cycle", "Step"])[_cap_col].max()
+                if not _step_cap.empty:
+                    # 사이클별 최대 스텝 용량의 5%를 상대적 threshold로 사용
+                    _cyc_max = _step_cap.groupby(level="Cycle").max()
+                    _rel_threshold = _cyc_max * 0.05
+
+                    # 보충전 스텝 식별: 절대 threshold 와 상대 threshold 모두 미달
+                    _supplement_steps = set()
+                    for (cyc, step), cap_val in _step_cap.items():
+                        abs_ok = cap_val >= _abs_threshold if _abs_threshold > 0 else True
+                        rel_ok = cap_val >= _rel_threshold.get(cyc, 0)
+                        if not abs_ok and not rel_ok:
+                            _supplement_steps.add((cyc, step))
+
+                    if _supplement_steps:
+                        # 보충전 스텝에 해당하는 행 제거 (벡터화)
+                        _keys = pd.MultiIndex.from_tuples(
+                            list(_supplement_steps), names=["Cycle", "Step"]
+                        )
+                        _idx = pd.MultiIndex.from_arrays(
+                            [filtered["Cycle"], filtered["Step"]], names=["Cycle", "Step"]
+                        )
+                        filtered = filtered[~_idx.isin(_keys)]
+
+    return filtered
+
+
+def _unified_merge_steps(
+    df: pd.DataFrame,
+    data_scope: str,
+) -> pd.DataFrame:
+    """멀티스텝 데이터를 시간·용량 연속으로 병합.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        필터링+정규화된 데이터 (Step, Time_s, ChgCap/DchgCap 컬럼).
+    data_scope : str
+        "charge" | "discharge" | "cycle"
+
+    Returns
+    -------
+    pd.DataFrame
+        스텝 병합된 데이터.
+
+    Notes
+    -----
+    cycle 모드에서는 병합하지 않음 (이미 시간순 정렬 가정).
+    charge/discharge 모드에서만 스텝 간 시간/용량 누적.
+    """
+    if data_scope == "cycle":
+        # 사이클 모드: 시간순 정렬만, 스텝 병합 불필요
+        return df.sort_values("Time_s").reset_index(drop=True)
+
+    # charge/discharge: 기존 _merge_step_profiles 로직 적용
+    if "Step" not in df.columns:
+        return df
+
+    stepmin = df["Step"].min()
+    stepmax = df["Step"].max()
+    if pd.isna(stepmin) or pd.isna(stepmax) or stepmin == stepmax:
+        return df
+
+    cap_col = "ChgCap" if data_scope == "charge" else "DchgCap"
+
+    parts = [df.loc[df["Step"] == stepmin].copy()]
+    for si in range(1, int(stepmax - stepmin) + 1):
+        part = df.loc[df["Step"] == stepmin + si].copy()
+        if part.empty:
+            continue
+        prev_max_time = parts[-1]["Time_s"].max() if not parts[-1].empty else 0
+        prev_max_cap = parts[-1][cap_col].max() if not parts[-1].empty else 0
+        part["Time_s"] = part["Time_s"] + prev_max_time
+        part[cap_col] = part[cap_col] + prev_max_cap
+        parts.append(part)
+
+    return pd.concat(parts).reset_index(drop=True)
+
+
+def _unified_calculate_axis(
+    df: pd.DataFrame,
+    axis_mode: str,
+    data_scope: str,
+    continuity: str,
+) -> pd.DataFrame:
+    """X축(Time/SOC) 및 사이클 연속성 처리.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        병합된 프로필 데이터.
+    axis_mode : str
+        "time" | "soc"
+    data_scope : str
+        "charge" | "discharge" | "cycle"
+    continuity : str
+        "overlay" | "continuous"
+
+    Returns
+    -------
+    pd.DataFrame
+        TimeMin, SOC 컬럼이 추가된 데이터.
+    """
+    df = df.copy()
+
+    # 시간축 처리
+    if continuity == "overlay":
+        if data_scope == "cycle":
+            # 사이클 모드 오버레이: 충전/방전 각각 시작점 0으로 리셋
+            # → 충전과 방전을 동일 시간축에서 비교 가능
+            for cyc in df["Cycle"].unique():
+                mask_cyc = df["Cycle"] == cyc
+                for cond in df.loc[mask_cyc, "Condition"].unique():
+                    if cond == 3:  # Rest는 리셋 불필요
+                        continue
+                    mask = mask_cyc & (df["Condition"] == cond)
+                    cond_start = df.loc[mask, "Time_s"].min()
+                    df.loc[mask, "Time_s"] = df.loc[mask, "Time_s"] - cond_start
+            # Condition 경계에 NaN 행 삽입 → matplotlib 선 끊기
+            # (충전→방전 사이 라인이 이어지는 문제 방지)
+            nan_rows = []
+            for cyc in df["Cycle"].unique():
+                cyc_df = df.loc[df["Cycle"] == cyc]
+                conds = cyc_df["Condition"].unique()
+                if len(conds) > 1:
+                    # 첫 번째 Condition 그룹 끝에 NaN 행 삽입
+                    nan_row = {col: np.nan for col in df.columns}
+                    nan_row["Cycle"] = cyc
+                    nan_rows.append(nan_row)
+            if nan_rows:
+                # Condition별로 정렬 후 NaN 삽입
+                parts = []
+                for cyc in df["Cycle"].unique():
+                    cyc_df = df.loc[df["Cycle"] == cyc]
+                    conds = sorted(cyc_df["Condition"].unique())
+                    for i, cond in enumerate(conds):
+                        parts.append(cyc_df.loc[cyc_df["Condition"] == cond])
+                        if i < len(conds) - 1:
+                            nan_row = {col: np.nan for col in df.columns}
+                            nan_row["Cycle"] = cyc
+                            parts.append(pd.DataFrame([nan_row]))
+                df = pd.concat(parts, ignore_index=True)
+        else:
+            # 충전/방전 단독: 사이클별 시작점 0으로 리셋
+            for cyc in df["Cycle"].unique():
+                mask = df["Cycle"] == cyc
+                cyc_start = df.loc[mask, "Time_s"].min()
+                df.loc[mask, "Time_s"] = df.loc[mask, "Time_s"] - cyc_start
+    elif continuity == "continuous":
+        # 사이클 간 시간 연속 (이미 TotTime 기반이면 그대로)
+        # 시작점만 0으로 보정
+        if not df.empty:
+            df["Time_s"] = df["Time_s"] - df["Time_s"].iloc[0]
+
+    df["TimeMin"] = df["Time_s"] / 60.0
+
+    # SOC 계산
+    if data_scope == "charge":
+        df["SOC"] = df["ChgCap"]  # 이미 정규화됨 (0~1)
+    elif data_scope == "discharge":
+        df["SOC"] = df["DchgCap"]  # DOD 방향 (0~1)
+    elif data_scope == "cycle":
+        # 양방향 누적: 충전(+) - 방전(-) → SOC
+        df["SOC"] = df["ChgCap"] - df["DchgCap"]
+
+    return df
+
+
+def _unified_calculate_dqdv(
+    df: pd.DataFrame,
+    smooth_degree: int = 0,
+) -> pd.DataFrame:
+    """dQ/dV 및 dV/dQ 계산.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        SOC, Voltage 컬럼 필요.
+    smooth_degree : int
+        미분 평활 간격. 0이면 자동 (len/30).
+
+    Returns
+    -------
+    pd.DataFrame
+        dQdV, dVdQ 컬럼 추가.
+
+    Notes
+    -----
+    휴지 구간(Condition==3)에서는 dQdV=NaN 처리.
+    ΔQ=0 또는 ΔV=0인 지점도 NaN.
+    """
+    df = df.copy()
+
+    if smooth_degree == 0:
+        smooth_degree = max(1, int(len(df) / 30))
+
+    delvol = df["Voltage"].diff(periods=smooth_degree)
+    delcap = df["SOC"].diff(periods=smooth_degree)
+
+    # 0 나누기 방지
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dqdv = delcap / delvol
+        dvdq = delvol / delcap
+
+    # 휴지 구간은 NaN 처리 (전류 0이므로 dQdV 의미 없음)
+    if "Condition" in df.columns:
+        rest_mask = df["Condition"] == 3
+        dqdv[rest_mask] = np.nan
+        dvdq[rest_mask] = np.nan
+
+    df["dQdV"] = dqdv
+    df["dVdQ"] = dvdq
+
+    return df
+
+
+def unified_profile_core(
+    raw_file_path: str,
+    cycle_range: tuple[int, int],
+    mincapacity: float,
+    inirate: float,
+    *,
+    data_scope: str = "charge",
+    axis_mode: str = "soc",
+    continuity: str = "overlay",
+    include_rest: bool = False,
+    calc_dqdv: bool = False,
+    smooth_degree: int = 0,
+    cutoff: float = 0.0,
+    cycle_map: dict | None = None,
+) -> UnifiedProfileResult:
+    """통합 프로필 파싱 엔진.
+
+    5개 기존 함수(step/rate/chg/dchg/continue)를 대체하는 공통 코어.
+    4개 옵션 조합으로 14가지 유효 모드를 지원한다.
+
+    Parameters
+    ----------
+    raw_file_path : str
+        사이클러 채널 경로.
+    cycle_range : tuple[int, int]
+        (시작 논리사이클, 종료 논리사이클). 단일 사이클이면 (n, n).
+    mincapacity : float
+        공칭 용량 (mAh). 0이면 자동 산정.
+    inirate : float
+        초기 C-rate (용량 산정용).
+    data_scope : str
+        "charge" | "discharge" | "cycle"
+    axis_mode : str
+        "time" | "soc"
+    continuity : str
+        "overlay"(시작점 동일) | "continuous"(이어서)
+    include_rest : bool
+        True이면 휴지 구간 포함.
+    calc_dqdv : bool
+        True이면 dQ/dV, dV/dQ 계산.
+    smooth_degree : int
+        dQ/dV 평활 간격 (0=자동).
+    cutoff : float
+        전류 또는 전압 cutoff 필터값.
+    cycle_map : dict | None
+        논리사이클 ↔ 물리사이클 매핑.
+        None이면 자동 생성. "identity"이면 매핑 없이 물리번호 직접 사용.
+        Toyo: {논리번호: (시작파일, 끝파일)}
+        PNE: {논리번호: TotlCycle값}
+
+    Returns
+    -------
+    UnifiedProfileResult
+        통합 프로필 결과. metadata에 cycle_map 포함.
+
+    Raises
+    ------
+    ValueError
+        잘못된 옵션 조합 (예: continuity="continuous" + axis_mode="soc").
+
+    Notes
+    -----
+    옵션 의존성:
+      - axis_mode="soc" → continuity는 자동으로 "overlay" 강제.
+      - continuity="continuous" → axis_mode는 자동으로 "time" 강제.
+    논리사이클:
+      - cycle_range는 논리사이클 번호. cycle_map을 통해 물리파일에 접근.
+      - cycle_map이 None이면 자동으로 toyo_build_cycle_map / pne_build_cycle_map 호출.
+    """
+    # === 옵션 의존성 강제 ===
+    if axis_mode == "soc" and continuity == "continuous":
+        continuity = "overlay"  # SOC 축에서 "이어서"는 무효
+    if continuity == "continuous" and axis_mode == "soc":
+        axis_mode = "time"      # "이어서"일 때 Time 강제
+
+    cycle_start, cycle_end = cycle_range
+
+    # === Stage 1: 사이클러 판별 및 원시 로딩 ===
+    is_pne = check_cycler(raw_file_path)  # True=PNE, False=Toyo
+
+    if is_pne:
+        # PNE 용량 산정
+        tempcap = pne_min_cap(raw_file_path, mincapacity, inirate)
+        mincapacity = tempcap
+        # cycle_map 자동 생성 (None일 때) — .sch 힌트 포함
+        if cycle_map is None:
+            cycle_map, _ = _get_pne_cycle_map(raw_file_path, mincapacity, inirate)
+        raw = _unified_pne_load_raw(
+            raw_file_path, cycle_start, cycle_end,
+            cycle_map=cycle_map,
+        )
+    else:
+        # Toyo 용량 산정
+        tempcap = toyo_min_cap(raw_file_path, mincapacity, inirate)
+        mincapacity = tempcap
+        # cycle_map 자동 생성 (None일 때)
+        if cycle_map is None:
+            cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
+        raw = _unified_toyo_load_raw(
+            raw_file_path, cycle_start, cycle_end,
+            cycle_map=cycle_map,
+        )
+
+    if raw is None or raw.empty:
+        return UnifiedProfileResult(
+            df=pd.DataFrame(),
+            mincapacity=mincapacity,
+            columns=[],
+            metadata={"cycler_type": "PNE" if is_pne else "TOYO",
+                      "cycle_range": cycle_range, "error": "데이터 없음"},
+        )
+
+    # === Stage 2: Condition 필터링 ===
+    # 스윕 시험 여부 판별: cycle_map 값에 tuple이 있으면 스윕
+    _is_sweep = cycle_map is not None and any(
+        isinstance(v, tuple) for v in cycle_map.values())
+    filtered = _unified_filter_condition(
+        raw, data_scope, include_rest,
+        is_sweep=_is_sweep, mincapacity=mincapacity)
+
+    if filtered.empty:
+        return UnifiedProfileResult(
+            df=pd.DataFrame(),
+            mincapacity=mincapacity,
+            columns=[],
+            metadata={"cycler_type": "PNE" if is_pne else "TOYO",
+                      "cycle_range": cycle_range, "error": "필터 후 데이터 없음"},
+        )
+
+    # === Stage 3: 정규화 ===
+    if is_pne:
+        normalized = _unified_normalize_pne(filtered, mincapacity, raw_file_path)
+    else:
+        normalized = _unified_normalize_toyo(filtered, mincapacity)
+
+    # Condition, Cycle 복원 (정규화 결과에 이미 포함)
+    # Step 복원
+    if "Step" not in normalized.columns:
+        normalized["Step"] = filtered["Step"].values
+
+    # === Stage 4: 스텝 병합 ===
+    merged = _unified_merge_steps(normalized, data_scope)
+
+    # === Stage 5: X축 및 SOC 계산 ===
+    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity)
+
+    # === Cutoff 필터 ===
+    if cutoff > 0:
+        if data_scope in ("charge",):
+            # 충전: 전류 cutoff (C-rate 기준)
+            with_axis = with_axis[with_axis["Crate"] >= cutoff]
+        elif data_scope in ("discharge",):
+            # 방전: 전압 cutoff
+            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+
+    # === Stage 6: 파생값 계산 ===
+    if calc_dqdv:
+        with_axis = _unified_calculate_dqdv(with_axis, smooth_degree)
+
+    # === 최종 컬럼 구성 ===
+    base_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]
+
+    if calc_dqdv:
+        # Energy 컬럼 추가
+        if data_scope == "charge":
+            with_axis["Energy"] = with_axis["ChgWh"]
+        elif data_scope == "discharge":
+            with_axis["Energy"] = with_axis["DchgWh"]
+        else:
+            with_axis["Energy"] = with_axis["ChgWh"] - with_axis["DchgWh"]
+        base_cols = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
+
+    # 호환성 컬럼 추가 (기존 렌더러가 .Vol 속성 접근)
+    with_axis["Vol"] = with_axis["Voltage"]
+    # Cycle, Condition 유지 (플롯에서 사이클별 색상 구분용)
+    output_cols = base_cols + ["Vol", "Cycle", "Condition"]
+    if continuity == "continuous":
+        with_axis["TimeSec"] = with_axis["Time_s"]
+        with_axis["Curr"] = with_axis["Current_mA"] / 1000  # mA → A
+        output_cols = ["TimeSec"] + output_cols + ["Curr"]
+
+    # 존재하는 컬럼만 선택
+    final_cols = [c for c in output_cols if c in with_axis.columns]
+    result_df = with_axis[final_cols].reset_index(drop=True)
+
+    return UnifiedProfileResult(
+        df=result_df,
+        mincapacity=mincapacity,
+        columns=final_cols,
+        cycfile_soc=None,  # CycfileSOC는 별도 유틸로 분리 (Phase 3)
+        metadata={
+            "cycler_type": "PNE" if is_pne else "TOYO",
+            "cycle_range": cycle_range,
+            "cycle_map": cycle_map if cycle_map else {},
+            "options": {
+                "data_scope": data_scope,
+                "axis_mode": axis_mode,
+                "continuity": continuity,
+                "include_rest": include_rest,
+                "calc_dqdv": calc_dqdv,
+            },
+        },
+    )
+
+
+# ============================================================================
+# Unified Profile Batch — 통합 프로필 배치 로딩
+# ============================================================================
+# 기존 10개 배치 함수(toyo/pne × step/rate/chg/dchg/continue)를 하나로 통합.
+# PNE: SaveData 1회 I/O 후 사이클별 슬라이싱 (성능 최적화 유지).
+# Toyo: 사이클별 unified_profile_core() 호출 (파일 단위 I/O이므로 동일).
+# ============================================================================
+
+
+def _unified_process_single_cycle_from_raw(
+    raw_cycle: pd.DataFrame,
+    mincapacity: float,
+    raw_file_path: str,
+    is_pne: bool,
+    *,
+    data_scope: str = "charge",
+    axis_mode: str = "soc",
+    continuity: str = "overlay",
+    include_rest: bool = False,
+    calc_dqdv: bool = False,
+    smooth_degree: int = 0,
+    cutoff: float = 0.0,
+    cycle_map: dict | None = None,
+) -> UnifiedProfileResult:
+    """이미 로드된 원시 데이터에서 단일 사이클 프로필을 파싱.
+
+    _unified_pne_load_raw()로 한번에 로드한 PNE 원시 데이터에서
+    특정 사이클만 슬라이싱하여 Stage 2~6을 실행한다.
+    Toyo도 동일한 로직을 사용할 수 있으나 사이클별 파일이므로
+    unified_profile_core()를 직접 호출하는 것이 더 효율적이다.
+
+    Parameters
+    ----------
+    raw_cycle : pd.DataFrame
+        _unified_pne_load_raw() 또는 _unified_toyo_load_raw() 출력에서
+        특정 사이클만 슬라이싱한 DataFrame.
+    mincapacity : float
+        공칭 용량 (mAh).
+    raw_file_path : str
+        사이클러 경로 (PNE 정규화에서 is_micro 판별용).
+    is_pne : bool
+        True=PNE, False=Toyo.
+    data_scope, axis_mode, continuity, include_rest, calc_dqdv,
+    smooth_degree, cutoff : 동일 옵션.
+
+    Returns
+    -------
+    UnifiedProfileResult
+        단일 사이클 프로필 결과.
+    """
+    # 옵션 의존성 강제
+    if axis_mode == "soc" and continuity == "continuous":
+        continuity = "overlay"
+    if continuity == "continuous" and axis_mode == "soc":
+        axis_mode = "time"
+
+    cycle_val = raw_cycle["Cycle"].iloc[0] if not raw_cycle.empty else 0
+
+    if raw_cycle.empty:
+        return UnifiedProfileResult(
+            df=pd.DataFrame(),
+            mincapacity=mincapacity,
+            columns=[],
+            metadata={"cycle": cycle_val, "error": "데이터 없음"},
+        )
+
+    # Stage 2: Condition 필터링
+    _is_sweep = bool(
+        cycle_map
+        and any(isinstance(v, tuple) for v in cycle_map.values())
+    )
+    filtered = _unified_filter_condition(
+        raw_cycle, data_scope, include_rest,
+        is_sweep=_is_sweep, mincapacity=mincapacity,
+    )
+    if filtered.empty:
+        return UnifiedProfileResult(
+            df=pd.DataFrame(),
+            mincapacity=mincapacity,
+            columns=[],
+            metadata={"cycle": cycle_val, "error": "필터 후 데이터 없음"},
+        )
+
+    # Stage 3: 정규화
+    if is_pne:
+        normalized = _unified_normalize_pne(filtered, mincapacity, raw_file_path)
+    else:
+        normalized = _unified_normalize_toyo(filtered, mincapacity)
+
+    if "Step" not in normalized.columns:
+        normalized["Step"] = filtered["Step"].values
+
+    # Stage 4: 스텝 병합
+    merged = _unified_merge_steps(normalized, data_scope)
+
+    # Stage 5: X축 및 SOC 계산
+    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity)
+
+    # Cutoff 필터
+    if cutoff > 0:
+        if data_scope in ("charge",):
+            with_axis = with_axis[with_axis["Crate"] >= cutoff]
+        elif data_scope in ("discharge",):
+            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+
+    # Stage 6: 파생값 계산
+    if calc_dqdv:
+        with_axis = _unified_calculate_dqdv(with_axis, smooth_degree)
+
+    # 최종 컬럼 구성 (unified_profile_core와 동일 로직)
+    base_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]
+    if calc_dqdv:
+        if data_scope == "charge":
+            with_axis["Energy"] = with_axis["ChgWh"]
+        elif data_scope == "discharge":
+            with_axis["Energy"] = with_axis["DchgWh"]
+        else:
+            with_axis["Energy"] = with_axis["ChgWh"] - with_axis["DchgWh"]
+        base_cols = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
+
+    with_axis["Vol"] = with_axis["Voltage"]
+    output_cols = base_cols + ["Vol", "Cycle", "Condition"]
+    if continuity == "continuous":
+        with_axis["TimeSec"] = with_axis["Time_s"]
+        with_axis["Curr"] = with_axis["Current_mA"] / 1000
+        output_cols = ["TimeSec"] + output_cols + ["Curr"]
+
+    final_cols = [c for c in output_cols if c in with_axis.columns]
+    result_df = with_axis[final_cols].reset_index(drop=True)
+
+    return UnifiedProfileResult(
+        df=result_df,
+        mincapacity=mincapacity,
+        columns=final_cols,
+        metadata={"cycle": cycle_val},
+    )
+
+
+def unified_profile_batch(
+    raw_file_path: str,
+    cycle_list: list[int],
+    mincapacity: float,
+    inirate: float,
+    *,
+    data_scope: str = "charge",
+    axis_mode: str = "soc",
+    continuity: str = "overlay",
+    include_rest: bool = False,
+    calc_dqdv: bool = False,
+    smooth_degree: int = 0,
+    cutoff: float = 0.0,
+    cycle_map: dict | None = None,
+) -> dict:
+    """통합 프로필 배치 로딩.
+
+    기존 10개 배치 함수(toyo/pne × step/rate/chg/dchg/continue)를 하나로 통합.
+    1채널의 cycle_list 전체를 한 번에 처리하여 결과 dict를 반환한다.
+
+    Parameters
+    ----------
+    raw_file_path : str
+        사이클러 채널 경로.
+    cycle_list : list[int]
+        처리할 논리사이클 번호 목록.
+    mincapacity : float
+        공칭 용량 (mAh). 0이면 자동 산정.
+    inirate : float
+        초기 C-rate (용량 산정용).
+    data_scope : str
+        "charge" | "discharge" | "cycle"
+    axis_mode : str
+        "time" | "soc"
+    continuity : str
+        "overlay" | "continuous"
+    include_rest : bool
+        True이면 휴지 포함.
+    calc_dqdv : bool
+        True이면 dQ/dV 계산.
+    smooth_degree : int
+        dQ/dV 평활 간격.
+    cutoff : float
+        전류/전압 cutoff.
+    cycle_map : dict | None
+        논리사이클 매핑. None이면 자동 생성.
+
+    Returns
+    -------
+    dict
+        {cycle_no: [mincapacity, UnifiedProfileResult]} 형식.
+        기존 배치 함수의 {cycle_no: [mincapacity, df]} 반환과 호환.
+        continuity="continuous"일 때는 {(start, end): [mincapacity, UnifiedProfileResult]}.
+
+    Notes
+    -----
+    PNE 최적화: SaveData를 cycle_list 전체 범위로 1회만 디스크 I/O.
+    Toyo: 사이클별 개별 파일이므로 unified_profile_core() 루프 호출.
+    cycle_list의 번호는 논리사이클 번호이며 cycle_map을 통해 물리파일에 접근.
+    """
+    is_pne = check_cycler(raw_file_path)
+
+    # 1) 용량 1회 산정
+    if is_pne:
+        mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
+    else:
+        mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
+
+    # 2) cycle_map 자동 생성 (1회만) — 캐시 사용
+    if cycle_map is None:
+        if is_pne:
+            cycle_map, _ = _get_pne_cycle_map(raw_file_path, mincapacity, inirate)
+        else:
+            cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
+
+    results = {}
+
+    # === Continue 모드 (사이클 범위 단위) ===
+    if continuity == "continuous":
+        if len(cycle_list) >= 2:
+            cycle_range = (min(cycle_list), max(cycle_list))
+        elif len(cycle_list) == 1:
+            cycle_range = (cycle_list[0], cycle_list[0])
+        else:
+            return results
+
+        result = unified_profile_core(
+            raw_file_path, cycle_range, mincapacity, inirate,
+            data_scope=data_scope, axis_mode=axis_mode,
+            continuity=continuity, include_rest=include_rest,
+            calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
+            cutoff=cutoff, cycle_map=cycle_map,
+        )
+        results[cycle_range] = [mincapacity, result]
+        return results
+
+    # === Overlay 모드 (사이클별 개별 처리) ===
+    if is_pne:
+        # PNE: 1회 I/O 최적화 — 전체 범위 로드 후 사이클별 슬라이싱
+        all_raw = _unified_pne_load_raw(
+            raw_file_path, min(cycle_list), max(cycle_list),
+            cycle_map=cycle_map,
+        )
+        if all_raw is None or all_raw.empty:
+            for cyc in cycle_list:
+                results[cyc] = [mincapacity, UnifiedProfileResult(
+                    df=pd.DataFrame(), mincapacity=mincapacity, columns=[],
+                    metadata={"cycle": cyc, "error": "PNE 원시 데이터 없음"},
+                )]
+            return results
+
+        for cyc in cycle_list:
+            raw_cycle = all_raw[all_raw["Cycle"] == cyc].copy()
+            result = _unified_process_single_cycle_from_raw(
+                raw_cycle, mincapacity, raw_file_path, is_pne=True,
+                data_scope=data_scope, axis_mode=axis_mode,
+                continuity=continuity, include_rest=include_rest,
+                calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
+                cutoff=cutoff, cycle_map=cycle_map,
+            )
+            results[cyc] = [mincapacity, result]
+    else:
+        # Toyo: 사이클별 개별 파일 → unified_profile_core() 직접 호출 (cycle_map 전달)
+        for cyc in cycle_list:
+            result = unified_profile_core(
+                raw_file_path, (cyc, cyc), mincapacity, inirate,
+                data_scope=data_scope, axis_mode=axis_mode,
+                continuity=continuity, include_rest=include_rest,
+                calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
+                cutoff=cutoff, cycle_map=cycle_map,
+            )
+            results[cyc] = [mincapacity, result]
+
+    return results
+
+
+def unified_profile_batch_continue(
+    raw_file_path: str,
+    step_ranges: list[tuple[int, int]],
+    mincapacity: float,
+    inirate: float,
+    *,
+    data_scope: str = "cycle",
+    include_rest: bool = True,
+    cycle_map: dict | None = None,
+) -> dict:
+    """Continue 프로필 전용 배치 로딩.
+
+    기존 toyo_continue_Profile_batch / pne_continue_Profile_batch를 대체.
+    step_ranges 각 (start, end) 범위에 대해 unified_profile_core()를 호출한다.
+
+    Parameters
+    ----------
+    raw_file_path : str
+        사이클러 채널 경로.
+    step_ranges : list[tuple[int, int]]
+        처리할 논리사이클 범위 목록 [(start1, end1), (start2, end2), ...].
+    mincapacity : float
+        공칭 용량.
+    inirate : float
+        초기 C-rate.
+    data_scope : str
+        기본 "cycle" (Continue는 전체 사이클).
+    include_rest : bool
+        기본 True (Continue는 휴지 포함).
+    cycle_map : dict | None
+        논리사이클 매핑. None이면 자동 생성.
+
+    Returns
+    -------
+    dict
+        {(start, end): [mincapacity, UnifiedProfileResult]} 형식.
+    """
+    is_pne = check_cycler(raw_file_path)
+
+    if is_pne:
+        mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
+    else:
+        mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
+
+    # cycle_map 자동 생성 (1회만) — PNE: .sch 힌트 포함
+    if cycle_map is None:
+        if is_pne:
+            cycle_map, _ = _get_pne_cycle_map(raw_file_path, mincapacity, inirate)
+        else:
+            cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
+
+    results = {}
+    for (start, end) in step_ranges:
+        result = unified_profile_core(
+            raw_file_path, (start, end), mincapacity, inirate,
+            data_scope=data_scope, axis_mode="time",
+            continuity="continuous", include_rest=include_rest,
+            calc_dqdv=False, smooth_degree=0, cutoff=0.0,
+            cycle_map=cycle_map,
+        )
+        results[(start, end)] = [mincapacity, result]
+
+    return results
+
+
 # 주어진 문자열을 리스트로 변환
-def convert_steplist(input_str):
+# 지원 형식: "2 4 5 1-10", "2,4,5,1-10", "2, 4, 5, 1-10" (쉼표·공백 혼용 가능)
+def convert_steplist(input_str: str) -> list[int]:
+    import re
+    # 쉼표 또는 공백을 구분자로 분리 → 빈 문자열 제거
+    parts = [p.strip() for p in re.split(r'[,\s]+', input_str.strip()) if p.strip()]
     output_list = []
-    for part in input_str.split():
+    for part in parts:
         if "-" in part:
             start, end = map(int, part.split("-"))
             output_list.extend(range(start, end + 1))
@@ -1237,10 +2494,11 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         Cycleraw = tempdata.dataraw
         # 기존 cycle 저장
         Cycleraw.loc[:,"OriCycle"]=Cycleraw.loc[:,"TotlCycle"]
-        # 방전 시작 시 data 변경
+        # 방전 시작 시 첫 행(고아 방전) 제거
+        # 기존 버그: Condition==2 전체 행의 TotlCycle -= 1 → dcir 파일 조회 등에서 번호 불일치 유발
+        # 수정: 고아 첫 행만 드롭. OriCycle이 원본을 보존하고, merge_group은 Condition 시퀀스 기반이므로 TotlCycle 수정 불필요
         if Cycleraw.loc[0, "Condition"] == 2 and len(Cycleraw.index) > 2:
             if Cycleraw.loc[1, "TotlCycle"] == 1:
-                Cycleraw.loc[Cycleraw["Condition"] == 2, "TotlCycle"] -= 1
                 Cycleraw = Cycleraw.drop(0, axis=0)
                 Cycleraw = Cycleraw.reset_index()
         
@@ -1371,29 +2629,98 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         # 전체 Data 취합
         df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng,
                                    "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle})
-        # df.NewData = df.NewData.dropna(axis=0, how='all')
-        df.NewData = df.NewData.dropna(axis=0, how='all', subset=['Dchg'])
+        # Dchg 또는 Chg 중 하나라도 NaN이면 제거 (불완전 사이클)
+        df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
         df.NewData = df.NewData.reset_index()
         if hasattr(dcir, "dcir"):
             df.NewData = pd.concat([df.NewData, dcir["dcir"]], axis=1, join="outer")
         else:
             df.NewData.loc[0, "dcir"] = 0
         df.NewData = df.NewData.drop("TotlCycle", axis=1)
-        # 재정의 사이클 번호 (충방전 쌍 기준 1, 2, 3, ...)
-        df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+        # ── .ptn 구조 분석 → 논리사이클 힌트 ──
+        _ptn_struct = None
+        try:
+            _ptn_struct = extract_toyo_ptn_structure(raw_file_path, mincapacity)
+        except Exception:
+            _ptn_struct = None
+        # ── 논리사이클 매핑 생성 및 적용 ──
+        _cycle_map = None
+        try:
+            _cycle_map, _ = toyo_build_cycle_map(
+                raw_file_path, mincapacity, inirate, ptn_struct=_ptn_struct,
+            )
+        except Exception:
+            _cycle_map = None
+        if _cycle_map and len(df.NewData) > 0:
+            # Toyo: Cycle 열은 항상 순번 부여 (호환성)
+            # cycle_map은 df.cycle_map에 보존 (프로필 파이프라인에서 사용)
+            df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+        else:
+            # cycle_map 없음: 기존 방식 (순번)
+            df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+        df.cycle_map = _cycle_map if _cycle_map else {}
+        # ── 충전 전용 사이클 df.NewData에 추가 (스윕 시험만) ──
+        # 스윕 시험에서 cycle_map에는 있지만 df.NewData에 없는 논리사이클 = 충전 전용 (화성 등)
+        # 일반 시험은 순번 부여이므로 cycle_map 키와 Cycle 번호가 불일치 → 스킵
+        # Toyo는 Cycle 열이 순번이므로 충전 전용 추가 스킵
+        # (cycle_map은 df.cycle_map에 보존되어 프로필 파이프라인에서 사용)
+        if False and 'Cycle' in df.NewData.columns:
+            _existing_lns = set(df.NewData['Cycle'].values)
+            _chg_only_rows: list[dict] = []
+            for _ln, _tc_range in _cycle_map.items():
+                if _ln in _existing_lns:
+                    continue
+                # cycle_map 범위 내 충전 데이터 조회
+                if isinstance(_tc_range, tuple):
+                    _tc_s, _tc_e = _tc_range
+                    _match = chgdata[(chgdata.index >= _tc_s) & (chgdata.index <= _tc_e)]
+                else:
+                    _match = chgdata.loc[[_tc_range]] if _tc_range in chgdata.index else chgdata.iloc[0:0]
+                if _match.empty:
+                    continue
+                _chg_cap_sum = _match["Cap[mAh]"].sum()
+                _ocv_val = _match["Ocv"].iloc[-1] if "Ocv" in _match.columns else np.nan
+                _ori_tc = int(_match.index[-1])
+                _chg_only_rows.append({
+                    'Cycle': _ln,
+                    'Dchg': np.nan,
+                    'RndV': _ocv_val,
+                    'Eff': np.nan,
+                    'Chg': _chg_cap_sum / mincapacity,
+                    'DchgEng': np.nan,
+                    'Eff2': np.nan,
+                    'Temp': np.nan,
+                    'AvgV': np.nan,
+                    'OriCyc': _ori_tc,
+                })
+            if _chg_only_rows:
+                _chg_df = pd.DataFrame(_chg_only_rows)
+                df.NewData = pd.concat([df.NewData, _chg_df], ignore_index=True)
+                df.NewData = df.NewData.sort_values('Cycle').reset_index(drop=True)
         # ── 충전 상한 전압 트래킹: ChgVolt, ChgSteps (위치 기반 정렬) ──
         if len(df.NewData) > 0 and len(_ChgVolt.dropna()) > 0:
             _n = min(len(_ChgVolt), len(df.NewData))
             df.NewData.loc[df.NewData.index[:_n], 'ChgVolt'] = _ChgVolt.values[:_n]
             df.NewData.loc[df.NewData.index[:_n], 'ChgSteps'] = _ChgSteps.values[:_n]
     else:
-        pass
+        df.cycle_map = {}
     return [mincapacity, df]
 
 
-def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
-    """
-    toyo_cycle_data()와 동일한 사이클 재정의
+def toyo_build_cycle_map(raw_file_path, mincapacity, inirate, ptn_struct=None):
+    """Toyo capacity.log로부터 논리사이클 → OriCycle 범위 매핑 생성.
+
+    Parameters
+    ----------
+    raw_file_path : str
+        Toyo 채널 경로.
+    mincapacity : float
+        공칭 용량 (mAh).
+    inirate : float
+        초기 C-rate.
+    ptn_struct : dict | None
+        extract_toyo_ptn_structure() 반환값.
+        제공 시 min_pulse_cap_mAh로 용량 임계값 보정.
     """
     mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
     tempdata = toyo_cycle_import(raw_file_path)
@@ -1403,10 +2730,10 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
     Cycleraw = tempdata.dataraw.copy()
     Cycleraw["OriCycle"] = Cycleraw["TotlCycle"]
 
-    # 방전 시작 시 data 변경 (toyo_cycle_data와 동일)
+    # 방전 시작 시 첫 행(고아 방전) 제거
+    # OriCycle이 원본을 보존하고, merge_group은 Condition 시퀀스 기반이므로 TotlCycle 수정 불필요
     if Cycleraw.iloc[0]["Condition"] == 2 and len(Cycleraw) > 2:
         if Cycleraw.iloc[1]["TotlCycle"] == 1:
-            Cycleraw.loc[Cycleraw["Condition"] == 2, "TotlCycle"] -= 1
             Cycleraw = Cycleraw.drop(0, axis=0).reset_index(drop=True)
 
     # 연속 동일 Condition 벡터 그룹 (toyo_cycle_data와 동일)
@@ -1422,22 +2749,419 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate):
         OriMax=("OriCycle", "max")
     ).reset_index(drop=True)
 
-    # 방전 그룹 중 유효 사이클만 필터링 (toyo_cycle_data의 Dchgdata 조건)
-    dchg_mask = (group_info["Condition"] == 2) & (group_info["Cap"] > mincapacity / 60)
+    # 방전 그룹 유효 판별 임계값 결정
+    # 기본: mincapacity / 60 (공칭의 1/60)
+    # .ptn 힌트: min_pulse_cap_mAh가 더 작으면 해당 값 사용 (GITT 펄스 등)
+    cap_threshold = mincapacity / 60
+    if ptn_struct and ptn_struct.get('min_pulse_cap_mAh', 0) > 0:
+        ptn_min = ptn_struct['min_pulse_cap_mAh']
+        if ptn_min < cap_threshold:
+            cap_threshold = ptn_min * 0.5  # 보수적 마진
+
+    dchg_mask = (group_info["Condition"] == 2) & (group_info["Cap"] > cap_threshold)
     dchg_indices = group_info[dchg_mask].index.tolist()
 
-    # 논리 사이클 → (시작파일, 끝파일) 매핑
-    cycle_map = {}
-    for logical_num, dchg_idx in enumerate(dchg_indices, start=1):
-        dchg_ori_max = int(group_info.loc[dchg_idx, "OriMax"])
-        # 직전 그룹이 충전(Condition=1)이면, 해당 충전의 OriMin이 사이클 시작
+    # ── 논리 사이클 구성 ──
+    # 규칙 1: 충전→방전→(휴지) = 1 논리사이클 (방전 후 휴지 포함)
+    # 규칙 2: 충전 전용 그룹 = 독립 논리사이클 (화성 등)
+    used_indices: set[int] = set()
+    events: list[tuple[int, int]] = []  # (start_OriMin, end_OriMax)
+
+    # Pass 1: 방전 기반 사이클 (충전 + 방전 + 방전 후 휴지)
+    for dchg_idx in dchg_indices:
+        start_idx = dchg_idx
+        end_idx = dchg_idx
+
+        # 직전 그룹이 충전(Condition=1)이면 사이클 시작에 포함
         if dchg_idx > 0 and group_info.loc[dchg_idx - 1, "Condition"] == 1:
-            first_file = int(group_info.loc[dchg_idx - 1, "OriMin"])
-        else:
-            first_file = int(group_info.loc[dchg_idx, "OriMin"])
-        cycle_map[logical_num] = (first_file, dchg_ori_max)
+            start_idx = dchg_idx - 1
+            used_indices.add(dchg_idx - 1)
+
+        # 방전 직후 연속 비충전/비방전 그룹(휴지 등)을 사이클 끝에 포함
+        next_idx = dchg_idx + 1
+        while (next_idx < len(group_info)
+               and group_info.loc[next_idx, "Condition"] not in (1, 2)):
+            end_idx = next_idx
+            used_indices.add(next_idx)
+            next_idx += 1
+
+        used_indices.add(dchg_idx)
+
+        first_file = int(group_info.loc[start_idx, "OriMin"])
+        last_file = int(group_info.loc[end_idx, "OriMax"])
+        events.append((first_file, last_file))
+
+    # Pass 2: 충전 전용 사이클 (방전 없이 충전만 있는 그룹)
+    chg_only_mask = (group_info["Condition"] == 1) & (group_info["Cap"] > mincapacity / 60)
+    for idx in group_info[chg_only_mask].index:
+        if idx in used_indices:
+            continue
+        used_indices.add(idx)
+        first_file = int(group_info.loc[idx, "OriMin"])
+        last_file = int(group_info.loc[idx, "OriMax"])
+        # 충전 후 연속 비충전/비방전 그룹(휴지 등)도 포함
+        next_idx = idx + 1
+        while (next_idx < len(group_info)
+               and next_idx not in used_indices
+               and group_info.loc[next_idx, "Condition"] not in (1, 2)):
+            last_file = int(group_info.loc[next_idx, "OriMax"])
+            used_indices.add(next_idx)
+            next_idx += 1
+        events.append((first_file, last_file))
+
+    # 시작 파일 기준 정렬 → 논리사이클 번호 부여
+    events.sort(key=lambda x: x[0])
+    cycle_map = {}
+    for ln, (start, end) in enumerate(events, start=1):
+        cycle_map[ln] = (start, end)
 
     return cycle_map, mincapacity
+
+
+# ── 스윕 기반 사이클 매핑 헬퍼 (GITT/DCIR용) ──────────────────────
+
+
+def _opposite_dirs(d1: str, d2: str) -> bool:
+    """충전/방전 방향이 반대인지 판별.
+
+    MIXED는 양방향을 포함하므로 CHG 또는 DCHG와 짝이 될 수 있다.
+    MIXED↔MIXED도 병합 대상 (교대 펄스 패턴).
+    """
+    _PAIRS = {
+        ('CHG', 'DCHG'), ('DCHG', 'CHG'),
+        ('MIXED', 'CHG'), ('CHG', 'MIXED'),
+        ('MIXED', 'DCHG'), ('DCHG', 'MIXED'),
+        ('MIXED', 'MIXED'),
+    }
+    return (d1, d2) in _PAIRS
+
+
+def _pne_build_sweep_cycle_map(
+    pivot: pd.DataFrame,
+    all_tcs: list[int],
+    mincapacity: float,
+) -> dict:
+    """스윕 방향 감지 + 그룹핑 → cycle_map 생성 (GITT/DCIR/펄스 시험용).
+
+    알고리즘
+    --------
+    1. TotlCycle별 유의 여부(significant)와 주 방향(CHG/DCHG/MIXED) 결정
+       - 유의 기준: max(ChgCap, DchgCap) ≥ 공칭 용량의 20%
+    2. 유의 TC → 충방전 쌍이 있으면 개별 논리사이클 (RPT, 보관 등)
+    3. 비유의 TC → 방향 무관하게 연속된 비유의 TC를 하나의 "스윕"으로 묶기
+       (펄스 시험의 DCHG→CHG→DCHG 교대 패턴도 단일 스윕)
+    4. 인접 반대 방향 스윕 쌍 → 1 논리사이클로 병합 (해당 시에만)
+
+    Parameters
+    ----------
+    pivot : pd.DataFrame
+        TotlCycle × Condition 피벗 (값: μAh 합산).
+    all_tcs : list[int]
+        전체 TotlCycle 번호 목록 (정렬 완료).
+    mincapacity : float
+        공칭 용량 (mAh).
+
+    Returns
+    -------
+    dict
+        {논리사이클: int} (단일 TC) 또는 {논리사이클: (시작TC, 끝TC)} (스윕 범위).
+    """
+    chg_s = pivot["chgCap"].get(1, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
+    dchg_s = pivot["DchgCap"].get(2, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
+
+    # ── 유의 TC 임계값: 최대 TC 용량의 50% ──
+    # 스윕 시험에서는 공칭 용량 기준이 부적절 (반셀 GITT: 공칭 4mAh인데
+    # 펄스 41mAh → 전부 유의로 판정되는 문제).
+    # 최대 TC 용량 대비 상대 비율로 "풀 사이클급"과 "펄스"를 구분한다.
+    max_cap_per_tc = pd.concat([chg_s, dchg_s], axis=1).max(axis=1)
+    max_tc_cap = float(max_cap_per_tc.max()) if len(max_cap_per_tc) > 0 else 0
+    threshold = max_tc_cap * 0.5
+
+    # ── 1단계: TC별 속성 (유의 여부 + 주 방향) ──
+    tc_attrs: list[tuple] = []      # (tc, significant, direction, has_both)
+    for tc in all_tcs:
+        c, d = float(chg_s[tc]), float(dchg_s[tc])
+        sig = max(c, d) >= threshold
+        has_both = c > 0 and d > 0
+        # 주 방향 결정 (1.5배 비율 기준)
+        if c > 0 and d == 0:
+            dirn = 'CHG'
+        elif d > 0 and c == 0:
+            dirn = 'DCHG'
+        elif d > 0 and c / d > 1.5:
+            dirn = 'CHG'
+        elif c > 0 and d / c > 1.5:
+            dirn = 'DCHG'
+        else:
+            dirn = 'MIXED'
+        tc_attrs.append((tc, sig, dirn, has_both))
+
+    # ── 2단계: 세그먼트화 (유의 TC = 개별, 비유의 TC = 스윕 누적) ──
+    segments: list[dict] = []
+    sweep_tcs: list[int] = []
+    sweep_dir: str | None = None
+
+    def _flush_sweep() -> None:
+        nonlocal sweep_tcs, sweep_dir
+        if sweep_tcs:
+            segments.append({'kind': 'sweep', 'tcs': list(sweep_tcs), 'dir': sweep_dir})
+        sweep_tcs = []
+        sweep_dir = None
+
+    for tc, sig, dirn, has_both in tc_attrs:
+        if sig:
+            _flush_sweep()
+            segments.append({'kind': 'sig', 'tcs': [tc], 'dir': dirn, 'has_both': has_both})
+        else:
+            # 비유의 TC는 방향 전환과 무관하게 연속 스윕으로 누적
+            # (펄스 시험: DCHG→CHG→DCHG 교대 패턴도 하나의 스윕 블록)
+            if sweep_dir is None:
+                sweep_dir = dirn
+            elif dirn != sweep_dir and dirn != 'MIXED':
+                sweep_dir = 'MIXED'
+            sweep_tcs.append(tc)
+    _flush_sweep()
+
+    # ── 2.5단계: 유의 TC(has_both) 직후 DCHG 스윕 → 유의 TC에 흡수 ──
+    # 방전 마무리 규칙: 풀사이클 유의 TC 직후의 비유의 방전은
+    # 해당 사이클의 방전 완료로 간주하여 흡수한다.
+    # 예: [sig TC3 충방전] + [sweep DCHG TC4] → TC3에 TC4 흡수
+    absorbed: list[dict] = []
+    si = 0
+    while si < len(segments):
+        seg = segments[si]
+        if (seg['kind'] == 'sig'
+                and seg.get('has_both', False)
+                and si + 1 < len(segments)
+                and segments[si + 1]['kind'] == 'sweep'
+                and segments[si + 1]['dir'] == 'DCHG'):
+            # 유의 TC에 후속 DCHG 스윕 흡수 (방전 마무리)
+            absorbed.append({
+                'kind': 'sig',
+                'tcs': seg['tcs'] + segments[si + 1]['tcs'],
+                'dir': seg['dir'],
+                'has_both': True,
+            })
+            si += 2
+        else:
+            absorbed.append(seg)
+            si += 1
+    segments = absorbed
+
+    # ── 3단계: 인접 반대 방향 스윕 쌍 → 1 논리사이클로 병합 ──
+    merged: list[dict] = []
+    si = 0
+    while si < len(segments):
+        seg = segments[si]
+        if (seg['kind'] == 'sweep'
+                and si + 1 < len(segments)
+                and segments[si + 1]['kind'] == 'sweep'
+                and _opposite_dirs(seg['dir'], segments[si + 1]['dir'])):
+            merged.append({
+                'kind': 'paired',
+                'tcs': seg['tcs'] + segments[si + 1]['tcs'],
+            })
+            si += 2
+        else:
+            merged.append(seg)
+            si += 1
+
+    # ── 4단계: cycle_map 변환 ──
+    cycle_map: dict = {}
+    ln = 0
+    for seg in merged:
+        tcs = seg['tcs']
+        if seg['kind'] == 'sig':
+            # 유의 TC: 충방전 쌍 유무와 무관하게 논리사이클로 포함
+            # (초기 충전, 단독 RPT 등 has_both=False인 유의 TC도 유효한 이벤트)
+            ln += 1
+            if len(tcs) >= 2:
+                cycle_map[ln] = (int(min(tcs)), int(max(tcs)))
+            else:
+                cycle_map[ln] = int(tcs[0])
+        else:
+            # 스윕 또는 쌍 병합된 스윕
+            if len(tcs) >= 2:
+                ln += 1
+                cycle_map[ln] = (int(min(tcs)), int(max(tcs)))
+            elif tcs:
+                ln += 1
+                cycle_map[ln] = int(tcs[0])
+    return cycle_map
+
+
+def pne_build_cycle_map(
+    raw_file_path: str,
+    mincapacity: float,
+    ini_crate: float,
+    sch_struct: dict | None = None,
+) -> tuple[dict, float]:
+    """PNE SaveEndData로부터 논리사이클 → TotlCycle 매핑 생성.
+
+    시험 유형에 따라 두 가지 매핑 전략을 자동 선택한다:
+    - **일반 시험** (가속수명, 율별, 보관 등): TotlCycle 단위 1:1 매핑
+    - **스윕 시험** (GITT, DCIR 등): 방향 기반 그룹핑으로 스윕 범위 매핑
+
+    판별 우선순위:
+    1. sch_struct.sweep_mode (True/False) — .sch 파일 기반 확정 판별
+    2. sig_ratio/has_both_ratio 데이터 휴리스틱 — .sch 미제공 또는 미결정 시
+
+    Parameters
+    ----------
+    raw_file_path : str
+        PNE 채널 경로.
+    mincapacity : float
+        공칭 용량 (mAh). 0이면 자동 산정.
+    ini_crate : float
+        초기 C-rate (용량 산정용).
+    sch_struct : dict | None
+        extract_schedule_structure_from_sch() 반환값.
+        sweep_mode 키로 모드를 강제 지정 (True/False/None).
+
+    Returns
+    -------
+    tuple[dict, float]
+        (cycle_map, mincapacity).
+        cycle_map 값 형태:
+        - int: 단일 TotlCycle (일반 시험 또는 유의 TC)
+        - tuple[int, int]: (시작TC, 끝TC) 스윕 범위 (GITT/DCIR)
+    """
+    if (raw_file_path[-4:-1]) == "ter":
+        return {}, mincapacity
+
+    mincapacity = pne_min_cap(raw_file_path, mincapacity, ini_crate)
+    if not mincapacity:  # None 또는 0 → threshold=0 되어 모든 TC가 유의로 판정됨
+        return {}, 0
+
+    # SaveEndData 캐시 조회
+    save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
+    if save_end_cached is None:
+        return {}, mincapacity
+
+    Cycleraw = save_end_cached[[27, 2, 10, 11]].copy()
+    Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap"]
+
+    # TotlCycle × Condition 피벗
+    pivot = Cycleraw.pivot_table(
+        index="TotlCycle",
+        columns="Condition",
+        values=["DchgCap", "chgCap"],
+        aggfunc="sum",
+    )
+    all_tcs = sorted(Cycleraw["TotlCycle"].unique())
+    if not all_tcs:
+        return {}, mincapacity
+
+    # ── 시험 유형 판별: .sch 힌트 우선 → 데이터 휴리스틱 폴백 ──
+    # 1차: .sch 기반 모드 확정 (있으면)
+    _sch_sweep = sch_struct.get('sweep_mode') if isinstance(sch_struct, dict) else None
+
+    # 2차: 데이터 기반 유의 TC 비율 (1차 미결정 시 사용)
+    threshold = mincapacity * 1000 * 0.2  # μAh 단위 (공칭 20%)
+    chg_s = pivot["chgCap"].get(1, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
+    dchg_s = pivot["DchgCap"].get(2, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
+    max_cap = pd.concat([chg_s, dchg_s], axis=1).max(axis=1)
+    n_significant = int((max_cap >= threshold).sum())
+    sig_ratio = n_significant / len(all_tcs)
+
+    # has_both 비율: 충방전 쌍이 모두 있는 TC의 비율
+    # 낮으면 단방향 펄스 시험 (GITT 반셀 등) → 스윕 모드로 처리해야 함
+    has_both_mask = (chg_s > 0) & (dchg_s > 0)
+    has_both_ratio = float(has_both_mask.sum()) / len(all_tcs) if all_tcs else 0
+
+    # 보관/소규모 시험 특수 처리: TC ≤ 5이면 스윕 판별 무의미 → 일반 모드 강제
+    if len(all_tcs) <= 5 and _sch_sweep is None:
+        _sch_sweep = False
+
+    # 최종 모드 결정
+    _use_general = (
+        _sch_sweep is False  # .sch 또는 보관 특수 처리 → 일반
+        or (_sch_sweep is None and sig_ratio >= 0.5 and has_both_ratio >= 0.3)  # 데이터 휴리스틱 → 일반
+    )
+
+    if _use_general:
+        # ── 일반 시험: TotlCycle 단위 1:1 매핑 ──
+        # 조건: 유의 TC가 과반 AND 충방전 쌍이 있는 TC가 30% 이상
+        if 2 in pivot["DchgCap"].columns:
+            dchg_cap = pivot["DchgCap"][2]
+        else:
+            dchg_cap = pd.Series(dtype=float)
+        if 1 in pivot["chgCap"].columns:
+            chg_cap = pivot["chgCap"][1]
+        else:
+            chg_cap = pd.Series(dtype=float)
+
+        # 충방전 쌍이 있는 TC (기존 동작)
+        valid_dchg_tcs = set()
+        if not dchg_cap.empty:
+            _dchg_valid = dchg_cap.dropna().index
+            if not chg_cap.empty:
+                _chg_valid = chg_cap.dropna().index
+                valid_dchg_tcs = set(_dchg_valid.intersection(_chg_valid))
+            else:
+                valid_dchg_tcs = set(_dchg_valid)
+
+        # 충전 전용 TC (방전 없이 충전만 있는 TC) — 화성 등 독립 사이클
+        chg_only_tcs = set()
+        if not chg_cap.empty:
+            _all_chg = set(chg_cap.dropna().index)
+            _all_dchg = set(dchg_cap.dropna().index) if not dchg_cap.empty else set()
+            chg_only_tcs = _all_chg - _all_dchg
+
+        valid_totl_cycles = sorted(valid_dchg_tcs | chg_only_tcs)
+        if not valid_totl_cycles:
+            return {}, mincapacity
+
+        # 유의 TC 집합 (풀사이클급: 공칭 20% 이상)
+        sig_set = set()
+        for tc in valid_totl_cycles:
+            if float(max_cap.get(tc, 0)) >= threshold:
+                sig_set.add(tc)
+
+        # cycle_map 생성: 유의 TC는 개별, 비유의 연속 TC는 스윕 그룹
+        # 충전전용 유의 TC + 직후 비유의 블록 → 하나의 스윕으로 병합
+        # (풀충전은 펄스 스윕의 준비 단계이므로 물리적으로 같은 이벤트)
+        cycle_map = {}
+        ln = 0
+        i = 0
+        while i < len(valid_totl_cycles):
+            tc = valid_totl_cycles[i]
+            if tc in sig_set:
+                # 충전전용 유의 TC 뒤에 비유의 블록 → 함께 묶기
+                if (tc in chg_only_tcs
+                        and i + 1 < len(valid_totl_cycles)
+                        and valid_totl_cycles[i + 1] not in sig_set):
+                    group = [tc]
+                    i += 1
+                    while i < len(valid_totl_cycles) and valid_totl_cycles[i] not in sig_set:
+                        group.append(valid_totl_cycles[i])
+                        i += 1
+                    ln += 1
+                    cycle_map[ln] = (int(min(group)), int(max(group)))
+                else:
+                    ln += 1
+                    cycle_map[ln] = int(tc)
+                    i += 1
+            else:
+                # 연속 비유의 TC 블록을 하나의 논리사이클(스윕)로 묶기
+                group = [tc]
+                i += 1
+                while i < len(valid_totl_cycles) and valid_totl_cycles[i] not in sig_set:
+                    group.append(valid_totl_cycles[i])
+                    i += 1
+                ln += 1
+                if len(group) == 1:
+                    cycle_map[ln] = int(group[0])
+                else:
+                    cycle_map[ln] = (int(min(group)), int(max(group)))
+        return cycle_map, mincapacity
+    else:
+        # ── 스윕 시험: 방향 기반 그룹핑으로 스윕 범위 매핑 ──
+        # .sch sweep_mode=True 확정, 또는 데이터 휴리스틱 (sig_ratio < 0.5 / has_both < 0.3)
+        # GITT, DCIR 등 펄스 시험: 연속 동일 방향 TC를 하나의 스윕으로 묶고,
+        # 인접 반대 방향 스윕 쌍을 1 논리사이클로 병합
+        cycle_map = _pne_build_sweep_cycle_map(pivot, all_tcs, mincapacity)
+        return cycle_map, mincapacity
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1482,7 +3206,17 @@ def _classify_single_pne_cycle(group: pd.DataFrame) -> dict:
     elif has_es78:
         cat = 'Rss'
     elif n_charge >= 2 and n_discharge >= 1:
-        cat = '가속수명'
+        # n_charge==2인 경우: CC+CV 단일 CCCV인지, 실제 다스텝 충전인지 구분
+        # EndState 65=전압도달(CC끝), 66=전류도달(CV끝)
+        # 단일 CCCV: CC(ES=65) + CV(ES=66) = n_charge=2 → RPT
+        # 2스텝 가속수명: CC1+CV1+CC2+CV2 = n_charge=4+ → 가속수명
+        chg_rows = group[group['StepType'] == 1]
+        chg_es = set(int(e) for e in chg_rows['EndState'].values)
+        # 충전 스텝이 정확히 2개이고 CC+CV 쌍(ES=65,66)이면 단일 CCCV → RPT
+        if n_charge == 2 and 65 in chg_es and 66 in chg_es:
+            cat = 'RPT'
+        else:
+            cat = '가속수명'
     elif n_charge == 1 and n_discharge >= 1:
         cat = 'RPT'
     else:
@@ -1698,17 +3432,39 @@ def detect_test_type(counts: dict) -> str:
     return '기타'
 
 
+def _parse_capacity_value(text: str) -> float:
+    """용량 문자열 파싱 — 하이픈 소수점 표기 지원.
+
+    '4-22' → 4.22, '4.22' → 4.22, '1689' → 1689.0 등.
+    숫자 사이 하이픈을 소수점으로 해석한다 (예: 배터리 명명 규칙 '4-22mAh').
+    파싱 실패 시 0.0 반환.
+    """
+    if not text or not text.strip():
+        return 0.0
+    s = text.strip()
+    # 'mAh' 접미사 제거
+    s = re.sub(r'\s*mAh\s*$', '', s, flags=re.IGNORECASE)
+    # 숫자-숫자 패턴: 하이픈 → 소수점 (예: 4-22 → 4.22)
+    s = re.sub(r'^(\d+)-(\d+)$', r'\1.\2', s)
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
 def _extract_capacity_from_path(path: str) -> float:
     """경로 문자열에서 용량(mAh) 추출.
 
     폴더 명명 규칙 '_XXXXmAh_' 패턴에서 숫자 부분을 추출한다.
-    예: '1689mAh' → 1689.0, '2335mAh' → 2335.0
+    예: '1689mAh' → 1689.0, '2335mAh' → 2335.0, '4-22mAh' → 4.22
     매칭 실패 시 0.0 반환.
     """
     import re
-    # 폴더명에서 '숫자+mAh' 패턴 검색 (대소문자 무시)
-    m = re.search(r'(\d+(?:\.\d+)?)\s*mAh', path, re.IGNORECASE)
-    return float(m.group(1)) if m else 0.0
+    # 폴더명에서 '숫자+mAh' 패턴 검색 (하이픈 소수점 포함, 대소문자 무시)
+    m = re.search(r'(\d+(?:[.\-]\d+)?)\s*mAh', path, re.IGNORECASE)
+    if m:
+        return _parse_capacity_value(m.group(1))
+    return 0.0
 
 
 def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None:
@@ -2143,6 +3899,133 @@ def _parse_toyo_ptn(
     }
 
 
+def extract_toyo_ptn_structure(
+    channel_path: str,
+    capacity: float = 0,
+) -> dict | None:
+    """Toyo .PTN 파일에서 스케줄 구조 정보(시험유형, 패턴) 추출.
+
+    .PTN 파일의 루프/스텝 구조를 분석하여 시험유형을 판별한다.
+    toyo_build_cycle_map()에 용량 임계값 힌트를 제공하는 것이 주 용도.
+
+    Parameters
+    ----------
+    channel_path : str
+        Toyo 채널 폴더 경로
+    capacity : float
+        공칭 용량(mAh). 0이면 Option.PTN에서 추정.
+
+    Returns
+    -------
+    dict | None
+        {
+            'schedule_type': str,        # '가속수명'|'GITT'|'율별'|'기타'
+            'n_loop_groups': int,        # 루프 그룹 수 (전압 step-down 수)
+            'main_loop_count': int,      # 메인 루프 반복 수
+            'n_chg_per_loop': int,       # 루프당 충전 스텝 수
+            'n_dchg_per_loop': int,      # 루프당 방전 스텝 수
+            'has_voltage_stepdown': bool, # 전압 step-down 패턴 존재
+            'min_pulse_cap_mAh': float,  # 최소 펄스 용량 추정 (mAh)
+        }
+    """
+    ptn_file = _find_ptn_file(channel_path)
+    if not ptn_file:
+        return None
+
+    try:
+        with open(ptn_file, 'r', encoding='utf-8', errors='replace') as fh:
+            lines = fh.readlines()
+    except OSError:
+        return None
+    if len(lines) < 3:
+        return None
+
+    # Option 파일에서 용량 읽기
+    ptn_cap = _read_ptn_option_capacity(channel_path)
+    if ptn_cap > 0:
+        capacity = ptn_cap
+
+    # 모든 스텝 파싱
+    steps: list[dict] = []
+    for line in lines[1:]:
+        if len(line) < 100:
+            continue
+        steps.append(_parse_ptn_step(line))
+    if not steps:
+        return None
+
+    # 루프 그룹 식별
+    loop_groups: list[tuple[int, int, int]] = []
+    for i, s in enumerate(steps):
+        if s['loop_to'] > 0:
+            start = s['loop_to'] - 1
+            loop_groups.append((start, i, s['loop_count']))
+
+    n_loop_groups = len(loop_groups)
+    main_loop_count = max((lg[2] for lg in loop_groups), default=0)
+
+    # 첫 루프 그룹 내 충전/방전 스텝 수
+    n_chg_per_loop = 0
+    n_dchg_per_loop = 0
+    if loop_groups:
+        lg_s, lg_e, _ = loop_groups[0]
+        for s in steps[lg_s:lg_e + 1]:
+            if s['chg_mode'] in ('CC', 'CCCV'):
+                n_chg_per_loop += 1
+            if s['dchg_mode'] == 'CC' and s['dchg_current_mA'] > 0:
+                n_dchg_per_loop += 1
+
+    # 전압 step-down 감지: 루프 그룹 간 최대 충전 전압이 다르면 True
+    voltages: list[float] = []
+    for lg_s, lg_e, _ in loop_groups:
+        max_v = 0.0
+        for s in steps[lg_s:lg_e + 1]:
+            if s['chg_mode'] == 'CCCV' and s['chg_cv_voltage'] > max_v:
+                max_v = s['chg_cv_voltage']
+            elif s['chg_mode'] == 'CC' and s['chg_cc_endvolt'] > max_v:
+                max_v = s['chg_cc_endvolt']
+        voltages.append(max_v)
+    has_stepdown = len(set(round(v, 2) for v in voltages)) > 1
+
+    # 최소 펄스 용량 추정 (방전 전류 × 예상 시간)
+    # Toyo 가속수명은 C-rate 기반이므로 capacity × crate × (pulse_time / 60)
+    min_pulse_cap = 0.0
+    if capacity > 0 and loop_groups:
+        lg_s, lg_e, _ = loop_groups[0]
+        for s in steps[lg_s:lg_e + 1]:
+            if s['dchg_mode'] == 'CC' and s['dchg_current_mA'] > 0:
+                # 1C 1h = capacity mAh → 최소 펄스는 용량의 1/60 (1분) 수준으로 추정
+                dchg_crate = s['dchg_current_mA'] / capacity if capacity else 0
+                # 가속수명: 보통 30min~3h 방전 → min_pulse = capacity × crate × 0.5h
+                # 여기선 보수적으로 용량의 5% (3분@1C)
+                est = capacity * dchg_crate * (1 / 20)
+                if min_pulse_cap == 0 or est < min_pulse_cap:
+                    min_pulse_cap = est
+
+    # ── 시험유형 판별 규칙 ──
+    # (1) 가속수명: 대형 루프 (20+), 충전 1-2스텝 + 방전 1-2스텝
+    if main_loop_count >= 20 and n_chg_per_loop <= 3 and n_dchg_per_loop <= 3:
+        schedule_type = '가속수명'
+    # (2) GITT: 대형 루프지만 많은 충/방전 스텝 (펄스+휴지 반복)
+    elif main_loop_count >= 5 and (n_chg_per_loop >= 5 or n_dchg_per_loop >= 5):
+        schedule_type = 'GITT'
+    # (3) 율별: 루프 없거나 소수, 다양한 전류의 충방전 나열
+    elif main_loop_count <= 5 and n_loop_groups <= 2:
+        schedule_type = '율별' if (n_chg_per_loop + n_dchg_per_loop) >= 4 else '기타'
+    else:
+        schedule_type = '기타'
+
+    return {
+        'schedule_type': schedule_type,
+        'n_loop_groups': n_loop_groups,
+        'main_loop_count': main_loop_count,
+        'n_chg_per_loop': n_chg_per_loop,
+        'n_dchg_per_loop': n_dchg_per_loop,
+        'has_voltage_stepdown': has_stepdown,
+        'min_pulse_cap_mAh': round(min_pulse_cap, 2),
+    }
+
+
 def _snap_accel_pattern(pattern: dict) -> dict:
     """패턴 분석 결과의 C-rate/전압을 표준값으로 일괄 스냅."""
     for step in pattern['charge_steps']:
@@ -2501,6 +4384,300 @@ def _fmt_crate(val: float) -> str:
     return f'{val:.2f}'
 
 
+# ═══════════════════════════════════════════════════════════════
+# PNE .sch 바이너리 파서 (내장)
+# ═══════════════════════════════════════════════════════════════
+
+# .sch 타입 코드 → 문자열 매핑
+_SCH_TYPE_MAP: dict[int, str] = {
+    0x0101: 'CHG_CC',
+    0x0201: 'CHG_CCCV',
+    0x0202: 'DCHG_CC',
+    0xFF03: 'REST',
+    0xFF06: 'GOTO',
+    0xFF07: 'REST_SAFE',
+    0xFF08: 'LOOP',
+}
+
+_SCH_BLOCK_SIZE = 652       # 스텝 블록 크기 (bytes)
+_SCH_HEADER_SIZE = 1920     # 파일 헤더 크기 (bytes)
+
+
+def _parse_pne_sch(sch_path: str) -> dict | None:
+    """PNE .sch 바이너리 파일을 파싱하여 스텝 구조 반환.
+
+    Parameters
+    ----------
+    sch_path : str
+        .sch 파일 절대 경로.
+
+    Returns
+    -------
+    dict | None
+        {
+            'steps': list[dict],           # 전체 스텝 (순서대로)
+            'loop_steps': list[dict],      # LOOP 스텝만 (loop_count 포함)
+            'charge_steps': list[dict],    # CHG_CC, CHG_CCCV 스텝
+            'discharge_steps': list[dict], # DCHG_CC 스텝
+        }
+        파싱 실패 시 None.
+
+    Notes
+    -----
+    .sch 구조:
+      - 헤더: 1920 bytes (magic + schedule 메타데이터)
+      - 스텝 블록: 각 652 bytes 고정
+        +0: step_number (uint32)
+        +8: type_code (uint32)
+        +12/+16: voltage (mV, uint32) — CHG는 +12, DCHG는 +16
+        +20: current (mA, uint32)
+        +24: time_limit (sec, uint32)
+        +28: cv_voltage (mV, CHG_CCCV 전용)
+        +32: cv_cutoff_current (mA, CHG_CCCV 전용)
+        +56: loop_count (uint32, LOOP 전용)
+        +104: capacity_limit (mAh, uint32)
+        +336: record_interval (sec, uint32)
+        +372: end_condition_value_pct (float32)
+        +500: end_condition_type (uint32)
+        +504: end_condition_enabled (uint32)
+    """
+    try:
+        with open(sch_path, 'rb') as f:
+            data = f.read()
+    except (OSError, IOError):
+        return None
+
+    if len(data) < _SCH_HEADER_SIZE + _SCH_BLOCK_SIZE:
+        return None
+
+    # 매직 넘버 검증 (선택적 — 첫 4바이트)
+    # PNE .sch magic = (740721, ...)
+    magic = struct.unpack_from('<I', data, 0)[0]
+    if magic != 740721:
+        return None
+
+    n_steps = (len(data) - _SCH_HEADER_SIZE) // _SCH_BLOCK_SIZE
+    if n_steps <= 0:
+        return None
+
+    steps = []
+    loop_steps = []
+    charge_steps = []
+    discharge_steps = []
+
+    for i in range(n_steps):
+        offset = _SCH_HEADER_SIZE + i * _SCH_BLOCK_SIZE
+        if offset + _SCH_BLOCK_SIZE > len(data):
+            break
+
+        blk = data[offset:offset + _SCH_BLOCK_SIZE]
+        step_num = struct.unpack_from('<I', blk, 0)[0]
+        type_code = struct.unpack_from('<I', blk, 8)[0]
+        type_name = _SCH_TYPE_MAP.get(type_code, f'UNKNOWN_0x{type_code:04X}')
+
+        step_info: dict = {
+            'step': step_num,
+            'type': type_name,
+            'type_code': type_code,
+        }
+
+        if type_name in ('CHG_CC', 'CHG_CCCV'):
+            # 충전 스텝 공통 필드
+            voltage_mV = struct.unpack_from('<I', blk, 12)[0]
+            current_mA = struct.unpack_from('<I', blk, 20)[0]
+            time_limit = struct.unpack_from('<I', blk, 24)[0]
+            cap_limit = struct.unpack_from('<I', blk, 104)[0]
+            step_info.update({
+                'voltage_mV': voltage_mV,
+                'current_mA': current_mA,
+                'time_limit_s': time_limit,
+                'capacity_limit_mAh': cap_limit,
+            })
+            if type_name == 'CHG_CCCV':
+                cv_voltage = struct.unpack_from('<I', blk, 28)[0]
+                cv_cutoff = struct.unpack_from('<I', blk, 32)[0]
+                step_info['cv_voltage_mV'] = cv_voltage
+                step_info['cv_cutoff_mA'] = cv_cutoff
+            charge_steps.append(step_info)
+
+        elif type_name == 'DCHG_CC':
+            # 방전 스텝: 전압 오프셋이 +16 (CHG와 다름)
+            voltage_mV = struct.unpack_from('<I', blk, 16)[0]
+            current_mA = struct.unpack_from('<I', blk, 20)[0]
+            time_limit = struct.unpack_from('<I', blk, 24)[0]
+            cap_limit = struct.unpack_from('<I', blk, 104)[0]
+            step_info.update({
+                'voltage_mV': voltage_mV,
+                'current_mA': current_mA,
+                'time_limit_s': time_limit,
+                'capacity_limit_mAh': cap_limit,
+            })
+            discharge_steps.append(step_info)
+
+        elif type_name == 'LOOP':
+            loop_count = struct.unpack_from('<I', blk, 56)[0]
+            step_info['loop_count'] = loop_count
+            loop_steps.append(step_info)
+
+        elif type_name in ('REST', 'REST_SAFE'):
+            time_limit = struct.unpack_from('<I', blk, 24)[0]
+            step_info['time_limit_s'] = time_limit
+
+        elif type_name == 'GOTO':
+            # GOTO 대상 스텝: +56 offset (LOOP와 같은 위치)
+            goto_target = struct.unpack_from('<I', blk, 56)[0]
+            step_info['goto_target'] = goto_target
+
+        # End Condition (SOC/DOD 종료 조건) — Rss 판별용
+        ec_type = struct.unpack_from('<I', blk, 500)[0]
+        ec_enabled = struct.unpack_from('<I', blk, 504)[0]
+        if ec_type != 0 and ec_enabled == 1:
+            ec_value = struct.unpack_from('<f', blk, 372)[0]
+            step_info['end_condition'] = {
+                'type': ec_type,
+                'value_pct': round(ec_value, 2),
+            }
+
+        steps.append(step_info)
+
+    if not steps:
+        return None
+
+    return {
+        'steps': steps,
+        'loop_steps': loop_steps,
+        'charge_steps': charge_steps,
+        'discharge_steps': discharge_steps,
+    }
+
+
+def extract_accel_pattern_from_sch(
+    sch_path: str,
+    capacity: float = 0,
+) -> dict | None:
+    """PNE .sch 파일에서 가속수명 충방전 패턴 추출.
+
+    _analyze_accel_pattern_pne() 호환 형식의 dict를 반환한다.
+    .sch 바이너리에서 직접 스텝 구조를 읽으므로 SaveEndData CSV 대비 65배+ 빠름.
+
+    Parameters
+    ----------
+    sch_path : str
+        .sch 파일 경로.
+    capacity : float
+        공칭 용량(mAh). 0이면 C-rate = 0으로 표시.
+
+    Returns
+    -------
+    dict | None
+        {
+            'charge_steps': [{'step', 'mode', 'crate', 'current_mA',
+                              'voltage_cutoff', ...}, ...],
+            'discharge_steps': [...],
+            'n_charge_steps': int,
+            'n_discharge_steps': int,
+        }
+    """
+    parsed = _parse_pne_sch(sch_path)
+    if not parsed:
+        return None
+
+    # 메인 루프 내 스텝만 사용 (가속수명 = 대형 루프 내부 패턴)
+    # 루프를 찾고, 그 직전 스텝들이 실제 충방전 패턴
+    loop_steps = parsed.get('loop_steps', [])
+    all_steps = parsed['steps']
+
+    # 대형 루프 (count >= 20) 찾기
+    main_loop = None
+    main_loop_idx = None
+    for idx, s in enumerate(all_steps):
+        if s['type'] == 'LOOP' and s.get('loop_count', 0) >= 20:
+            main_loop = s
+            main_loop_idx = idx
+            break
+
+    if main_loop is None:
+        return None
+
+    # 메인 루프 직전의 1사이클 패턴 블록만 추출 (역방향 phase 탐색)
+    # 가속수명 스케줄: [화성 + LOOP] [RPT] [메인 CHG+REST+DCHG+REST] [LOOP 50+]
+    # 역방향 phase: REST(skip) → DCHG 블록 → REST(skip) → CHG 블록 → 종료
+    chg_steps = []
+    dchg_steps = []
+    phase = 'seek_dchg'  # 역방향: DCHG 먼저 찾기
+    for idx in range(main_loop_idx - 1, -1, -1):
+        s = all_steps[idx]
+        t = s['type']
+        if t in ('LOOP', 'GOTO'):
+            break  # 이전 제어 스텝 도달 → 패턴 경계
+        if phase == 'seek_dchg':
+            if t == 'DCHG_CC':
+                dchg_steps.insert(0, s)
+                phase = 'in_dchg'
+            # REST는 스킵
+        elif phase == 'in_dchg':
+            if t == 'DCHG_CC':
+                dchg_steps.insert(0, s)
+            elif t in ('REST', 'REST_SAFE'):
+                phase = 'seek_chg'  # DCHG 블록 끝 → CHG 탐색
+            elif t in ('CHG_CC', 'CHG_CCCV'):
+                # DCHG 직전에 CHG가 바로 오는 경우 (REST 없이)
+                chg_steps.insert(0, s)
+                phase = 'in_chg'
+        elif phase == 'seek_chg':
+            if t in ('CHG_CC', 'CHG_CCCV'):
+                chg_steps.insert(0, s)
+                phase = 'in_chg'
+            elif t == 'DCHG_CC':
+                break  # 이전 사이클의 DCHG → 패턴 경계
+        elif phase == 'in_chg':
+            if t in ('CHG_CC', 'CHG_CCCV'):
+                chg_steps.insert(0, s)
+            else:
+                break  # CHG 블록 종료 → 1사이클 패턴 완성
+
+    if not chg_steps and not dchg_steps:
+        return None
+
+    # 반환 형식: _analyze_accel_pattern_pne() 호환
+    charge_result = []
+    for idx, s in enumerate(chg_steps):
+        cur_mA = s.get('current_mA', 0)
+        v_cutoff = s.get('voltage_mV', 0) / 1000  # mV → V
+        entry: dict = {
+            'step': idx + 1,
+            'mode': 'CCCV' if s['type'] == 'CHG_CCCV' else 'CC',
+            'crate': round(cur_mA / capacity, 2) if capacity else 0,
+            'current_mA': cur_mA,
+            'voltage_cutoff': round(v_cutoff, 3),
+        }
+        if s['type'] == 'CHG_CCCV' and 'cv_cutoff_mA' in s:
+            entry['current_cutoff_crate'] = (
+                round(s['cv_cutoff_mA'] / capacity, 2) if capacity else 0
+            )
+            entry['current_cutoff_mA'] = s['cv_cutoff_mA']
+        charge_result.append(entry)
+
+    discharge_result = []
+    for idx, s in enumerate(dchg_steps):
+        cur_mA = s.get('current_mA', 0)
+        v_cutoff = s.get('voltage_mV', 0) / 1000  # mV → V
+        discharge_result.append({
+            'step': idx + 1,
+            'mode': 'CC',
+            'crate': round(cur_mA / capacity, 2) if capacity else 0,
+            'current_mA': cur_mA,
+            'voltage_cutoff': round(v_cutoff, 3),
+        })
+
+    return {
+        'charge_steps': charge_result,
+        'discharge_steps': discharge_result,
+        'n_charge_steps': len(charge_result),
+        'n_discharge_steps': len(discharge_result),
+    }
+
+
 _ORDINALS = ['1st', '2nd', '3rd'] + [f'{i}th' for i in range(4, 21)]
 
 
@@ -2509,6 +4686,122 @@ def _ordinal(n: int) -> str:
     if 1 <= n <= len(_ORDINALS):
         return _ORDINALS[n - 1]
     return f'{n}th'
+
+
+def extract_schedule_structure_from_sch(
+    sch_path: str,
+    capacity: float = 0,
+) -> dict | None:
+    """PNE .sch 파일에서 스케줄 구조 정보(시험유형, 패턴) 추출.
+
+    .sch 파일의 스텝/루프 구조를 분석하여 시험유형을 판별한다.
+    pne_build_cycle_map()에 sweep_mode 힌트를 제공하는 것이 주 용도.
+
+    Parameters
+    ----------
+    sch_path : str
+        .sch 파일 경로
+    capacity : float
+        공칭 용량(mAh). 0이면 .sch 내부에서 추정.
+
+    Returns
+    -------
+    dict | None
+        {
+            'schedule_type': str,     # '가속수명'|'GITT'|'Rss'|'SOC별DCIR'|'율별'|'기타'
+            'pattern_string': str,    # 스텝 시퀀스 요약
+            'has_rss': bool,          # Rss(DCIR) 섹션 포함 여부
+            'has_gitt_hppc': bool,    # GITT/HPPC 펄스 루프 포함 여부
+            'sweep_mode': bool|None,  # True=스윕강제, False=일반강제, None=미결정
+        }
+    """
+    if not HAS_SCH_PARSER:
+        return None
+    try:
+        parsed = _parse_pne_sch(sch_path)
+    except Exception:
+        return None
+    if not parsed:
+        return None
+
+    steps = parsed['steps']
+    loop_steps = parsed.get('loop_steps', [])
+    charge_steps = parsed.get('charge_steps', [])
+    discharge_steps = parsed.get('discharge_steps', [])
+    n_steps = len(steps)
+
+    # 루프 분석: count > 1인 실질 반복 루프만 추출
+    real_loops = [s for s in loop_steps if s.get('loop_count', 0) > 1]
+    max_loop = max((s.get('loop_count', 0) for s in real_loops), default=0)
+    n_real_loops = len(real_loops)
+    unique_loop_counts = set(s.get('loop_count', 0) for s in real_loops)
+
+    # 스텝 타입 시퀀스에서 CHG/DCHG 비율
+    n_chg = len(charge_steps)
+    n_dchg = len(discharge_steps)
+
+    # 패턴 문자열 생성 (스텝 타입 RLE)
+    type_seq = [s['type'] for s in steps]
+    rle_parts = []
+    if type_seq:
+        cur, cnt = type_seq[0], 1
+        for t in type_seq[1:]:
+            if t == cur:
+                cnt += 1
+            else:
+                rle_parts.append(f'{cur}×{cnt}' if cnt > 1 else cur)
+                cur, cnt = t, 1
+        rle_parts.append(f'{cur}×{cnt}' if cnt > 1 else cur)
+    pattern_string = ' → '.join(rle_parts[:20])
+    if len(rle_parts) > 20:
+        pattern_string += ' → ...'
+
+    # ── 시험유형 판별 규칙 ──
+    # (1) GITT: 소수 스텝에 대형 루프 (단방향 펄스 반복)
+    #     예: 17 steps, LOOP 105회 — 펄스+REST 반복
+    if max_loop >= 20 and n_steps <= 30:
+        schedule_type = 'GITT'
+        has_gitt_hppc = True
+        has_rss = False
+        sweep_mode = True
+
+    # (2) SOC별DCIR: 다수 독립 루프 그룹 (SOC 포인트별 펄스)
+    #     예: 105 steps, 6+ 루프, 각기 다른 count (5~25)
+    elif n_real_loops >= 4 and len(unique_loop_counts) >= 3:
+        schedule_type = 'SOC별DCIR'
+        has_gitt_hppc = True
+        has_rss = False
+        sweep_mode = True
+
+    # (3) 가속수명 / Rss: 대형 루프 (30+) + 다수 스텝 (50+)
+    #     예: 204/215 steps, main loop 47~97회
+    elif max_loop >= 20 and n_steps >= 50:
+        schedule_type = '가속수명'
+        has_rss = n_steps >= 100  # Rss 포함 스케줄은 보통 100+ 스텝
+        has_gitt_hppc = False
+        sweep_mode = False
+
+    # (4) 율별: 대형 루프 없음, 다수 단독 CHG/DCHG 스텝 (각기 다른 전류)
+    elif max_loop <= 5 and n_chg + n_dchg >= 6:
+        schedule_type = '율별'
+        has_rss = False
+        has_gitt_hppc = False
+        sweep_mode = False  # 율별은 각 rate가 풀 사이클
+
+    # (5) 미결정: .sch 구조가 위 패턴에 해당하지 않음 → 데이터 휴리스틱에 위임
+    else:
+        schedule_type = '기타'
+        has_rss = False
+        has_gitt_hppc = False
+        sweep_mode = None  # 데이터 휴리스틱 폴백
+
+    return {
+        'schedule_type': schedule_type,
+        'pattern_string': pattern_string,
+        'has_rss': has_rss,
+        'has_gitt_hppc': has_gitt_hppc,
+        'sweep_mode': sweep_mode,
+    }
 
 
 @functools.lru_cache(maxsize=128)
@@ -2534,6 +4827,64 @@ def _find_sch_file(channel_path: str) -> str | None:
         return int(m.group(2)) if m else -1
     sch_files.sort(key=_sort_key, reverse=True)
     return os.path.join(channel_path, sch_files[0])
+
+
+@functools.lru_cache(maxsize=256)
+def _get_pne_sch_struct(channel_path: str, mincapacity: float) -> dict | None:
+    """채널 경로에서 .sch 파일을 찾아 스케줄 구조 정보를 캐시로 반환.
+
+    _find_sch_file + extract_schedule_structure_from_sch 를 1회만 수행하고
+    결과를 캐시한다. 프로필/사이클/분류 파이프라인에서 공유.
+
+    Parameters
+    ----------
+    channel_path : str
+        PNE 채널 폴더 경로.
+    mincapacity : float
+        공칭 용량 (mAh).
+
+    Returns
+    -------
+    dict | None
+        extract_schedule_structure_from_sch() 반환값.
+    """
+    sch_file = _find_sch_file(channel_path)
+    if not sch_file:
+        return None
+    try:
+        return extract_schedule_structure_from_sch(sch_file, mincapacity)
+    except Exception:
+        return None
+
+
+@functools.lru_cache(maxsize=256)
+def _get_pne_cycle_map(
+    channel_path: str, mincapacity: float, ini_crate: float,
+) -> tuple[dict, float]:
+    """pne_build_cycle_map 캐시 래퍼.
+
+    동일 (채널경로, 공칭용량, 초기C-rate) 조합에 대해 cycle_map을
+    1회만 계산하고 이후 캐시 반환. 사이클/프로필/UI 파이프라인에서 공유.
+    _get_pne_sch_struct 캐시와 연동하여 .sch 파싱도 재사용.
+
+    Parameters
+    ----------
+    channel_path : str
+        PNE 채널 폴더 경로.
+    mincapacity : float
+        공칭 용량 (mAh). 사전에 pne_min_cap()으로 해결 필요.
+    ini_crate : float
+        초기 C-rate.
+
+    Returns
+    -------
+    tuple[dict, float]
+        (cycle_map, mincapacity).
+    """
+    _sch_struct = _get_pne_sch_struct(channel_path, mincapacity)
+    return pne_build_cycle_map(
+        channel_path, mincapacity, ini_crate, sch_struct=_sch_struct,
+    )
 
 
 def _fmt_step(s: dict) -> str:
@@ -2821,6 +5172,92 @@ def pne_dchg_Profile_batch(raw_file_path, cycle_list, mincapacity, cutoff, inira
 
 
 # ─── Continue Profile 배치 함수 ───
+
+def _resolve_logical_to_tc_range(
+    cycle_map: dict, start: int, end: int,
+) -> tuple[int, int]:
+    """논리사이클 범위를 물리사이클(TotlCycle/파일번호) 범위로 변환.
+
+    cycle_map 값이 int(단일 TC) 또는 tuple(시작TC, 끝TC) 모두 처리.
+    cycle_map이 없거나 매핑 결과가 없으면 원본 (start, end) 반환.
+
+    Parameters
+    ----------
+    cycle_map : dict
+        {논리사이클: int | tuple[int, int]} 매핑.
+    start : int
+        시작 논리사이클 번호.
+    end : int
+        종료 논리사이클 번호 (포함).
+
+    Returns
+    -------
+    tuple[int, int]
+        (물리 시작, 물리 끝) 범위.
+    """
+    if not cycle_map:
+        return (start, end)
+    tc_min: int | None = None
+    tc_max: int | None = None
+    for logical_cyc in range(start, end + 1):
+        if logical_cyc in cycle_map:
+            val = cycle_map[logical_cyc]
+            if isinstance(val, tuple):
+                s, e = val
+            else:
+                s, e = val, val
+            if tc_min is None or s < tc_min:
+                tc_min = s
+            if tc_max is None or e > tc_max:
+                tc_max = e
+    if tc_min is None:
+        # 매핑된 논리사이클이 없음 → 원본 범위 반환 (물리사이클로 간주)
+        return (start, end)
+    return (tc_min, tc_max)
+
+
+def _get_max_logical_cycle(
+    all_data_folder: list, mincapacity: float, inirate: float,
+) -> int | None:
+    """전체 데이터 폴더에서 첫 번째 유효 채널의 최대 논리사이클 번호를 반환.
+
+    cycle_map을 빌드하여 최대 키를 반환한다.
+    유효한 채널이 없으면 None 반환.
+
+    Parameters
+    ----------
+    all_data_folder : list
+        채널 상위 폴더 목록.
+    mincapacity : float
+        공칭 용량.
+    inirate : float
+        초기 C-rate.
+
+    Returns
+    -------
+    int | None
+        최대 논리사이클 번호. 유효한 채널이 없으면 None.
+    """
+    for cyclefolder in all_data_folder:
+        if not os.path.isdir(cyclefolder):
+            continue
+        is_pne = check_cycler(cyclefolder)
+        subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
+        for folder_path in subfolder:
+            if "Pattern" in folder_path:
+                continue
+            try:
+                if is_pne:
+                    cm, _ = _get_pne_cycle_map(folder_path, mincapacity, inirate)
+                else:
+                    cm, _ = toyo_build_cycle_map(folder_path, mincapacity, inirate)
+                if cm:
+                    return max(cm.keys())
+            except Exception:
+                continue
+    return None
+
+
 def toyo_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate):
     """Toyo Continue 프로파일 배치 로딩: 논리 사이클 → 파일 번호 자동 변환 후 로딩."""
     mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
@@ -2829,21 +5266,23 @@ def toyo_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate
     results = {}
     for (start, end) in step_ranges:
         # 논리 사이클 번호 → 원본 파일 번호 범위 변환
-        if cycle_map:
-            file_start = cycle_map.get(start, (start, start))[0]
-            file_end = cycle_map.get(end, (end, end))[1]
-        else:
-            file_start, file_end = start, end
+        file_start, file_end = _resolve_logical_to_tc_range(cycle_map, start, end)
         results[(start, end)] = toyo_Profile_continue_data(raw_file_path, file_start, file_end, mincapacity, inirate)
     return results
 
 
 def pne_continue_Profile_batch(raw_file_path, step_ranges, mincapacity, inirate, CDstate):
-    """PNE Continue 프로파일 배치 로딩: min_cap 1회 산정 후 step_range 반복."""
+    """PNE Continue 프로파일 배치 로딩: 논리 사이클 → TotlCycle 자동 변환 후 로딩."""
     mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
+    # 논리 사이클 → TotlCycle 매핑 자동 생성 — 캐시 사용
+    cycle_map, _ = _get_pne_cycle_map(raw_file_path, mincapacity, inirate)
     results = {}
     for (start, end) in step_ranges:
-        results[(start, end)] = pne_Profile_continue_data(raw_file_path, start, end, mincapacity, inirate, CDstate)
+        # 논리 사이클 번호 → TotlCycle 범위 변환
+        tc_start, tc_end = _resolve_logical_to_tc_range(cycle_map, start, end)
+        results[(start, end)] = pne_Profile_continue_data(
+            raw_file_path, tc_start, tc_end, mincapacity, inirate, CDstate,
+        )
     return results
 
 
@@ -3478,6 +5917,7 @@ def _process_pne_cycleraw(
     chkir: bool,
     chkir2: bool,
     mkdcir: bool,
+    cycle_map: dict | None = None,
 ) -> None:
     """Cycleraw → df.NewData 변환 (DCIR 계산, pivot, 사이클 지표).
 
@@ -3497,6 +5937,9 @@ def _process_pne_cycleraw(
         DCIR 보조 옵션
     mkdcir : bool
         MK DCIR 모드
+    cycle_map : dict | None
+        논리사이클 → 물리 TotlCycle 매핑 (pne_build_cycle_map 결과).
+        None이면 기존 방식(순번 재정의) 사용.
     """
     # 코인셀 단위 변환
     if is_micro_unit(raw_file_path):
@@ -3652,12 +6095,65 @@ def _process_pne_cycleraw(
         else:
             df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             df.NewData.loc[0, "dcir"] = 0
-    # 충·방전 쌍이 없는 사이클 제거 (출하상태 방전 등)
+    # Dchg/Chg 중 하나라도 NaN인 행 제거 (불완전 사이클 제외)
     if hasattr(df, 'NewData'):
         df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
         df.NewData = df.NewData.reset_index(drop=True)
-        # 재정의 사이클 번호 (충방전 쌍 기준 1, 2, 3, ...)
-        df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+        # ── 논리사이클 매핑 적용 (cycle_map 기반 Cycle 번호 부여) ──
+        if cycle_map and len(df.NewData) > 0:
+            # 물리 TC → 논리사이클 역매핑 생성
+            _tc_to_ln: dict[int, int] = {}
+            _is_sweep = False
+            for _ln, _tc_val in cycle_map.items():
+                if isinstance(_tc_val, tuple):
+                    _is_sweep = True
+                    for _t in range(_tc_val[0], _tc_val[1] + 1):
+                        _tc_to_ln[_t] = _ln
+                else:
+                    _tc_to_ln[int(_tc_val)] = _ln
+            # OriCyc(물리 TC) → 논리사이클 번호 매핑
+            _logical_col = df.NewData['OriCyc'].astype(int).map(_tc_to_ln)
+            if _is_sweep and _logical_col.notna().any():
+                # 스윕 시험: 같은 논리사이클에 속한 행들을 집계
+                df.NewData['_ln'] = _logical_col
+                _mapped = df.NewData.dropna(subset=['_ln']).copy()
+                _mapped['_ln'] = _mapped['_ln'].astype(int)
+                # 집계 규칙: 용량비 대표값(max), 전압/온도 대표값, DCIR 평균
+                # 스윕 내 다수 TC의 용량비를 sum하면 비정상 (94×) — max로 대표 TC 선택
+                _agg: dict[str, str] = {
+                    'Dchg': 'max', 'Chg': 'max', 'DchgEng': 'max',
+                    'RndV': 'first', 'Temp': 'max', 'AvgV': 'mean',
+                    'OriCyc': 'last',
+                }
+                for _dc in ['dcir', 'dcir2', 'soc70_dcir', 'soc70_rss_dcir', 'rssocv', 'rssccv']:
+                    if _dc in _mapped.columns and _mapped[_dc].notna().any():
+                        _agg[_dc] = 'mean'
+                _grouped = _mapped.groupby('_ln').agg(
+                    {k: v for k, v in _agg.items() if k in _mapped.columns})
+                _grouped = _grouped.reset_index()
+                _grouped.rename(columns={'_ln': 'Cycle'}, inplace=True)
+                # Eff, Eff2 재계산 (집계 후 비율 재산출)
+                if 'Dchg' in _grouped.columns and 'Chg' in _grouped.columns:
+                    _grouped['Eff'] = _grouped['Dchg'] / _grouped['Chg']
+                    _chg_next = _grouped['Chg'].shift(-1)
+                    _grouped['Eff2'] = _chg_next / _grouped['Dchg']
+                # 필수 컬럼 보장 (집계에서 제외된 경우 NaN으로 추가)
+                for _req in ['dcir', 'dcir2', 'soc70_dcir', 'soc70_rss_dcir', 'rssocv', 'rssccv']:
+                    if _req not in _grouped.columns:
+                        _grouped[_req] = np.nan
+                df.NewData = _grouped
+            elif _logical_col.notna().any():
+                # 일반 시험: 순번 부여 (1, 2, 3, ...) — 호환성 유지
+                # cycle_map은 df.cycle_map에 보존 (프로필 파이프라인에서 사용)
+                df.NewData.insert(0, 'Cycle', range(1, len(df.NewData) + 1))
+            else:
+                # 매핑 실패 시 폴백: 순번 부여
+                if '_ln' in df.NewData.columns:
+                    df.NewData.drop(columns=['_ln'], inplace=True)
+                df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+        else:
+            # cycle_map 없음: 기존 방식 (순번 1, 2, 3, ...)
+            df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
 
     # ── 충전/방전 종료 전압 트래킹: ChgVolt(상한 V), DchgVolt(하한 V), ChgSteps ──
     if hasattr(df, 'NewData') and len(df.NewData) > 0 and 'Ocv' in Cycleraw.columns and not df.NewData['OriCyc'].isna().any():
@@ -3878,9 +6374,19 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
                     Cycleraw = None
             except Exception:
                 Cycleraw = None
+        # ── 논리사이클 매핑 생성 (캐시 사용) ──
+        _cycle_map = None
+        try:
+            _cycle_map, _ = _get_pne_cycle_map(
+                raw_file_path, mincapacity, ini_crate)
+        except Exception:
+            _cycle_map = None
         # Cycleraw 처리 (DCIR + pivot + df.NewData)
         if Cycleraw is not None and mincapacity is not None:
-            _process_pne_cycleraw(Cycleraw, df, raw_file_path, mincapacity, chkir, chkir2, mkdcir)
+            _process_pne_cycleraw(Cycleraw, df, raw_file_path, mincapacity, chkir, chkir2, mkdcir,
+                                  cycle_map=_cycle_map)
+        # cycle_map 저장 (프로필 로딩, UI 표시 등에서 재사용)
+        df.cycle_map = _cycle_map if _cycle_map else {}
     return [mincapacity, df]
 
 # PNE Step charge Profile data 처리 class
@@ -5175,6 +7681,15 @@ class Ui_sitool(object):
         self._path_btn_layout.addStretch(1)
         self.horizontalLayout_119.addLayout(self._path_btn_layout)
         self._path_groupbox_vlayout.addLayout(self.horizontalLayout_119)
+        # ── 논리사이클 정보 라벨 (Phase B) ──
+        self.cycle_map_info_label = QtWidgets.QLabel(parent=self._path_groupbox)
+        self.cycle_map_info_label.setObjectName("cycle_map_info_label")
+        self.cycle_map_info_label.setStyleSheet(
+            "QLabel { color: #666666; font-size: 11px; padding: 1px 4px; }")
+        self.cycle_map_info_label.setWordWrap(True)
+        self.cycle_map_info_label.setText("")
+        self.cycle_map_info_label.setVisible(False)
+        self._path_groupbox_vlayout.addWidget(self.cycle_map_info_label)
         self.verticalLayout_6.addWidget(self._path_groupbox, stretch=0)
         # [제거됨] capacitygroup (C-rate 설정) — 기본값 0.2 하드코딩으로 대체
         # 경로 테이블 용량 컬럼 + name_capacity() 자동파싱으로 충분
@@ -5193,7 +7708,7 @@ class Ui_sitool(object):
         self.verticalLayout_17 = QtWidgets.QVBoxLayout()
         self.verticalLayout_17.setObjectName("verticalLayout_17")
         # ── DCIR 옵션 선택 GroupBox ──
-        self._dcir_groupbox = QtWidgets.QGroupBox("3. DCIR 옵션 선택", parent=self.tab_5)
+        self._dcir_groupbox = QtWidgets.QGroupBox("2. DCIR 옵션 선택", parent=self.tab_5)
         _dcir_layout = QtWidgets.QVBoxLayout(self._dcir_groupbox)
         _dcir_layout.setContentsMargins(6, 4, 6, 4)
         _dcir_layout.setSpacing(2)
@@ -5241,7 +7756,7 @@ class Ui_sitool(object):
         self.verticalLayout_14 = _dcir_layout
         self.verticalLayout_17.addWidget(self._dcir_groupbox)
         # ── 그래프 옵션 GroupBox ──
-        self._graph_opt_groupbox = QtWidgets.QGroupBox("4. 그래프 옵션", parent=self.tab_5)
+        self._graph_opt_groupbox = QtWidgets.QGroupBox("3. 그래프 옵션", parent=self.tab_5)
         self._graph_opt_layout = QtWidgets.QVBoxLayout(self._graph_opt_groupbox)
         self._graph_opt_layout.setContentsMargins(6, 4, 6, 4)
         self._graph_opt_layout.setSpacing(4)
@@ -5316,7 +7831,7 @@ class Ui_sitool(object):
         self.horizontalLayout_88 = self._cycle_input_grid
         self.horizontalLayout_89 = self._cycle_input_grid
         # ── 사이클 분석 GroupBox (개별/통합 라디오 + 분석 버튼) ──
-        self._cycle_analysis_groupbox = QtWidgets.QGroupBox("5. 사이클 분석", parent=self.tab_5)
+        self._cycle_analysis_groupbox = QtWidgets.QGroupBox("4. 사이클 분석", parent=self.tab_5)
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -5406,6 +7921,11 @@ class Ui_sitool(object):
         self.AllProfile.setFont(font)
         self.AllProfile.setObjectName("AllProfile")
         self.horizontalLayout_15.addWidget(self.AllProfile)
+        # 3개 통합 모드를 명시적 QButtonGroup으로 묶기 (1개 필수 선택)
+        self.profile_view_group = QtWidgets.QButtonGroup(self.tab_6)
+        self.profile_view_group.addButton(self.CycProfile, 0)
+        self.profile_view_group.addButton(self.CellProfile, 1)
+        self.profile_view_group.addButton(self.AllProfile, 2)
         self.chk_dqdv = QtWidgets.QCheckBox(parent=self.tab_6)
         self.chk_dqdv.setMinimumSize(QtCore.QSize(145, 30))
         self.chk_dqdv.setMaximumSize(QtCore.QSize(145, 30))
@@ -5540,81 +8060,132 @@ class Ui_sitool(object):
         self.horizontalLayout_113 = self._profile_input_grid
         self.horizontalLayout_114 = self._profile_input_grid
         self.horizontalLayout_115 = self._profile_input_grid
-        self.horizontalLayout_116 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_116.setObjectName("horizontalLayout_116")
-        self.StepConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.StepConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.StepConfirm.setMaximumSize(QtCore.QSize(215, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.StepConfirm.setFont(font)
-        self.StepConfirm.setObjectName("StepConfirm")
-        self.horizontalLayout_116.addWidget(self.StepConfirm)
-        self.ChgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ChgConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.ChgConfirm.setMaximumSize(QtCore.QSize(215, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.ChgConfirm.setFont(font)
-        self.ChgConfirm.setObjectName("ChgConfirm")
-        self.horizontalLayout_116.addWidget(self.ChgConfirm)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_116)
-        self.horizontalLayout_117 = QtWidgets.QHBoxLayout()
-        self.horizontalLayout_117.setObjectName("horizontalLayout_117")
-        self.RateConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.RateConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.RateConfirm.setMaximumSize(QtCore.QSize(215, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.RateConfirm.setFont(font)
-        self.RateConfirm.setObjectName("RateConfirm")
-        self.horizontalLayout_117.addWidget(self.RateConfirm)
-        self.DchgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.DchgConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.DchgConfirm.setMaximumSize(QtCore.QSize(215, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.DchgConfirm.setFont(font)
-        self.DchgConfirm.setObjectName("DchgConfirm")
-        self.horizontalLayout_117.addWidget(self.DchgConfirm)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_117)
+        # ── 통합 프로필 옵션 위젯 ──
+        _opt_font = QtGui.QFont("맑은 고딕", 9)
+        _opt_bold = QtGui.QFont("맑은 고딕", 10)
+        _opt_bold.setBold(True)
+
+        # 옵션 행 1: data_scope + continuity
+        self._profile_opt_row1 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row1.setObjectName("_profile_opt_row1")
+
+        # ── 데이터 범위: 라디오 버튼 (충전 / 방전 / 사이클) ──
+        self.profile_scope_label = QtWidgets.QLabel(parent=self.tab_6)
+        self.profile_scope_label.setFont(_opt_font)
+        self.profile_scope_label.setObjectName("profile_scope_label")
+        self._profile_opt_row1.addWidget(self.profile_scope_label)
+
+        self.profile_scope_cyc = QtWidgets.QRadioButton("사이클", parent=self.tab_6)
+        self.profile_scope_cyc.setFont(_opt_font)
+        self.profile_scope_cyc.setChecked(True)
+        self.profile_scope_chg = QtWidgets.QRadioButton("충전", parent=self.tab_6)
+        self.profile_scope_chg.setFont(_opt_font)
+        self.profile_scope_dchg = QtWidgets.QRadioButton("방전", parent=self.tab_6)
+        self.profile_scope_dchg.setFont(_opt_font)
+        self.profile_scope_group = QtWidgets.QButtonGroup(self.tab_6)
+        self.profile_scope_group.addButton(self.profile_scope_cyc, 0)
+        self.profile_scope_group.addButton(self.profile_scope_chg, 1)
+        self.profile_scope_group.addButton(self.profile_scope_dchg, 2)
+        self._profile_opt_row1.addWidget(self.profile_scope_cyc)
+        self._profile_opt_row1.addWidget(self.profile_scope_chg)
+        self._profile_opt_row1.addWidget(self.profile_scope_dchg)
+
+        self._profile_opt_row1.addSpacing(12)
+
+        # ── 연속성: 라디오 버튼 (오버레이 / 이어서) ──
+        self.profile_cont_label = QtWidgets.QLabel(parent=self.tab_6)
+        self.profile_cont_label.setFont(_opt_font)
+        self.profile_cont_label.setObjectName("profile_cont_label")
+        self._profile_opt_row1.addWidget(self.profile_cont_label)
+
+        self.profile_cont_overlay = QtWidgets.QRadioButton("오버레이", parent=self.tab_6)
+        self.profile_cont_overlay.setFont(_opt_font)
+        self.profile_cont_continuous = QtWidgets.QRadioButton("이어서", parent=self.tab_6)
+        self.profile_cont_continuous.setFont(_opt_font)
+        self.profile_cont_continuous.setChecked(True)
+        self.profile_cont_group = QtWidgets.QButtonGroup(self.tab_6)
+        self.profile_cont_group.addButton(self.profile_cont_overlay, 0)
+        self.profile_cont_group.addButton(self.profile_cont_continuous, 1)
+        self._profile_opt_row1.addWidget(self.profile_cont_overlay)
+        self._profile_opt_row1.addWidget(self.profile_cont_continuous)
+
+        self._profile_opt_row1.addStretch()
+        self.verticalLayout_4.addLayout(self._profile_opt_row1)
+
+        # 옵션 행 2: axis_mode (토글) + include_rest
+        self._profile_opt_row2 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row2.setObjectName("_profile_opt_row2")
+
+        self.profile_axis_label = QtWidgets.QLabel(parent=self.tab_6)
+        self.profile_axis_label.setFont(_opt_font)
+        self.profile_axis_label.setObjectName("profile_axis_label")
+        self._profile_opt_row2.addWidget(self.profile_axis_label)
+
+        # ── X축: 라디오 버튼 (SOC(DOD) / 시간) ──
+        self.profile_axis_soc = QtWidgets.QRadioButton("SOC(DOD)", parent=self.tab_6)
+        self.profile_axis_soc.setFont(_opt_font)
+        self.profile_axis_time = QtWidgets.QRadioButton("시간", parent=self.tab_6)
+        self.profile_axis_time.setFont(_opt_font)
+        self.profile_axis_time.setChecked(True)
+        self.profile_axis_group = QtWidgets.QButtonGroup(self.tab_6)
+        self.profile_axis_group.addButton(self.profile_axis_soc, 0)   # 0 = SOC
+        self.profile_axis_group.addButton(self.profile_axis_time, 1)  # 1 = 시간
+        self._profile_opt_row2.addWidget(self.profile_axis_soc)
+        self._profile_opt_row2.addWidget(self.profile_axis_time)
+
+        self._profile_opt_row2.addSpacing(12)
+
+        self.profile_rest_chk = QtWidgets.QCheckBox(parent=self.tab_6)
+        self.profile_rest_chk.setFont(_opt_font)
+        self.profile_rest_chk.setObjectName("profile_rest_chk")
+        self._profile_opt_row2.addWidget(self.profile_rest_chk)
+
+        self._profile_opt_row2.addStretch()
+        self.verticalLayout_4.addLayout(self._profile_opt_row2)
+
+        # 실행 버튼 행: ProfileConfirm + DCIRConfirm
         self.horizontalLayout_118 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_118.setObjectName("horizontalLayout_118")
-        self.ContinueConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ContinueConfirm.setMinimumSize(QtCore.QSize(215, 40))
-        self.ContinueConfirm.setMaximumSize(QtCore.QSize(215, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.ContinueConfirm.setFont(font)
-        self.ContinueConfirm.setObjectName("ContinueConfirm")
-        self.horizontalLayout_118.addWidget(self.ContinueConfirm)
+        self.ProfileConfirm = QtWidgets.QPushButton(parent=self.tab_6)
+        self.ProfileConfirm.setMinimumSize(QtCore.QSize(215, 40))
+        self.ProfileConfirm.setMaximumSize(QtCore.QSize(215, 40))
+        self.ProfileConfirm.setFont(_opt_bold)
+        self.ProfileConfirm.setObjectName("ProfileConfirm")
+        self.horizontalLayout_118.addWidget(self.ProfileConfirm)
         self.DCIRConfirm = QtWidgets.QPushButton(parent=self.tab_6)
         self.DCIRConfirm.setMinimumSize(QtCore.QSize(215, 40))
         self.DCIRConfirm.setMaximumSize(QtCore.QSize(215, 40))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(True)
-        font.setWeight(75)
-        self.DCIRConfirm.setFont(font)
+        self.DCIRConfirm.setFont(_opt_bold)
         self.DCIRConfirm.setObjectName("DCIRConfirm")
         self.horizontalLayout_118.addWidget(self.DCIRConfirm)
+        self.profile_tab_reset = QtWidgets.QPushButton(parent=self.tab_6)
+        self.profile_tab_reset.setMinimumSize(QtCore.QSize(0, 40))
+        self.profile_tab_reset.setMaximumSize(QtCore.QSize(16777215, 40))
+        self.profile_tab_reset.setFont(_opt_bold)
+        self.profile_tab_reset.setEnabled(False)
+        self.profile_tab_reset.setObjectName("profile_tab_reset")
+        self.horizontalLayout_118.addWidget(self.profile_tab_reset)
         self.verticalLayout_4.addLayout(self.horizontalLayout_118)
+
+        # ── 기존 5개 버튼 (숨김 — 하위 호환용) ──
+        self.StepConfirm = QtWidgets.QPushButton(parent=self.tab_6)
+        self.StepConfirm.setObjectName("StepConfirm")
+        self.StepConfirm.setVisible(False)
+        self.ChgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
+        self.ChgConfirm.setObjectName("ChgConfirm")
+        self.ChgConfirm.setVisible(False)
+        self.RateConfirm = QtWidgets.QPushButton(parent=self.tab_6)
+        self.RateConfirm.setObjectName("RateConfirm")
+        self.RateConfirm.setVisible(False)
+        self.DchgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
+        self.DchgConfirm.setObjectName("DchgConfirm")
+        self.DchgConfirm.setVisible(False)
+        self.ContinueConfirm = QtWidgets.QPushButton(parent=self.tab_6)
+        self.ContinueConfirm.setObjectName("ContinueConfirm")
+        self.ContinueConfirm.setVisible(False)
+        # 기존 레이아웃 참조 호환
+        self.horizontalLayout_116 = self.horizontalLayout_118
+        self.horizontalLayout_117 = self.horizontalLayout_118
         self.horizontalLayout_17.addLayout(self.verticalLayout_4)
         self.tabWidget_2.addTab(self.tab_6, "")
         self.verticalLayout_6.addWidget(self.tabWidget_2, stretch=0)
@@ -10643,12 +13214,20 @@ class Ui_sitool(object):
         self.cutoff.setText(_translate("sitool", "0"))
         self.dqdvscalelb.setText(_translate("sitool", "dQdV 축늘리기"))
         self.dqdvscale.setText(_translate("sitool", "1"))
+        # 통합 프로필 옵션 위젯 텍스트
+        self.profile_scope_label.setText(_translate("sitool", "데이터:"))
+        self.profile_cont_label.setText(_translate("sitool", "연속성:"))
+        self.profile_axis_label.setText(_translate("sitool", "X축:"))
+        self.profile_rest_chk.setText(_translate("sitool", "휴지 포함"))
+        self.ProfileConfirm.setText(_translate("sitool", "프로필 분석"))
+        self.DCIRConfirm.setText(_translate("sitool", "DCIR"))
+        self.profile_tab_reset.setText(_translate("sitool", "탭 초기화"))
+        # 기존 버튼 텍스트 (숨김 — 하위 호환)
         self.StepConfirm.setText(_translate("sitool", "충전 Step 확인"))
         self.ChgConfirm.setText(_translate("sitool", "충전 분석"))
         self.RateConfirm.setText(_translate("sitool", "율별 충전 확인"))
         self.DchgConfirm.setText(_translate("sitool", "방전 분석"))
         self.ContinueConfirm.setText(_translate("sitool", "HPPC/ GITT/ ECT"))
-        self.DCIRConfirm.setText(_translate("sitool", "DCIR"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_6), _translate("sitool", "Profile"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.CycTab), _translate("sitool", "사이클데이터"))
         self.label_10.setText(_translate("sitool", "패턴 리스트 Load를 누르고 패턴을 선택한 후에 오른쪽 패널에서 원하는 부분 수정"))
@@ -11025,6 +13604,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.unmount_all.clicked.connect(self.unmount_all_button)
         # 충방전기 데이터 보는 버튼
         self.cycle_tab_reset.clicked.connect(self.cycle_tab_reset_confirm_button)
+        self.profile_tab_reset.clicked.connect(self.profile_tab_reset_confirm_button)
         # 탭 전환 시 충방전 패턴 팝업 자동 접기
         self.cycle_tab.currentChanged.connect(
             lambda _: self._collapse_all_classify_popups())
@@ -11061,12 +13641,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # ECT 경로 체크 토글 시 사이클·모드 열 편집 가능 여부 갱신
         self.chk_ectpath.toggled.connect(self._update_ect_columns_state)
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
+        # 통합 프로필 분석 버튼
+        self.ProfileConfirm.clicked.connect(self.unified_profile_confirm_button)
+        self.DCIRConfirm.clicked.connect(self.dcir_confirm_button)
+        # 옵션 의존성 시그널 (라디오 버튼 그룹 + 토글)
+        self.profile_scope_group.idToggled.connect(self._profile_opt_scope_changed)
+        self.profile_axis_group.idToggled.connect(self._profile_opt_axis_changed)
+        self.profile_cont_group.idToggled.connect(self._profile_opt_cont_changed)
+        # 초기 상태 반영: 충전(id=0)이므로 이어서 비활성화
+        self._profile_opt_scope_changed(0, True)
+        # 기존 버튼 시그널 (숨김 — 하위 호환)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
         self.RateConfirm.clicked.connect(self.rate_confirm_button)
         self.ChgConfirm.clicked.connect(self.chg_confirm_button)
         self.DchgConfirm.clicked.connect(self.dchg_confirm_button)
         self.ContinueConfirm.clicked.connect(self.continue_confirm_button)
-        self.DCIRConfirm.clicked.connect(self.dcir_confirm_button)
         # SET 관련 버튼
         # self.BMSetProfile.clicked.connect(self.BMSetProfilebutton)
         # self.BMSetCycle.clicked.connect(self.BMSetCyclebutton)
@@ -12364,6 +14953,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
+        self.profile_tab_reset.setEnabled(True)
         # 범례가 figure 오른쪽 외부에 있으면 여백 확보
         if getattr(self, '_cycle_legend_outside', False):
             plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.82, 1])
@@ -12588,6 +15178,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
+        self.profile_tab_reset.setEnabled(True)
         if getattr(self, '_has_colorbar', False):
             plt.tight_layout(pad=1, w_pad=1, h_pad=1, rect=[0, 0, 0.88, 1])
             self._has_colorbar = False
@@ -12731,6 +15322,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # CellProfile = not all_profile and not cyc_profile
 
         # ── AllProfile: 루프 전에 fig 1개만 생성 ──
+        has_any_data = False  # 전체 데이터 플롯 여부 추적 (AllProfile/공통)
         if all_profile:
             fig, axes_2x3 = plt.subplots(nrows=2, ncols=3, figsize=figsize)
             axes = (axes_2x3[0][0], axes_2x3[0][1], axes_2x3[0][2],
@@ -12761,6 +15353,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                     namelist = None
                     channel_map, sub2_channel_map = {}, {}
+                    has_data = False  # 데이터 플롯 여부 추적
                     for CycNo in CycleNo:
                         cyccountmax = len(CycleNo)
                         cyccount += 1
@@ -12782,6 +15375,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             writecolno, _artists = plot_one_fn(
                                 temp, axes, headername, lgnd, temp_lgnd,
                                 writer, save_file_name, writecolno, CycNo)
+                            has_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, _ = _make_channel_labels(namelist, all_data_name, i)
                             cyc_label = "%04d" % CycNo
@@ -12791,7 +15385,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                             sub2_channel_map[cyc_label] = {
                                 'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                    # 채널 fig 마무리
+                    # 채널 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
+                    if not has_data:
+                        plt.close(fig)
+                        continue
                     if namelist:
                         title = f"{namelist[-2]}={namelist[-1]}"
                         plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
@@ -12834,6 +15431,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             writecolno, _artists = plot_one_fn(
                                 temp, axes, headername, lgnd, temp_lgnd,
                                 writer, save_file_name, writecolno, CycNo)
+                            has_any_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, sub_label = _make_channel_labels(
                                 last_namelist, all_data_name, i)
@@ -12863,6 +15461,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chnlcountmax = len(subfolder)
                     namelist = None
                     channel_map, sub_channel_map = {}, {}
+                    has_data = False  # 데이터 플롯 여부 추적
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" in FolderBase:
                             continue
@@ -12885,6 +15484,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             writecolno, _artists = plot_one_fn(
                                 temp, axes, headername, lgnd, temp_lgnd,
                                 writer, save_file_name, writecolno, CycNo)
+                            has_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, sub_label = _make_channel_labels(
                                 namelist, all_data_name, i)
@@ -12894,7 +15494,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                             sub_channel_map[sub_label] = {
                                 'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                    # 사이클 fig 마무리
+                    # 사이클 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
+                    if not has_data:
+                        plt.close(fig)
+                        continue
                     if namelist:
                         title = f"{namelist[-2]}=%04d" % CycNo
                         plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
@@ -12911,7 +15514,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                f"{namelist[-2]}=%04d" % CycNo if namelist else "")
 
         # ── AllProfile: 전체 루프 종료 후 1회 마무리 ──
-        if all_profile and last_namelist:
+        if all_profile and last_namelist and has_any_data:
             title = f"{last_namelist[-2]} All"
             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
                          fontweight=THEME['SUPTITLE_WEIGHT'])
@@ -12923,6 +15526,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 sub_channel_map=all_sub_map, sub2_channel_map=all_sub2_map)
             tab_no += 1
             output_fig(self.figsaveok, title)
+        elif all_profile and not has_any_data:
+            plt.close(fig)
 
         # ── 공통 마무리 ──
         if self.saveok.isChecked() and save_file_name:
@@ -13071,10 +15676,126 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         return results
 
+    # ─── 통합 프로파일 배치 병렬 로더 ───
+    def _load_unified_batch_task(self, task_info):
+        """채널 단위 통합 배치 프로파일 로딩 (ThreadPoolExecutor용).
+
+        unified_profile_batch()를 호출하여 1채널의 모든 사이클을
+        한 번에 처리한다. 기존 _load_step_batch_task + _load_profile_batch_task를
+        하나로 통합.
+        """
+        (folder_path, cycle_list, mincapacity, inirate,
+         options, folder_idx, subfolder_idx) = task_info
+        try:
+            if options.get("continuity") == "continuous":
+                # Continue 모드: step_ranges 형식으로 변환
+                step_ranges = options.get("step_ranges", [])
+                if not step_ranges and cycle_list:
+                    step_ranges = [(min(cycle_list), max(cycle_list))]
+                batch_results = unified_profile_batch_continue(
+                    folder_path, step_ranges, mincapacity, inirate,
+                    data_scope=options.get("data_scope", "cycle"),
+                    include_rest=options.get("include_rest", True),
+                )
+            else:
+                batch_results = unified_profile_batch(
+                    folder_path, cycle_list, mincapacity, inirate,
+                    data_scope=options.get("data_scope", "charge"),
+                    axis_mode=options.get("axis_mode", "soc"),
+                    continuity=options.get("continuity", "overlay"),
+                    include_rest=options.get("include_rest", False),
+                    calc_dqdv=options.get("calc_dqdv", False),
+                    smooth_degree=options.get("smooth_degree", 0),
+                    cutoff=options.get("cutoff", 0.0),
+                )
+            return (folder_idx, subfolder_idx, batch_results)
+        except Exception as e:
+            print(f"[통합 배치 로딩 오류] {folder_path}: {e}")
+            return (folder_idx, subfolder_idx, None)
+
+    @log_perf
+    def _load_all_unified_parallel(
+        self,
+        all_data_folder: list[str],
+        cycle_list: list[int],
+        mincapacity: float,
+        inirate: float,
+        options: dict,
+        max_workers: int | None = None,
+    ) -> dict:
+        """모든 폴더의 통합 프로파일 데이터를 병렬로 로딩.
+
+        기존 _load_all_step_data_parallel + _load_all_profile_data_parallel을
+        하나로 통합한 범용 병렬 로더.
+
+        Parameters
+        ----------
+        all_data_folder : list[str]
+            채널 상위 폴더 목록.
+        cycle_list : list[int]
+            처리할 사이클 번호 목록.
+        mincapacity : float
+            공칭 용량.
+        inirate : float
+            초기 C-rate.
+        options : dict
+            통합 옵션: data_scope, axis_mode, continuity, include_rest,
+            calc_dqdv, smooth_degree, cutoff, step_ranges(continue용).
+        max_workers : int | None
+            스레드 수 (None=자동).
+
+        Returns
+        -------
+        dict
+            {(folder_idx, subfolder_idx, cycle_key): [mincapacity, UnifiedProfileResult]}
+        """
+        clear_channel_cache()
+        tasks = []
+        for i, cyclefolder in enumerate(all_data_folder):
+            if os.path.isdir(cyclefolder):
+                subfolder = [f.path for f in os.scandir(cyclefolder)
+                             if f.is_dir() and _is_channel_folder(f.name)]
+                for j, folder_path in enumerate(subfolder):
+                    if "Pattern" not in folder_path:
+                        task_info = (folder_path, cycle_list, mincapacity,
+                                     inirate, options, i, j)
+                        tasks.append(task_info)
+
+        if max_workers is None:
+            max_workers = calc_optimal_workers(len(tasks))
+        _perf_logger.info(
+            f'  [unified] folders={len(all_data_folder)}, tasks={len(tasks)}, '
+            f'cycles={len(cycle_list)}, workers={max_workers}'
+        )
+
+        results = {}
+        total_tasks = len(tasks)
+        completed = 0
+        if total_tasks == 0:
+            return results
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._load_unified_batch_task, task): task
+                for task in tasks
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    folder_idx, subfolder_idx, batch_results = result
+                    if batch_results:
+                        for key, data in batch_results.items():
+                            results[(folder_idx, subfolder_idx, key)] = data
+                completed += 1
+                if completed % 3 == 0 or completed == total_tasks:
+                    self.progressBar.setValue(int(completed / total_tasks * 50))
+
+        return results
+
     def _plot_and_save_step_data(self, axes, stepchg, capacity, headername, lgnd, temp_lgnd,
                                   writer, write_column_num, save_file_name, Step_CycNo, save_csv=False):
         """
-        스텝 프로파일 6개 그래프 플롯 + 데이터 저장 
+        스텝 프로파일 6개 그래프 플롯 + 데이터 저장
         """
         step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6 = axes
         
@@ -13520,10 +16241,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         all_channels = [_parse_channel_str(r['channel']) for r in _folder_rows]
                         all_caps = []
                         for r in _folder_rows:
-                            try:
-                                all_caps.append(float(r.get('capacity', '') or 0))
-                            except ValueError:
-                                all_caps.append(0.0)
+                            all_caps.append(_parse_capacity_value(r.get('capacity', '')))
                         has_channels = any(chs for chs in all_channels)
                         _src = ''
                         for r in _folder_rows:
@@ -13571,10 +16289,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ext = os.path.splitext(path)[1].lower()
                     channels = _parse_channel_str(row['channel'])
                     valid_chs = [ch for ch in channels if ch != '-']
-                    try:
-                        _cap = float(row.get('capacity', '') or 0)
-                    except ValueError:
-                        _cap = 0.0
+                    _cap = _parse_capacity_value(row.get('capacity', ''))
                     _caps = [_cap] if _cap > 0 else []
 
                     if ext in ('.xlsx', '.xls'):
@@ -13726,6 +16441,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.cycle_tab.addTab(tab, str(tab_no))
                 self.cycle_tab.setCurrentWidget(tab)
                 self.cycle_tab_reset.setEnabled(True)
+                self.profile_tab_reset.setEnabled(True)
                 tab_no += 1
             plt.close(fig)
 
@@ -13817,6 +16533,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _perf_logger.info(line)
                             _seen_patterns.add(pat_key)
 
+
+            # ── 논리사이클 매핑 요약 로그 ──
+            _cm_logged = set()
+            for fi, subs in subfolder_map.items():
+                for sub_idx in range(len(subs)):
+                    if (fi, sub_idx) not in loaded_data:
+                        continue
+                    _, cyctemp = loaded_data[(fi, sub_idx)]
+                    if cyctemp is None or cyctemp[1] is None:
+                        continue
+                    if not hasattr(cyctemp[1], 'cycle_map') or not cyctemp[1].cycle_map:
+                        continue
+                    if fi in _cm_logged:
+                        continue
+                    _cm = cyctemp[1].cycle_map
+                    _n_ln = len(_cm)
+                    _has_sw = any(isinstance(v, tuple) for v in _cm.values())
+                    _type_tag = "스윕" if _has_sw else "일반"
+                    ch_name = os.path.basename(subs[sub_idx])
+                    _perf_logger.info(
+                        f'  논리사이클: path{fi} [{ch_name}]  {_type_tag}  '
+                        f'{_n_ln}개 논리사이클')
+                    _cm_logged.add(fi)
+                    break  # 경로당 첫 채널만
 
             # 탭 할당: 개별=group별, 통합=전체 합산
             if is_individual:
@@ -14510,6 +17250,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tab_delete(self.cycle_tab)
         self.tab_no = 0
         self.cycle_tab_reset.setEnabled(False)
+        self.profile_tab_reset.setEnabled(False)
+
+    def profile_tab_reset_confirm_button(self):
+        """프로필 탭 초기화 — cycle_tab 내 모든 탭 제거."""
+        self._collapse_all_classify_popups()
+        self._classify_popups = []
+        self.tab_delete(self.cycle_tab)
+        self.tab_no = 0
+        self.cycle_tab_reset.setEnabled(False)
+        self.profile_tab_reset.setEnabled(False)
 
     def _collapse_all_classify_popups(self):
         """열린 충방전 패턴 팝업을 모두 접기."""
@@ -14693,10 +17443,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 최대 사이클 수 (빠른 추정)
                 # 사용자가 용량 열(col3)에 직접 입력한 값 우선 사용
                 user_cap = self._get_table_cell(r, 3)
-                try:
-                    cap_for_cycle = float(user_cap) if user_cap else 0
-                except ValueError:
-                    cap_for_cycle = 0
+                cap_for_cycle = _parse_capacity_value(user_cap)
                 if not cap_for_cycle:
                     cap_for_cycle = auto_cap if auto_cap else 0
                 max_cyc = _quick_max_cycle(path, cap_for_cycle)
@@ -14772,6 +17519,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._highlight_channel_mismatch()
         # 연결 모드: 용량 불일치 빨간 폰트 표시
         self._highlight_capacity_mismatch()
+        # 논리사이클 매핑 정보 라벨 갱신 (Phase B)
+        self._update_cycle_map_info()
 
     def _set_table_rows(self, rows):
         """dict 리스트를 테이블에 채움. None 항목은 빈 행(그룹 구분자)."""
@@ -14794,6 +17543,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.setColumnCount(6)
         self.cycle_path_table.clearContents()
         self._update_ect_columns_state()
+        self.cycle_map_info_label.setVisible(False)
 
     # 인식 가능한 헤더 키워드 (소문자)
     # ECT 형식: path/cycle/cd/save 도 인식
@@ -15361,6 +18111,73 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         item.setToolTip((existing_tip + tip_add).strip())
         finally:
             tbl.blockSignals(False)
+
+    def _update_cycle_map_info(self) -> None:
+        """경로 테이블의 첫 유효 경로를 기반으로 논리사이클 매핑 정보를 라벨에 표시.
+
+        _autofill_table_empty_cells() 완료 후 호출되어, 경로의 첫 채널에서
+        cycle_map을 빌드한 뒤 논리사이클 수와 시험 유형을 요약한다.
+        """
+        label = self.cycle_map_info_label
+        # 첫 유효 경로 탐색
+        first_path = None
+        first_cap = 0.0
+        for r in range(self.cycle_path_table.rowCount()):
+            path = self._get_table_cell(r, 1)
+            if path and os.path.isdir(path):
+                first_path = path
+                cap_str = self._get_table_cell(r, 3)
+                try:
+                    first_cap = float(cap_str) if cap_str else 0.0
+                except ValueError:
+                    first_cap = 0.0
+                break
+        if not first_path:
+            label.setVisible(False)
+            return
+        # 첫 채널 폴더 탐색
+        subs = sorted(
+            [f.path for f in os.scandir(first_path)
+             if f.is_dir() and "Pattern" not in f.name
+             and _is_channel_folder(f.name)])
+        if not subs:
+            label.setVisible(False)
+            return
+        ch_path = subs[0]
+        try:
+            is_pne = check_cycler(first_path)
+            if is_pne:
+                cycle_map, cap = _get_pne_cycle_map(ch_path, first_cap, 0.2)
+            else:
+                cycle_map, cap = toyo_build_cycle_map(ch_path, first_cap, 0.2)
+            if not cycle_map:
+                label.setVisible(False)
+                return
+            n_logical = len(cycle_map)
+            # 시험 유형 판별 (스윕 여부)
+            has_sweep = any(isinstance(v, tuple) for v in cycle_map.values())
+            if has_sweep:
+                # 스윕 내 TC 수 계산
+                total_tc = 0
+                for v in cycle_map.values():
+                    if isinstance(v, tuple):
+                        total_tc += v[1] - v[0] + 1
+                    else:
+                        total_tc += 1
+                type_str = f"스윕 시험, 물리TC {total_tc}개"
+            else:
+                type_str = "일반 시험"
+            cycler_str = "PNE" if is_pne else "Toyo"
+            info_text = (f"ℹ 논리사이클 1~{n_logical}  ({cycler_str}, {type_str})")
+            label.setText(info_text)
+            label.setToolTip(
+                f"cycle_map: {n_logical}개 논리사이클\n"
+                f"사이클러: {cycler_str}\n"
+                f"유형: {type_str}\n"
+                f"경로: {first_path}")
+            label.setVisible(True)
+        except Exception:
+            label.setVisible(False)
 
     def _collect_measured_first_dchg(self, loaded_data, subfolder_map, n_paths):
         """각 path(folder_idx)의 실측 2nd Dchg(mAh) 수집
@@ -15997,6 +18814,399 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_order=[0, 1, 2, 3, 4, 5],
         )
 
+    # ════════════════════════════════════════════════════════════════
+    # 통합 프로필 분석 핸들러 (Phase 4)
+    # ════════════════════════════════════════════════════════════════
+
+    def _profile_opt_scope_changed(self, btn_id: int, checked: bool = True) -> None:
+        """데이터 범위 변경 시 의존성 처리.
+
+        Parameters
+        ----------
+        btn_id : int
+            QButtonGroup id — 0: 사이클, 1: 충전, 2: 방전
+        checked : bool
+            라디오 버튼 체크 상태 (idToggled 시그널은 id, checked 두 인자)
+        """
+        if not checked:
+            return  # 해제 이벤트는 무시
+        is_cycle = (btn_id == 0)
+        self.profile_cont_overlay.setEnabled(is_cycle)
+        self.profile_cont_continuous.setEnabled(is_cycle)
+        if not is_cycle:
+            # 충전/방전에서는 오버레이 강제
+            self.profile_cont_overlay.setChecked(True)
+
+    def _profile_opt_axis_changed(self, btn_id: int, checked: bool = True) -> None:
+        """X축 라디오 변경 시 처리.
+
+        Parameters
+        ----------
+        btn_id : int
+            QButtonGroup id — 0: SOC, 1: 시간
+        checked : bool
+            라디오 버튼 체크 상태
+        """
+        if not checked:
+            return
+        if btn_id == 0:  # SOC 선택 → 오버레이 강제
+            self.profile_cont_overlay.setChecked(True)
+
+    def _profile_opt_cont_changed(self, btn_id: int, checked: bool = True) -> None:
+        """연속성 변경 시 의존성 처리: 이어서 선택 → SOC→시간 강제.
+
+        Parameters
+        ----------
+        btn_id : int
+            QButtonGroup id — 0: 오버레이, 1: 이어서
+        checked : bool
+            라디오 버튼 체크 상태
+        """
+        if not checked:
+            return
+        if btn_id == 1:  # 이어서
+            self.profile_axis_time.setChecked(True)  # 시간 강제
+
+    def _read_profile_options(self) -> dict:
+        """통합 프로필 옵션 위젯에서 값 읽기.
+
+        Returns
+        -------
+        dict
+            data_scope, axis_mode, continuity, include_rest, calc_dqdv 키.
+        """
+        scope_map = {0: "cycle", 1: "charge", 2: "discharge"}
+        cont_map = {0: "overlay", 1: "continuous"}
+
+        data_scope = scope_map.get(self.profile_scope_group.checkedId(), "cycle")
+        axis_mode = "time" if self.profile_axis_group.checkedId() == 1 else "soc"
+        continuity = cont_map.get(self.profile_cont_group.checkedId(), "overlay")
+        include_rest = self.profile_rest_chk.isChecked()
+
+        # SOC 축이면 dQ/dV 자동 활성화 (기존 chg/dchg 동작)
+        calc_dqdv = (axis_mode == "soc")
+
+        return {
+            "data_scope": data_scope,
+            "axis_mode": axis_mode,
+            "continuity": continuity,
+            "include_rest": include_rest,
+            "calc_dqdv": calc_dqdv,
+        }
+
+    def _map_options_to_legacy_mode(self, options: dict) -> str:
+        """통합 옵션 → 기존 모드명 매핑 (렌더링 분기용).
+
+        Returns
+        -------
+        str
+            "step" | "chg" | "dchg" | "cycle_soc" | "continue"
+        """
+        if options["continuity"] == "continuous":
+            return "continue"
+        if options["axis_mode"] == "soc" and options["data_scope"] == "charge":
+            return "chg"
+        if options["axis_mode"] == "soc" and options["data_scope"] == "discharge":
+            return "dchg"
+        if options["axis_mode"] == "soc" and options["data_scope"] == "cycle":
+            return "cycle_soc"
+        # time + overlay → step 스타일
+        return "step"
+
+    @log_perf
+    def unified_profile_confirm_button(self) -> None:
+        """통합 프로필 분석 — 4개 옵션에 따라 데이터 로딩 + 렌더링.
+
+        기존 5개 confirm 버튼(step/rate/chg/dchg/continue)을 하나로 통합.
+        옵션 조합에 따라 적절한 로딩 + 렌더링 파이프라인을 선택한다.
+        """
+        options = self._read_profile_options()
+        legacy_mode = self._map_options_to_legacy_mode(options)
+
+        # ECT 경로 체크 시 기존 Continue(ECT) 핸들러로 위임
+        if options["continuity"] == "continuous" and self.chk_ectpath.isChecked():
+            self.ect_confirm_button()
+            return
+
+        # ── 1. 공통 초기화 ──
+        init_data = self._init_confirm_button(self.ProfileConfirm)
+        firstCrate = init_data['firstCrate']
+        mincapacity = init_data['mincapacity']
+        CycleNo = init_data['CycleNo']
+        smoothdegree = init_data['smoothdegree']
+        mincrate = init_data['mincrate']
+        dqscale, dvscale = init_data['dqscale'], init_data['dvscale']
+        all_data_folder, all_data_name = init_data['folders'], init_data['names']
+
+        # ── 1-b. 논리사이클 최대값 초과 검증 ──
+        max_lc = _get_max_logical_cycle(all_data_folder, mincapacity, firstCrate)
+        if max_lc is not None:
+            invalid_cycles = [c for c in CycleNo if c > max_lc]
+            CycleNo = [c for c in CycleNo if c <= max_lc]
+            if invalid_cycles:
+                err_msg(
+                    "사이클 범위 초과",
+                    f"입력한 사이클 {invalid_cycles}이(가) "
+                    f"최대 논리사이클({max_lc})을 초과합니다.\n"
+                    f"유효 범위: 1 ~ {max_lc}",
+                )
+            if not CycleNo:
+                self.progressBar.setValue(0)
+                return
+
+        writer, save_file_name = self._setup_file_writer()
+
+        # ── 2. 통합 병렬 데이터 로딩 ──
+        self.progressBar.setValue(0)
+        load_options = {
+            **options,
+            "smooth_degree": smoothdegree,
+            "cutoff": mincrate if legacy_mode in ("step",) else 0.0,
+        }
+        loaded_data = self._load_all_unified_parallel(
+            all_data_folder, CycleNo, mincapacity, firstCrate, load_options,
+        )
+
+        # ── 3. 결과 호환 래퍼 ──
+        # _profile_render_loop가 기대하는 형식으로 변환:
+        #   temp[1].{data_attr} → DataFrame (len > 2)
+        _compat_data = {}
+        if legacy_mode == "step":
+            data_attr = "stepchg"
+        elif legacy_mode in ("chg", "dchg", "cycle_soc"):
+            data_attr = "Profile"
+        else:
+            data_attr = "stepchg"
+
+        for key, (cap, result) in loaded_data.items():
+            # UnifiedProfileResult → 호환 컨테이너
+            class _Compat:
+                pass
+            compat = _Compat()
+            if hasattr(result, 'df') and not result.df.empty:
+                setattr(compat, data_attr, result.df)
+            _compat_data[key] = [cap, compat]
+
+        # ── 4. 플롯 콜백 선택 ──
+        if legacy_mode == "step":
+            def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
+                          writer, save_file_name, writecolno, CycNo):
+                return self._plot_and_save_step_data(
+                    axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
+                    writer, writecolno, save_file_name, CycNo, save_csv=True)
+
+            def _fallback(FolderBase, CycNo, is_pne):
+                r = unified_profile_core(
+                    FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
+                    data_scope=options["data_scope"], axis_mode="time",
+                    continuity="overlay", include_rest=options["include_rest"],
+                )
+                class _C:
+                    pass
+                c = _C()
+                if not r.df.empty:
+                    c.stepchg = r.df
+                return [r.mincapacity, c]
+
+            legend_pos = ["lower right"] * 4 + ["upper right"] * 2
+            axes_order = None  # 기본 step 스타일
+
+        elif legacy_mode == "chg":
+            def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
+                          writer, save_file_name, writecolno, CycNo):
+                ax1, ax2, ax3, ax4, ax5, ax6 = axes
+                p = temp[1].Profile
+                _artists = []
+                _artists.append(graph_profile(p.SOC, p.Vol, ax1,
+                    -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "SOC", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Vol, ax3,
+                    -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "SOC", "Voltage(V)", temp_lgnd))
+                if self.chk_dqdv.isChecked():
+                    _artists.append(graph_profile(p.Vol, p.dQdV, ax2,
+                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                        0, 5.5 * dqscale, 0.5 * dqscale, "Voltage(V)", "dQdV", temp_lgnd))
+                else:
+                    _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
+                        0, 5.5 * dqscale, 0.5 * dqscale,
+                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                        "dQdV", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Crate, ax5,
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
+                    -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Temp, ax6,
+                    -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                if self.saveok.isChecked() and save_file_name:
+                    p.to_excel(writer, startcol=writecolno, index=False,
+                        header=[headername + c for c in
+                                ["Time(min)", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]])
+                    writecolno += 8
+                if self.ect_saveok.isChecked() and save_file_name:
+                    cdf = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
+                    cdf["TimeSec"] = (cdf["TimeMin"] * 60).round(1)
+                    cdf["Curr"] = (cdf["Crate"] * temp[0] / 1000).round(4)
+                    cdf["Vol"] = cdf["Vol"].round(4)
+                    cdf["Temp"] = cdf["Temp"].round(1)
+                    cdf[["TimeSec", "Vol", "Curr", "Temp"]].to_csv(
+                        save_file_name + "_" + "%04d" % CycNo + ".csv",
+                        index=False, sep=',',
+                        header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
+                return writecolno, _artists
+
+            def _fallback(FolderBase, CycNo, is_pne):
+                r = unified_profile_core(
+                    FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
+                    data_scope="charge", axis_mode="soc", calc_dqdv=True,
+                    smooth_degree=smoothdegree,
+                )
+                class _C:
+                    pass
+                c = _C()
+                if not r.df.empty:
+                    c.Profile = r.df
+                return [r.mincapacity, c]
+
+            legend_pos = ["lower right"] * 3 + ["upper right"] * 3
+            axes_order = [0, 1, 2, 3, 4, 5]
+
+        elif legacy_mode == "dchg":
+            def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
+                          writer, save_file_name, writecolno, CycNo):
+                ax1, ax2, ax3, ax4, ax5, ax6 = axes
+                p = temp[1].Profile
+                _artists = []
+                _artists.append(graph_profile(p.SOC, p.Vol, ax1,
+                    -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "DOD", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Vol, ax3,
+                    -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "DOD", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
+                    -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale,
+                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "dQdV", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Crate, ax5,
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
+                    -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
+                    "DOD", "dVdQ", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Temp, ax6,
+                    -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
+                if self.saveok.isChecked() and save_file_name:
+                    p.to_excel(writer, startcol=writecolno, index=False,
+                        header=[headername + c for c in
+                                ["Time(min)", "DOD", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]])
+                    writecolno += 8
+                if self.ect_saveok.isChecked() and save_file_name:
+                    cdf = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
+                    cdf["TimeSec"] = (cdf["TimeMin"] * 60).round(1)
+                    cdf["Curr"] = (cdf["Crate"] * temp[0] / 1000).round(4)
+                    cdf["Vol"] = cdf["Vol"].round(4)
+                    cdf["Temp"] = cdf["Temp"].round(1)
+                    cdf[["TimeSec", "Vol", "Curr", "Temp"]].to_csv(
+                        save_file_name + "_" + "%04d" % CycNo + ".csv",
+                        index=False, sep=',',
+                        header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
+                return writecolno, _artists
+
+            def _fallback(FolderBase, CycNo, is_pne):
+                r = unified_profile_core(
+                    FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
+                    data_scope="discharge", axis_mode="soc", calc_dqdv=True,
+                    smooth_degree=smoothdegree,
+                )
+                class _C:
+                    pass
+                c = _C()
+                if not r.df.empty:
+                    c.Profile = r.df
+                return [r.mincapacity, c]
+
+            legend_pos = ["lower left", "upper left", "lower left",
+                          "lower left", "upper right", "upper right"]
+            axes_order = [0, 1, 2, 3, 4, 5]
+
+        elif legacy_mode == "cycle_soc":
+            # 사이클+SOC+오버레이: 충전(0→1)+방전(1→0) 루프를 SOC 축에 표시
+            def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
+                          writer, save_file_name, writecolno, CycNo):
+                ax1, ax2, ax3, ax4, ax5, ax6 = axes
+                p = temp[1].Profile
+                _artists = []
+                # ax1, ax3: SOC vs Voltage (동일 — 확대용)
+                _artists.append(graph_profile(p.SOC, p.Vol, ax1,
+                    -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "SOC", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_profile(p.SOC, p.Vol, ax3,
+                    -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "SOC", "Voltage(V)", temp_lgnd))
+                # ax2: dQdV vs Voltage
+                if hasattr(p, 'dQdV') and 'dQdV' in p.columns:
+                    _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
+                        -5 * dqscale, 5.5 * dqscale, 0.5 * dqscale,
+                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                        "dQdV", "Voltage(V)", temp_lgnd))
+                # ax5: SOC vs C-rate
+                _artists.append(graph_profile(p.SOC, p.Crate, ax5,
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                # ax4: SOC vs dVdQ
+                if hasattr(p, 'dVdQ') and 'dVdQ' in p.columns:
+                    _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
+                        -0.1, 1.2, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
+                        "SOC", "dVdQ", temp_lgnd))
+                # ax6: SOC vs Temp
+                _artists.append(graph_profile(p.SOC, p.Temp, ax6,
+                    -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                # Excel 저장
+                if self.saveok.isChecked() and save_file_name:
+                    save_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]
+                    if "Energy" in p.columns:
+                        save_cols.insert(2, "Energy")
+                    if "dQdV" in p.columns:
+                        save_cols.extend(["dQdV", "dVdQ"])
+                    p[save_cols].to_excel(writer, startcol=writecolno, index=False,
+                        header=[headername + c for c in save_cols])
+                    writecolno += len(save_cols)
+                return writecolno, _artists
+
+            def _fallback(FolderBase, CycNo, is_pne):
+                r = unified_profile_core(
+                    FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
+                    data_scope="cycle", axis_mode="soc", calc_dqdv=True,
+                    smooth_degree=smoothdegree, include_rest=options["include_rest"],
+                )
+                class _C:
+                    pass
+                c = _C()
+                if not r.df.empty:
+                    c.Profile = r.df
+                return [r.mincapacity, c]
+
+            legend_pos = ["lower right"] * 3 + ["upper right"] * 3
+            axes_order = [0, 1, 2, 3, 4, 5]
+
+        else:
+            # Continue 모드 — 기존 pro_continue_confirm_button으로 위임
+            self.pro_continue_confirm_button()
+            return
+
+        # ── 5. 통합 렌더링 루프 ──
+        self._profile_render_loop(
+            loaded_data=_compat_data,
+            all_data_folder=all_data_folder,
+            all_data_name=all_data_name,
+            CycleNo=CycleNo,
+            writer=writer,
+            save_file_name=save_file_name,
+            plot_one_fn=_plot_one,
+            fallback_fn=_fallback,
+            data_attr=data_attr,
+            legend_positions=legend_pos,
+            axes_order=axes_order,
+        )
+
     def continue_confirm_button(self):
         if self.chk_ectpath.isChecked():
             self.ect_confirm_button()
@@ -16145,12 +19355,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     s = int(dcir_step)
                     e = s
                 step_ranges.append((s, e))
+
+            # 논리사이클 최대값 초과 검증
+            max_lc = _get_max_logical_cycle(all_data_folder, mincapacity, firstCrate)
+            if max_lc is not None:
+                invalid_ranges = [(s, e) for s, e in step_ranges if s > max_lc]
+                step_ranges = [(s, min(e, max_lc)) for s, e in step_ranges if s <= max_lc]
+                chg_dchg_dcir_no = [
+                    f"{s}-{e}" if s != e else str(s) for s, e in step_ranges
+                ]
+                if invalid_ranges:
+                    err_msg(
+                        "사이클 범위 초과",
+                        f"입력한 사이클 중 {invalid_ranges}이(가) "
+                        f"최대 논리사이클({max_lc})을 초과합니다.\n"
+                        f"유효 범위: 1 ~ {max_lc}",
+                    )
+                if not step_ranges:
+                    self.progressBar.setValue(0)
+                    self.ContinueConfirm.setEnabled(True)
+                    return
+
             self.progressBar.setValue(0)
             loaded_data = self._load_all_profile_data_parallel(
                 all_data_folder, 'continue', (step_ranges, mincapacity, firstCrate, ""))
             
             tab_no = 0
             all_profile = self.AllProfile.isChecked()
+            has_any_data = False  # 전체 데이터 플롯 여부 추적
             # AllProfile: 사전에 fig/tab 1개 생성
             if all_profile:
                 fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
@@ -16184,6 +19416,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 nrows=2, ncols=3, figsize=(14, 10))
                             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
                             channel_map = {}
+                            has_data = False  # 비-AllProfile 탭별 데이터 추적
                         cyccountmax = len(CycleNo)
                         cyccount += 1
                         progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
@@ -16206,20 +19439,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if not is_pne:
                                 # fallback: 논리 사이클 → 파일 번호 변환 후 로딩
                                 cm, _ = toyo_build_cycle_map(FolderBase, mincapacity, firstCrate)
-                                if cm:
-                                    fb_start = cm.get(Step_CycNo, (Step_CycNo, Step_CycNo))[0]
-                                    fb_end = cm.get(Step_CycEnd, (Step_CycEnd, Step_CycEnd))[1]
-                                else:
-                                    fb_start, fb_end = Step_CycNo, Step_CycEnd
+                                fb_start, fb_end = _resolve_logical_to_tc_range(
+                                    cm, Step_CycNo, Step_CycEnd)
                                 temp = toyo_Profile_continue_data(FolderBase, fb_start, fb_end, mincapacity, firstCrate)
                             else:
-                                temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, "")
+                                # fallback: 논리 사이클 → TotlCycle 변환 후 로딩
+                                cm, _ = _get_pne_cycle_map(FolderBase, mincapacity, firstCrate)
+                                tc_start, tc_end = _resolve_logical_to_tc_range(
+                                    cm, Step_CycNo, Step_CycEnd)
+                                temp = pne_Profile_continue_data(FolderBase, tc_start, tc_end, mincapacity, firstCrate, "")
                         if all_profile:
                             temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
                         else:
                             temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
                         if hasattr(temp[1], "stepchg"):
                             if len(temp[1].stepchg) > 2:
+                                has_any_data = True
+                                if not all_profile:
+                                    has_data = True
                                 # [제거됨] capacitytext 표시
                                 has_ocv = "OCV" in temp[1].stepchg.columns
                                 _artists = []
@@ -16296,14 +19533,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                        header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
                         if all_profile:
                             last_namelist = step_namelist
+                        elif not has_data:
+                            # 데이터 없으면 탭 생성 건너뜀
+                            plt.close(fig)
                         else:
                             title = step_namelist[-2] + "=" + step_namelist[-1] if self.CycProfile.isChecked() else step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                            
+
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
                             positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
                             self._setup_legend(axes_list, all_data_name, positions, fig=fig)
-                            
+
                             self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                                     channel_map=channel_map, fig=fig,
                                                     axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
@@ -16311,7 +19551,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 tab_no += 1
                             output_fig(self.figsaveok, title)
             # AllProfile: 루프 종료 후 한번에 finalize
-            if all_profile and last_namelist:
+            if all_profile and last_namelist and has_any_data:
                 title = last_namelist[-2] + " All"
                 plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                 axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
@@ -16324,6 +19564,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         sub2_channel_map=all_profile_sub2_map)
                 tab_no += 1
                 output_fig(self.figsaveok, title)
+            elif all_profile and not has_any_data:
+                plt.close(fig)
             if self.saveok.isChecked() and save_file_name:
                 writer.close()
             self.progressBar.setValue(100)
@@ -16454,6 +19696,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                 chg_tab_no = chg_tab_no + 1
                                             self.cycle_tab.setCurrentWidget(tab)
                                             self.cycle_tab_reset.setEnabled(True)
+                                            self.profile_tab_reset.setEnabled(True)
                                             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
                                             output_fig(self.figsaveok, title)
                             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
