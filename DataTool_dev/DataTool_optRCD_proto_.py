@@ -264,7 +264,6 @@ class ChannelMeta:
 
     # 사이클 맵
     cycle_map: dict | None = None     # 논리 ↔ 물리 매핑
-    sweep_scope: dict | None = None   # {논리사이클: {'chg': (s,e), 'dchg': (s,e)}}
     max_logical_cycle: int | None = None
 
 
@@ -568,10 +567,8 @@ def _logical_to_totl_str(cycle_map: dict, cycle_str: str) -> str:
                     val = cycle_map.get(ln)
                     if val is None:
                         continue
-                    if isinstance(val, tuple):
-                        all_tcs.extend(range(val[0], val[1] + 1))
-                    else:
-                        all_tcs.append(int(val))
+                    s, e = val['all']
+                    all_tcs.extend(range(s, e + 1))
             except (ValueError, TypeError):
                 pass
         else:
@@ -580,13 +577,49 @@ def _logical_to_totl_str(cycle_map: dict, cycle_str: str) -> str:
                 val = cycle_map.get(ln)
                 if val is None:
                     continue
-                if isinstance(val, tuple):
-                    all_tcs.extend(range(val[0], val[1] + 1))
-                else:
-                    all_tcs.append(int(val))
+                s, e = val['all']
+                all_tcs.extend(range(s, e + 1))
             except (ValueError, TypeError):
                 pass
     return _compress_int_ranges(all_tcs)
+
+
+def _totl_to_logical_str(cycle_map: dict, raw_str: str) -> str:
+    """TotlCycle(Raw) 문자열을 논리사이클 문자열로 역변환.
+
+    cycle_map: {logical_cycle: int | tuple(start, end)} 형태.
+    raw_str: "10-18, 25" 같은 TotlCycle 문자열.
+    Returns: 대응하는 논리사이클 압축 문자열 (예: "1-3, 5").
+    """
+    # 역매핑 구축: TotlCycle → logical_cycle
+    reverse: dict[int, int] = {}
+    for ln, val in cycle_map.items():
+        s, e = val['all']
+        for tc in range(s, e + 1):
+            reverse[tc] = ln
+
+    # raw_str 파싱 → TotlCycle 정수 목록
+    parts = [s.strip() for s in re.split(r'[,\s]+', raw_str) if s.strip()]
+    all_logical: list[int] = []
+    for part in parts:
+        if '-' in part:
+            try:
+                a, b = map(int, part.split('-', 1))
+                for tc in range(a, b + 1):
+                    ln = reverse.get(tc)
+                    if ln is not None:
+                        all_logical.append(ln)
+            except (ValueError, TypeError):
+                pass
+        else:
+            try:
+                tc = int(part)
+                ln = reverse.get(tc)
+                if ln is not None:
+                    all_logical.append(ln)
+            except (ValueError, TypeError):
+                pass
+    return _compress_int_ranges(all_logical)
 
 
 def _build_cycle_map_for_path(data_path: str, capacity: float) -> dict | None:
@@ -627,6 +660,31 @@ def is_micro_unit(raw_file_path):
 
 # ── Phase 0: 채널 메타데이터 캐시 ──────────────────────────────
 _channel_meta_store: dict[str, ChannelMeta] = {}
+_meta_fingerprint: int | None = None  # 경로+용량 조합 해시 — 동일하면 Phase 0 스킵
+
+
+def _calc_meta_fingerprint(
+    all_data_folder: list[str],
+    per_path_capacities: list[float] | None = None,
+) -> int:
+    """경로 목록 + 용량 배열 → 해시값 생성.
+
+    동일한 경로/용량 조합이면 동일한 해시를 반환하므로
+    Phase 0 재계산 여부를 빠르게 판단할 수 있다.
+    """
+    norm_paths = tuple(os.path.normpath(p) for p in all_data_folder)
+    norm_caps = tuple(per_path_capacities) if per_path_capacities else ()
+    return hash((norm_paths, norm_caps))
+
+
+def is_meta_valid(
+    all_data_folder: list[str],
+    per_path_capacities: list[float] | None = None,
+) -> bool:
+    """현재 메타 캐시가 주어진 경로/용량 조합에 유효한지 판별."""
+    if not _channel_meta_store or _meta_fingerprint is None:
+        return False
+    return _calc_meta_fingerprint(all_data_folder, per_path_capacities) == _meta_fingerprint
 
 
 def get_channel_meta(channel_path: str) -> ChannelMeta | None:
@@ -634,29 +692,67 @@ def get_channel_meta(channel_path: str) -> ChannelMeta | None:
     return _channel_meta_store.get(channel_path)
 
 
+def resolve_capacity(channel_path: str, table_cap: float = 0.0) -> float:
+    """확정 용량 반환 — 테이블 입력 > Phase 0 메타 > 0(자동감지 폴백).
+
+    Phase 0에서 이미 산정된 ChannelMeta.min_capacity를 single source of truth로 사용.
+    table_cap > 0이면 사용자 명시 입력이므로 최우선 적용.
+    반환값이 0이면 호출측에서 자동 감지 폴백.
+    """
+    if table_cap > 0:
+        return table_cap
+    meta = get_channel_meta(channel_path)
+    if meta and meta.min_capacity > 0:
+        return meta.min_capacity
+    return 0.0
+
+
+def enrich_newdata_with_meta(nd: 'pd.DataFrame', channel_path: str) -> None:
+    """Phase 0 메타의 classified 결과를 NewData에 Category 컬럼으로 주입.
+
+    NewData의 각 행은 논리사이클 1,2,3,... 순서이며,
+    classified 리스트도 동일 순서이므로 인덱스 기반으로 매핑한다.
+    메타가 없거나 classified가 비어있으면 아무 것도 하지 않는다.
+
+    Parameters
+    ----------
+    nd : pd.DataFrame
+        NewData (Cycle, Dchg, ... 컬럼 포함).
+    channel_path : str
+        채널 폴더 절대 경로.
+    """
+    meta = get_channel_meta(channel_path)
+    if not meta or not meta.classified:
+        return
+
+    # classified를 논리사이클 번호 → category 딕셔너리로 변환
+    cat_map = {entry['cycle']: entry['category'] for entry in meta.classified}
+
+    # NewData의 Cycle 컬럼(논리사이클 번호)으로 매핑
+    if 'Cycle' in nd.columns:
+        nd['Category'] = nd['Cycle'].map(cat_map).fillna('')
+
+
 def clear_channel_meta_store():
     """전체 채널 메타데이터 캐시 초기화."""
+    global _meta_fingerprint
     _channel_meta_store.clear()
+    _meta_fingerprint = None
 
 
 # ── Phase 2: 채널별 파일 I/O 캐시 ──────────────────────────────
 _channel_cache: dict[str, dict] = {}
-
-# ── sweep_scope 캐시: 채널경로 → {논리사이클: {'chg': (s,e), 'dchg': (s,e)}} ──
-_SWEEP_SCOPE_CACHE: dict[str, dict] = {}
 
 
 def _reset_all_caches():
     """모든 캐시 일괄 초기화 (새 데이터 로드 시작 시 호출)."""
     clear_channel_meta_store()
     _channel_cache.clear()
-    _SWEEP_SCOPE_CACHE.clear()
 
 
 def clear_channel_cache():
     """전체 채널 I/O 캐시 초기화 (새 데이터 로드 시작 시 호출)."""
     _channel_cache.clear()
-    _SWEEP_SCOPE_CACHE.clear()
 
 
 def _get_channel_cache(raw_file_path: str) -> dict:
@@ -666,42 +762,70 @@ def _get_channel_cache(raw_file_path: str) -> dict:
     return _channel_cache[raw_file_path]
 
 
-def get_sweep_scope(raw_file_path: str) -> dict:
-    """채널별 sweep_scope 캐시 조회.
+# ── cycle_map dict 접근 헬퍼 ────────────────────────────────────
+def _cm_all_range(entry: dict) -> tuple[int, int]:
+    """cycle_map entry → 전체 TC 범위 (start, end) 반환."""
+    return entry['all']
 
-    pne_build_cycle_map()이 스윕 모드에서 자동 저장한 sweep_scope를 반환.
-    캐시에 없거나 일반 모드 시 빈 dict 반환 (안전한 폴백).
 
-    Returns
-    -------
-    dict
-        {논리사이클: {'chg': (start_tc, end_tc), 'dchg': (start_tc, end_tc)}}.
-        키가 없으면 해당 scope의 서브 범위가 정의되지 않은 것.
+def _cm_tc_list(entry: dict, scope: str = 'all') -> list[int]:
+    """cycle_map entry → scope별 TC 목록 반환.
+
+    Parameters
+    ----------
+    entry : dict
+        {'all': (s, e), 'chg': [...], 'dchg': [...], 'chg_rest': [...], 'dchg_rest': [...]}.
+    scope : str
+        'all' → 전체 범위 TC 목록.
+        'charge' → chg + chg_rest TC 목록.
+        'discharge' → dchg + dchg_rest TC 목록.
+        'cycle' → 'all'과 동일.
     """
-    return _SWEEP_SCOPE_CACHE.get(raw_file_path, {})
+    if scope in ('all', 'cycle'):
+        s, e = entry['all']
+        return list(range(s, e + 1))
+    if scope == 'charge':
+        return sorted(set(entry.get('chg', []) + entry.get('chg_rest', [])))
+    if scope == 'discharge':
+        return sorted(set(entry.get('dchg', []) + entry.get('dchg_rest', [])))
+    # 알 수 없는 scope → 전체 범위 폴백
+    s, e = entry['all']
+    return list(range(s, e + 1))
+
+
+def _is_sweep_map(cycle_map: dict) -> bool:
+    """cycle_map이 스윕 시험인지 판별 (충전/방전 TC가 disjoint).
+
+    하나 이상의 논리사이클에서 chg와 dchg TC 집합이 서로 겹치지 않으면
+    스윕 시험(GITT, DCIR, 펄스 등)으로 판별한다.
+    """
+    for v in cycle_map.values():
+        if not isinstance(v, dict):
+            continue
+        chg = set(v.get('chg', []))
+        dchg = set(v.get('dchg', []))
+        if chg and dchg and not chg & dchg:
+            return True
+    return False
 
 
 def resolve_tc_range(
     cycle_map: dict,
     logical: int,
     scope: str = "cycle",
-    sweep_scope: dict | None = None,
 ) -> tuple[int, int] | None:
     """논리사이클 + scope → TotlCycle 범위 반환.
 
-    sweep_scope가 있고 해당 논리사이클에 scope별 서브 범위가 정의되어 있으면
-    축소된 범위를 반환하여 I/O 최적화 및 충/방전 데이터 분리를 지원한다.
+    cycle_map dict의 chg/dchg/all 키를 사용하여 scope에 맞는 TC 범위를 반환.
 
     Parameters
     ----------
     cycle_map : dict
-        {논리사이클: int | tuple[int, int]}.
+        {논리사이클: {'all': (s,e), 'chg': [...], 'dchg': [...], ...}}.
     logical : int
         조회할 논리사이클 번호.
     scope : str
         "cycle" | "charge" | "discharge".
-    sweep_scope : dict | None
-        {논리사이클: {'chg': (s, e), 'dchg': (s, e)}}. None이면 전체 범위 반환.
 
     Returns
     -------
@@ -712,18 +836,13 @@ def resolve_tc_range(
     if val is None:
         return None
 
-    # sweep_scope에 scope별 서브 범위가 있으면 우선 사용
-    if sweep_scope and logical in sweep_scope:
-        ss = sweep_scope[logical]
-        if scope == "charge" and 'chg' in ss:
-            return ss['chg']
-        elif scope == "discharge" and 'dchg' in ss:
-            return ss['dchg']
-
-    # 기본: 전체 범위 반환
-    if isinstance(val, tuple):
-        return val
-    return (val, val)
+    tc_list = _cm_tc_list(val, scope)
+    if not tc_list:
+        # scope별 TC 없으면 전체 범위 폴백
+        tc_list = _cm_tc_list(val, 'all')
+    if not tc_list:
+        return None
+    return (min(tc_list), max(tc_list))
 
 
 def _cached_pne_restore_files(raw_file_path: str) -> tuple:
@@ -867,7 +986,6 @@ def _unified_pne_load_raw(
     cycle_map: dict | None = None,
     *,
     data_scope: str = "cycle",
-    sweep_scope: dict | None = None,
 ) -> pd.DataFrame | None:
     """PNE SaveData에서 원시 프로필 데이터 로딩.
 
@@ -880,13 +998,10 @@ def _unified_pne_load_raw(
     cycle_end : int
         종료 논리사이클 번호 (포함).
     cycle_map : dict | None
-        논리사이클 → TotlCycle 값 매핑. None이면 TotlCycle 직접 사용.
+        논리사이클 → {'all': (s,e), 'chg': [...], 'dchg': [...], ...} 매핑.
+        None이면 TotlCycle 직접 사용.
     data_scope : str
-        "cycle" | "charge" | "discharge". sweep_scope와 함께 사용하여
-        TC 범위를 축소할 수 있음.
-    sweep_scope : dict | None
-        {논리사이클: {'chg': (s, e), 'dchg': (s, e)}}. 스윕 시험의
-        충/방전 서브 범위. None이면 전체 범위 로딩.
+        "cycle" | "charge" | "discharge". scope에 맞는 TC만 로딩.
 
     Returns
     -------
@@ -903,8 +1018,7 @@ def _unified_pne_load_raw(
       [17]=StepTime(/100s), [18]=TotTime(day), [19]=TotTime(/100s),
       [21]=Temp1, [27]=TotalCycle
     cycle_map 사용 시 논리사이클 번호가 Cycle 컬럼에 부여된다.
-    sweep_scope + data_scope 사용 시 스윕 논리사이클의 TC 범위가 축소되어
-    불필요한 데이터 I/O를 줄인다.
+    data_scope별로 cycle_map dict의 chg/dchg TC 목록에서 필요한 TC만 로딩한다.
     """
     restore_dir = os.path.join(raw_file_path, "Restore")
     if not os.path.isdir(restore_dir):
@@ -913,22 +1027,18 @@ def _unified_pne_load_raw(
     # cycle_map이 있으면 논리사이클 → TotlCycle로 변환
     if cycle_map:
         # 요청된 논리사이클 범위에 해당하는 TotlCycle 값들 수집
-        # cycle_map 값: int(단일 TC) 또는 tuple(시작TC, 끝TC) 스윕 범위
-        # sweep_scope가 있으면 scope별 TC 서브 범위로 축소 가능
+        # cycle_map dict에서 data_scope별 TC 목록 추출
         totl_cycles_set: set[int] = set()
         logical_to_totl: dict[int, int] = {}  # 역매핑: TotlCycle → 논리사이클
         for logical_cyc in range(cycle_start, cycle_end + 1):
             if logical_cyc not in cycle_map:
                 continue
-            # resolve_tc_range: sweep_scope가 있으면 scope별 축소, 없으면 전체 범위
-            tc_range = resolve_tc_range(
-                cycle_map, logical_cyc, scope=data_scope,
-                sweep_scope=sweep_scope,
-            )
-            if tc_range is None:
-                continue
-            tc_s, tc_e = tc_range
-            for tc in range(tc_s, tc_e + 1):
+            entry = cycle_map[logical_cyc]
+            tc_list = _cm_tc_list(entry, data_scope)
+            if not tc_list:
+                # scope별 TC 없으면 전체 범위 폴백
+                tc_list = _cm_tc_list(entry, 'all')
+            for tc in tc_list:
                 totl_cycles_set.add(tc)
                 logical_to_totl[tc] = logical_cyc
         totl_cycles = sorted(totl_cycles_set)
@@ -1043,7 +1153,7 @@ def _unified_toyo_load_raw(
         for logical_cyc in range(cycle_start, cycle_end + 1):
             if logical_cyc not in cycle_map:
                 continue
-            first_file, last_file = cycle_map[logical_cyc]
+            first_file, last_file = cycle_map[logical_cyc]['all']
             for phys_cyc in range(first_file, last_file + 1):
                 fpath = os.path.join(raw_file_path, "%06d" % phys_cyc)
                 if not os.path.isfile(fpath):
@@ -1146,11 +1256,13 @@ def _unified_normalize_pne(
     # 전압: μV → V
     result["Voltage"] = df["Voltage_raw"].values / 1_000_000
 
-    # 전류: μA (또는 mA) → mA (부호 유지, 방전 반전은 후속 단계)
+    # 전류 → A (기존 pne_continue_profile_scale_change와 동일 단위)
+    # 일반 PNE: 원시 μA → A (÷1,000,000)
+    # PNE21/22 (is_micro): 원시 nA → A (÷1,000,000,000)
     if is_micro:
-        result["Current_mA"] = df["Current_raw"].values / 1_000_000  # μA → A → ... 아님
+        result["Current_mA"] = df["Current_raw"].values / 1_000_000_000  # nA → A
     else:
-        result["Current_mA"] = df["Current_raw"].values / 1_000  # μA→mA 또는 mA→A
+        result["Current_mA"] = df["Current_raw"].values / 1_000_000  # μA → A
 
     # Crate = Current / mincapacity (정규화)
     result["Crate"] = df["Current_raw"].values / cap_divisor
@@ -1210,25 +1322,43 @@ def _unified_normalize_toyo(
     result["Temp"] = df["Temp_raw"].values
 
     # 용량: 시간적분 (Toyo는 장비가 용량을 직접 제공하지 않으므로 계산)
-    dt = np.diff(result["Time_s"].values, prepend=result["Time_s"].values[0])
-    dt[0] = 0
-    current_a = df["Current_raw"].values / 1000  # mA → A
+    # 기존 방식 정합성: shift(-1) 패턴 — 다음 행 전류 × 다음 행까지 시간차
+    time_s = result["Time_s"].values
+    current_mA = df["Current_raw"].values
+    voltage_V = df["Voltage_raw"].values
+    cond = df["Condition"].values
+    n = len(time_s)
 
-    # 충전/방전 용량 분리 계산
-    chg_mask = (df["Condition"].values == 1)
-    dchg_mask = (df["Condition"].values == 2)
+    # dt[i] = time[i+1] - time[i], 마지막 행은 0
+    dt_fwd = np.zeros(n)
+    if n > 1:
+        dt_fwd[:-1] = np.diff(time_s)
+        dt_fwd[dt_fwd < 0] = 0  # 파일 경계 음수 diff 클리핑
 
-    chg_increments = np.where(chg_mask, np.abs(current_a) * dt / 3600, 0)
-    dchg_increments = np.where(dchg_mask, np.abs(current_a) * dt / 3600, 0)
+    # next_current[i] = current[i+1], 마지막 행은 0
+    next_curr_mA = np.zeros(n)
+    if n > 1:
+        next_curr_mA[:-1] = current_mA[1:]
+    next_volt = np.zeros(n)
+    if n > 1:
+        next_volt[:-1] = voltage_V[1:]
 
-    result["ChgCap"] = np.cumsum(chg_increments) / (mincapacity / 1000)  # → 정규화
-    result["DchgCap"] = np.cumsum(dchg_increments) / (mincapacity / 1000)
+    # 충전/방전 마스크 (현재 행 기준)
+    chg_mask = (cond == 1)
+    dchg_mask = (cond == 2)
 
-    # 에너지 (간이 계산)
-    chg_energy = np.where(chg_mask, np.abs(current_a) * df["Voltage_raw"].values * dt / 3600, 0)
-    dchg_energy = np.where(dchg_mask, np.abs(current_a) * df["Voltage_raw"].values * dt / 3600, 0)
-    result["ChgWh"] = np.cumsum(chg_energy) / (mincapacity / 1000)
-    result["DchgWh"] = np.cumsum(dchg_energy) / (mincapacity / 1000)
+    # 용량 = Σ(dt × next_I / 3600) / mincapacity — 기존 방식과 동일
+    chg_inc = np.where(chg_mask, dt_fwd * np.abs(next_curr_mA) / 3600 / mincapacity, 0)
+    dchg_inc = np.where(dchg_mask, dt_fwd * np.abs(next_curr_mA) / 3600 / mincapacity, 0)
+
+    result["ChgCap"] = np.cumsum(chg_inc)
+    result["DchgCap"] = np.cumsum(dchg_inc)
+
+    # 에너지 = Σ(dt × next_I × next_V / 3600) / mincapacity
+    chg_e = np.where(chg_mask, dt_fwd * np.abs(next_curr_mA) * next_volt / 3600 / mincapacity, 0)
+    dchg_e = np.where(dchg_mask, dt_fwd * np.abs(next_curr_mA) * next_volt / 3600 / mincapacity, 0)
+    result["ChgWh"] = np.cumsum(chg_e)
+    result["DchgWh"] = np.cumsum(dchg_e)
 
     return result
 
@@ -1240,7 +1370,6 @@ def _unified_filter_condition(
     *,
     is_sweep: bool = False,
     mincapacity: float = 0,
-    sweep_scope_applied: bool = False,
 ) -> pd.DataFrame:
     """Condition 기반 필터링 (전류 부호 기반 CC 재분류 + 휴지 분류 + 보충전 제외).
 
@@ -1297,19 +1426,6 @@ def _unified_filter_condition(
         _curr_col = "Current_mA"
     elif "Current_raw" in df.columns:
         _curr_col = "Current_raw"
-
-    # --- sweep_scope 적용 시: TC 범위로 이미 충/방전 구분됨 ---
-    # 스윕 내부의 모든 데이터(충전 펄스, 휴지, 소규모 보방전/보충전)를 유지.
-    # CC(Condition=9) 재분류만 수행하고 Condition 필터링은 생략.
-    if sweep_scope_applied:
-        if _curr_col:
-            cc_mask = df["Condition"] == 9
-            if cc_mask.any():
-                curr = df.loc[cc_mask, _curr_col]
-                df.loc[cc_mask & (curr > 0).values, "Condition"] = 1
-                df.loc[cc_mask & (curr < 0).values, "Condition"] = 2
-                df.loc[cc_mask & (curr == 0).values, "Condition"] = 3
-        return df
 
     # --- Condition=9 재분류: 전류 부호 기반 ---
     if _curr_col:
@@ -1456,7 +1572,7 @@ def _unified_merge_steps(
     df: pd.DataFrame,
     data_scope: str,
     *,
-    sweep_scope_applied: bool = False,
+    multi_tc: bool = False,
 ) -> pd.DataFrame:
     """멀티스텝 데이터를 시간·용량 연속으로 병합.
 
@@ -1481,10 +1597,10 @@ def _unified_merge_steps(
         # 사이클 모드: 시간순 정렬만, 스텝 병합 불필요
         return df.sort_values("Time_s").reset_index(drop=True)
 
-    # --- sweep_scope 적용 시: TotTime 기반 절대 시간 보존 + 용량 누적 보정 ---
-    # 스윕 데이터는 다수 TC를 하나의 논리사이클로 매핑하므로,
+    # --- multi-TC: TotTime 기반 절대 시간 보존 + 용량 누적 보정 ---
+    # 다수 TC를 하나의 논리사이클로 매핑하는 경우,
     # Step 기반 병합 대신 시간 정렬 + 용량 리셋 감지로 누적 처리.
-    if sweep_scope_applied:
+    if multi_tc:
         df = df.sort_values("Time_s").reset_index(drop=True)
         for cap_col in ("ChgCap", "DchgCap", "ChgWh", "DchgWh"):
             if cap_col not in df.columns:
@@ -1557,11 +1673,41 @@ def _unified_calculate_axis(
     """
     df = df.copy()
 
+    _has_blocks = "Block" in df.columns
+
     # 시간축 처리
     if continuity == "overlay":
-        if data_scope == "cycle":
-            # 사이클 모드 오버레이: 충전/방전 각각 시작점 0으로 리셋
-            # → 충전과 방전을 동일 시간축에서 비교 가능
+        if _has_blocks:
+            # ── Block 기반 오버레이 (스윕 데이터) ──
+            # 각 Block(1=충전,2=방전)별 시간 시작점 0으로 리셋
+            for blk_val in sorted(df["Block"].unique()):
+                if blk_val <= 0:
+                    continue
+                blk_mask = df["Block"] == blk_val
+                if not blk_mask.any():
+                    continue
+                blk_start = df.loc[blk_mask, "Time_s"].min()
+                df.loc[blk_mask, "Time_s"] -= blk_start
+
+            # Block 경계에 NaN 행 삽입 → matplotlib 선 끊기
+            if data_scope == "cycle":
+                active_blocks = sorted(
+                    g for g in df["Block"].unique() if g > 0)
+                if len(active_blocks) > 1:
+                    parts = []
+                    for i, blk_val in enumerate(active_blocks):
+                        blk_df = df[df["Block"] == blk_val]
+                        parts.append(blk_df)
+                        if i < len(active_blocks) - 1:
+                            nan_row = {col: np.nan for col in df.columns}
+                            nan_row["Cycle"] = (
+                                blk_df["Cycle"].iloc[0]
+                                if "Cycle" in blk_df.columns else np.nan)
+                            parts.append(pd.DataFrame([nan_row]))
+                    df = pd.concat(parts, ignore_index=True)
+
+        elif data_scope == "cycle":
+            # ── 기존 Condition 기반 오버레이 (비스윕) ──
             for cyc in df["Cycle"].unique():
                 mask_cyc = df["Cycle"] == cyc
                 for cond in df.loc[mask_cyc, "Condition"].unique():
@@ -1571,18 +1717,15 @@ def _unified_calculate_axis(
                     cond_start = df.loc[mask, "Time_s"].min()
                     df.loc[mask, "Time_s"] = df.loc[mask, "Time_s"] - cond_start
             # Condition 경계에 NaN 행 삽입 → matplotlib 선 끊기
-            # (충전→방전 사이 라인이 이어지는 문제 방지)
             nan_rows = []
             for cyc in df["Cycle"].unique():
                 cyc_df = df.loc[df["Cycle"] == cyc]
                 conds = cyc_df["Condition"].unique()
                 if len(conds) > 1:
-                    # 첫 번째 Condition 그룹 끝에 NaN 행 삽입
                     nan_row = {col: np.nan for col in df.columns}
                     nan_row["Cycle"] = cyc
                     nan_rows.append(nan_row)
             if nan_rows:
-                # Condition별로 정렬 후 NaN 삽입
                 parts = []
                 for cyc in df["Cycle"].unique():
                     cyc_df = df.loc[df["Cycle"] == cyc]
@@ -1745,31 +1888,35 @@ def unified_profile_core(
 
     cycle_start, cycle_end = cycle_range
 
-    # === Stage 1: 사이클러 판별 및 원시 로딩 ===
+    # === Stage 1: 사이클러 판별 및 cycle_map 확보 ===
     is_pne = check_cycler(raw_file_path)  # True=PNE, False=Toyo
-    _sweep_scope_core: dict = {}  # sweep_scope 추적 (Stage 2 필터에서 활용)
 
     if is_pne:
-        # PNE 용량 산정
         tempcap = pne_min_cap(raw_file_path, mincapacity, inirate)
         mincapacity = tempcap
-        # cycle_map 자동 생성 (None일 때) — .sch 힌트 포함
         if cycle_map is None:
             cycle_map, _ = _get_pne_cycle_map(raw_file_path, mincapacity, inirate)
-        _sweep_scope_core = get_sweep_scope(raw_file_path)
+    else:
+        tempcap = toyo_min_cap(raw_file_path, mincapacity, inirate)
+        mincapacity = tempcap
+        if cycle_map is None:
+            cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
+
+    # 스윕 시험 여부 판별: cycle_map의 chg/dchg TC가 분리(disjoint)이면 스윕
+    _is_sweep = cycle_map is not None and _is_sweep_map(cycle_map)
+    # multi-TC 여부: 논리사이클 내 TC가 2개 이상인 경우 용량 누적 보정 필요
+    _is_multi_tc = cycle_map is not None and any(
+        v['all'][0] != v['all'][1] for v in cycle_map.values() if isinstance(v, dict))
+
+    # ── 통합 파이프라인: 스윕/비스윕 공통 ──
+    # Stage 2: 원시 데이터 로딩 (data_scope별 TC 직접 선택)
+    if is_pne:
         raw = _unified_pne_load_raw(
             raw_file_path, cycle_start, cycle_end,
             cycle_map=cycle_map,
             data_scope=data_scope,
-            sweep_scope=_sweep_scope_core if _sweep_scope_core else None,
         )
     else:
-        # Toyo 용량 산정
-        tempcap = toyo_min_cap(raw_file_path, mincapacity, inirate)
-        mincapacity = tempcap
-        # cycle_map 자동 생성 (None일 때)
-        if cycle_map is None:
-            cycle_map, _ = toyo_build_cycle_map(raw_file_path, mincapacity, inirate)
         raw = _unified_toyo_load_raw(
             raw_file_path, cycle_start, cycle_end,
             cycle_map=cycle_map,
@@ -1777,50 +1924,53 @@ def unified_profile_core(
 
     if raw is None or raw.empty:
         return UnifiedProfileResult(
-            df=pd.DataFrame(),
-            mincapacity=mincapacity,
-            columns=[],
+            df=pd.DataFrame(), mincapacity=mincapacity, columns=[],
             metadata={"cycler_type": "PNE" if is_pne else "TOYO",
-                      "cycle_range": cycle_range, "error": "데이터 없음"},
-        )
+                      "cycle_range": cycle_range, "error": "데이터 없음"})
 
-    # === Stage 2: Condition 필터링 ===
-    # 스윕 시험 여부 판별: cycle_map 값에 tuple이 있으면 스윕
-    _is_sweep = cycle_map is not None and any(
-        isinstance(v, tuple) for v in cycle_map.values())
-    # sweep_scope가 TC 범위로 충/방전을 이미 구분했는지 판별
-    _sweep_applied = bool(
-        _sweep_scope_core and data_scope in ("charge", "discharge"))
+    # Stage 3: Condition 필터링 (CC 재분류 + 휴지 분류 + 보충전 제외)
     filtered = _unified_filter_condition(
         raw, data_scope, include_rest,
-        is_sweep=_is_sweep, mincapacity=mincapacity,
-        sweep_scope_applied=_sweep_applied)
+        is_sweep=_is_sweep, mincapacity=mincapacity)
 
     if filtered.empty:
         return UnifiedProfileResult(
-            df=pd.DataFrame(),
-            mincapacity=mincapacity,
-            columns=[],
+            df=pd.DataFrame(), mincapacity=mincapacity, columns=[],
             metadata={"cycler_type": "PNE" if is_pne else "TOYO",
-                      "cycle_range": cycle_range, "error": "필터 후 데이터 없음"},
-        )
+                      "cycle_range": cycle_range, "error": "필터 후 데이터 없음"})
 
-    # === Stage 3: 정규화 ===
+    # Stage 4: 정규화
     if is_pne:
         normalized = _unified_normalize_pne(filtered, mincapacity, raw_file_path)
     else:
         normalized = _unified_normalize_toyo(filtered, mincapacity)
 
-    # Condition, Cycle 복원 (정규화 결과에 이미 포함)
-    # Step 복원
     if "Step" not in normalized.columns:
         normalized["Step"] = filtered["Step"].values
 
-    # === Stage 4: 스텝 병합 ===
+    # Stage 5: 스텝 병합 (multi-TC일 때 용량 리셋 감지 + 누적)
     merged = _unified_merge_steps(
-        normalized, data_scope, sweep_scope_applied=_sweep_applied)
+        normalized, data_scope, multi_tc=_is_multi_tc)
 
-    # === Stage 5: X축 및 SOC 계산 ===
+    # Stage 5.5: Block 컬럼 할당 (스윕 + cycle + overlay 한정)
+    if _is_sweep and data_scope == "cycle" and continuity == "overlay":
+        if "RawCycle" in merged.columns:
+            block = np.zeros(len(merged), dtype=int)
+            for ln in range(cycle_start, cycle_end + 1):
+                entry = cycle_map.get(ln)
+                if not entry or not isinstance(entry, dict):
+                    continue
+                for tc in entry.get('chg', []):
+                    block[merged['RawCycle'].values == tc] = 1
+                for tc in entry.get('dchg', []):
+                    block[merged['RawCycle'].values == tc] = 2
+                for tc in entry.get('chg_rest', []):
+                    block[merged['RawCycle'].values == tc] = 1
+                for tc in entry.get('dchg_rest', []):
+                    block[merged['RawCycle'].values == tc] = 2
+            merged['Block'] = block
+
+    # Stage 6: X축 및 SOC 계산
     with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity)
 
     # === Cutoff 필터 ===
@@ -1905,7 +2055,6 @@ def _unified_process_single_cycle_from_raw(
     smooth_degree: int = 0,
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
-    sweep_scope_applied: bool = False,
 ) -> UnifiedProfileResult:
     """이미 로드된 원시 데이터에서 단일 사이클 프로필을 파싱.
 
@@ -1950,14 +2099,14 @@ def _unified_process_single_cycle_from_raw(
         )
 
     # Stage 2: Condition 필터링
-    _is_sweep = bool(
+    _is_sweep = bool(cycle_map and _is_sweep_map(cycle_map))
+    _is_multi_tc = bool(
         cycle_map
-        and any(isinstance(v, tuple) for v in cycle_map.values())
+        and any(v['all'][0] != v['all'][1] for v in cycle_map.values() if isinstance(v, dict))
     )
     filtered = _unified_filter_condition(
         raw_cycle, data_scope, include_rest,
         is_sweep=_is_sweep, mincapacity=mincapacity,
-        sweep_scope_applied=sweep_scope_applied,
     )
     if filtered.empty:
         return UnifiedProfileResult(
@@ -1978,7 +2127,7 @@ def _unified_process_single_cycle_from_raw(
 
     # Stage 4: 스텝 병합
     merged = _unified_merge_steps(
-        normalized, data_scope, sweep_scope_applied=sweep_scope_applied)
+        normalized, data_scope, multi_tc=_is_multi_tc)
 
     # Stage 5: X축 및 SOC 계산
     with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity)
@@ -2122,13 +2271,10 @@ def unified_profile_batch(
     # === Overlay 모드 (사이클별 개별 처리) ===
     if is_pne:
         # PNE: 1회 I/O 최적화 — 전체 범위 로드 후 사이클별 슬라이싱
-        # sweep_scope가 있으면 scope별 TC 범위 축소 (충전만 / 방전만 로딩)
-        _sweep_scope = get_sweep_scope(raw_file_path)
         all_raw = _unified_pne_load_raw(
             raw_file_path, min(cycle_list), max(cycle_list),
             cycle_map=cycle_map,
             data_scope=data_scope,
-            sweep_scope=_sweep_scope if _sweep_scope else None,
         )
         if all_raw is None or all_raw.empty:
             for cyc in cycle_list:
@@ -2140,18 +2286,12 @@ def unified_profile_batch(
 
         for cyc in cycle_list:
             raw_cycle = all_raw[all_raw["Cycle"] == cyc].copy()
-            # sweep_scope가 해당 사이클의 TC 범위를 충/방전으로 구분했는지 판별
-            _scope_applied = bool(
-                _sweep_scope and cyc in _sweep_scope
-                and data_scope in ("charge", "discharge")
-            )
             result = _unified_process_single_cycle_from_raw(
                 raw_cycle, mincapacity, raw_file_path, is_pne=True,
                 data_scope=data_scope, axis_mode=axis_mode,
                 continuity=continuity, include_rest=include_rest,
                 calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
                 cutoff=cutoff, cycle_map=cycle_map,
-                sweep_scope_applied=_scope_applied,
             )
             results[cyc] = [mincapacity, result]
     else:
@@ -3142,17 +3282,19 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate, ptn_struct=None):
     # 규칙 1: 충전→방전→(휴지) = 1 논리사이클 (방전 후 휴지 포함)
     # 규칙 2: 충전 전용 그룹 = 독립 논리사이클 (화성 등)
     used_indices: set[int] = set()
-    events: list[tuple[int, int]] = []  # (start_OriMin, end_OriMax)
+    events: list[tuple[int, int, list[int]]] = []  # (start_OriMin, end_OriMax, group_indices)
 
     # Pass 1: 방전 기반 사이클 (충전 + 방전 + 방전 후 휴지)
     for dchg_idx in dchg_indices:
         start_idx = dchg_idx
         end_idx = dchg_idx
+        gi_list = [dchg_idx]
 
         # 직전 그룹이 충전(Condition=1)이면 사이클 시작에 포함
         if dchg_idx > 0 and group_info.loc[dchg_idx - 1, "Condition"] == 1:
             start_idx = dchg_idx - 1
             used_indices.add(dchg_idx - 1)
+            gi_list.insert(0, dchg_idx - 1)
 
         # 방전 직후 연속 비충전/비방전 그룹(휴지 등)을 사이클 끝에 포함
         next_idx = dchg_idx + 1
@@ -3160,13 +3302,14 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate, ptn_struct=None):
                and group_info.loc[next_idx, "Condition"] not in (1, 2)):
             end_idx = next_idx
             used_indices.add(next_idx)
+            gi_list.append(next_idx)
             next_idx += 1
 
         used_indices.add(dchg_idx)
 
         first_file = int(group_info.loc[start_idx, "OriMin"])
         last_file = int(group_info.loc[end_idx, "OriMax"])
-        events.append((first_file, last_file))
+        events.append((first_file, last_file, gi_list))
 
     # Pass 2: 충전 전용 사이클 (방전 없이 충전만 있는 그룹)
     chg_only_mask = (group_info["Condition"] == 1) & (group_info["Cap"] > mincapacity / 60)
@@ -3176,6 +3319,7 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate, ptn_struct=None):
         used_indices.add(idx)
         first_file = int(group_info.loc[idx, "OriMin"])
         last_file = int(group_info.loc[idx, "OriMax"])
+        gi_list = [idx]
         # 충전 후 연속 비충전/비방전 그룹(휴지 등)도 포함
         next_idx = idx + 1
         while (next_idx < len(group_info)
@@ -3183,14 +3327,40 @@ def toyo_build_cycle_map(raw_file_path, mincapacity, inirate, ptn_struct=None):
                and group_info.loc[next_idx, "Condition"] not in (1, 2)):
             last_file = int(group_info.loc[next_idx, "OriMax"])
             used_indices.add(next_idx)
+            gi_list.append(next_idx)
             next_idx += 1
-        events.append((first_file, last_file))
+        events.append((first_file, last_file, gi_list))
 
-    # 시작 파일 기준 정렬 → 논리사이클 번호 부여
+    # 시작 파일 기준 정렬 → 논리사이클 번호 부여 (dict 형식)
     events.sort(key=lambda x: x[0])
     cycle_map = {}
-    for ln, (start, end) in enumerate(events, start=1):
-        cycle_map[ln] = (start, end)
+    for ln, (start, end, gi_list) in enumerate(events, start=1):
+        chg_files, dchg_files, chg_rest, dchg_rest = [], [], [], []
+        last_dir: str | None = None
+        for gi in sorted(gi_list):
+            cond = int(group_info.loc[gi, "Condition"])
+            ori_min = int(group_info.loc[gi, "OriMin"])
+            ori_max = int(group_info.loc[gi, "OriMax"])
+            files = list(range(ori_min, ori_max + 1))
+            if cond == 1:
+                chg_files.extend(files)
+                last_dir = 'chg'
+            elif cond == 2:
+                dchg_files.extend(files)
+                last_dir = 'dchg'
+            else:
+                # 휴지 등 비충방전: 직전 active 방향 상속
+                if last_dir == 'chg':
+                    chg_rest.extend(files)
+                elif last_dir == 'dchg':
+                    dchg_rest.extend(files)
+        cycle_map[ln] = {
+            'all': (start, end),
+            'chg': chg_files,
+            'dchg': dchg_files,
+            'chg_rest': chg_rest,
+            'dchg_rest': dchg_rest,
+        }
 
     return cycle_map, mincapacity
 
@@ -3217,6 +3387,8 @@ def _pne_build_sweep_cycle_map(
     pivot: pd.DataFrame,
     all_tcs: list[int],
     mincapacity: float,
+    chg_s: pd.Series,
+    dchg_s: pd.Series,
 ) -> dict:
     """스윕 방향 감지 + 그룹핑 → cycle_map 생성 (GITT/DCIR/펄스 시험용).
 
@@ -3237,11 +3409,16 @@ def _pne_build_sweep_cycle_map(
         전체 TotlCycle 번호 목록 (정렬 완료).
     mincapacity : float
         공칭 용량 (mAh).
+    chg_s : pd.Series
+        TC별 충전 용량 (Condition=1 합산). index=TotlCycle.
+    dchg_s : pd.Series
+        TC별 방전 용량 (Condition=2 합산). index=TotlCycle.
 
     Returns
     -------
     dict
-        {논리사이클: int} (단일 TC) 또는 {논리사이클: (시작TC, 끝TC)} (스윕 범위).
+        {논리사이클: {'all': (s,e), 'chg': [...], 'dchg': [...],
+                     'chg_rest': [...], 'dchg_rest': [...]}}.
     """
     chg_s = pivot["chgCap"].get(1, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
     dchg_s = pivot["DchgCap"].get(2, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
@@ -3338,9 +3515,26 @@ def _pne_build_sweep_cycle_map(
             si += 1
     segments = absorbed
 
+    # ── 2.7단계: 초기 단방향 유의 TC → 스윕 변환 (후속 스윕과 페어링 유도) ──
+    # 스윕 시험(GITT 등)에서 첫 TC가 유의(풀충전/풀방전)이고 단방향인 경우,
+    # 이는 GITT 스윕의 "준비 스텝"이므로 스윕으로 변환하여 후속 반대 방향
+    # 스윕과 자연스럽게 페어링되게 한다.
+    # → LC1 = (충전 + 방전스윕) 또는 (방전 + 충전스윕)으로 구성됨.
+    if (segments
+            and segments[0]['kind'] == 'sig'
+            and not segments[0].get('has_both', False)
+            and len(segments) >= 2
+            and segments[1]['kind'] == 'sweep'
+            and _opposite_dirs(segments[0]['dir'], segments[1]['dir'])):
+        segments[0] = {
+            'kind': 'sweep',
+            'tcs': segments[0]['tcs'],
+            'dir': segments[0]['dir'],
+        }
+
     # ── 3단계: 인접 반대 방향 스윕 쌍 → 1 논리사이클로 병합 ──
     # paired 병합 시 각 서브스윕의 방향·TC 범위를 보존하여
-    # 이후 sweep_scope 생성에 활용한다.
+    # 이후 cycle_map dict 생성에 활용한다.
     merged: list[dict] = []
     si = 0
     while si < len(segments):
@@ -3362,57 +3556,50 @@ def _pne_build_sweep_cycle_map(
             merged.append(seg)
             si += 1
 
-    # ── 4단계: cycle_map + sweep_scope 변환 ──
+    # ── 4단계: cycle_map 변환 (dict 형식) ──
+    # TC별 방향 분류: chg_s/dchg_s 기반. rest TC는 직전 active TC 방향 상속.
     cycle_map: dict = {}
-    sweep_scope: dict = {}   # {논리사이클: {'chg': (start, end), 'dchg': (start, end)}}
     ln = 0
     for seg in merged:
-        tcs = seg['tcs']
-        if seg['kind'] == 'sig':
-            # 유의 TC: 충방전 쌍 유무와 무관하게 논리사이클로 포함
-            # (초기 충전, 단독 RPT 등 has_both=False인 유의 TC도 유효한 이벤트)
-            ln += 1
-            if len(tcs) >= 2:
-                cycle_map[ln] = (int(min(tcs)), int(max(tcs)))
+        tcs = sorted(seg['tcs'])
+        if not tcs:
+            continue
+        ln += 1
+        tc_min, tc_max = int(min(tcs)), int(max(tcs))
+
+        # TC별 chg/dchg/rest 분류
+        chg_list, dchg_list, chg_rest_list, dchg_rest_list = [], [], [], []
+        last_dir: str | None = None
+        for tc in tcs:
+            c = float(chg_s.get(tc, 0))
+            d = float(dchg_s.get(tc, 0))
+            if c > 0 and d > 0:
+                chg_list.append(tc)
+                dchg_list.append(tc)
+                # 양방향 TC → rest 방향 미정
+            elif c > 0:
+                chg_list.append(tc)
+                last_dir = 'chg'
+            elif d > 0:
+                dchg_list.append(tc)
+                last_dir = 'dchg'
             else:
-                cycle_map[ln] = int(tcs[0])
-        else:
-            # 스윕 또는 쌍 병합된 스윕
-            if len(tcs) >= 2:
-                ln += 1
-                cycle_map[ln] = (int(min(tcs)), int(max(tcs)))
-            elif tcs:
-                ln += 1
-                cycle_map[ln] = int(tcs[0])
+                # rest TC: 직전 active TC 방향 상속
+                if last_dir == 'chg':
+                    chg_rest_list.append(tc)
+                elif last_dir == 'dchg':
+                    dchg_rest_list.append(tc)
+                # 방향 미정이면 분류 생략 (all 범위에는 포함됨)
 
-            # paired 세그먼트: 서브스윕 방향별 TC 범위를 sweep_scope에 기록
-            if seg['kind'] == 'paired' and 'sub_sweeps' in seg:
-                scope_entry: dict = {}
-                for sub in seg['sub_sweeps']:
-                    sub_tcs = sub['tcs']
-                    if not sub_tcs:
-                        continue
-                    tc_range = (int(min(sub_tcs)), int(max(sub_tcs)))
-                    if sub['dir'] == 'CHG':
-                        scope_entry['chg'] = tc_range
-                    elif sub['dir'] == 'DCHG':
-                        scope_entry['dchg'] = tc_range
-                    elif sub['dir'] == 'MIXED':
-                        # MIXED: 충방전 혼합 구간 — 양쪽 모두에 할당
-                        scope_entry.setdefault('chg', tc_range)
-                        scope_entry.setdefault('dchg', tc_range)
-                if scope_entry:
-                    sweep_scope[ln] = scope_entry
+        cycle_map[ln] = {
+            'all': (tc_min, tc_max),
+            'chg': chg_list,
+            'dchg': dchg_list,
+            'chg_rest': chg_rest_list,
+            'dchg_rest': dchg_rest_list,
+        }
 
-            # 단방향 스윕 (비paired): 방향 정보 기록
-            elif seg['kind'] == 'sweep' and len(tcs) >= 2:
-                tc_range = (int(min(tcs)), int(max(tcs)))
-                if seg['dir'] == 'CHG':
-                    sweep_scope[ln] = {'chg': tc_range}
-                elif seg['dir'] == 'DCHG':
-                    sweep_scope[ln] = {'dchg': tc_range}
-
-    return cycle_map, sweep_scope
+    return cycle_map
 
 
 def pne_build_cycle_map(
@@ -3562,10 +3749,36 @@ def pne_build_cycle_map(
                         group.append(valid_totl_cycles[i])
                         i += 1
                     ln += 1
-                    cycle_map[ln] = (int(min(group)), int(max(group)))
+                    # dict 형식: TC별 방향 분류
+                    chg_l, dchg_l, cr, dr = [], [], [], []
+                    last_d: str | None = None
+                    for t in group:
+                        c_v = float(chg_s.get(t, 0))
+                        d_v = float(dchg_s.get(t, 0))
+                        if c_v > 0 and d_v > 0:
+                            chg_l.append(t); dchg_l.append(t)
+                        elif c_v > 0:
+                            chg_l.append(t); last_d = 'chg'
+                        elif d_v > 0:
+                            dchg_l.append(t); last_d = 'dchg'
+                        else:
+                            if last_d == 'chg': cr.append(t)
+                            elif last_d == 'dchg': dr.append(t)
+                    cycle_map[ln] = {
+                        'all': (int(min(group)), int(max(group))),
+                        'chg': chg_l, 'dchg': dchg_l,
+                        'chg_rest': cr, 'dchg_rest': dr,
+                    }
                 else:
                     ln += 1
-                    cycle_map[ln] = int(tc)
+                    has_c = float(chg_s.get(tc, 0)) > 0
+                    has_d = float(dchg_s.get(tc, 0)) > 0
+                    cycle_map[ln] = {
+                        'all': (int(tc), int(tc)),
+                        'chg': [int(tc)] if has_c else [],
+                        'dchg': [int(tc)] if has_d else [],
+                        'chg_rest': [], 'dchg_rest': [],
+                    }
                     i += 1
             else:
                 # 연속 비유의 TC 블록을 하나의 논리사이클(스윕)로 묶기
@@ -3575,19 +3788,33 @@ def pne_build_cycle_map(
                     group.append(valid_totl_cycles[i])
                     i += 1
                 ln += 1
-                if len(group) == 1:
-                    cycle_map[ln] = int(group[0])
-                else:
-                    cycle_map[ln] = (int(min(group)), int(max(group)))
+                chg_l, dchg_l, cr, dr = [], [], [], []
+                last_d: str | None = None
+                for t in group:
+                    c_v = float(chg_s.get(t, 0))
+                    d_v = float(dchg_s.get(t, 0))
+                    if c_v > 0 and d_v > 0:
+                        chg_l.append(t); dchg_l.append(t)
+                    elif c_v > 0:
+                        chg_l.append(t); last_d = 'chg'
+                    elif d_v > 0:
+                        dchg_l.append(t); last_d = 'dchg'
+                    else:
+                        if last_d == 'chg': cr.append(t)
+                        elif last_d == 'dchg': dr.append(t)
+                cycle_map[ln] = {
+                    'all': (int(min(group)), int(max(group))),
+                    'chg': chg_l, 'dchg': dchg_l,
+                    'chg_rest': cr, 'dchg_rest': dr,
+                }
         return cycle_map, mincapacity
     else:
         # ── 스윕 시험: 방향 기반 그룹핑으로 스윕 범위 매핑 ──
         # .sch sweep_mode=True 확정, 또는 데이터 휴리스틱 (sig_ratio < 0.5 / has_both < 0.3)
         # GITT, DCIR 등 펄스 시험: 연속 동일 방향 TC를 하나의 스윕으로 묶고,
         # 인접 반대 방향 스윕 쌍을 1 논리사이클로 병합
-        cycle_map, sweep_scope = _pne_build_sweep_cycle_map(pivot, all_tcs, mincapacity)
-        # sweep_scope를 캐시에 저장 (채널 경로 기반)
-        _SWEEP_SCOPE_CACHE[raw_file_path] = sweep_scope
+        cycle_map = _pne_build_sweep_cycle_map(
+            pivot, all_tcs, mincapacity, chg_s, dchg_s)
         return cycle_map, mincapacity
 
 
@@ -4138,14 +4365,11 @@ def _build_channel_meta(
 
     # ── 5. 사이클 맵 생성 ──
     cycle_map = None
-    sweep_scope = None
     max_logical = None
     if is_pne:
         cycle_map, _ = pne_build_cycle_map(
             channel_path, min_capacity, ini_crate,
             sch_struct=schedule_struct)
-        # sweep_scope는 pne_build_cycle_map에서 _SWEEP_SCOPE_CACHE에 저장됨
-        sweep_scope = _SWEEP_SCOPE_CACHE.get(channel_path, {})
     else:
         cycle_map, _ = toyo_build_cycle_map(
             channel_path, min_capacity, ini_crate)
@@ -4170,7 +4394,6 @@ def _build_channel_meta(
         test_type=test_type,
         schedule_pattern=schedule_pattern_str,
         cycle_map=cycle_map,
-        sweep_scope=sweep_scope if sweep_scope else None,
         max_logical_cycle=max_logical,
     )
     _channel_meta_store[channel_path] = meta
@@ -5809,10 +6032,7 @@ def _resolve_logical_to_tc_range(
     for logical_cyc in range(start, end + 1):
         if logical_cyc in cycle_map:
             val = cycle_map[logical_cyc]
-            if isinstance(val, tuple):
-                s, e = val
-            else:
-                s, e = val, val
+            s, e = val['all']
             if tc_min is None or s < tc_min:
                 tc_min = s
             if tc_max is None or e > tc_max:
@@ -6712,9 +6932,11 @@ def _process_pne_cycleraw(
             _tc_to_ln: dict[int, int] = {}
             _is_sweep = False
             for _ln, _tc_val in cycle_map.items():
-                if isinstance(_tc_val, tuple):
-                    _is_sweep = True
-                    for _t in range(_tc_val[0], _tc_val[1] + 1):
+                if isinstance(_tc_val, dict):
+                    _s, _e = _tc_val['all']
+                    if _s != _e:
+                        _is_sweep = True
+                    for _t in range(_s, _e + 1):
                         _tc_to_ln[_t] = _ln
                 else:
                     _tc_to_ln[int(_tc_val)] = _ln
@@ -14447,9 +14669,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         table_cycle = self._get_table_cycle_input()
         if table_cycle is not None:
             CycleNo = table_cycle
-        
+
+        # 테이블에서 per-path 용량 배열 추출 (사이클 분석과 동일 구조)
+        _per_path_caps = None
+        if self._has_table_data():
+            table_rows = self._get_table_rows()
+            caps = []
+            for row in table_rows:
+                cap_str = row.get('capacity', '')
+                try:
+                    cap_val = float(cap_str) if cap_str else 0.0
+                except (ValueError, TypeError):
+                    # 경로명에서 mAh 추출 시도
+                    cap_val = name_capacity(row['path']) if 'mAh' in row.get('path', '') else 0.0
+                caps.append(cap_val)
+            if any(c > 0 for c in caps):
+                _per_path_caps = caps
+
         button_widget.setEnabled(True)
-        
+
         return {
             'config': config,
             'folders': pne_path[0],
@@ -14460,7 +14698,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             'smoothdegree': config[3],
             'mincrate': config[4],
             'dqscale': config[5],
-            'dvscale': config[6]
+            'dvscale': config[6],
+            'per_path_capacities': _per_path_caps,
         }
 
     def _get_table_cycle_input(self) -> list[int] | None:
@@ -16416,13 +16655,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                              if f.is_dir() and _is_channel_folder(f.name)]
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
-                        # Phase 0 메타가 있으면 cycle_map 전달
+                        # Phase 0 메타가 있으면 cycle_map + 확정 용량 전달
                         cm = None
+                        _cap = mincapacity
                         if has_meta:
                             meta = get_channel_meta(folder_path)
                             if meta is not None:
                                 cm = meta.cycle_map
-                        task_info = (folder_path, cycle_list, mincapacity,
+                                if meta.min_capacity > 0 and _cap == 0:
+                                    _cap = meta.min_capacity
+                        task_info = (folder_path, cycle_list, _cap,
                                      inirate, options, i, j, cm)
                         tasks.append(task_info)
 
@@ -16478,15 +16720,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                    "Time(min)", "SOC", temp_lgnd))
         _artists.append(graph_step(stepchg.TimeMin, stepchg.Temp, step_ax6, -15, 60, 5,
                    "Time(min)", "Temperature (℃)", lgnd))
-        # Excel 저장
+        # Excel 저장 (기존 5컬럼 호환: TimeMin, SOC, Vol, Crate, Temp)
         if self.saveok.isChecked() and save_file_name:
-            stepchg.to_excel(writer, startcol=write_column_num, index=False,
-                        header=[headername + "time(min)",
-                                headername + "SOC",
-                                headername + "Voltage",
-                                headername + "Crate",
-                                headername + "Temp."])
-            write_column_num += 5
+            _save_cols = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
+            _save_df = stepchg[[c for c in _save_cols if c in stepchg.columns]]
+            _save_df.to_excel(writer, startcol=write_column_num, index=False,
+                        header=[headername + c for c in
+                                ["time(min)", "SOC", "Voltage", "Crate", "Temp."]][:len(_save_df.columns)])
+            write_column_num += len(_save_df.columns)
         # CSV 저장 (CycProfile 모드에서만 사용, .copy()로 SettingWithCopyWarning 방지)
         if save_csv and self.ect_saveok.isChecked() and save_file_name:
             continue_df = stepchg[["TimeMin", "Vol", "Crate", "Temp"]].copy()
@@ -16530,7 +16771,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         dict[str, ChannelMeta]
             {channel_path: ChannelMeta}. _channel_meta_store와 동일 참조.
         """
+        global _meta_fingerprint
+
+        # fingerprint 비교: 동일 경로+용량이면 기존 캐시 재사용
+        if is_meta_valid(all_data_folder, per_path_capacities):
+            _perf_logger.info('  [Phase 0] 캐시 유효 — 재계산 스킵')
+            return dict(_channel_meta_store)
+
         _reset_all_caches()
+        _meta_fingerprint = _calc_meta_fingerprint(all_data_folder, per_path_capacities)
 
         # 채널 폴더 탐색 + 태스크 구성
         tasks = []  # (channel_path, capacity_override, ini_crate)
@@ -16605,6 +16854,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 cyctemp = pne_cycle_data(folder_path, mincapacity, firstCrate, dcirchk, dcirchk_2, mkdcir)
             else:
                 cyctemp = toyo_cycle_data(folder_path, mincapacity, firstCrate, dcirchk_2)
+            # Phase 0 메타에서 Category 컬럼 주입
+            if cyctemp is not None and cyctemp[1] is not None and hasattr(cyctemp[1], 'NewData'):
+                enrich_newdata_with_meta(cyctemp[1].NewData, folder_path)
             return (folder_idx, subfolder_idx, folder_path, cyctemp)
         except Exception as e:
             print(f"[병렬 로딩 오류] {folder_path}: {e}")
@@ -16634,18 +16886,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if i not in subfolder_map:
                     continue
                 subfolder = subfolder_map[i]
-                _cap = mincapacity
+                _table_cap = 0.0
                 if per_path_capacities and i < len(per_path_capacities) and per_path_capacities[i] > 0:
-                    _cap = per_path_capacities[i]
+                    _table_cap = per_path_capacities[i]
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
                         meta = get_channel_meta(folder_path)
                         is_pne = meta.is_pne if meta else check_cycler(cyclefolder)
-                        # meta에서 확정된 용량이 있고, 테이블 용량이 없으면 meta 용량 사용
-                        if meta and meta.min_capacity > 0 and _cap == mincapacity:
-                            _cap_ch = meta.min_capacity
-                        else:
-                            _cap_ch = _cap
+                        # 용량 결정: 테이블 > Phase 0 메타 > 0(자동감지)
+                        _cap_ch = resolve_capacity(folder_path, _table_cap)
                         task_info = (folder_path, _cap_ch, firstCrate,
                                      dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
                         tasks.append(task_info)
@@ -17309,7 +17558,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     meta = get_channel_meta(ch_path)
                     if meta and meta.cycle_map:
                         _n_ln = len(meta.cycle_map)
-                        _has_sw = any(isinstance(v, tuple) for v in meta.cycle_map.values())
+                        _has_sw = _is_sweep_map(meta.cycle_map)
                         _type_tag = "스윕" if _has_sw else "일반"
                         _perf_logger.info(
                             f'  논리사이클: path{fi} [{os.path.basename(ch_path)}]  '
@@ -18232,12 +18481,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             cm = _build_cycle_map_for_path(path, cap_for_cycle)
                         if cm:
-                            all_tc = []
-                            for v in cm.values():
-                                if isinstance(v, tuple):
-                                    all_tc.extend(v)
-                                else:
-                                    all_tc.append(v)
+                            all_tc = [v['all'][1] for v in cm.values() if isinstance(v, dict)]
                             if all_tc:
                                 auto_raw_str = str(max(all_tc))
                     except Exception:
@@ -18984,15 +19228,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return
             n_logical = len(cycle_map)
             # 시험 유형 판별 (스윕 여부)
-            has_sweep = any(isinstance(v, tuple) for v in cycle_map.values())
+            has_sweep = _is_sweep_map(cycle_map)
             if has_sweep:
                 # 스윕 내 TC 수 계산
-                total_tc = 0
-                for v in cycle_map.values():
-                    if isinstance(v, tuple):
-                        total_tc += v[1] - v[0] + 1
-                    else:
-                        total_tc += 1
+                total_tc = sum(
+                    v['all'][1] - v['all'][0] + 1
+                    for v in cycle_map.values() if isinstance(v, dict))
                 type_str = f"스윕 시험, 물리TC {total_tc}개"
             else:
                 type_str = "일반 시험"
@@ -19094,12 +19335,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         try:
             cm = _build_cycle_map_for_path(path, cap)
             if cm:
-                all_tc = []
-                for v in cm.values():
-                    if isinstance(v, tuple):
-                        all_tc.extend(v)
-                    else:
-                        all_tc.append(v)
+                all_tc = [v['all'][1] for v in cm.values() if isinstance(v, dict)]
                 if all_tc:
                     max_raw = str(max(all_tc))
         except Exception:
@@ -19107,7 +19343,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return {'max_cycle': str(max_cyc), 'max_raw': max_raw or str(max_cyc)}
 
     def _restore_cycle_hint(self, row: int, col: int):
-        """셀이 비워졌을 때 회색 max 힌트를 복원."""
+        """셀이 비워졌을 때 회색 max 힌트를 복원 (양쪽 모두 복원)."""
         info = self._get_row_max_cycle_info(row)
         if not info:
             return
@@ -19115,33 +19351,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _auto_fg = QtGui.QColor(160, 160, 160)
         tbl.blockSignals(True)
         try:
-            if col == 4:
-                item = tbl.item(row, 4)
-                if item is None:
-                    item = QtWidgets.QTableWidgetItem(f"1-{info['max_cycle']}")
-                    tbl.setItem(row, 4, item)
-                else:
-                    item.setText(f"1-{info['max_cycle']}")
-                item.setForeground(_auto_fg)
-                item.setToolTip(f"최대 사이클: {info['max_cycle']}")
-                # col5도 함께 복원
-                item5 = tbl.item(row, 5)
-                if item5 is None:
-                    item5 = QtWidgets.QTableWidgetItem(f"1-{info['max_raw']}")
-                    tbl.setItem(row, 5, item5)
-                else:
-                    item5.setText(f"1-{info['max_raw']}")
-                item5.setForeground(_auto_fg)
-                item5.setToolTip(f"최대 TotlCycle(Raw): {info['max_raw']}")
-            elif col == 5:
-                item5 = tbl.item(row, 5)
-                if item5 is None:
-                    item5 = QtWidgets.QTableWidgetItem(f"1-{info['max_raw']}")
-                    tbl.setItem(row, 5, item5)
-                else:
-                    item5.setText(f"1-{info['max_raw']}")
-                item5.setForeground(_auto_fg)
-                item5.setToolTip(f"최대 TotlCycle(Raw): {info['max_raw']}")
+            # col4 복원
+            item4 = tbl.item(row, 4)
+            if item4 is None:
+                item4 = QtWidgets.QTableWidgetItem(f"1-{info['max_cycle']}")
+                tbl.setItem(row, 4, item4)
+            else:
+                item4.setText(f"1-{info['max_cycle']}")
+            item4.setForeground(_auto_fg)
+            item4.setToolTip(f"최대 사이클: {info['max_cycle']}")
+            # col5 복원
+            item5 = tbl.item(row, 5)
+            if item5 is None:
+                item5 = QtWidgets.QTableWidgetItem(f"1-{info['max_raw']}")
+                tbl.setItem(row, 5, item5)
+            else:
+                item5.setText(f"1-{info['max_raw']}")
+            item5.setForeground(_auto_fg)
+            item5.setToolTip(f"최대 TotlCycle(Raw): {info['max_raw']}")
         finally:
             tbl.blockSignals(False)
 
@@ -19149,8 +19376,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """사이클(col4) 또는 사이클(Raw)(col5) 셀 변경 시 양방향 연동.
 
         col4 편집 → 검정 폰트 + col5에 대응 TotlCycle 회색 자동 갱신
-        col5 편집 → 검정 폰트 (col4는 건드리지 않음)
-        비우면 → 회색 max 힌트 복원
+        col5 편집 → 검정 폰트 + col4에 대응 논리사이클 회색 자동 갱신
+        비우면 → 회색 max 힌트 복원 (양쪽 모두)
         """
         if col not in (4, 5):
             return
@@ -19165,9 +19392,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             text = item.text().strip()
             _auto_fg = QtGui.QColor(160, 160, 160)
 
-            # ── 셀이 비워졌을 때: 회색 max 힌트 복원 ──
+            # ── 셀이 비워졌을 때: 회색 max 힌트 복원 (양쪽 모두) ──
             if not text:
                 self._restore_cycle_hint(row, col)
+                # 양쪽 모두 편집 가능으로 복원
+                tbl.blockSignals(True)
+                try:
+                    _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
+                                 | QtCore.Qt.ItemFlag.ItemIsEnabled
+                                 | QtCore.Qt.ItemFlag.ItemIsEditable)
+                    for c in (4, 5):
+                        it = tbl.item(row, c)
+                        if it is not None:
+                            it.setFlags(_editable)
+                finally:
+                    tbl.blockSignals(False)
                 return
 
             # ── 아이템 속성 변경 시 cellChanged 재발화 방지 ──
@@ -19182,25 +19421,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 elif col == 5 and max_info:
                     item.setToolTip(f"입력: {text}  (최대 Raw: {max_info['max_raw']})")
 
+                # ── 경로 및 cycle_map 준비 (양방향 공통) ──
+                path = self._get_table_cell(row, 1)
+                if not path:
+                    for rr in range(row - 1, -1, -1):
+                        path = self._get_table_cell(rr, 1)
+                        if path:
+                            break
+                if not path:
+                    return
+                cap_str = self._get_table_cell(row, 3)
+                try:
+                    cap = float(cap_str) if cap_str else 0.0
+                except ValueError:
+                    cap = 0.0
+                cycle_map = _build_cycle_map_for_path(path, cap)
+                if not cycle_map:
+                    return
+
                 if col == 4:
                     # col4(사이클) 편집 → col5(사이클Raw)에 대응 TotlCycle 자동 매핑
-                    path = self._get_table_cell(row, 1)
-                    if not path:
-                        # forward-fill: 이전 행에서 경로 찾기
-                        for rr in range(row - 1, -1, -1):
-                            path = self._get_table_cell(rr, 1)
-                            if path:
-                                break
-                    if not path:
-                        return
-                    cap_str = self._get_table_cell(row, 3)
-                    try:
-                        cap = float(cap_str) if cap_str else 0.0
-                    except ValueError:
-                        cap = 0.0
-                    cycle_map = _build_cycle_map_for_path(path, cap)
-                    if not cycle_map:
-                        return
                     totl_str = _logical_to_totl_str(cycle_map, text)
                     if totl_str:
                         item5 = tbl.item(row, 5)
@@ -19214,7 +19454,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if max_info:
                             raw_tip += f"  (최대 Raw: {max_info['max_raw']})"
                         item5.setToolTip(raw_tip)
-                # col5 편집 → 검정 폰트만 설정, col4는 건드리지 않음 (위에서 이미 처리)
+                        # col5 읽기전용으로 설정 (자동 매핑 값 보호)
+                        item5.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable
+                                       | QtCore.Qt.ItemFlag.ItemIsEnabled)
+                elif col == 5:
+                    # col5(사이클Raw) 편집 → col4(사이클)에 대응 논리사이클 자동 매핑
+                    logical_str = _totl_to_logical_str(cycle_map, text)
+                    if logical_str:
+                        item4 = tbl.item(row, 4)
+                        if item4 is None:
+                            item4 = QtWidgets.QTableWidgetItem(logical_str)
+                            tbl.setItem(row, 4, item4)
+                        else:
+                            item4.setText(logical_str)
+                        item4.setForeground(_auto_fg)
+                        cyc_tip = f"논리사이클 (자동 매핑): {logical_str}"
+                        if max_info:
+                            cyc_tip += f"  (최대: {max_info['max_cycle']})"
+                        item4.setToolTip(cyc_tip)
+                        # col4 읽기전용으로 설정 (자동 매핑 값 보호)
+                        item4.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable
+                                       | QtCore.Qt.ItemFlag.ItemIsEnabled)
             finally:
                 tbl.blockSignals(False)
         except Exception:
@@ -19989,10 +20249,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         mincrate = init_data['mincrate']
         dqscale, dvscale = init_data['dqscale'], init_data['dvscale']
         all_data_folder, all_data_name = init_data['folders'], init_data['names']
+        _per_path_caps = init_data.get('per_path_capacities')
 
-        # ── Phase 0: 메타데이터 사전 구축 ──
-        if not _channel_meta_store:
-            self._build_all_channel_meta_parallel(all_data_folder, mincapacity, firstCrate)
+        # ── Phase 0: 메타데이터 사전 구축 (fingerprint 비교 — 동일 경로면 스킵) ──
+        self._build_all_channel_meta_parallel(all_data_folder, per_path_capacities=_per_path_caps)
 
         # ── 1-b. 논리사이클 최대값 초과 검증 (메타 스토어 우선) ──
         max_lc = None
@@ -20030,32 +20290,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             all_data_folder, CycleNo, mincapacity, firstCrate, load_options,
         )
 
-        # ── 3. 결과 호환 래퍼 ──
-        # _profile_render_loop가 기대하는 형식으로 변환:
-        #   temp[1].{data_attr} → DataFrame (len > 2)
+        # ── 3. 결과 변환 ──
+        # _profile_render_loop는 data_attr="df" 로 UnifiedProfileResult.df를 직접 참조
         _compat_data = {}
-        if legacy_mode == "step":
-            data_attr = "stepchg"
-        elif legacy_mode in ("chg", "dchg", "cycle_soc"):
-            data_attr = "Profile"
-        else:
-            data_attr = "stepchg"
+        data_attr = "df"
 
         for key, (cap, result) in loaded_data.items():
-            # UnifiedProfileResult → 호환 컨테이너
-            class _Compat:
-                pass
-            compat = _Compat()
-            if hasattr(result, 'df') and not result.df.empty:
-                setattr(compat, data_attr, result.df)
-            _compat_data[key] = [cap, compat]
+            _compat_data[key] = [cap, result]
 
         # ── 4. 플롯 콜백 선택 ──
         if legacy_mode == "step":
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 return self._plot_and_save_step_data(
-                    axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
+                    axes, temp[1].df, temp[0], headername, lgnd, temp_lgnd,
                     writer, writecolno, save_file_name, CycNo, save_csv=True)
 
             def _fallback(FolderBase, CycNo, is_pne):
@@ -20064,12 +20312,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     data_scope=options["data_scope"], axis_mode="time",
                     continuity="overlay", include_rest=options["include_rest"],
                 )
-                class _C:
-                    pass
-                c = _C()
-                if not r.df.empty:
-                    c.stepchg = r.df
-                return [r.mincapacity, c]
+                return [r.mincapacity, r]
 
             legend_pos = ["lower right"] * 4 + ["upper right"] * 2
             axes_order = None  # 기본 step 스타일
@@ -20078,7 +20321,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
-                p = temp[1].Profile
+                p = temp[1].df
                 _artists = []
                 _artists.append(graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -20102,10 +20345,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _artists.append(graph_profile(p.SOC, p.Temp, ax6,
                     -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
                 if self.saveok.isChecked() and save_file_name:
-                    p.to_excel(writer, startcol=writecolno, index=False,
+                    _sc = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
+                    _sd = p[[c for c in _sc if c in p.columns]]
+                    _sd.to_excel(writer, startcol=writecolno, index=False,
                         header=[headername + c for c in
-                                ["Time(min)", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]])
-                    writecolno += 8
+                                ["Time(min)", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]][:len(_sd.columns)])
+                    writecolno += len(_sd.columns)
                 if self.ect_saveok.isChecked() and save_file_name:
                     cdf = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
                     cdf["TimeSec"] = (cdf["TimeMin"] * 60).round(1)
@@ -20124,12 +20369,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     data_scope="charge", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree,
                 )
-                class _C:
-                    pass
-                c = _C()
-                if not r.df.empty:
-                    c.Profile = r.df
-                return [r.mincapacity, c]
+                return [r.mincapacity, r]
 
             legend_pos = ["lower right"] * 3 + ["upper right"] * 3
             axes_order = [0, 1, 2, 3, 4, 5]
@@ -20138,7 +20378,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
-                p = temp[1].Profile
+                p = temp[1].df
                 _artists = []
                 _artists.append(graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -20158,10 +20398,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _artists.append(graph_profile(p.SOC, p.Temp, ax6,
                     -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
                 if self.saveok.isChecked() and save_file_name:
-                    p.to_excel(writer, startcol=writecolno, index=False,
+                    _sc = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
+                    _sd = p[[c for c in _sc if c in p.columns]]
+                    _sd.to_excel(writer, startcol=writecolno, index=False,
                         header=[headername + c for c in
-                                ["Time(min)", "DOD", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]])
-                    writecolno += 8
+                                ["Time(min)", "DOD", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]][:len(_sd.columns)])
+                    writecolno += len(_sd.columns)
                 if self.ect_saveok.isChecked() and save_file_name:
                     cdf = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
                     cdf["TimeSec"] = (cdf["TimeMin"] * 60).round(1)
@@ -20180,12 +20422,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     data_scope="discharge", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree,
                 )
-                class _C:
-                    pass
-                c = _C()
-                if not r.df.empty:
-                    c.Profile = r.df
-                return [r.mincapacity, c]
+                return [r.mincapacity, r]
 
             legend_pos = ["lower left", "upper left", "lower left",
                           "lower left", "upper right", "upper right"]
@@ -20196,7 +20433,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
-                p = temp[1].Profile
+                p = temp[1].df
                 _artists = []
                 # ax1, ax3: SOC vs Voltage (동일 — 확대용)
                 _artists.append(graph_profile(p.SOC, p.Vol, ax1,
@@ -20240,12 +20477,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     data_scope="cycle", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree, include_rest=options["include_rest"],
                 )
-                class _C:
-                    pass
-                c = _C()
-                if not r.df.empty:
-                    c.Profile = r.df
-                return [r.mincapacity, c]
+                return [r.mincapacity, r]
 
             legend_pos = ["lower right"] * 3 + ["upper right"] * 3
             axes_order = [0, 1, 2, 3, 4, 5]

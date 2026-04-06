@@ -453,12 +453,14 @@ def validate_profile_result(result, spec: ProfileTestSpec, label: str = ""):
             assert pd.api.types.is_numeric_dtype(df[col]), \
                 f"{prefix}'{col}' 비숫자: {df[col].dtype}"
 
-    # 5. NaN 비율 (90% 초과 비정상)
+    # 5. NaN 비율 (90% 초과 비정상, dQdV/dVdQ는 95% — GITT 휴지 비율이 높음)
     present_req = [c for c in required if c in df.columns]
     if present_req:
         nan_ratio = df[present_req].isnull().mean()
-        high_nan = nan_ratio[nan_ratio > 0.9]
-        assert high_nan.empty, f"{prefix}NaN 90%+ : {dict(high_nan)}"
+        _dqdv_cols = {'dQdV', 'dVdQ'}
+        high_nan = {c: v for c, v in nan_ratio.items()
+                    if v > (0.95 if c in _dqdv_cols else 0.9)}
+        assert not high_nan, f"{prefix}NaN 과다 : {high_nan}"
 
 
 def validate_plot_creation(result, spec: ProfileTestSpec, label: str = ""):

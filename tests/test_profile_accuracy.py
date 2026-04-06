@@ -487,23 +487,25 @@ class TestLogicalCycleMapping:
             f"[{exp_entry['tag']}] 키 정렬 안됨"
 
     def test_cycle_map_values_valid(self, exp_entry, cycle_info):
-        """값이 int 또는 tuple(int,int)이고 모두 양수인지 확인."""
+        """값이 dict{'all': (s,e), 'chg': [...], ...} 형식인지 확인."""
         cmap, _ = cycle_info
         for key, val in cmap.items():
-            if isinstance(val, tuple):
-                assert len(val) == 2, \
-                    f"[{exp_entry['tag']}] 튜플 길이 이상: key={key}, val={val}"
-                assert val[0] > 0 and val[1] > 0, \
-                    f"[{exp_entry['tag']}] 튜플 값 ≤ 0: key={key}, val={val}"
-                assert val[0] <= val[1], \
-                    f"[{exp_entry['tag']}] 튜플 역순: key={key}, val={val}"
-            elif isinstance(val, (int, np.integer)):
-                assert val > 0, \
-                    f"[{exp_entry['tag']}] 값 ≤ 0: key={key}, val={val}"
-            else:
-                pytest.fail(
-                    f"[{exp_entry['tag']}] 값 타입 이상: key={key}, "
-                    f"type={type(val)}")
+            assert isinstance(val, dict), \
+                f"[{exp_entry['tag']}] 값이 dict가 아님: key={key}, type={type(val)}"
+            assert 'all' in val, \
+                f"[{exp_entry['tag']}] 'all' 키 없음: key={key}, val={val}"
+            s, e = val['all']
+            assert s > 0 and e > 0, \
+                f"[{exp_entry['tag']}] all 범위 값 ≤ 0: key={key}, all=({s}, {e})"
+            assert s <= e, \
+                f"[{exp_entry['tag']}] all 범위 역순: key={key}, all=({s}, {e})"
+            for dir_key in ('chg', 'dchg', 'chg_rest', 'dchg_rest'):
+                tc_list = val.get(dir_key, [])
+                assert isinstance(tc_list, list), \
+                    f"[{exp_entry['tag']}] {dir_key}가 list가 아님: key={key}"
+                for tc in tc_list:
+                    assert s <= tc <= e, \
+                        f"[{exp_entry['tag']}] {dir_key} TC {tc}가 all({s},{e}) 범위 밖: key={key}"
 
     def test_logical_vs_totlcycle_distinction(self, exp_entry, cycle_info):
         """논리사이클 N으로 호출하면 해당 TotlCycle 범위의 데이터만 반환되는지 확인."""
@@ -530,37 +532,40 @@ class TestLogicalCycleMapping:
                 f"[{tag}] 단일 논리사이클인데 Cycle 값이 {len(unique_cycles)}개"
 
     def test_sweep_mode_has_tuple_values(self, exp_entry, cycle_info):
-        """GITT/DCIR 데이터는 cycle_map 값이 tuple이어야 함."""
+        """스윕 데이터는 cycle_map 값이 dict이고 multi-TC이어야 함."""
         tag = exp_entry["tag"]
         fn = exp_entry["folder_name"]
         if not _is_sweep_data(tag, fn):
             pytest.skip("스윕 데이터 아님")
 
         cmap, _ = cycle_info
-        has_tuple = any(isinstance(v, tuple) for v in cmap.values())
-        if not has_tuple:
+        has_multi_tc = any(
+            isinstance(v, dict) and v['all'][0] != v['all'][1]
+            for v in cmap.values())
+        if not has_multi_tc:
             warnings.warn(
-                f"[{tag}] 스윕 데이터인데 tuple 값 없음 — "
+                f"[{tag}] 스윕 데이터인데 multi-TC 값 없음 — "
                 f"general 모드로 분류되었을 수 있음")
 
-    def test_general_mode_has_int_values(self, exp_entry, cycle_info):
-        """일반 가속수명 데이터는 cycle_map 값이 대부분 int여야 함."""
+    def test_general_mode_has_single_tc_values(self, exp_entry, cycle_info):
+        """일반 가속수명 데이터는 cycle_map 값이 대부분 단일 TC여야 함."""
         tag = exp_entry["tag"]
         fn = exp_entry["folder_name"]
         if _is_sweep_data(tag, fn):
             pytest.skip("스윕 데이터임")
 
         cmap, _ = cycle_info
-        int_count = sum(1 for v in cmap.values()
-                        if isinstance(v, (int, np.integer)))
+        single_count = sum(
+            1 for v in cmap.values()
+            if isinstance(v, dict) and v['all'][0] == v['all'][1])
         total = len(cmap)
         if total == 0:
             pytest.skip("빈 사이클 맵")
-        ratio = int_count / total
-        # 일반 모드: 과반수가 int (Toyo도 tuple 사용하므로 비율 완화)
+        ratio = single_count / total
+        # 일반 모드: 과반수가 단일 TC (Toyo도 multi-TC 가능하므로 비율 완화)
         if exp_entry["cycler"] == "pne":
             assert ratio >= 0.5, \
-                f"[{tag}] PNE 일반 모드인데 int 비율 {ratio:.0%} (기대: ≥50%)"
+                f"[{tag}] PNE 일반 모드인데 단일TC 비율 {ratio:.0%} (기대: ≥50%)"
 
 
 class TestProfileDataAccuracy:
@@ -1024,16 +1029,21 @@ class TestSweepProfileAccuracy:
                 f"펄스 특성 미약할 수 있음")
 
     def test_sweep_logical_cycles_are_grouped(self, exp_entry, cycle_info):
-        """스윕 데이터의 cycle_map이 그룹화(tuple)되어 있는지 확인."""
+        """스윕 데이터의 cycle_map이 그룹화(dict 값에 disjoint chg/dchg)되어 있는지 확인."""
         tag = exp_entry["tag"]
         cmap, _ = cycle_info
 
-        tuple_count = sum(1 for v in cmap.values() if isinstance(v, tuple))
+        # dict 값 중 disjoint chg/dchg가 있는지 확인
+        sweep_count = sum(
+            1 for v in cmap.values()
+            if isinstance(v, dict) and set(v.get('chg', [])).isdisjoint(set(v.get('dchg', []))) and (v.get('chg') or v.get('dchg'))
+            and v['all'][0] != v['all'][1]
+        )
         total = len(cmap)
 
-        if tuple_count == 0 and exp_entry["cycler"] == "pne":
+        if sweep_count == 0 and exp_entry["cycler"] == "pne":
             warnings.warn(
-                f"[{tag}] PNE 스윕인데 tuple 매핑 없음 — "
+                f"[{tag}] PNE 스윕인데 스윕 매핑 없음 — "
                 f"general 모드로 분류된 것일 수 있음 ({total}개 사이클)")
 
 
