@@ -7614,8 +7614,8 @@ class Ui_sitool(object):
         self.horizontalLayout_119.setSpacing(4)
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
-        self.cycle_path_table = QtWidgets.QTableWidget(5, 6, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "모드"])
+        self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
+        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "모드", "TotlCycle"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -7624,11 +7624,13 @@ class Ui_sitool(object):
         _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        _hdr.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.cycle_path_table.setColumnWidth(0, 55)
         self.cycle_path_table.setColumnWidth(2, 70)
         self.cycle_path_table.setColumnWidth(3, 55)
         self.cycle_path_table.setColumnWidth(4, 55)
         self.cycle_path_table.setColumnWidth(5, 50)
+        self.cycle_path_table.setColumnWidth(6, 65)
         self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
         self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
         _table_font = QtGui.QFont()
@@ -17299,7 +17301,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _get_table_rows(self):
         """테이블의 모든 행을 dict 리스트로 반환 (빈 행 제외)
-        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str, 'cycle': str, 'mode': str}, ...]
+        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str, 'cycle': str, 'mode': str, 'totl_cycle': str}, ...]
         """
         rows = []
         for r in range(self.cycle_path_table.rowCount()):
@@ -17313,6 +17315,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'capacity': self._get_table_cell(r, 3),
                 'cycle': self._get_table_cell(r, 4),
                 'mode': self._get_table_cell(r, 5),
+                'totl_cycle': self._get_table_cell(r, 6),
             })
         return rows
 
@@ -17344,6 +17347,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'capacity': self._get_table_cell(r, 3),
                 'cycle': self._get_table_cell(r, 4),
                 'mode': self._get_table_cell(r, 5),
+                'totl_cycle': self._get_table_cell(r, 6),
             })
         if current_group:
             groups.append(current_group)
@@ -17365,6 +17369,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             capacity = self._get_table_cell(r, 3)
             cycle = self._get_table_cell(r, 4)
             mode = self._get_table_cell(r, 5)
+            totl_cycle = self._get_table_cell(r, 6)
             # forward-fill: 빈 경로/경로명은 직전 유효값 사용
             if path:
                 last_path = path
@@ -17380,6 +17385,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'name': name, 'path': path,
                 'channel': channel, 'capacity': capacity,
                 'cycle': cycle, 'mode': mode,
+                'totl_cycle': totl_cycle,
             })
         return rows
 
@@ -17528,10 +17534,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for r, row in enumerate(rows):
             if row is None:
                 # 그룹 구분자: 빈 행
-                for col in range(6):
+                for col in range(7):
                     self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
                 continue
-            for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'mode']):
+            for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'mode', 'totl_cycle']):
                 val = row.get(key, '')
                 item = QtWidgets.QTableWidgetItem(val)
                 item.setToolTip(val)
@@ -17540,7 +17546,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _clear_table(self):
         """테이블 내용 초기화"""
         self.cycle_path_table.setRowCount(5)
-        self.cycle_path_table.setColumnCount(6)
+        self.cycle_path_table.setColumnCount(7)
         self.cycle_path_table.clearContents()
         self._update_ect_columns_state()
         self.cycle_map_info_label.setVisible(False)
@@ -17554,6 +17560,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         'cycle': 'cycle', '사이클': 'cycle',
         'cd': 'mode', 'mode': 'mode', '모드': 'mode',
         'capacity': 'capacity', 'cap': 'capacity',
+        'totlcycle': 'totl_cycle', 'totl_cycle': 'totl_cycle',
     }
     # ECT 형식 판별용 키워드 (이 3개가 모두 존재하면 ECT)
     _ECT_HEADER_KEYS = {'cycle', 'cd', 'save'}
@@ -17570,7 +17577,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             is_header: 알려진 헤더 키워드가 1개 이상 매칭되면 True
         """
         cols = [c.strip().lower() for c in header_line.rstrip('\n\r').split('\t')]
-        mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None, 'cycle': None, 'mode': None}
+        mapping = {'name': None, 'path': None, 'channel': None, 'capacity': None, 'cycle': None, 'mode': None, 'totl_cycle': None}
         matched = False
         for idx, col in enumerate(cols):
             key = WindowClass._HEADER_ALIASES.get(col)
@@ -17680,6 +17687,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             capacity = parts[col_map['capacity']] if col_map['capacity'] is not None and col_map['capacity'] < len(parts) else ''
             cycle = parts[col_map['cycle']] if col_map['cycle'] is not None and col_map['cycle'] < len(parts) else ''
             mode = parts[col_map['mode']] if col_map['mode'] is not None and col_map['mode'] < len(parts) else ''
+            totl_cycle = parts[col_map['totl_cycle']] if col_map['totl_cycle'] is not None and col_map['totl_cycle'] < len(parts) else ''
             # 탭 구분 부족 → 드라이브 문자 패턴으로 name/path 분리 시도
             if not path and len(parts) <= 1:
                 fb_name, fb_path = self._split_name_path_fallback(
@@ -17689,12 +17697,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if path:
                 rows.append({'name': name, 'path': path,
                              'channel': channel, 'capacity': capacity,
-                             'cycle': cycle, 'mode': mode})
+                             'cycle': cycle, 'mode': mode,
+                             'totl_cycle': totl_cycle})
             elif name or channel or capacity or cycle or mode:
                 # path 비어있지만 다른 열에 값 있으면 → 데이터 행
                 rows.append({'name': name, 'path': '',
                              'channel': channel, 'capacity': capacity,
-                             'cycle': cycle, 'mode': mode})
+                             'cycle': cycle, 'mode': mode,
+                             'totl_cycle': totl_cycle})
         # 연결처리 체크박스 복원
         if link_mode is not None and self.chk_link_cycle.isEnabled():
             self.chk_link_cycle.setChecked(link_mode)
@@ -17749,13 +17759,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             f.write(f"#ect_mode={int(ect_mode)}\n")
             if ect_mode:
                 # ECT 원본 헤더 형식으로 저장 (forward-fill 복원)
-                f.write("path\tcycle\tcd\tsave\n")
+                f.write("path\tcycle\tcd\tsave\ttotlcycle\n")
                 table_rows = self._get_table_rows_ffill()
                 for r in table_rows:
                     f.write(f"{r['path']}\t{r['cycle']}\t"
-                            f"{r['mode']}\t{r['name']}\n")
+                            f"{r['mode']}\t{r['name']}\t{r['totl_cycle']}\n")
             else:
-                f.write("cyclename\tcyclepath\tchannel\tcapacity\t사이클\t모드\n")
+                f.write("cyclename\tcyclepath\tchannel\tcapacity\t사이클\t모드\tTotlCycle\n")
                 # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
                 last_data_row = -1
                 for r in range(self.cycle_path_table.rowCount()):
@@ -17768,8 +17778,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cap = self._get_table_cell(r, 3)
                     cyc = self._get_table_cell(r, 4)
                     mode = self._get_table_cell(r, 5)
+                    totl = self._get_table_cell(r, 6)
                     if path:
-                        f.write(f"{name}\t{path}\t{ch}\t{cap}\t{cyc}\t{mode}\n")
+                        f.write(f"{name}\t{path}\t{ch}\t{cap}\t{cyc}\t{mode}\t{totl}\n")
                     elif link_mode:
                         f.write("\n")  # 그룹 구분자 (빈 행)
 
@@ -18357,10 +18368,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tbl.blockSignals(False)
 
     def _update_ect_columns_state(self):
-        """chk_ectpath 체크 여부에 따라 사이클(col4)·모드(col5) 편집 가능 여부 토글.
+        """chk_ectpath 체크 여부에 따라 사이클(col4)·모드(col5)·TotlCycle(col6) 편집 가능 여부 토글.
 
-        체크됨 → 두 열 편집 가능(기본 배경)
-        체크 안 됨 → 두 열 읽기 전용(회색 배경)
+        체크됨 → 세 열 편집 가능(기본 배경)
+        체크 안 됨 → 세 열 읽기 전용(회색 배경)
         """
         tbl = self.cycle_path_table
         enabled = self.chk_ectpath.isChecked()
@@ -18369,7 +18380,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         tbl.blockSignals(True)
         for r in range(tbl.rowCount()):
-            for c in (4, 5):
+            for c in (4, 5, 6):
                 item = tbl.item(r, c)
                 if item is None:
                     item = QtWidgets.QTableWidgetItem('')
@@ -19223,12 +19234,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
         # 테이블에 데이터 있으면 테이블에서 읽기, 없으면 파일 선택
         if self._has_table_data():
-            # ECT 테이블 매핑: name→save, path→path, cycle→사이클, mode→CD
+            # ECT 테이블 매핑: name→save, path→path, cycle→사이클, mode→CD, totl_cycle→TotlCycle
             table_rows = self._get_table_rows_ffill()
             ect_path = np.array([r['path'] for r in table_rows])
             ect_cycle = np.array([r['cycle'] for r in table_rows])
             ect_CD = np.array([r['mode'] for r in table_rows])
             ect_save = np.array([r['name'] for r in table_rows])
+            ect_totl_cycle = np.array([r['totl_cycle'] for r in table_rows])
+            # 현재 ect_cycle에 TotlCycle 기준값 사용 (totl_cycle 열에 값이 있으면 우선 적용)
+            for idx in range(len(ect_totl_cycle)):
+                if ect_totl_cycle[idx]:
+                    ect_cycle[idx] = ect_totl_cycle[idx]
         else:
             root = Tk()
             root.withdraw()
