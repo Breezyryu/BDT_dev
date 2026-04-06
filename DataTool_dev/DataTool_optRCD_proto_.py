@@ -592,10 +592,14 @@ def is_micro_unit(raw_file_path):
 # ── Phase 2: 채널별 파일 I/O 캐시 ──────────────────────────────
 _channel_cache: dict[str, dict] = {}
 
+# ── sweep_scope 캐시: 채널경로 → {논리사이클: {'chg': (s,e), 'dchg': (s,e)}} ──
+_SWEEP_SCOPE_CACHE: dict[str, dict] = {}
+
 
 def clear_channel_cache():
     """전체 채널 캐시 초기화 (새 데이터 로드 시작 시 호출)."""
     _channel_cache.clear()
+    _SWEEP_SCOPE_CACHE.clear()
 
 
 def _get_channel_cache(raw_file_path: str) -> dict:
@@ -603,6 +607,66 @@ def _get_channel_cache(raw_file_path: str) -> dict:
     if raw_file_path not in _channel_cache:
         _channel_cache[raw_file_path] = {}
     return _channel_cache[raw_file_path]
+
+
+def get_sweep_scope(raw_file_path: str) -> dict:
+    """채널별 sweep_scope 캐시 조회.
+
+    pne_build_cycle_map()이 스윕 모드에서 자동 저장한 sweep_scope를 반환.
+    캐시에 없거나 일반 모드 시 빈 dict 반환 (안전한 폴백).
+
+    Returns
+    -------
+    dict
+        {논리사이클: {'chg': (start_tc, end_tc), 'dchg': (start_tc, end_tc)}}.
+        키가 없으면 해당 scope의 서브 범위가 정의되지 않은 것.
+    """
+    return _SWEEP_SCOPE_CACHE.get(raw_file_path, {})
+
+
+def resolve_tc_range(
+    cycle_map: dict,
+    logical: int,
+    scope: str = "cycle",
+    sweep_scope: dict | None = None,
+) -> tuple[int, int] | None:
+    """논리사이클 + scope → TotlCycle 범위 반환.
+
+    sweep_scope가 있고 해당 논리사이클에 scope별 서브 범위가 정의되어 있으면
+    축소된 범위를 반환하여 I/O 최적화 및 충/방전 데이터 분리를 지원한다.
+
+    Parameters
+    ----------
+    cycle_map : dict
+        {논리사이클: int | tuple[int, int]}.
+    logical : int
+        조회할 논리사이클 번호.
+    scope : str
+        "cycle" | "charge" | "discharge".
+    sweep_scope : dict | None
+        {논리사이클: {'chg': (s, e), 'dchg': (s, e)}}. None이면 전체 범위 반환.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        (start_tc, end_tc). cycle_map에 키가 없으면 None.
+    """
+    val = cycle_map.get(logical)
+    if val is None:
+        return None
+
+    # sweep_scope에 scope별 서브 범위가 있으면 우선 사용
+    if sweep_scope and logical in sweep_scope:
+        ss = sweep_scope[logical]
+        if scope == "charge" and 'chg' in ss:
+            return ss['chg']
+        elif scope == "discharge" and 'dchg' in ss:
+            return ss['dchg']
+
+    # 기본: 전체 범위 반환
+    if isinstance(val, tuple):
+        return val
+    return (val, val)
 
 
 def _cached_pne_restore_files(raw_file_path: str) -> tuple:
@@ -744,6 +808,9 @@ def _unified_pne_load_raw(
     cycle_start: int,
     cycle_end: int,
     cycle_map: dict | None = None,
+    *,
+    data_scope: str = "cycle",
+    sweep_scope: dict | None = None,
 ) -> pd.DataFrame | None:
     """PNE SaveData에서 원시 프로필 데이터 로딩.
 
@@ -757,6 +824,12 @@ def _unified_pne_load_raw(
         종료 논리사이클 번호 (포함).
     cycle_map : dict | None
         논리사이클 → TotlCycle 값 매핑. None이면 TotlCycle 직접 사용.
+    data_scope : str
+        "cycle" | "charge" | "discharge". sweep_scope와 함께 사용하여
+        TC 범위를 축소할 수 있음.
+    sweep_scope : dict | None
+        {논리사이클: {'chg': (s, e), 'dchg': (s, e)}}. 스윕 시험의
+        충/방전 서브 범위. None이면 전체 범위 로딩.
 
     Returns
     -------
@@ -773,6 +846,8 @@ def _unified_pne_load_raw(
       [17]=StepTime(/100s), [18]=TotTime(day), [19]=TotTime(/100s),
       [21]=Temp1, [27]=TotalCycle
     cycle_map 사용 시 논리사이클 번호가 Cycle 컬럼에 부여된다.
+    sweep_scope + data_scope 사용 시 스윕 논리사이클의 TC 범위가 축소되어
+    불필요한 데이터 I/O를 줄인다.
     """
     restore_dir = os.path.join(raw_file_path, "Restore")
     if not os.path.isdir(restore_dir):
@@ -782,21 +857,23 @@ def _unified_pne_load_raw(
     if cycle_map:
         # 요청된 논리사이클 범위에 해당하는 TotlCycle 값들 수집
         # cycle_map 값: int(단일 TC) 또는 tuple(시작TC, 끝TC) 스윕 범위
+        # sweep_scope가 있으면 scope별 TC 서브 범위로 축소 가능
         totl_cycles_set: set[int] = set()
         logical_to_totl: dict[int, int] = {}  # 역매핑: TotlCycle → 논리사이클
         for logical_cyc in range(cycle_start, cycle_end + 1):
-            if logical_cyc in cycle_map:
-                val = cycle_map[logical_cyc]
-                if isinstance(val, tuple):
-                    # 스윕 범위: (시작TC, 끝TC) → 범위 내 모든 TC 포함
-                    tc_start, tc_end = val
-                    for tc in range(tc_start, tc_end + 1):
-                        totl_cycles_set.add(tc)
-                        logical_to_totl[tc] = logical_cyc
-                else:
-                    # 단일 TC
-                    totl_cycles_set.add(val)
-                    logical_to_totl[val] = logical_cyc
+            if logical_cyc not in cycle_map:
+                continue
+            # resolve_tc_range: sweep_scope가 있으면 scope별 축소, 없으면 전체 범위
+            tc_range = resolve_tc_range(
+                cycle_map, logical_cyc, scope=data_scope,
+                sweep_scope=sweep_scope,
+            )
+            if tc_range is None:
+                continue
+            tc_s, tc_e = tc_range
+            for tc in range(tc_s, tc_e + 1):
+                totl_cycles_set.add(tc)
+                logical_to_totl[tc] = logical_cyc
         totl_cycles = sorted(totl_cycles_set)
         if not totl_cycles:
             return None
@@ -1837,9 +1914,13 @@ def unified_profile_batch(
     # === Overlay 모드 (사이클별 개별 처리) ===
     if is_pne:
         # PNE: 1회 I/O 최적화 — 전체 범위 로드 후 사이클별 슬라이싱
+        # sweep_scope가 있으면 scope별 TC 범위 축소 (충전만 / 방전만 로딩)
+        _sweep_scope = get_sweep_scope(raw_file_path)
         all_raw = _unified_pne_load_raw(
             raw_file_path, min(cycle_list), max(cycle_list),
             cycle_map=cycle_map,
+            data_scope=data_scope,
+            sweep_scope=_sweep_scope if _sweep_scope else None,
         )
         if all_raw is None or all_raw.empty:
             for cyc in cycle_list:
@@ -3044,6 +3125,8 @@ def _pne_build_sweep_cycle_map(
     segments = absorbed
 
     # ── 3단계: 인접 반대 방향 스윕 쌍 → 1 논리사이클로 병합 ──
+    # paired 병합 시 각 서브스윕의 방향·TC 범위를 보존하여
+    # 이후 sweep_scope 생성에 활용한다.
     merged: list[dict] = []
     si = 0
     while si < len(segments):
@@ -3055,14 +3138,19 @@ def _pne_build_sweep_cycle_map(
             merged.append({
                 'kind': 'paired',
                 'tcs': seg['tcs'] + segments[si + 1]['tcs'],
+                'sub_sweeps': [
+                    {'dir': seg['dir'], 'tcs': seg['tcs']},
+                    {'dir': segments[si + 1]['dir'], 'tcs': segments[si + 1]['tcs']},
+                ],
             })
             si += 2
         else:
             merged.append(seg)
             si += 1
 
-    # ── 4단계: cycle_map 변환 ──
+    # ── 4단계: cycle_map + sweep_scope 변환 ──
     cycle_map: dict = {}
+    sweep_scope: dict = {}   # {논리사이클: {'chg': (start, end), 'dchg': (start, end)}}
     ln = 0
     for seg in merged:
         tcs = seg['tcs']
@@ -3082,7 +3170,35 @@ def _pne_build_sweep_cycle_map(
             elif tcs:
                 ln += 1
                 cycle_map[ln] = int(tcs[0])
-    return cycle_map
+
+            # paired 세그먼트: 서브스윕 방향별 TC 범위를 sweep_scope에 기록
+            if seg['kind'] == 'paired' and 'sub_sweeps' in seg:
+                scope_entry: dict = {}
+                for sub in seg['sub_sweeps']:
+                    sub_tcs = sub['tcs']
+                    if not sub_tcs:
+                        continue
+                    tc_range = (int(min(sub_tcs)), int(max(sub_tcs)))
+                    if sub['dir'] == 'CHG':
+                        scope_entry['chg'] = tc_range
+                    elif sub['dir'] == 'DCHG':
+                        scope_entry['dchg'] = tc_range
+                    elif sub['dir'] == 'MIXED':
+                        # MIXED: 충방전 혼합 구간 — 양쪽 모두에 할당
+                        scope_entry.setdefault('chg', tc_range)
+                        scope_entry.setdefault('dchg', tc_range)
+                if scope_entry:
+                    sweep_scope[ln] = scope_entry
+
+            # 단방향 스윕 (비paired): 방향 정보 기록
+            elif seg['kind'] == 'sweep' and len(tcs) >= 2:
+                tc_range = (int(min(tcs)), int(max(tcs)))
+                if seg['dir'] == 'CHG':
+                    sweep_scope[ln] = {'chg': tc_range}
+                elif seg['dir'] == 'DCHG':
+                    sweep_scope[ln] = {'dchg': tc_range}
+
+    return cycle_map, sweep_scope
 
 
 def pne_build_cycle_map(
@@ -3255,7 +3371,9 @@ def pne_build_cycle_map(
         # .sch sweep_mode=True 확정, 또는 데이터 휴리스틱 (sig_ratio < 0.5 / has_both < 0.3)
         # GITT, DCIR 등 펄스 시험: 연속 동일 방향 TC를 하나의 스윕으로 묶고,
         # 인접 반대 방향 스윕 쌍을 1 논리사이클로 병합
-        cycle_map = _pne_build_sweep_cycle_map(pivot, all_tcs, mincapacity)
+        cycle_map, sweep_scope = _pne_build_sweep_cycle_map(pivot, all_tcs, mincapacity)
+        # sweep_scope를 캐시에 저장 (채널 경로 기반)
+        _SWEEP_SCOPE_CACHE[raw_file_path] = sweep_scope
         return cycle_map, mincapacity
 
 

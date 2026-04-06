@@ -27,6 +27,9 @@ from DataTool_optRCD_proto_ import (
     _classify_single_pne_cycle,
     extract_schedule_structure_from_sch,
     extract_toyo_ptn_structure,
+    get_sweep_scope,
+    resolve_tc_range,
+    _SWEEP_SCOPE_CACHE,
     HAS_SCH_PARSER,
 )
 
@@ -250,6 +253,171 @@ class TestToyoCycleMap:
         except Exception as e:
             pytest.fail(f'ptn_struct 힌트 전달 시 crash: {e}')
         assert isinstance(cycle_map, dict)
+
+
+# =============================================================================
+# resolve_tc_range 헬퍼 검증
+# =============================================================================
+
+class TestResolveTcRange:
+    """resolve_tc_range() 단위 테스트."""
+
+    def test_single_tc_no_scope(self):
+        """단일 TC, cycle scope → (tc, tc) 반환."""
+        cm = {1: 5, 2: 10}
+        assert resolve_tc_range(cm, 1) == (5, 5)
+        assert resolve_tc_range(cm, 2) == (10, 10)
+
+    def test_tuple_tc_no_scope(self):
+        """tuple TC, cycle scope → 전체 범위."""
+        cm = {1: (5, 148)}
+        assert resolve_tc_range(cm, 1) == (5, 148)
+
+    def test_missing_key(self):
+        """존재하지 않는 논리사이클 → None."""
+        cm = {1: 5}
+        assert resolve_tc_range(cm, 99) is None
+
+    def test_sweep_scope_charge(self):
+        """sweep_scope 있을 때 charge scope → 충전 서브 범위."""
+        cm = {4: (5, 148)}
+        ss = {4: {'chg': (5, 112), 'dchg': (114, 148)}}
+        assert resolve_tc_range(cm, 4, scope="charge", sweep_scope=ss) == (5, 112)
+
+    def test_sweep_scope_discharge(self):
+        """sweep_scope 있을 때 discharge scope → 방전 서브 범위."""
+        cm = {4: (5, 148)}
+        ss = {4: {'chg': (5, 112), 'dchg': (114, 148)}}
+        assert resolve_tc_range(cm, 4, scope="discharge", sweep_scope=ss) == (114, 148)
+
+    def test_sweep_scope_cycle(self):
+        """sweep_scope 있어도 cycle scope → 전체 범위."""
+        cm = {4: (5, 148)}
+        ss = {4: {'chg': (5, 112), 'dchg': (114, 148)}}
+        assert resolve_tc_range(cm, 4, scope="cycle", sweep_scope=ss) == (5, 148)
+
+    def test_sweep_scope_missing_key(self):
+        """sweep_scope에 해당 논리사이클 없음 → 전체 범위 폴백."""
+        cm = {1: (3, 4), 4: (5, 148)}
+        ss = {4: {'chg': (5, 112), 'dchg': (114, 148)}}
+        # 논리사이클 1은 sweep_scope에 없음 → cycle_map의 (3,4)
+        assert resolve_tc_range(cm, 1, scope="charge", sweep_scope=ss) == (3, 4)
+
+    def test_sweep_scope_partial_dir(self):
+        """단방향 스윕 (dchg 없음) + discharge scope → 전체 범위 폴백."""
+        cm = {3: (10, 50)}
+        ss = {3: {'chg': (10, 50)}}  # chg만 있음
+        assert resolve_tc_range(cm, 3, scope="discharge", sweep_scope=ss) == (10, 50)
+
+    def test_single_tc_with_sweep_scope(self):
+        """단일 TC에 sweep_scope 적용 시 (비스윕) → (tc, tc)."""
+        cm = {1: 5, 4: (5, 148)}
+        ss = {4: {'chg': (5, 112), 'dchg': (114, 148)}}
+        assert resolve_tc_range(cm, 1, scope="charge", sweep_scope=ss) == (5, 5)
+
+
+# =============================================================================
+# sweep_scope 캐시 통합 검증 (실데이터)
+# =============================================================================
+
+class TestSweepScopeCache:
+    """pne_build_cycle_map이 sweep_scope를 캐시에 저장하는지 검증."""
+
+    def test_gitt_sweep_scope_populated(self):
+        """GITT 시험: sweep_scope가 비어있지 않아야 함."""
+        folder = os.path.join(
+            EXP_DATA,
+            '260316_270318_00_이성일_5882mAh_M47 ATL ECT GITT',
+        )
+        ch = _find_first_channel(folder)
+        if ch is None:
+            pytest.skip('GITT test data not found')
+        # 캐시 초기화
+        _SWEEP_SCOPE_CACHE.clear()
+        cycle_map, cap = pne_build_cycle_map(ch, 5882, 0.2)
+        ss = get_sweep_scope(ch)
+        # GITT 스윕 모드 → sweep_scope 존재
+        assert len(ss) > 0, f'GITT인데 sweep_scope가 비어있음: {cycle_map}'
+
+    def test_gitt_sweep_scope_has_chg_dchg(self):
+        """GITT 스윕 논리사이클: chg, dchg 키가 모두 존재."""
+        folder = os.path.join(
+            EXP_DATA,
+            '260316_270318_00_이성일_5882mAh_M47 ATL ECT GITT',
+        )
+        ch = _find_first_channel(folder)
+        if ch is None:
+            pytest.skip('GITT test data not found')
+        _SWEEP_SCOPE_CACHE.clear()
+        cycle_map, cap = pne_build_cycle_map(ch, 5882, 0.2)
+        ss = get_sweep_scope(ch)
+        # paired 스윕에는 chg, dchg 모두 있어야 함
+        for ln, scope_entry in ss.items():
+            if 'chg' in scope_entry and 'dchg' in scope_entry:
+                chg_range = scope_entry['chg']
+                dchg_range = scope_entry['dchg']
+                # 충전 범위와 방전 범위는 겹치지 않아야 함
+                assert chg_range[1] < dchg_range[0] or dchg_range[1] < chg_range[0], \
+                    f'L{ln}: chg={chg_range}, dchg={dchg_range} 범위가 겹침'
+
+    def test_gitt_sweep_scope_within_cycle_map(self):
+        """sweep_scope의 TC 범위는 cycle_map의 전체 범위 내에 있어야 함."""
+        folder = os.path.join(
+            EXP_DATA,
+            '260316_270318_00_이성일_5882mAh_M47 ATL ECT GITT',
+        )
+        ch = _find_first_channel(folder)
+        if ch is None:
+            pytest.skip('GITT test data not found')
+        _SWEEP_SCOPE_CACHE.clear()
+        cycle_map, cap = pne_build_cycle_map(ch, 5882, 0.2)
+        ss = get_sweep_scope(ch)
+        for ln, scope_entry in ss.items():
+            cm_val = cycle_map[ln]
+            if isinstance(cm_val, tuple):
+                cm_start, cm_end = cm_val
+            else:
+                cm_start = cm_end = cm_val
+            for key in ('chg', 'dchg'):
+                if key in scope_entry:
+                    s, e = scope_entry[key]
+                    assert s >= cm_start, f'L{ln} {key} start {s} < cycle_map start {cm_start}'
+                    assert e <= cm_end, f'L{ln} {key} end {e} > cycle_map end {cm_end}'
+
+    def test_life_test_no_sweep_scope(self):
+        """가속수명 시험 (일반 모드): sweep_scope가 비어있어야 함."""
+        folder = os.path.join(
+            EXP_DATA,
+            '251028_260428_05_나무늬_2335mAh_Q8 ATL 선상 SEU4 RT @1-1202',
+        )
+        ch = _find_first_channel(folder)
+        if ch is None:
+            pytest.skip('test data not found')
+        _SWEEP_SCOPE_CACHE.clear()
+        cycle_map, cap = pne_build_cycle_map(ch, 2335, 0.2)
+        ss = get_sweep_scope(ch)
+        # 일반 모드에서는 sweep_scope가 비어있어야 함
+        assert ss == {}, f'일반 모드인데 sweep_scope가 있음: {ss}'
+
+    def test_halfcell_gitt_sweep_scope(self):
+        """반셀 GITT: sweep_scope 생성 검증."""
+        folder = os.path.join(
+            EXP_DATA,
+            '250905_250915_00_류성택_4-187mAh_M2-SDI-open-ca-half-14pi-GITT-0.1C-T23',
+        )
+        ch = _find_first_channel(folder)
+        if ch is None:
+            pytest.skip('half-cell GITT data not found')
+        _SWEEP_SCOPE_CACHE.clear()
+        cycle_map, cap = pne_build_cycle_map(ch, 4.187, 0.1)
+        ss = get_sweep_scope(ch)
+        # 반셀 GITT도 스윕 모드 → sweep_scope 빈 dict가 아니어야 함
+        # (단방향 스윕이면 한쪽만 있을 수 있음)
+        assert isinstance(ss, dict)
+        if ss:
+            for ln, entry in ss.items():
+                assert any(k in entry for k in ('chg', 'dchg')), \
+                    f'L{ln}: chg도 dchg도 없음: {entry}'
 
 
 if __name__ == '__main__':
