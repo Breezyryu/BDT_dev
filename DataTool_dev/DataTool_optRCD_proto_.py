@@ -1075,6 +1075,8 @@ def _unified_normalize_pne(
     result["Condition"] = df["Condition"].values
     result["Cycle"] = df["Cycle"].values
     result["Step"] = df["Step"].values
+    if "PhysicalCycle" in df.columns:
+        result["PhysicalCycle"] = df["PhysicalCycle"].values
 
     # 시간: PNE TotTime 사용 (멀티사이클) 또는 StepTime (단일사이클)
     if "TotTime_Day" in df.columns and "TotTime_Sec_raw" in df.columns:
@@ -1181,6 +1183,7 @@ def _unified_filter_condition(
     *,
     is_sweep: bool = False,
     mincapacity: float = 0,
+    sweep_scope_applied: bool = False,
 ) -> pd.DataFrame:
     """Condition 기반 필터링 (전류 부호 기반 CC 재분류 + 휴지 분류 + 보충전 제외).
 
@@ -1230,11 +1233,32 @@ def _unified_filter_condition(
     """
     df = df.copy()
 
-    # --- Condition=9 재분류: 전류 부호 기반 ---
+    # --- Condition=9 재분류에 사용할 전류 컬럼 결정 ---
+    # 정규화 전(Current_raw)과 후(Current_mA) 모두 지원
+    _curr_col: str | None = None
     if "Current_mA" in df.columns:
+        _curr_col = "Current_mA"
+    elif "Current_raw" in df.columns:
+        _curr_col = "Current_raw"
+
+    # --- sweep_scope 적용 시: TC 범위로 이미 충/방전 구분됨 ---
+    # 스윕 내부의 모든 데이터(충전 펄스, 휴지, 소규모 보방전/보충전)를 유지.
+    # CC(Condition=9) 재분류만 수행하고 Condition 필터링은 생략.
+    if sweep_scope_applied:
+        if _curr_col:
+            cc_mask = df["Condition"] == 9
+            if cc_mask.any():
+                curr = df.loc[cc_mask, _curr_col]
+                df.loc[cc_mask & (curr > 0).values, "Condition"] = 1
+                df.loc[cc_mask & (curr < 0).values, "Condition"] = 2
+                df.loc[cc_mask & (curr == 0).values, "Condition"] = 3
+        return df
+
+    # --- Condition=9 재분류: 전류 부호 기반 ---
+    if _curr_col:
         cc_mask = df["Condition"] == 9
         if cc_mask.any():
-            curr = df.loc[cc_mask, "Current_mA"]
+            curr = df.loc[cc_mask, _curr_col]
             df.loc[cc_mask & (curr > 0).values, "Condition"] = 1   # CC 충전
             df.loc[cc_mask & (curr < 0).values, "Condition"] = 2   # CC 방전
             df.loc[cc_mask & (curr == 0).values, "Condition"] = 3  # 전류 0 → 휴지
@@ -1374,6 +1398,8 @@ def _unified_filter_condition(
 def _unified_merge_steps(
     df: pd.DataFrame,
     data_scope: str,
+    *,
+    sweep_scope_applied: bool = False,
 ) -> pd.DataFrame:
     """멀티스텝 데이터를 시간·용량 연속으로 병합.
 
@@ -1397,6 +1423,31 @@ def _unified_merge_steps(
     if data_scope == "cycle":
         # 사이클 모드: 시간순 정렬만, 스텝 병합 불필요
         return df.sort_values("Time_s").reset_index(drop=True)
+
+    # --- sweep_scope 적용 시: TotTime 기반 절대 시간 보존 + 용량 누적 보정 ---
+    # 스윕 데이터는 다수 TC를 하나의 논리사이클로 매핑하므로,
+    # Step 기반 병합 대신 시간 정렬 + 용량 리셋 감지로 누적 처리.
+    if sweep_scope_applied:
+        df = df.sort_values("Time_s").reset_index(drop=True)
+        for cap_col in ("ChgCap", "DchgCap", "ChgWh", "DchgWh"):
+            if cap_col not in df.columns:
+                continue
+            cap = df[cap_col].values.copy()
+            if len(cap) == 0:
+                continue
+            cumulative = np.zeros(len(cap))
+            offset = 0.0
+            running_max = 0.0
+            for i in range(len(cap)):
+                val = cap[i]
+                # 리셋 감지: 이전 구간 최대값의 10% 미만으로 떨어짐
+                if i > 0 and val < running_max * 0.1 and running_max > 1e-9:
+                    offset += running_max
+                    running_max = 0.0
+                running_max = max(running_max, val)
+                cumulative[i] = offset + val
+            df[cap_col] = cumulative
+        return df
 
     # charge/discharge: 기존 _merge_step_profiles 로직 적용
     if "Step" not in df.columns:
@@ -1639,6 +1690,7 @@ def unified_profile_core(
 
     # === Stage 1: 사이클러 판별 및 원시 로딩 ===
     is_pne = check_cycler(raw_file_path)  # True=PNE, False=Toyo
+    _sweep_scope_core: dict = {}  # sweep_scope 추적 (Stage 2 필터에서 활용)
 
     if is_pne:
         # PNE 용량 산정
@@ -1647,9 +1699,12 @@ def unified_profile_core(
         # cycle_map 자동 생성 (None일 때) — .sch 힌트 포함
         if cycle_map is None:
             cycle_map, _ = _get_pne_cycle_map(raw_file_path, mincapacity, inirate)
+        _sweep_scope_core = get_sweep_scope(raw_file_path)
         raw = _unified_pne_load_raw(
             raw_file_path, cycle_start, cycle_end,
             cycle_map=cycle_map,
+            data_scope=data_scope,
+            sweep_scope=_sweep_scope_core if _sweep_scope_core else None,
         )
     else:
         # Toyo 용량 산정
@@ -1676,9 +1731,13 @@ def unified_profile_core(
     # 스윕 시험 여부 판별: cycle_map 값에 tuple이 있으면 스윕
     _is_sweep = cycle_map is not None and any(
         isinstance(v, tuple) for v in cycle_map.values())
+    # sweep_scope가 TC 범위로 충/방전을 이미 구분했는지 판별
+    _sweep_applied = bool(
+        _sweep_scope_core and data_scope in ("charge", "discharge"))
     filtered = _unified_filter_condition(
         raw, data_scope, include_rest,
-        is_sweep=_is_sweep, mincapacity=mincapacity)
+        is_sweep=_is_sweep, mincapacity=mincapacity,
+        sweep_scope_applied=_sweep_applied)
 
     if filtered.empty:
         return UnifiedProfileResult(
@@ -1701,7 +1760,8 @@ def unified_profile_core(
         normalized["Step"] = filtered["Step"].values
 
     # === Stage 4: 스텝 병합 ===
-    merged = _unified_merge_steps(normalized, data_scope)
+    merged = _unified_merge_steps(
+        normalized, data_scope, sweep_scope_applied=_sweep_applied)
 
     # === Stage 5: X축 및 SOC 계산 ===
     with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity)
@@ -1788,6 +1848,7 @@ def _unified_process_single_cycle_from_raw(
     smooth_degree: int = 0,
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
+    sweep_scope_applied: bool = False,
 ) -> UnifiedProfileResult:
     """이미 로드된 원시 데이터에서 단일 사이클 프로필을 파싱.
 
@@ -1839,6 +1900,7 @@ def _unified_process_single_cycle_from_raw(
     filtered = _unified_filter_condition(
         raw_cycle, data_scope, include_rest,
         is_sweep=_is_sweep, mincapacity=mincapacity,
+        sweep_scope_applied=sweep_scope_applied,
     )
     if filtered.empty:
         return UnifiedProfileResult(
@@ -1858,7 +1920,8 @@ def _unified_process_single_cycle_from_raw(
         normalized["Step"] = filtered["Step"].values
 
     # Stage 4: 스텝 병합
-    merged = _unified_merge_steps(normalized, data_scope)
+    merged = _unified_merge_steps(
+        normalized, data_scope, sweep_scope_applied=sweep_scope_applied)
 
     # Stage 5: X축 및 SOC 계산
     with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity)
@@ -2020,12 +2083,18 @@ def unified_profile_batch(
 
         for cyc in cycle_list:
             raw_cycle = all_raw[all_raw["Cycle"] == cyc].copy()
+            # sweep_scope가 해당 사이클의 TC 범위를 충/방전으로 구분했는지 판별
+            _scope_applied = bool(
+                _sweep_scope and cyc in _sweep_scope
+                and data_scope in ("charge", "discharge")
+            )
             result = _unified_process_single_cycle_from_raw(
                 raw_cycle, mincapacity, raw_file_path, is_pne=True,
                 data_scope=data_scope, axis_mode=axis_mode,
                 continuity=continuity, include_rest=include_rest,
                 calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
                 cutoff=cutoff, cycle_map=cycle_map,
+                sweep_scope_applied=_scope_applied,
             )
             results[cyc] = [mincapacity, result]
     else:
