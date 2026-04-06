@@ -2995,19 +2995,31 @@ def _pne_build_sweep_cycle_map(
             _flush_sweep()
             segments.append({'kind': 'sig', 'tcs': [tc], 'dir': dirn, 'has_both': has_both})
         else:
-            # 비유의 TC는 방향 전환과 무관하게 연속 스윕으로 누적
-            # (펄스 시험: DCHG→CHG→DCHG 교대 패턴도 하나의 스윕 블록)
-            if sweep_dir is None:
+            # 비유의 TC: 방향 전환(CHG↔DCHG) 시 스윕 분리
+            # 논리사이클 = 충전(스윕) - 방전(스윕) 이므로 방향 경계에서 분리
+            if sweep_dir is None or sweep_dir == 'MIXED':
+                # 방향 미정 → 새 방향 채택
                 sweep_dir = dirn
-            elif dirn != sweep_dir and dirn != 'MIXED':
-                sweep_dir = 'MIXED'
-            sweep_tcs.append(tc)
+                sweep_tcs.append(tc)
+            elif dirn == 'MIXED':
+                # 휴지 등 무방향 TC → 현재 스윕에 유지
+                sweep_tcs.append(tc)
+            elif dirn != sweep_dir:
+                # 실질적 방향 전환 (CHG↔DCHG) → 스윕 분리
+                _flush_sweep()
+                sweep_dir = dirn
+                sweep_tcs.append(tc)
+            else:
+                # 같은 방향 → 누적
+                sweep_tcs.append(tc)
     _flush_sweep()
 
-    # ── 2.5단계: 유의 TC(has_both) 직후 DCHG 스윕 → 유의 TC에 흡수 ──
-    # 방전 마무리 규칙: 풀사이클 유의 TC 직후의 비유의 방전은
-    # 해당 사이클의 방전 완료로 간주하여 흡수한다.
+    # ── 2.5단계: 유의 TC(has_both) 직후 소규모 DCHG → 유의 TC에 흡수 ──
+    # 방전 마무리 규칙: 풀사이클 유의 TC 직후의 소규모 비유의 방전은
+    # SOC 세팅 등 해당 사이클의 방전 마무리로 간주하여 흡수한다.
     # 예: [sig TC3 충방전] + [sweep DCHG TC4] → TC3에 TC4 흡수
+    # 단, GITT 스윕 자체(다수 TC)는 흡수하지 않도록 크기 제한 적용
+    _MAX_ABSORB_TCS = 3  # SOC 세팅용 소방전은 통상 1~2 TC
     absorbed: list[dict] = []
     si = 0
     while si < len(segments):
@@ -3016,7 +3028,8 @@ def _pne_build_sweep_cycle_map(
                 and seg.get('has_both', False)
                 and si + 1 < len(segments)
                 and segments[si + 1]['kind'] == 'sweep'
-                and segments[si + 1]['dir'] == 'DCHG'):
+                and segments[si + 1]['dir'] == 'DCHG'
+                and len(segments[si + 1]['tcs']) <= _MAX_ABSORB_TCS):
             # 유의 TC에 후속 DCHG 스윕 흡수 (방전 마무리)
             absorbed.append({
                 'kind': 'sig',
@@ -13941,9 +13954,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _get_table_cycle_input(self) -> list[int] | None:
         """경로 테이블 첫 행의 사이클 열(col4)에서 사용자 입력값을 읽어 반환.
 
+        ECT 모드가 아니면 항상 None (stepnum 사용).
         회색 힌트(자동 감지)가 아닌 검정 폰트(사용자 직접 입력)인 경우에만 반환.
         사용자 입력이 없으면 None 반환 → 호출측에서 stepnum 폴백.
         """
+        # ECT 비활성이면 테이블 사이클 무시 (상호배타: stepnum 사용)
+        if not self.chk_ectpath.isChecked():
+            return None
         tbl = self.cycle_path_table
         _auto_fg = QtGui.QColor(160, 160, 160)
         # 첫 번째 데이터 행 탐색
@@ -17644,24 +17661,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 사용자 입력 없으면 max cycle을 회색 폰트로 표시
                     item = tbl.item(r, 4)
                     if item is None:
-                        item = QtWidgets.QTableWidgetItem(cyc_auto)
+                        item = QtWidgets.QTableWidgetItem(f"1-{cyc_auto}")
                         tbl.setItem(r, 4, item)
                     else:
-                        item.setText(cyc_auto)
+                        item.setText(f"1-{cyc_auto}")
                     item.setForeground(QtGui.QColor(160, 160, 160))
-                    item.setToolTip(f"최대 사이클 (자동 감지): {cyc_auto}")
+                    item.setToolTip(f"최대 사이클: {cyc_auto}")
+                elif cyc_auto and cyc_existing:
+                    # 사용자 입력이 있어도 tooltip에 max값 유지
+                    item = tbl.item(r, 4)
+                    if item:
+                        item.setToolTip(f"입력: {cyc_existing}  (최대: {cyc_auto})")
                 # ── col 5 (사이클(Raw)): max TotlCycle을 회색 힌트로 표시 ──
                 raw_existing = self._get_table_cell(r, 5)
                 raw_auto = auto.get('cycleraw', '')
                 if raw_auto and not raw_existing:
                     item5 = tbl.item(r, 5)
                     if item5 is None:
-                        item5 = QtWidgets.QTableWidgetItem(raw_auto)
+                        item5 = QtWidgets.QTableWidgetItem(f"1-{raw_auto}")
                         tbl.setItem(r, 5, item5)
                     else:
-                        item5.setText(raw_auto)
+                        item5.setText(f"1-{raw_auto}")
                     item5.setForeground(QtGui.QColor(160, 160, 160))
-                    item5.setToolTip(f"최대 TotlCycle (자동 감지): {raw_auto}")
+                    item5.setToolTip(f"최대 TotlCycle(Raw): {raw_auto}")
+                elif raw_auto and raw_existing:
+                    item5 = tbl.item(r, 5)
+                    if item5:
+                        item5.setToolTip(f"입력: {raw_existing}  (최대 Raw: {raw_auto})")
         finally:
             tbl.blockSignals(False)
         # 경로 하이라이트 갱신
@@ -18404,11 +18430,89 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         finally:
             tbl.blockSignals(False)
 
+    def _get_row_max_cycle_info(self, row: int) -> dict | None:
+        """해당 행의 경로에서 max 논리사이클/max TotlCycle 정보 반환.
+
+        Returns: {'max_cycle': str, 'max_raw': str} 또는 None
+        """
+        path = self._get_table_cell(row, 1)
+        if not path:
+            for rr in range(row - 1, -1, -1):
+                path = self._get_table_cell(rr, 1)
+                if path:
+                    break
+        if not path:
+            return None
+        cap_str = self._get_table_cell(row, 3)
+        try:
+            cap = float(cap_str) if cap_str else 0.0
+        except ValueError:
+            cap = 0.0
+        max_cyc = _quick_max_cycle(path, cap)
+        if not max_cyc:
+            return None
+        # max raw TC 계산
+        max_raw = ''
+        try:
+            cm = _build_cycle_map_for_path(path, cap)
+            if cm:
+                all_tc = []
+                for v in cm.values():
+                    if isinstance(v, tuple):
+                        all_tc.extend(v)
+                    else:
+                        all_tc.append(v)
+                if all_tc:
+                    max_raw = str(max(all_tc))
+        except Exception:
+            pass
+        return {'max_cycle': str(max_cyc), 'max_raw': max_raw or str(max_cyc)}
+
+    def _restore_cycle_hint(self, row: int, col: int):
+        """셀이 비워졌을 때 회색 max 힌트를 복원."""
+        info = self._get_row_max_cycle_info(row)
+        if not info:
+            return
+        tbl = self.cycle_path_table
+        _auto_fg = QtGui.QColor(160, 160, 160)
+        tbl.blockSignals(True)
+        try:
+            if col == 4:
+                item = tbl.item(row, 4)
+                if item is None:
+                    item = QtWidgets.QTableWidgetItem(f"1-{info['max_cycle']}")
+                    tbl.setItem(row, 4, item)
+                else:
+                    item.setText(f"1-{info['max_cycle']}")
+                item.setForeground(_auto_fg)
+                item.setToolTip(f"최대 사이클: {info['max_cycle']}")
+                # col5도 함께 복원
+                item5 = tbl.item(row, 5)
+                if item5 is None:
+                    item5 = QtWidgets.QTableWidgetItem(f"1-{info['max_raw']}")
+                    tbl.setItem(row, 5, item5)
+                else:
+                    item5.setText(f"1-{info['max_raw']}")
+                item5.setForeground(_auto_fg)
+                item5.setToolTip(f"최대 TotlCycle(Raw): {info['max_raw']}")
+            elif col == 5:
+                item5 = tbl.item(row, 5)
+                if item5 is None:
+                    item5 = QtWidgets.QTableWidgetItem(f"1-{info['max_raw']}")
+                    tbl.setItem(row, 5, item5)
+                else:
+                    item5.setText(f"1-{info['max_raw']}")
+                item5.setForeground(_auto_fg)
+                item5.setToolTip(f"최대 TotlCycle(Raw): {info['max_raw']}")
+        finally:
+            tbl.blockSignals(False)
+
     def _on_cycle_cell_changed(self, row: int, col: int):
         """사이클(col4) 또는 사이클(Raw)(col5) 셀 변경 시 양방향 연동.
 
         col4 편집 → 검정 폰트 + col5에 대응 TotlCycle 회색 자동 갱신
         col5 편집 → 검정 폰트 (col4는 건드리지 않음)
+        비우면 → 회색 max 힌트 복원
         """
         if col not in (4, 5):
             return
@@ -18421,11 +18525,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return
         text = item.text().strip()
         _auto_fg = QtGui.QColor(160, 160, 160)
-        # 빈 값이면 무시 (삭제 시)
+
+        # ── 셀이 비워졌을 때: 회색 max 힌트 복원 ──
         if not text:
+            self._restore_cycle_hint(row, col)
             return
+
         # 사용자 입력 → 검정 폰트로 변경
         item.setForeground(QtGui.QColor(0, 0, 0))
+        # tooltip에 max 값 유지 (입력 중에도 최대값 확인 가능)
+        max_info = self._get_row_max_cycle_info(row)
+        if col == 4 and max_info:
+            item.setToolTip(f"입력: {text}  (최대: {max_info['max_cycle']}")
+        elif col == 5 and max_info:
+            item.setToolTip(f"입력: {text}  (최대 Raw: {max_info['max_raw']}")
+
         if col == 4:
             # col4(사이클) 편집 → col5(사이클Raw)에 대응 TotlCycle 자동 매핑
             path = self._get_table_cell(row, 1)
@@ -18456,7 +18570,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     else:
                         item5.setText(totl_str)
                     item5.setForeground(_auto_fg)
-                    item5.setToolTip(f"TotlCycle (자동 매핑): {totl_str}")
+                    raw_tip = f"TotlCycle (자동 매핑): {totl_str}"
+                    if max_info:
+                        raw_tip += f"  (최대 Raw: {max_info['max_raw']})"
+                    item5.setToolTip(raw_tip)
                 finally:
                     tbl.blockSignals(False)
         # col5 편집 → 검정 폰트만 설정, col4는 건드리지 않음 (위에서 이미 처리)
@@ -18639,16 +18756,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tbl.blockSignals(False)
 
     def _update_ect_columns_state(self):
-        """chk_ectpath 체크 여부에 따라 사이클(col4)·사이클Raw(col5)·모드(col6) 편집 가능 여부 토글.
+        """chk_ectpath 체크 여부에 따라 사이클 입력 경로를 상호배타로 토글.
 
-        체크됨 → 세 열 편집 가능(기본 배경)
-        체크 안 됨 → 세 열 읽기 전용(회색 배경)
+        ECT 체크됨 → 테이블 col4-6 편집 가능, stepnum 비활성
+        ECT 체크 안 됨 → 테이블 col4-6 읽기 전용, stepnum 활성
         """
         tbl = self.cycle_path_table
-        enabled = self.chk_ectpath.isChecked()
+        ect_on = self.chk_ectpath.isChecked()
         disabled_bg = QtGui.QColor('#D5D8DC')   # 회색 — 비활성 시각적 표시
         clear_bg = QtGui.QBrush()               # 기본 배경
 
+        # ── 테이블 col4-6 토글 ──
         tbl.blockSignals(True)
         for r in range(tbl.rowCount()):
             for c in (4, 5, 6):
@@ -18656,13 +18774,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if item is None:
                     item = QtWidgets.QTableWidgetItem('')
                     tbl.setItem(r, c, item)
-                if enabled:
+                if ect_on:
                     item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
                     item.setBackground(clear_bg)
                 else:
                     item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
                     item.setBackground(disabled_bg)
         tbl.blockSignals(False)
+
+        # ── stepnum 상호배타 토글 ──
+        if ect_on:
+            self.stepnum.setReadOnly(True)
+            self.stepnum.setStyleSheet("background-color: #D5D8DC; color: #888;")
+            self.stepnum.setPlaceholderText("ECT 모드: 경로 테이블에서 사이클 입력")
+        else:
+            self.stepnum.setReadOnly(False)
+            self.stepnum.setStyleSheet("")
+            self.stepnum.setPlaceholderText("")
 
     def _push_table_undo(self):
         """현재 테이블 상태를 Undo 스택에 저장"""
