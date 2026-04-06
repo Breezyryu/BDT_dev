@@ -232,6 +232,42 @@ class CycleGroup:
     per_path_capacities: list = field(default_factory=list)  # [float, ...] path별 테이블 입력 용량 (빈=[])
 
 
+@dataclass
+class ChannelMeta:
+    """채널 단위 메타데이터 — Phase 0에서 1회 계산, 전 파이프라인에서 공유.
+
+    경로 입력 직후 _build_channel_meta()에서 생성되어
+    경로 테이블, 사이클 분석, 프로필 분석에 전달된다.
+    """
+    channel_path: str                  # 채널 폴더 절대 경로
+    parent_path: str                   # 상위 데이터 폴더 (os.path.dirname)
+
+    # 사이클러 판별
+    cycler: str = 'PNE'               # 'PNE' | 'Toyo'
+    is_pne: bool = True
+
+    # 용량
+    min_capacity: float = 0.0         # 확정된 공칭 용량 (mAh)
+    capacity_source: str = 'auto'     # 'table' | 'path_name' | 'file' | 'auto'
+
+    # 스케줄 파싱 결과
+    sch_file: str | None = None       # .sch/.ptn 파일 경로
+    sch_parsed: dict | None = None    # _parse_pne_sch() 원본 결과 (PNE only)
+    schedule_struct: dict | None = None  # extract_schedule_structure_from_sch() 결과
+    accel_pattern: dict | None = None  # 가속수명 충방전 패턴
+
+    # 사이클 분류
+    classified: list | None = None    # [{cycle, category, ...}, ...]
+    counts: dict | None = None        # {'RPT': n, '가속수명': n, ...}
+    test_type: str | None = None      # '가속수명 시험', 'GITT 시험', ...
+    schedule_pattern: str | None = None  # RLE 패턴 문자열
+
+    # 사이클 맵
+    cycle_map: dict | None = None     # 논리 ↔ 물리 매핑
+    sweep_scope: dict | None = None   # {논리사이클: {'chg': (s,e), 'dchg': (s,e)}}
+    max_logical_cycle: int | None = None
+
+
 def _normalize_ch(s):
     """채널번호 정규화: '32' → '032', '032' → '032', 비숫자 → 원본"""
     try:
@@ -589,6 +625,20 @@ def is_micro_unit(raw_file_path):
     return ('PNE21' in raw_file_path) or ('PNE22' in raw_file_path) or _coincell_mode
 
 
+# ── Phase 0: 채널 메타데이터 캐시 ──────────────────────────────
+_channel_meta_store: dict[str, ChannelMeta] = {}
+
+
+def get_channel_meta(channel_path: str) -> ChannelMeta | None:
+    """채널 경로별 ChannelMeta 조회. 없으면 None."""
+    return _channel_meta_store.get(channel_path)
+
+
+def clear_channel_meta_store():
+    """전체 채널 메타데이터 캐시 초기화."""
+    _channel_meta_store.clear()
+
+
 # ── Phase 2: 채널별 파일 I/O 캐시 ──────────────────────────────
 _channel_cache: dict[str, dict] = {}
 
@@ -596,8 +646,15 @@ _channel_cache: dict[str, dict] = {}
 _SWEEP_SCOPE_CACHE: dict[str, dict] = {}
 
 
+def _reset_all_caches():
+    """모든 캐시 일괄 초기화 (새 데이터 로드 시작 시 호출)."""
+    clear_channel_meta_store()
+    _channel_cache.clear()
+    _SWEEP_SCOPE_CACHE.clear()
+
+
 def clear_channel_cache():
-    """전체 채널 캐시 초기화 (새 데이터 로드 시작 시 호출)."""
+    """전체 채널 I/O 캐시 초기화 (새 데이터 로드 시작 시 호출)."""
     _channel_cache.clear()
     _SWEEP_SCOPE_CACHE.clear()
 
@@ -3951,6 +4008,175 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
     return result
 
 
+def _build_channel_meta(
+    channel_path: str,
+    capacity_override: float = 0,
+    ini_crate: float = 0.2,
+) -> ChannelMeta | None:
+    """단일 채널의 메타데이터를 1회에 전부 계산하여 ChannelMeta 반환.
+
+    classify_channel_path + 스케줄 파싱 + cycle_map + min_cap을
+    한번에 수행하여 중복 계산을 제거한다.
+    결과는 _channel_meta_store에 자동 등록된다.
+
+    Parameters
+    ----------
+    channel_path : str
+        채널 폴더 경로 (예: rawdata/dataset/[032])
+    capacity_override : float
+        테이블 입력 용량 (mAh). 0이면 자동 감지.
+    ini_crate : float
+        초기 C-rate (용량 산정용). 기본 0.2C.
+
+    Returns
+    -------
+    ChannelMeta | None
+        성공 시 ChannelMeta, 데이터 없으면 None.
+    """
+    parent_path = os.path.dirname(channel_path)
+    is_pne = check_cycler(parent_path)
+    cycler_str = 'PNE' if is_pne else 'Toyo'
+
+    # ── 1. 용량 산정 ──
+    if capacity_override > 0:
+        min_capacity = capacity_override
+        cap_source = 'table'
+    else:
+        cap_from_path = _extract_capacity_from_path(parent_path)
+        if cap_from_path > 0:
+            min_capacity = cap_from_path
+            cap_source = 'path_name'
+        else:
+            # 파일 기반 산정 (기존 캐시 활용)
+            if is_pne:
+                min_capacity = pne_min_cap(channel_path, 0, ini_crate)
+            else:
+                min_capacity = toyo_min_cap(channel_path, 0, ini_crate)
+            cap_source = 'file' if min_capacity > 0 else 'auto'
+
+    # ── 2. 사이클 분류 ──
+    _raw_df = None
+    classified = None
+    counts = None
+    if is_pne:
+        _raw_df, _, _ = _cached_pne_restore_files(channel_path)
+        if _raw_df is None or _raw_df.shape[1] < 28:
+            return None
+        summary = _raw_df[[27, 2, 6, 9, 10, 11, 17]].copy()
+        summary.columns = ['TotlCycle', 'StepType', 'EndState', 'Current',
+                           'ChgCap', 'DchgCap', 'StepTime']
+        classified = classify_pne_cycles(summary, int(min_capacity))
+    else:
+        _raw_df = toyo_read_csv(channel_path)
+        if _raw_df is None:
+            for f in os.listdir(channel_path):
+                if f.upper() == 'CAPACITY.LOG':
+                    try:
+                        _raw_df = pd.read_csv(
+                            os.path.join(channel_path, f),
+                            sep=',', encoding='cp949', on_bad_lines='skip')
+                    except Exception:
+                        pass
+                    break
+        if _raw_df is None:
+            return None
+        needed = ['Condition', 'TotlCycle', 'Cap[mAh]']
+        if not all(c in _raw_df.columns for c in needed):
+            return None
+        classified = classify_toyo_cycles(
+            _raw_df[['Condition', 'TotlCycle', 'Cap[mAh]']].copy(),
+            int(min_capacity),
+        )
+
+    if not classified:
+        return None
+
+    counts = {}
+    for c in classified:
+        cat = c['category']
+        counts[cat] = counts.get(cat, 0) + 1
+
+    # ── 3. 스케줄 파싱 (1회) ──
+    sch_file = None
+    sch_parsed = None
+    schedule_struct = None
+    accel_pattern = None
+
+    if is_pne and HAS_SCH_PARSER:
+        sch_file = _find_sch_file(channel_path)
+        if sch_file:
+            sch_parsed = _parse_pne_sch(sch_file)  # 1회 파싱
+            if sch_parsed:
+                # 기존 함수에 parsed_data 전달 → 재파싱 방지
+                schedule_struct = extract_schedule_structure_from_sch(
+                    sch_file, min_capacity, parsed_data=sch_parsed)
+                accel_pattern = extract_accel_pattern_from_sch(
+                    sch_file, min_capacity, parsed_data=sch_parsed)
+    elif not is_pne:
+        # Toyo: .ptn 파싱
+        ptn_file = _find_ptn_file(channel_path)
+        if ptn_file:
+            sch_file = ptn_file
+            accel_pattern = _parse_toyo_ptn(channel_path, min_capacity)
+
+    # CSV 폴백: 스케줄 파일 없거나 패턴 추출 실패 시
+    if accel_pattern is None:
+        accel_pattern = analyze_accel_pattern(
+            channel_path, min_capacity, classified, is_pne, raw_df=_raw_df)
+
+    # 스냅 처리
+    if accel_pattern:
+        accel_pattern = _snap_accel_pattern(accel_pattern)
+
+    # ── 4. 시험유형 결정 ──
+    if schedule_struct:
+        test_type = schedule_struct['schedule_type']
+        schedule_pattern_str = schedule_struct['pattern_string']
+    else:
+        test_type = detect_test_type(counts)
+        schedule_pattern_str = detect_schedule_pattern(classified)
+
+    # ── 5. 사이클 맵 생성 ──
+    cycle_map = None
+    sweep_scope = None
+    max_logical = None
+    if is_pne:
+        cycle_map, _ = pne_build_cycle_map(
+            channel_path, min_capacity, ini_crate,
+            sch_struct=schedule_struct)
+        # sweep_scope는 pne_build_cycle_map에서 _SWEEP_SCOPE_CACHE에 저장됨
+        sweep_scope = _SWEEP_SCOPE_CACHE.get(channel_path, {})
+    else:
+        cycle_map, _ = toyo_build_cycle_map(
+            channel_path, min_capacity, ini_crate)
+
+    if cycle_map:
+        max_logical = max(cycle_map.keys()) if cycle_map else None
+
+    # ── 6. ChannelMeta 생성 및 등록 ──
+    meta = ChannelMeta(
+        channel_path=channel_path,
+        parent_path=parent_path,
+        cycler=cycler_str,
+        is_pne=is_pne,
+        min_capacity=min_capacity,
+        capacity_source=cap_source,
+        sch_file=sch_file,
+        sch_parsed=sch_parsed,
+        schedule_struct=schedule_struct,
+        accel_pattern=accel_pattern,
+        classified=classified,
+        counts=counts,
+        test_type=test_type,
+        schedule_pattern=schedule_pattern_str,
+        cycle_map=cycle_map,
+        sweep_scope=sweep_scope if sweep_scope else None,
+        max_logical_cycle=max_logical,
+    )
+    _channel_meta_store[channel_path] = meta
+    return meta
+
+
 def classify_paths_summary(path_list: list, capacity_list: list | None = None) -> dict:
     """여러 경로의 사이클 분류를 일괄 수행하여 요약 dict 반환.
 
@@ -4924,6 +5150,8 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
 def extract_accel_pattern_from_sch(
     sch_path: str,
     capacity: float = 0,
+    *,
+    parsed_data: dict | None = None,
 ) -> dict | None:
     """PNE .sch 파일에서 가속수명 충방전 패턴 추출.
 
@@ -4936,6 +5164,8 @@ def extract_accel_pattern_from_sch(
         .sch 파일 경로.
     capacity : float
         공칭 용량(mAh). 0이면 C-rate = 0으로 표시.
+    parsed_data : dict | None
+        이미 파싱된 _parse_pne_sch() 결과. 제공 시 재파싱 생략.
 
     Returns
     -------
@@ -4948,7 +5178,7 @@ def extract_accel_pattern_from_sch(
             'n_discharge_steps': int,
         }
     """
-    parsed = _parse_pne_sch(sch_path)
+    parsed = parsed_data if parsed_data is not None else _parse_pne_sch(sch_path)
     if not parsed:
         return None
 
@@ -5061,6 +5291,8 @@ def _ordinal(n: int) -> str:
 def extract_schedule_structure_from_sch(
     sch_path: str,
     capacity: float = 0,
+    *,
+    parsed_data: dict | None = None,
 ) -> dict | None:
     """PNE .sch 파일에서 스케줄 구조 정보(시험유형, 패턴) 추출.
 
@@ -5073,6 +5305,8 @@ def extract_schedule_structure_from_sch(
         .sch 파일 경로
     capacity : float
         공칭 용량(mAh). 0이면 .sch 내부에서 추정.
+    parsed_data : dict | None
+        이미 파싱된 _parse_pne_sch() 결과. 제공 시 재파싱 생략.
 
     Returns
     -------
@@ -5087,10 +5321,13 @@ def extract_schedule_structure_from_sch(
     """
     if not HAS_SCH_PARSER:
         return None
-    try:
-        parsed = _parse_pne_sch(sch_path)
-    except Exception:
-        return None
+    if parsed_data is not None:
+        parsed = parsed_data
+    else:
+        try:
+            parsed = _parse_pne_sch(sch_path)
+        except Exception:
+            return None
     if not parsed:
         return None
 
@@ -16094,9 +16331,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         unified_profile_batch()를 호출하여 1채널의 모든 사이클을
         한 번에 처리한다. 기존 _load_step_batch_task + _load_profile_batch_task를
         하나로 통합.
+
+        task_info 형식 (8-tuple):
+            (folder_path, cycle_list, mincapacity, inirate,
+             options, folder_idx, subfolder_idx, cycle_map)
+        cycle_map이 None이면 batch 함수 내부에서 자동 생성(폴백).
         """
         (folder_path, cycle_list, mincapacity, inirate,
-         options, folder_idx, subfolder_idx) = task_info
+         options, folder_idx, subfolder_idx, cycle_map) = task_info
         try:
             if options.get("continuity") == "continuous":
                 # Continue 모드: step_ranges 형식으로 변환
@@ -16107,6 +16349,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     folder_path, step_ranges, mincapacity, inirate,
                     data_scope=options.get("data_scope", "cycle"),
                     include_rest=options.get("include_rest", True),
+                    cycle_map=cycle_map,
                 )
             else:
                 batch_results = unified_profile_batch(
@@ -16118,6 +16361,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     calc_dqdv=options.get("calc_dqdv", False),
                     smooth_degree=options.get("smooth_degree", 0),
                     cutoff=options.get("cutoff", 0.0),
+                    cycle_map=cycle_map,
                 )
             return (folder_idx, subfolder_idx, batch_results)
         except Exception as e:
@@ -16160,7 +16404,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         dict
             {(folder_idx, subfolder_idx, cycle_key): [mincapacity, UnifiedProfileResult]}
         """
-        clear_channel_cache()
+        # Phase 0 메타 스토어가 있으면 channel_cache만 보존 (I/O 캐시 재활용)
+        has_meta = bool(_channel_meta_store)
+        if not has_meta:
+            clear_channel_cache()
+
         tasks = []
         for i, cyclefolder in enumerate(all_data_folder):
             if os.path.isdir(cyclefolder):
@@ -16168,8 +16416,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                              if f.is_dir() and _is_channel_folder(f.name)]
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
+                        # Phase 0 메타가 있으면 cycle_map 전달
+                        cm = None
+                        if has_meta:
+                            meta = get_channel_meta(folder_path)
+                            if meta is not None:
+                                cm = meta.cycle_map
                         task_info = (folder_path, cycle_list, mincapacity,
-                                     inirate, options, i, j)
+                                     inirate, options, i, j, cm)
                         tasks.append(task_info)
 
         if max_workers is None:
@@ -16244,7 +16498,103 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             continue_df.to_csv(save_file_name + "_" + "%04d" % Step_CycNo + ".csv", index=False, sep=',',
                                 header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
         return write_column_num, _artists
-    
+
+    # ─── Phase 0: 채널 메타데이터 선취득 ───
+    @log_perf
+    def _build_all_channel_meta_parallel(
+        self,
+        all_data_folder: list[str],
+        per_path_capacities: list[float] | None = None,
+        ini_crate: float = 0.2,
+        max_workers: int | None = None,
+    ) -> dict[str, ChannelMeta]:
+        """모든 폴더의 채널 메타데이터를 병렬로 1회 계산.
+
+        경로 입력 직후 호출하여 사이클러 판별, 용량 산정, 스케줄 파싱,
+        사이클 분류, cycle_map 생성을 한번에 수행한다.
+        결과는 _channel_meta_store에 자동 등록된다.
+
+        Parameters
+        ----------
+        all_data_folder : list[str]
+            상위 데이터 폴더 목록.
+        per_path_capacities : list[float] | None
+            all_data_folder와 1:1 대응하는 용량 배열. >0이면 우선 사용.
+        ini_crate : float
+            초기 C-rate (용량 산정용).
+        max_workers : int | None
+            스레드 수 (None=자동).
+
+        Returns
+        -------
+        dict[str, ChannelMeta]
+            {channel_path: ChannelMeta}. _channel_meta_store와 동일 참조.
+        """
+        _reset_all_caches()
+
+        # 채널 폴더 탐색 + 태스크 구성
+        tasks = []  # (channel_path, capacity_override, ini_crate)
+        self._meta_subfolder_map = {}  # {folder_idx: [subfolder_path, ...]} — 후속 단계 재사용
+        for i, cyclefolder in enumerate(all_data_folder):
+            if not os.path.isdir(cyclefolder):
+                continue
+            subfolder = [f.path for f in os.scandir(cyclefolder)
+                         if f.is_dir() and _is_channel_folder(f.name)]
+            self._meta_subfolder_map[i] = subfolder
+            _cap = 0.0
+            if per_path_capacities and i < len(per_path_capacities):
+                _cap = per_path_capacities[i] if per_path_capacities[i] > 0 else 0.0
+            for ch_path in subfolder:
+                if 'Pattern' in os.path.basename(ch_path):
+                    continue
+                tasks.append((ch_path, _cap, ini_crate))
+
+        if not tasks:
+            return {}
+
+        if max_workers is None:
+            max_workers = calc_optimal_workers(len(tasks))
+        _perf_logger.info(
+            f'  [Phase 0] folders={len(all_data_folder)}, channels={len(tasks)}, '
+            f'workers={max_workers}')
+
+        completed = 0
+        total = len(tasks)
+
+        def _worker(args):
+            ch_path, cap_override, ini_cr = args
+            return _build_channel_meta(ch_path, cap_override, ini_cr)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_worker, t): t for t in tasks}
+            for future in as_completed(futures):
+                completed += 1
+                if completed % 5 == 0 or completed == total:
+                    self.progressBar.setValue(int(completed / total * 20))
+
+        # 콘솔 요약 출력
+        meta_count = len(_channel_meta_store)
+        if meta_count:
+            _perf_logger.info(f'  [Phase 0] {meta_count}개 채널 메타데이터 생성 완료')
+            # 폴더별 대표 정보 출력
+            _logged_parents = set()
+            for meta in _channel_meta_store.values():
+                if meta.parent_path in _logged_parents:
+                    continue
+                _logged_parents.add(meta.parent_path)
+                cat_parts = [f'{cat}:{n}' for cat, n in (meta.counts or {}).items() if n > 0]
+                src_tag = '[sch]' if meta.sch_parsed else '[csv]'
+                _perf_logger.info(
+                    f'    [{meta.cycler}] {os.path.basename(meta.parent_path)}  '
+                    f'{meta.test_type} {src_tag}  '
+                    f'총 {len(meta.classified or [])}cyc  {", ".join(cat_parts)}  '
+                    f'cap={meta.min_capacity:.0f}mAh  논리cyc={meta.max_logical_cycle}')
+                if meta.accel_pattern:
+                    for line in format_accel_pattern(meta.accel_pattern):
+                        _perf_logger.info(line)
+
+        return dict(_channel_meta_store)
+
     def _load_cycle_data_task(self, task_info):
         """
         단일 폴더의 사이클 데이터 로딩(ThreadPoolExecutor용)
@@ -16271,24 +16621,51 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
           - results: {(folder_idx, subfolder_idx): (folder_path, cyctemp)}
           - subfolder_map: {folder_idx: [subfolder_path, ...]}
         """
-        clear_channel_cache()  # 새 로드 시작 시 캐시 초기화
+        # Phase 0 메타가 있으면 I/O 캐시만 초기화 (메타 캐시 보존)
+        clear_channel_cache()
         tasks = []
-        subfolder_map = {}  # 폴더별 subfolder 캐시 (os.scandir 1회만)
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.exists(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder)
-                             if f.is_dir() and _is_channel_folder(f.name)]
-                subfolder_map[i] = subfolder
-                is_pne = check_cycler(cyclefolder)
-                # 테이블 용량이 있으면 해당 path용 mincapacity 로 사용
+        # Phase 0에서 구성된 subfolder_map이 있으면 재사용
+        subfolder_map = getattr(self, '_meta_subfolder_map', {})
+        _has_meta = bool(_channel_meta_store)
+
+        if subfolder_map and _has_meta:
+            # Phase 0 경로로 태스크 구성 — check_cycler 재호출 불필요
+            for i, cyclefolder in enumerate(all_data_folder):
+                if i not in subfolder_map:
+                    continue
+                subfolder = subfolder_map[i]
                 _cap = mincapacity
                 if per_path_capacities and i < len(per_path_capacities) and per_path_capacities[i] > 0:
                     _cap = per_path_capacities[i]
                 for j, folder_path in enumerate(subfolder):
                     if "Pattern" not in folder_path:
-                        task_info = (folder_path, _cap, firstCrate, 
+                        meta = get_channel_meta(folder_path)
+                        is_pne = meta.is_pne if meta else check_cycler(cyclefolder)
+                        # meta에서 확정된 용량이 있고, 테이블 용량이 없으면 meta 용량 사용
+                        if meta and meta.min_capacity > 0 and _cap == mincapacity:
+                            _cap_ch = meta.min_capacity
+                        else:
+                            _cap_ch = _cap
+                        task_info = (folder_path, _cap_ch, firstCrate,
                                      dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
                         tasks.append(task_info)
+        else:
+            # Phase 0 없이 직접 호출된 경우 (폴백)
+            subfolder_map = {}
+            for i, cyclefolder in enumerate(all_data_folder):
+                if os.path.exists(cyclefolder):
+                    subfolder = [f.path for f in os.scandir(cyclefolder)
+                                 if f.is_dir() and _is_channel_folder(f.name)]
+                    subfolder_map[i] = subfolder
+                    is_pne = check_cycler(cyclefolder)
+                    _cap = mincapacity
+                    if per_path_capacities and i < len(per_path_capacities) and per_path_capacities[i] > 0:
+                        _cap = per_path_capacities[i]
+                    for j, folder_path in enumerate(subfolder):
+                        if "Pattern" not in folder_path:
+                            task_info = (folder_path, _cap, firstCrate,
+                                         dcirchk, dcirchk_2, mkdcir, is_pne, i, j)
+                            tasks.append(task_info)
         
         if max_workers is None:
             max_workers = calc_optimal_workers(len(tasks))
@@ -16877,6 +17254,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cap_val = g.per_path_capacities[pi]
                         _per_path_caps.append(cap_val)
 
+            # ── Phase 0: 메타데이터 선취득 (1회 계산, 캐시 보관) ──
+            with PerfSection('Phase 0 메타데이터', paths=len(all_paths)):
+                self._build_all_channel_meta_parallel(
+                    all_paths, per_path_capacities=_per_path_caps,
+                    ini_crate=firstCrate)
+
+            # subfolder_map을 Phase 0에서 구성된 것 사용
+            subfolder_map = getattr(self, '_meta_subfolder_map', {})
+
             with PerfSection('데이터 로딩', paths=len(all_paths)):
                 loaded_data, subfolder_map = self._load_all_cycle_data_parallel(
                     np.array(all_paths), mincapacity, firstCrate,
@@ -16884,90 +17270,51 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     per_path_capacities=_per_path_caps
                 )
 
-            # ── 경로별 사이클 카테고리 분류 (병렬) ──
-            with PerfSection('사이클 카테고리 분류'):
-                _classify_results = {}  # {flat_idx: {sub_idx: classify_result}}
-                _classify_tasks = []  # (fi, sub_idx, ch_path, cap_val)
-                for fi, subs in subfolder_map.items():
-                    _classify_results[fi] = {}
-                    cap_val = _per_path_caps[fi] if _per_path_caps and fi < len(_per_path_caps) else 0
-                    for sub_idx, ch_path in enumerate(subs):
-                        if 'Pattern' in os.path.basename(ch_path):
-                            continue
-                        _classify_tasks.append((fi, sub_idx, ch_path, cap_val))
-
-                _cls_workers = calc_optimal_workers(len(_classify_tasks))
-                _perf_logger.info(f'  분류 병렬화: tasks={len(_classify_tasks)}, workers={_cls_workers}')
-                with ThreadPoolExecutor(max_workers=_cls_workers) as _cls_ex:
-                    _cls_futures = {
-                        _cls_ex.submit(classify_channel_path, t[2], t[3]): t
-                        for t in _classify_tasks
-                    }
-                    for future in as_completed(_cls_futures):
-                        fi, sub_idx, ch_path, _ = _cls_futures[future]
-                        try:
-                            cr = future.result()
-                            if cr:
-                                cr['channel'] = os.path.basename(ch_path)
-                                _classify_results[fi][sub_idx] = cr
-                        except Exception:
-                            pass
-            # 콘솔 요약 출력 (사이클 그룹별 한 줄)
-            _all_cr = [cr for fi_dict in _classify_results.values() for cr in fi_dict.values()]
-            if _all_cr:
-                _perf_logger.info('▶ 사이클 카테고리 분류 완료')
-                # 그룹별 요약: 같은 패턴이면 채널 목록만 표시
-                _seen_patterns = set()  # 이미 출력한 패턴 문자열
-                for gi, g in enumerate(folder_groups):
-                    _grp_crs = []
-                    for pi in range(len(g.paths)):
-                        fi = flat_idx_of.get((gi, pi), -1)
-                        if fi in _classify_results:
-                            _grp_crs.extend(_classify_results[fi].values())
-                    if not _grp_crs:
+            # ── 분류 결과를 Phase 0 메타 스토어에서 조회 ──
+            _classify_results = {}  # {flat_idx: {sub_idx: classify_dict}} — 기존 호환 형식
+            for fi, subs in subfolder_map.items():
+                _classify_results[fi] = {}
+                for sub_idx, ch_path in enumerate(subs):
+                    if 'Pattern' in os.path.basename(ch_path):
                         continue
-                    # 그룹 대표 정보 (첫 채널 기준)
-                    rep = _grp_crs[0]
-                    cat_parts = [f'{cat}:{n}' for cat, n in rep['counts'].items() if n > 0]
-                    src_tag = '[sch]' if 'sch_info' in rep else '[csv]'
-                    ch_names = [cr.get('channel', '') for cr in _grp_crs]
-                    _perf_logger.info(
-                        f'  그룹{gi} [{rep["cycler"]}] {len(ch_names)}ch  '
-                        f'{rep["test_type"]} {src_tag}  총 {rep["total_cycles"]}cyc  {", ".join(cat_parts)}'
-                    )
-                    # 가속수명 패턴: 그룹 간 동일하면 한 번만 출력
-                    ap = rep.get('accel_pattern')
-                    if ap:
-                        pat_key = _pattern_signature(ap)
-                        if pat_key not in _seen_patterns:
-                            for line in format_accel_pattern(ap):
-                                _perf_logger.info(line)
-                            _seen_patterns.add(pat_key)
+                    meta = get_channel_meta(ch_path)
+                    if meta:
+                        # classify_channel_path 호환 dict 생성
+                        cr = {
+                            'cycler': meta.cycler,
+                            'total_cycles': len(meta.classified) if meta.classified else 0,
+                            'counts': meta.counts or {},
+                            'classified': meta.classified or [],
+                            'schedule_pattern': meta.schedule_pattern or '',
+                            'test_type': meta.test_type or '',
+                            'channel': os.path.basename(ch_path),
+                        }
+                        if meta.schedule_struct:
+                            cr['sch_info'] = {
+                                'has_rss': meta.schedule_struct.get('has_rss', False),
+                                'has_gitt_hppc': meta.schedule_struct.get('has_gitt_hppc', False),
+                                'pattern_string': meta.schedule_struct.get('pattern_string', ''),
+                                'schedule_type': meta.schedule_struct.get('schedule_type', ''),
+                            }
+                        if meta.accel_pattern:
+                            cr['accel_pattern'] = meta.accel_pattern
+                        _classify_results[fi][sub_idx] = cr
 
-
-            # ── 논리사이클 매핑 요약 로그 ──
+            # 논리사이클 매핑 요약 로그 (Phase 0 메타에서 직접 조회)
             _cm_logged = set()
             for fi, subs in subfolder_map.items():
-                for sub_idx in range(len(subs)):
-                    if (fi, sub_idx) not in loaded_data:
-                        continue
-                    _, cyctemp = loaded_data[(fi, sub_idx)]
-                    if cyctemp is None or cyctemp[1] is None:
-                        continue
-                    if not hasattr(cyctemp[1], 'cycle_map') or not cyctemp[1].cycle_map:
-                        continue
+                for sub_idx, ch_path in enumerate(subs):
                     if fi in _cm_logged:
-                        continue
-                    _cm = cyctemp[1].cycle_map
-                    _n_ln = len(_cm)
-                    _has_sw = any(isinstance(v, tuple) for v in _cm.values())
-                    _type_tag = "스윕" if _has_sw else "일반"
-                    ch_name = os.path.basename(subs[sub_idx])
-                    _perf_logger.info(
-                        f'  논리사이클: path{fi} [{ch_name}]  {_type_tag}  '
-                        f'{_n_ln}개 논리사이클')
-                    _cm_logged.add(fi)
-                    break  # 경로당 첫 채널만
+                        break
+                    meta = get_channel_meta(ch_path)
+                    if meta and meta.cycle_map:
+                        _n_ln = len(meta.cycle_map)
+                        _has_sw = any(isinstance(v, tuple) for v in meta.cycle_map.values())
+                        _type_tag = "스윕" if _has_sw else "일반"
+                        _perf_logger.info(
+                            f'  논리사이클: path{fi} [{os.path.basename(ch_path)}]  '
+                            f'{_type_tag}  {_n_ln}개 논리사이클')
+                        _cm_logged.add(fi)
 
             # 탭 할당: 개별=group별, 통합=전체 합산
             if is_individual:
@@ -17838,36 +18185,52 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         channels.append(ch)
                     if channels:
                         auto_ch = ",".join(channels)
-                # 용량
+                # 용량 — Phase 0 메타 스토어 우선, 폴백으로 직접 산정
                 auto_cap = None
-                if "mAh" in path:
-                    auto_cap = name_capacity(path)
-                if not auto_cap and os.path.isdir(path):
-                    try:
-                        first_crate = 0.2  # 기본 C-rate
-                        subs = sorted([f.path for f in os.scandir(path)
-                                       if f.is_dir() and "Pattern" not in f.name])
-                        if subs:
-                            if check_cycler(path):
-                                auto_cap = pne_min_cap(subs[0], 0, first_crate)
-                            else:
-                                auto_cap = toyo_min_cap(subs[0], 0, first_crate)
-                    except Exception:
-                        auto_cap = None
+                meta_hit = None  # 이 경로(parent)에 해당하는 ChannelMeta
+                if _channel_meta_store and os.path.isdir(path):
+                    for sf in (f.path for f in os.scandir(path)
+                               if f.is_dir() and "Pattern" not in f.name):
+                        meta_hit = get_channel_meta(sf)
+                        if meta_hit is not None:
+                            break
+                if meta_hit is not None:
+                    auto_cap = meta_hit.min_capacity
+                else:
+                    if "mAh" in path:
+                        auto_cap = name_capacity(path)
+                    if not auto_cap and os.path.isdir(path):
+                        try:
+                            first_crate = 0.2  # 기본 C-rate
+                            subs = sorted([f.path for f in os.scandir(path)
+                                           if f.is_dir() and "Pattern" not in f.name])
+                            if subs:
+                                if check_cycler(path):
+                                    auto_cap = pne_min_cap(subs[0], 0, first_crate)
+                                else:
+                                    auto_cap = toyo_min_cap(subs[0], 0, first_crate)
+                        except Exception:
+                            auto_cap = None
                 auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
-                # 최대 사이클 수 (빠른 추정)
-                # 사용자가 용량 열(col3)에 직접 입력한 값 우선 사용
+                # 최대 사이클 수 — Phase 0 메타 스토어 우선
                 user_cap = self._get_table_cell(r, 3)
                 cap_for_cycle = _parse_capacity_value(user_cap)
                 if not cap_for_cycle:
                     cap_for_cycle = auto_cap if auto_cap else 0
-                max_cyc = _quick_max_cycle(path, cap_for_cycle)
+                if meta_hit is not None and meta_hit.max_logical_cycle is not None:
+                    max_cyc = meta_hit.max_logical_cycle
+                else:
+                    max_cyc = _quick_max_cycle(path, cap_for_cycle)
                 auto_cyc_str = str(max_cyc) if max_cyc else ""
-                # 최대 TotlCycle (사이클(Raw) 힌트용)
+                # 최대 TotlCycle (사이클(Raw) 힌트용) — Phase 0 메타 스토어 우선
                 auto_raw_str = ""
                 if auto_cyc_str:
                     try:
-                        cm = _build_cycle_map_for_path(path, cap_for_cycle)
+                        cm = None
+                        if meta_hit is not None and meta_hit.cycle_map:
+                            cm = meta_hit.cycle_map
+                        else:
+                            cm = _build_cycle_map_for_path(path, cap_for_cycle)
                         if cm:
                             all_tc = []
                             for v in cm.values():
@@ -19627,8 +19990,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         dqscale, dvscale = init_data['dqscale'], init_data['dvscale']
         all_data_folder, all_data_name = init_data['folders'], init_data['names']
 
-        # ── 1-b. 논리사이클 최대값 초과 검증 ──
-        max_lc = _get_max_logical_cycle(all_data_folder, mincapacity, firstCrate)
+        # ── Phase 0: 메타데이터 사전 구축 ──
+        if not _channel_meta_store:
+            self._build_all_channel_meta_parallel(all_data_folder, mincapacity, firstCrate)
+
+        # ── 1-b. 논리사이클 최대값 초과 검증 (메타 스토어 우선) ──
+        max_lc = None
+        if _channel_meta_store:
+            for meta in _channel_meta_store.values():
+                if meta.max_logical_cycle is not None:
+                    max_lc = meta.max_logical_cycle
+                    break
+        if max_lc is None:
+            max_lc = _get_max_logical_cycle(all_data_folder, mincapacity, firstCrate)
         if max_lc is not None:
             invalid_cycles = [c for c in CycleNo if c > max_lc]
             CycleNo = [c for c in CycleNo if c <= max_lc]
