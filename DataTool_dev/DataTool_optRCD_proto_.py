@@ -1182,7 +1182,7 @@ def _unified_filter_condition(
     is_sweep: bool = False,
     mincapacity: float = 0,
 ) -> pd.DataFrame:
-    """Condition 기반 필터링 (전류 부호 기반 CC 재분류 + 보충전 제외).
+    """Condition 기반 필터링 (전류 부호 기반 CC 재분류 + 휴지 분류 + 보충전 제외).
 
     Parameters
     ----------
@@ -1191,7 +1191,8 @@ def _unified_filter_condition(
     data_scope : str
         "charge" | "discharge" | "cycle"
     include_rest : bool
-        True이면 휴지(Condition==3) 포함.
+        True이면 경계 휴지(충/방전 블록 시작 전·종료 후) 포함.
+        인터펄스 휴지(같은 방향 펄스 사이)는 이 값과 무관하게 항상 포함.
     is_sweep : bool
         True이면 스윕 시험 (GITT/DCIR). 보충전/보방전 필터링 활성화.
     mincapacity : float
@@ -1213,6 +1214,15 @@ def _unified_filter_condition(
       - Current_mA < 0 인 CC 구간 → Condition=2 (방전)으로 재분류
       - Current_mA == 0 인 CC 구간 → Condition=3 (휴지)으로 재분류
 
+    휴지 분류 (charge/discharge scope):
+      데이터의 Condition 시퀀스를 연속 구간(run)으로 분할한 뒤,
+      각 휴지 구간을 인접 비휴지 구간의 Condition 기준으로 분류한다.
+
+      - **인터펄스 휴지**: 앞뒤 비휴지가 모두 target Condition과 동일
+        (예: CHG-REST-CHG). include_rest 무관하게 항상 포함.
+      - **경계 휴지**: 앞 또는 뒤 비휴지가 target Condition과 다르거나 없음
+        (예: REST-CHG..., ...CHG-REST-DCHG). include_rest=True일 때만 포함.
+
     보충전/보방전 필터링 (is_sweep=True, charge/discharge scope):
       스윕 시험에서 보충전(DCIR 후 소량 recharge)이나 보방전이
       단방향 필터에 포함되지 않도록 StepTime 기반으로 제외한다.
@@ -1232,17 +1242,95 @@ def _unified_filter_condition(
     # --- 필터 적용 ---
     if data_scope == "charge":
         cond_values = [1]
+        _target_cond = 1
     elif data_scope == "discharge":
         cond_values = [2]
+        _target_cond = 2
     elif data_scope == "cycle":
         cond_values = [1, 2]
+        _target_cond = None
     else:
         raise ValueError(f"지원하지 않는 data_scope: {data_scope}")
 
-    if include_rest:
-        cond_values.append(3)
+    # --- 휴지 분류: 인터펄스 vs 경계 ---
+    # cycle 모드에서는 기존 동작 (단순 include_rest 체크)
+    if data_scope == "cycle":
+        if include_rest:
+            cond_values.append(3)
+        filtered = df.loc[df["Condition"].isin(cond_values)].copy()
+    else:
+        # charge/discharge 모드: 인터펄스 휴지는 항상 포함, 경계 휴지는 옵션
+        # Condition 시퀀스를 연속 구간(run)으로 분할
+        cond_arr = df["Condition"].values
+        # run 경계 감지: 값이 바뀌는 위치
+        run_change = np.concatenate(([True], cond_arr[1:] != cond_arr[:-1]))
+        run_ids = np.cumsum(run_change) - 1  # 0-based run ID
 
-    filtered = df.loc[df["Condition"].isin(cond_values)].copy()
+        # 각 run의 Condition 값 추출
+        n_runs = run_ids[-1] + 1 if len(run_ids) > 0 else 0
+        run_conds = np.empty(n_runs, dtype=int)
+        for i in range(n_runs):
+            run_conds[i] = cond_arr[run_ids == i][0]
+
+        # 인터펄스 휴지 판별: REST run의 앞뒤 비REST가 모두 target_cond
+        interpulse_runs: set[int] = set()
+        for rid in range(n_runs):
+            if run_conds[rid] != 3:
+                continue
+            # 앞쪽 비휴지 run 탐색
+            prev_cond = None
+            for p in range(rid - 1, -1, -1):
+                if run_conds[p] != 3:
+                    prev_cond = run_conds[p]
+                    break
+            # 뒤쪽 비휴지 run 탐색
+            next_cond = None
+            for n in range(rid + 1, n_runs):
+                if run_conds[n] != 3:
+                    next_cond = run_conds[n]
+                    break
+            # 앞뒤 모두 target_cond → 인터펄스 휴지 (무조건 포함)
+            if prev_cond == _target_cond and next_cond == _target_cond:
+                interpulse_runs.add(rid)
+
+        # 인터펄스 휴지에 해당하는 행의 마스크
+        interpulse_mask = np.zeros(len(df), dtype=bool)
+        if interpulse_runs:
+            for rid in interpulse_runs:
+                interpulse_mask |= (run_ids == rid)
+
+        # 최종 필터: target_cond 행 + 인터펄스 휴지 + (옵션: 경계 휴지)
+        target_mask = df["Condition"].isin(cond_values).values
+        if include_rest:
+            # 경계 휴지 포함: target 근처 휴지만 (앞 또는 뒤 비휴지가 target_cond)
+            boundary_runs: set[int] = set()
+            for rid in range(n_runs):
+                if run_conds[rid] != 3:
+                    continue
+                if rid in interpulse_runs:
+                    continue  # 이미 인터펄스로 포함됨
+                prev_cond = None
+                for p in range(rid - 1, -1, -1):
+                    if run_conds[p] != 3:
+                        prev_cond = run_conds[p]
+                        break
+                next_cond = None
+                for n in range(rid + 1, n_runs):
+                    if run_conds[n] != 3:
+                        next_cond = run_conds[n]
+                        break
+                # 앞 또는 뒤 비휴지가 target_cond → 경계 휴지 (include_rest 시 포함)
+                if prev_cond == _target_cond or next_cond == _target_cond:
+                    boundary_runs.add(rid)
+            boundary_mask = np.zeros(len(df), dtype=bool)
+            if boundary_runs:
+                for rid in boundary_runs:
+                    boundary_mask |= (run_ids == rid)
+            final_mask = target_mask | interpulse_mask | boundary_mask
+        else:
+            final_mask = target_mask | interpulse_mask
+
+        filtered = df.loc[final_mask].copy()
 
     # --- 보충전/보방전 제외 (스윕 시험 + 단방향 scope) ---
     if is_sweep and data_scope in ("charge", "discharge") and "Step" in filtered.columns:
@@ -18637,64 +18725,68 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # Undo 복원 중이면 무시
         if getattr(self, '_table_undo_restoring', False):
             return
-        tbl = self.cycle_path_table
-        item = tbl.item(row, col)
-        if item is None:
-            return
-        text = item.text().strip()
-        _auto_fg = QtGui.QColor(160, 160, 160)
-
-        # ── 셀이 비워졌을 때: 회색 max 힌트 복원 ──
-        if not text:
-            self._restore_cycle_hint(row, col)
-            return
-
-        # 사용자 입력 → 검정 폰트로 변경
-        item.setForeground(QtGui.QColor(0, 0, 0))
-        # tooltip에 max 값 유지 (입력 중에도 최대값 확인 가능)
-        max_info = self._get_row_max_cycle_info(row)
-        if col == 4 and max_info:
-            item.setToolTip(f"입력: {text}  (최대: {max_info['max_cycle']}")
-        elif col == 5 and max_info:
-            item.setToolTip(f"입력: {text}  (최대 Raw: {max_info['max_raw']}")
-
-        if col == 4:
-            # col4(사이클) 편집 → col5(사이클Raw)에 대응 TotlCycle 자동 매핑
-            path = self._get_table_cell(row, 1)
-            if not path:
-                # forward-fill: 이전 행에서 경로 찾기
-                for rr in range(row - 1, -1, -1):
-                    path = self._get_table_cell(rr, 1)
-                    if path:
-                        break
-            if not path:
+        try:
+            tbl = self.cycle_path_table
+            item = tbl.item(row, col)
+            if item is None:
                 return
-            cap_str = self._get_table_cell(row, 3)
+            text = item.text().strip()
+            _auto_fg = QtGui.QColor(160, 160, 160)
+
+            # ── 셀이 비워졌을 때: 회색 max 힌트 복원 ──
+            if not text:
+                self._restore_cycle_hint(row, col)
+                return
+
+            # ── 아이템 속성 변경 시 cellChanged 재발화 방지 ──
+            tbl.blockSignals(True)
             try:
-                cap = float(cap_str) if cap_str else 0.0
-            except ValueError:
-                cap = 0.0
-            cycle_map = _build_cycle_map_for_path(path, cap)
-            if not cycle_map:
-                return
-            totl_str = _logical_to_totl_str(cycle_map, text)
-            if totl_str:
-                tbl.blockSignals(True)
-                try:
-                    item5 = tbl.item(row, 5)
-                    if item5 is None:
-                        item5 = QtWidgets.QTableWidgetItem(totl_str)
-                        tbl.setItem(row, 5, item5)
-                    else:
-                        item5.setText(totl_str)
-                    item5.setForeground(_auto_fg)
-                    raw_tip = f"TotlCycle (자동 매핑): {totl_str}"
-                    if max_info:
-                        raw_tip += f"  (최대 Raw: {max_info['max_raw']})"
-                    item5.setToolTip(raw_tip)
-                finally:
-                    tbl.blockSignals(False)
-        # col5 편집 → 검정 폰트만 설정, col4는 건드리지 않음 (위에서 이미 처리)
+                # 사용자 입력 → 검정 폰트로 변경
+                item.setForeground(QtGui.QColor(0, 0, 0))
+                # tooltip에 max 값 유지 (입력 중에도 최대값 확인 가능)
+                max_info = self._get_row_max_cycle_info(row)
+                if col == 4 and max_info:
+                    item.setToolTip(f"입력: {text}  (최대: {max_info['max_cycle']})")
+                elif col == 5 and max_info:
+                    item.setToolTip(f"입력: {text}  (최대 Raw: {max_info['max_raw']})")
+
+                if col == 4:
+                    # col4(사이클) 편집 → col5(사이클Raw)에 대응 TotlCycle 자동 매핑
+                    path = self._get_table_cell(row, 1)
+                    if not path:
+                        # forward-fill: 이전 행에서 경로 찾기
+                        for rr in range(row - 1, -1, -1):
+                            path = self._get_table_cell(rr, 1)
+                            if path:
+                                break
+                    if not path:
+                        return
+                    cap_str = self._get_table_cell(row, 3)
+                    try:
+                        cap = float(cap_str) if cap_str else 0.0
+                    except ValueError:
+                        cap = 0.0
+                    cycle_map = _build_cycle_map_for_path(path, cap)
+                    if not cycle_map:
+                        return
+                    totl_str = _logical_to_totl_str(cycle_map, text)
+                    if totl_str:
+                        item5 = tbl.item(row, 5)
+                        if item5 is None:
+                            item5 = QtWidgets.QTableWidgetItem(totl_str)
+                            tbl.setItem(row, 5, item5)
+                        else:
+                            item5.setText(totl_str)
+                        item5.setForeground(_auto_fg)
+                        raw_tip = f"TotlCycle (자동 매핑): {totl_str}"
+                        if max_info:
+                            raw_tip += f"  (최대 Raw: {max_info['max_raw']})"
+                        item5.setToolTip(raw_tip)
+                # col5 편집 → 검정 폰트만 설정, col4는 건드리지 않음 (위에서 이미 처리)
+            finally:
+                tbl.blockSignals(False)
+        except Exception:
+            import traceback; traceback.print_exc()
 
     def _collect_measured_first_dchg(self, loaded_data, subfolder_map, n_paths):
         """각 path(folder_idx)의 실측 2nd Dchg(mAh) 수집
