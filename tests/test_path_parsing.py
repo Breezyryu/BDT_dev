@@ -34,8 +34,8 @@ class TestDetectPathColumns:
         assert is_header is True
         assert mapping['name'] == 0    # 'save' → name
         assert mapping['path'] == 2    # 'path' → path
-        assert mapping['channel'] == 1  # 'cycle' → channel
-        assert mapping['capacity'] == 3  # 'cd' → capacity
+        assert mapping['cycle'] == 1   # 'cycle' → cycle
+        assert mapping['mode'] == 3    # 'cd' → mode
 
     def test_2col_header(self, window_class):
         """2열 헤더: cyclename / cyclepath"""
