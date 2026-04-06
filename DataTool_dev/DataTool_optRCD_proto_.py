@@ -494,6 +494,88 @@ def _quick_max_cycle(data_path: str, mincapacity: float = 0) -> int | None:
         pass
     return None
 
+
+def _compress_int_ranges(nums: list[int]) -> str:
+    """정수 리스트를 범위 문자열로 압축.
+
+    [1,2,3,5,7,8,9] → "1-3, 5, 7-9"
+    """
+    if not nums:
+        return ''
+    nums = sorted(set(nums))
+    ranges: list[str] = []
+    start = prev = nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+        else:
+            ranges.append(str(start) if start == prev else f"{start}-{prev}")
+            start = prev = n
+    ranges.append(str(start) if start == prev else f"{start}-{prev}")
+    return ', '.join(ranges)
+
+
+def _logical_to_totl_str(cycle_map: dict, cycle_str: str) -> str:
+    """논리사이클 문자열을 TotlCycle 문자열로 변환.
+
+    cycle_map 값이 int이면 단일 TC, tuple이면 (start, end) 범위.
+    예: cycle_str="1-3", cycle_map={1:10, 2:11, 3:(12,18)}
+        → "10-18"
+    """
+    parts = [s.strip() for s in re.split(r'[,\s]+', cycle_str) if s.strip()]
+    all_tcs: list[int] = []
+    for part in parts:
+        if '-' in part:
+            try:
+                a, b = map(int, part.split('-', 1))
+                for ln in range(a, b + 1):
+                    val = cycle_map.get(ln)
+                    if val is None:
+                        continue
+                    if isinstance(val, tuple):
+                        all_tcs.extend(range(val[0], val[1] + 1))
+                    else:
+                        all_tcs.append(int(val))
+            except (ValueError, TypeError):
+                pass
+        else:
+            try:
+                ln = int(part)
+                val = cycle_map.get(ln)
+                if val is None:
+                    continue
+                if isinstance(val, tuple):
+                    all_tcs.extend(range(val[0], val[1] + 1))
+                else:
+                    all_tcs.append(int(val))
+            except (ValueError, TypeError):
+                pass
+    return _compress_int_ranges(all_tcs)
+
+
+def _build_cycle_map_for_path(data_path: str, capacity: float) -> dict | None:
+    """데이터 경로에서 cycle_map을 빌드 (첫 채널 기준).
+
+    PNE / Toyo 자동 판별 후 해당 빌더 사용.
+    """
+    if not os.path.isdir(data_path):
+        return None
+    subs = sorted(
+        [f.path for f in os.scandir(data_path)
+         if f.is_dir() and "Pattern" not in f.name
+         and _is_channel_folder(f.name)])
+    if not subs:
+        return None
+    try:
+        if check_cycler(data_path):
+            cm, _ = _get_pne_cycle_map(subs[0], capacity, 0.2)
+        else:
+            cm, _ = toyo_build_cycle_map(subs[0], capacity, 0.2)
+        return cm if cm else None
+    except Exception:
+        return None
+
+
 # 코인셀/PNE21·22 μA 단위 사용 여부 판별
 _coincell_mode = False
 
@@ -17527,6 +17609,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._highlight_capacity_mismatch()
         # 논리사이클 매핑 정보 라벨 갱신 (Phase B)
         self._update_cycle_map_info()
+        # TotlCycle 자동 매핑 (ECT 모드: 논리사이클 → TotlCycle 변환)
+        self._autofill_totl_cycle_column()
 
     def _set_table_rows(self, rows):
         """dict 리스트를 테이블에 채움. None 항목은 빈 행(그룹 구분자)."""
@@ -17552,18 +17636,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_map_info_label.setVisible(False)
 
     # 인식 가능한 헤더 키워드 (소문자)
-    # ECT 형식: path/cycle/cd/save 도 인식
+    # ECT 형식: path/totlcycle/cd/save (구형: path/cycle/cd/save)
     _HEADER_ALIASES = {
         'cyclename': 'name', 'name': 'name', 'save': 'name',
         'cyclepath': 'path', 'path': 'path',
         'channel': 'channel', 'ch': 'channel',
-        'cycle': 'cycle', '사이클': 'cycle',
+        '사이클': 'cycle',
         'cd': 'mode', 'mode': 'mode', '모드': 'mode',
         'capacity': 'capacity', 'cap': 'capacity',
         'totlcycle': 'totl_cycle', 'totl_cycle': 'totl_cycle',
+        'cycle': 'totl_cycle',  # ECT 구형 호환: cycle = TotlCycle
     }
-    # ECT 형식 판별용 키워드 (이 3개가 모두 존재하면 ECT)
-    _ECT_HEADER_KEYS = {'cycle', 'cd', 'save'}
+    # ECT 형식 판별용 키워드 (cd + save 필수, cycle 또는 totlcycle 중 하나)
+    _ECT_HEADER_KEYS_BASE = {'cd', 'save'}
+    _ECT_HEADER_CYCLE_KEYS = {'cycle', 'totlcycle'}
 
     @staticmethod
     def _detect_path_columns(header_line: str) -> tuple[dict, bool]:
@@ -17708,11 +17794,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 연결처리 체크박스 복원
         if link_mode is not None and self.chk_link_cycle.isEnabled():
             self.chk_link_cycle.setChecked(link_mode)
-        # ECT 형식 감지: 헤더에 ECT 전용 키워드(cycle, cd, save)가 모두 있으면 ECT
+        # ECT 형식 감지: 헤더에 (cd + save) + (cycle 또는 totlcycle) 가 있으면 ECT
         _header_cols_lower = set(
             c.strip().lower() for c in header_line.rstrip('\n\r').split('\t'))
         is_ect = (ect_mode is True) or (
-            is_header and self._ECT_HEADER_KEYS.issubset(_header_cols_lower))
+            is_header
+            and self._ECT_HEADER_KEYS_BASE.issubset(_header_cols_lower)
+            and bool(_header_cols_lower & self._ECT_HEADER_CYCLE_KEYS))
         if is_ect:
             self.chk_ectpath.setChecked(True)
             # 연속 동일 경로 중복 제거 (시각적 정리)
@@ -17758,12 +17846,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             f.write(f"#link_mode={int(link_mode)}\n")
             f.write(f"#ect_mode={int(ect_mode)}\n")
             if ect_mode:
-                # ECT 원본 헤더 형식으로 저장 (forward-fill 복원)
-                f.write("path\tcycle\tcd\tsave\ttotlcycle\n")
+                # ECT 헤더: path/totlcycle/cd/save
+                f.write("path\ttotlcycle\tcd\tsave\n")
                 table_rows = self._get_table_rows_ffill()
                 for r in table_rows:
-                    f.write(f"{r['path']}\t{r['cycle']}\t"
-                            f"{r['mode']}\t{r['name']}\t{r['totl_cycle']}\n")
+                    f.write(f"{r['path']}\t{r['totl_cycle']}\t"
+                            f"{r['mode']}\t{r['name']}\n")
             else:
                 f.write("cyclename\tcyclepath\tchannel\tcapacity\t사이클\t모드\tTotlCycle\n")
                 # 테이블 행을 순서대로 기록 (빈 행 = 그룹 구분자)
@@ -18189,6 +18277,68 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             label.setVisible(True)
         except Exception:
             label.setVisible(False)
+
+    def _autofill_totl_cycle_column(self):
+        """논리사이클(col4) → TotlCycle(col6) 자동 매핑 채움.
+
+        각 행의 경로에서 cycle_map을 빌드하고, 사이클 열의 논리사이클 값을
+        TotlCycle 값으로 변환하여 col6에 회색 텍스트로 표시한다.
+        ECT path 체크 시에만 동작한다.
+        """
+        if not self.chk_ectpath.isChecked():
+            return
+        tbl = self.cycle_path_table
+        _cache: dict[str, dict | None] = {}  # path → cycle_map
+        _auto_fg = QtGui.QColor(160, 160, 160)  # 자동 매핑 표시용 회색
+        tbl.blockSignals(True)
+        try:
+            last_path = ''
+            for r in range(tbl.rowCount()):
+                path = self._get_table_cell(r, 1)
+                if path:
+                    last_path = path
+                else:
+                    path = last_path  # forward-fill
+                if not path:
+                    continue
+                # col6에 사용자 직접 입력이 있으면 유지 (회색이 아닌 폰트)
+                item6 = tbl.item(r, 6)
+                if item6 and item6.text().strip():
+                    fg = item6.foreground().color()
+                    if fg != _auto_fg:
+                        continue  # 사용자 입력은 덮어쓰지 않음
+                # col4 값 확인 — 회색 힌트(자동 감지)이면 매핑 건너뛰기
+                cyc_str = self._get_table_cell(r, 4)
+                if not cyc_str:
+                    continue
+                item4 = tbl.item(r, 4)
+                if item4 and item4.foreground().color() == _auto_fg:
+                    continue  # 자동 감지 힌트 → TotlCycle 매핑 불필요
+                # cycle_map 빌드/캐시
+                if path not in _cache:
+                    cap_str = self._get_table_cell(r, 3)
+                    try:
+                        cap = float(cap_str) if cap_str else 0.0
+                    except ValueError:
+                        cap = 0.0
+                    _cache[path] = _build_cycle_map_for_path(path, cap)
+                cycle_map = _cache.get(path)
+                if not cycle_map:
+                    continue
+                # 논리사이클 → TotlCycle 변환
+                totl_str = _logical_to_totl_str(cycle_map, cyc_str)
+                if totl_str:
+                    if item6 is None:
+                        item6 = QtWidgets.QTableWidgetItem(totl_str)
+                        tbl.setItem(r, 6, item6)
+                    else:
+                        item6.setText(totl_str)
+                    item6.setForeground(_auto_fg)
+                    item6.setToolTip(f"TotlCycle (자동 매핑): {totl_str}")
+        except Exception:
+            pass
+        finally:
+            tbl.blockSignals(False)
 
     def _collect_measured_first_dchg(self, loaded_data, subfolder_map, n_paths):
         """각 path(folder_idx)의 실측 2nd Dchg(mAh) 수집
@@ -19234,17 +19384,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
         # 테이블에 데이터 있으면 테이블에서 읽기, 없으면 파일 선택
         if self._has_table_data():
-            # ECT 테이블 매핑: name→save, path→path, cycle→사이클, mode→CD, totl_cycle→TotlCycle
+            # ECT 테이블 매핑: TotlCycle(col6)을 사이클 기준으로 사용
             table_rows = self._get_table_rows_ffill()
             ect_path = np.array([r['path'] for r in table_rows])
-            ect_cycle = np.array([r['cycle'] for r in table_rows])
+            ect_cycle = np.array([r['totl_cycle'] for r in table_rows])
             ect_CD = np.array([r['mode'] for r in table_rows])
             ect_save = np.array([r['name'] for r in table_rows])
-            ect_totl_cycle = np.array([r['totl_cycle'] for r in table_rows])
-            # 현재 ect_cycle에 TotlCycle 기준값 사용 (totl_cycle 열에 값이 있으면 우선 적용)
-            for idx in range(len(ect_totl_cycle)):
-                if ect_totl_cycle[idx]:
-                    ect_cycle[idx] = ect_totl_cycle[idx]
         else:
             root = Tk()
             root.withdraw()
@@ -19256,10 +19401,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             cycle_path = pd.read_csv(
                 datafilepath, sep="\t", engine="c", encoding="UTF-8",
                 skiprows=1, on_bad_lines='skip')
-            ect_path = np.array(cycle_path.path.tolist())
-            ect_cycle = np.array(cycle_path.cycle.tolist())
-            ect_CD = np.array(cycle_path.CD.tolist())
-            ect_save = np.array(cycle_path.save.tolist())
+            # 컬럼명 정규화: 구형(cycle) / 신형(totlcycle) 모두 지원
+            _cols_lower = {c.lower(): c for c in cycle_path.columns}
+            ect_path = np.array(cycle_path[_cols_lower['path']].tolist())
+            _tc_col = _cols_lower.get('totlcycle', _cols_lower.get('cycle'))
+            ect_cycle = np.array(cycle_path[_tc_col].tolist())
+            ect_CD = np.array(cycle_path[_cols_lower['cd']].tolist())
+            ect_save = np.array(cycle_path[_cols_lower['save']].tolist())
             if "mAh" in datafilepath:
                 self.mincapacity = name_capacity(datafilepath)
         self.ContinueConfirm.setEnabled(True)
