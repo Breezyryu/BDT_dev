@@ -8104,18 +8104,67 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
 
 
 class BorderDelegate(QtWidgets.QStyledItemDelegate):
-    """셀 테두리를 그리는 커스텀 delegate. UserRole+100에 QColor가 설정되면 테두리 표시."""
+    """셀 배경을 둥근 모서리로 그리고, UserRole+100에 QColor가 설정되면 테두리 표시."""
     BORDER_ROLE = QtCore.Qt.ItemDataRole.UserRole + 100
+    _RADIUS = 6  # 모서리 둥글기 (px)
+    _MARGIN = 1  # 셀 안쪽 여백 (px)
 
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+        # 둥근 배경 영역
+        rect = option.rect.adjusted(self._MARGIN, self._MARGIN,
+                                    -self._MARGIN, -self._MARGIN)
+
+        # 배경색 결정 (선택 상태 / 아이템 배경색 / 기본)
+        if option.state & QtWidgets.QStyle.StateFlag.State_Selected:
+            bg = option.palette.highlight().color()
+        else:
+            bg_brush = index.data(QtCore.Qt.ItemDataRole.BackgroundRole)
+            if bg_brush and isinstance(bg_brush, QtGui.QBrush):
+                bg = bg_brush.color()
+            elif bg_brush and isinstance(bg_brush, QtGui.QColor):
+                bg = bg_brush
+            else:
+                bg = option.palette.base().color()
+
+        # 둥근 사각형으로 배경 칠하기
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(bg)
+        painter.drawRoundedRect(QtCore.QRectF(rect), self._RADIUS, self._RADIUS)
+
+        # 텍스트 그리기
+        text = index.data(QtCore.Qt.ItemDataRole.DisplayRole)
+        if text:
+            fg_brush = index.data(QtCore.Qt.ItemDataRole.ForegroundRole)
+            if fg_brush and isinstance(fg_brush, QtGui.QBrush):
+                painter.setPen(fg_brush.color())
+            elif fg_brush and isinstance(fg_brush, QtGui.QColor):
+                painter.setPen(fg_brush)
+            elif option.state & QtWidgets.QStyle.StateFlag.State_Selected:
+                painter.setPen(option.palette.highlightedText().color())
+            else:
+                painter.setPen(option.palette.text().color())
+            font_data = index.data(QtCore.Qt.ItemDataRole.FontRole)
+            if font_data and isinstance(font_data, QtGui.QFont):
+                painter.setFont(font_data)
+            else:
+                painter.setFont(option.font)
+            text_rect = rect.adjusted(4, 0, -4, 0)
+            painter.drawText(QtCore.QRectF(text_rect),
+                             QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft,
+                             str(text))
+
+        # 테두리 (UserRole+100에 색상이 설정된 경우)
         border_color = index.data(self.BORDER_ROLE)
         if border_color and isinstance(border_color, QtGui.QColor):
-            painter.save()
-            pen = QtGui.QPen(border_color, 0.5) # 0.5pt 두께 테두리
+            pen = QtGui.QPen(border_color, 0.5)
             painter.setPen(pen)
-            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
-            painter.restore()
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(QtCore.QRectF(rect), self._RADIUS, self._RADIUS)
+
+        painter.restore()
 
 
 class PathElideDelegate(QtWidgets.QStyledItemDelegate):
@@ -21230,14 +21279,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             toyo_data["day"] = toyo_data['testname'].apply(self.split_value0)
             toyo_data["part"] = toyo_data['testname'].apply(self.split_value1)
             toyo_data["name"] = toyo_data['testname'].apply(self.split_value2)
-            # path: Chpatrn.cfg 컬럼9(folder)가 기본값, ExperimentStatusReport가 있으면 덮어씀
-            toyo_data["path"] = toyo_data["folder"]
+            toyo_data["path"] = toyo_data['testname']
             if toyo_num != 3:
-                toyo_data["path"] = toyo_data2["folder"]
+                toyo_data["folder"] = toyo_data2["folder"]
                 toyo_data["temp"] = toyo_data2['temp']
                 toyo_data["cyc"] = toyo_data2['cyc1'].astype(str) + " / " + toyo_data2['cyc2'].astype(str) + " / " + toyo_data2['cyc3'].astype(str)
                 toyo_data["vol"] = toyo_data2['vol'].where((toyo_data2["vol"].astype('float') < 5) & (toyo_data2["vol"].astype('float') > 2), "-")
             else:
+                toyo_data["folder"] = toyo_data['testname'].str.split(" ").str[2]
                 toyo_data["temp"] = toyo_data['testname'].str.split(" ").str[2]
                 toyo_data["cyc"] = toyo_data['testname'].str.split(" ").str[2]
                 toyo_data["vol"] = toyo_data['testname'].str.split(" ").str[2]
