@@ -617,14 +617,26 @@ def _totl_to_logical_str(cycle_map: dict, raw_str: str) -> str:
         sorted_entries.append((s, e, ln))
 
     def _find_nearest_logical(tc: int) -> int | None:
-        """직접 매핑 안 되는 TC에 대해 가장 가까운 논리사이클 추정."""
+        """직접 매핑 안 되는 TC에 대해 가장 가까운 논리사이클 추정.
+
+        - cycle_map 범위 내부의 갭: 가장 가까운 논리사이클 반환
+        - 범위 밖(최소 미만/최대 초과): 최소/최대 논리사이클로 클램핑
+          (ECT 다중 경로 입력 시 경로별 max TC가 다를 때 빈칸 방지)
+        """
         if not sorted_entries:
             return None
         # TC가 어떤 논리사이클 범위 내에 있는지 확인
         for s, e, ln in sorted_entries:
             if s <= tc <= e:
                 return ln
-        # 범위 밖이면 가장 가까운 논리사이클 찾기
+        # 범위 밖 클램핑: 최소/최대 논리사이클 반환
+        global_min = sorted_entries[0][0]
+        global_max = sorted_entries[-1][1]
+        if tc < global_min:
+            return sorted_entries[0][2]   # 첫 논리사이클
+        if tc > global_max:
+            return sorted_entries[-1][2]  # 마지막 논리사이클
+        # 범위 내 갭: 가장 가까운 논리사이클 찾기
         best_ln = None
         best_dist = float('inf')
         for s, e, ln in sorted_entries:
@@ -7453,14 +7465,19 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin([9,2])]
                 elif (CDstate == "Cycle") or (CDstate == "7cyc") or (CDstate == "GITT"):
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle)]
-                Profileraw = Profileraw[[0, 18, 19, 8, 9, 21, 10, 11, 7, 17]]
-                Profileraw.columns = ["index", "TotTime[Day]", "TotTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]",
-                                            "ChgCap", "DchgCap", "step", "StepTime"]
-                Profileraw = pne_continue_profile_scale_change(raw_file_path, Profileraw, mincapacity)
-                df.stepchg = Profileraw
-                if hasattr(df, "stepchg"):
-                    df.stepchg = df.stepchg[["TotTime[Sec]", "TotTime[Min]", "SOC", "Voltage[V]", "Current[mA]", "Crate", "Temp1[Deg]"]]
-                    df.stepchg.columns = ["TimeSec", "TimeMin", "SOC", "Vol","Curr", "Crate", "Temp"]
+                if Profileraw.empty:
+                    # 해당 TC 범위에 데이터 없음 (시험 미도달 등) → 빈 결과 반환
+                    _perf_logger.warning(
+                        f'  [ECT] TC={inicycle}~{endcycle} 데이터 없음: {raw_file_path}')
+                else:
+                    Profileraw = Profileraw[[0, 18, 19, 8, 9, 21, 10, 11, 7, 17]]
+                    Profileraw.columns = ["index", "TotTime[Day]", "TotTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]",
+                                                "ChgCap", "DchgCap", "step", "StepTime"]
+                    Profileraw = pne_continue_profile_scale_change(raw_file_path, Profileraw, mincapacity)
+                    df.stepchg = Profileraw
+                    if hasattr(df, "stepchg"):
+                        df.stepchg = df.stepchg[["TotTime[Sec]", "TotTime[Min]", "SOC", "Voltage[V]", "Current[mA]", "Crate", "Temp1[Deg]"]]
+                        df.stepchg.columns = ["TimeSec", "TimeMin", "SOC", "Vol","Curr", "Crate", "Temp"]
             CycfileSOC = pd.DataFrame()
         else:
             # PNE 채널, 용량 산정
@@ -7489,21 +7506,25 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
                 CCV = [i/1000000 for i in tempCCV]
                 min_length = min(len(Cap), len(OCV), len(CCV))
                 CycfileSOC = pd.DataFrame({"AccCap": Cap[:min_length], "OCV": OCV[:min_length], "CCV": CCV[:min_length]})
-                # Profile 데이터를 기준으로 산정 
+                # Profile 데이터를 기준으로 산정
                 Profileraw = pneProfile.Profileraw
                 Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle)]
-                Profileraw = Profileraw[[0, 18, 19, 8, 9, 21, 10, 11, 7, 17]]
-                Profileraw = pd.merge(Profileraw, Cycfileraw, on = 0, how = 'outer')
-                Profileraw.columns = ["index", "TotTime[Day]", "TotTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]",
-                                            "ChgCap", "DchgCap", "step", "StepTime", "OCV", "CCV"]
-                Profileraw["OCV"] = Profileraw["OCV"]/1000000
-                Profileraw["CCV"] = Profileraw["CCV"]/1000000
-                Profileraw = pne_continue_profile_scale_change(raw_file_path, Profileraw, mincapacity)
-                df.stepchg = Profileraw
-                if hasattr(df, "stepchg"):
-                    df.stepchg = df.stepchg[["TotTime[Sec]", "TotTime[Min]", "SOC", "Voltage[V]", "Current[mA]", "Crate",
-                                                        "Temp1[Deg]", "OCV", "CCV"]]
-                    df.stepchg.columns = ["TimeSec", "TimeMin", "SOC", "Vol","Curr", "Crate", "Temp", "OCV", "CCV"]
+                if Profileraw.empty:
+                    _perf_logger.warning(
+                        f'  [ECT] TC={inicycle}~{endcycle} 데이터 없음: {raw_file_path}')
+                else:
+                    Profileraw = Profileraw[[0, 18, 19, 8, 9, 21, 10, 11, 7, 17]]
+                    Profileraw = pd.merge(Profileraw, Cycfileraw, on = 0, how = 'outer')
+                    Profileraw.columns = ["index", "TotTime[Day]", "TotTime[Sec]", "Voltage[V]", "Current[mA]", "Temp1[Deg]",
+                                                "ChgCap", "DchgCap", "step", "StepTime", "OCV", "CCV"]
+                    Profileraw["OCV"] = Profileraw["OCV"]/1000000
+                    Profileraw["CCV"] = Profileraw["CCV"]/1000000
+                    Profileraw = pne_continue_profile_scale_change(raw_file_path, Profileraw, mincapacity)
+                    df.stepchg = Profileraw
+                    if hasattr(df, "stepchg"):
+                        df.stepchg = df.stepchg[["TotTime[Sec]", "TotTime[Min]", "SOC", "Voltage[V]", "Current[mA]", "Crate",
+                                                            "Temp1[Deg]", "OCV", "CCV"]]
+                        df.stepchg.columns = ["TimeSec", "TimeMin", "SOC", "Vol","Curr", "Crate", "Temp", "OCV", "CCV"]
     return [mincapacity, df, CycfileSOC]
 
 # PNE DCIR data 처리 class
@@ -14532,6 +14553,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.FindText.returnPressed.connect(self.tb_cycler_combobox)
         self.btn_highlight.clicked.connect(self.tb_cycler_combobox)
         self.btn_filter.clicked.connect(self.filter_all_channels)
+        # tb_channel Ctrl+C 복사 / Ctrl+A 전체 선택
+        self.tb_channel.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        _tb_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.tb_channel)
+        _tb_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tb_copy.activated.connect(self._tb_channel_copy)
+        _tb_selall = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.SelectAll, self.tb_channel)
+        _tb_selall.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _tb_selall.activated.connect(self.tb_channel.selectAll)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -19502,19 +19531,69 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             text = item.text().strip()
             _auto_fg = QtGui.QColor(160, 160, 160)
 
-            # ── 셀이 비워졌을 때: 회색 max 힌트 복원 (양쪽 모두) ──
+            # ── 셀이 비워졌을 때 ──
             if not text:
-                self._restore_cycle_hint(row, col)
-                # 양쪽 모두 편집 가능으로 복원
+                _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
+                             | QtCore.Qt.ItemFlag.ItemIsEnabled
+                             | QtCore.Qt.ItemFlag.ItemIsEditable)
                 tbl.blockSignals(True)
                 try:
-                    _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
-                                 | QtCore.Qt.ItemFlag.ItemIsEnabled
-                                 | QtCore.Qt.ItemFlag.ItemIsEditable)
-                    for c in (4, 5):
-                        it = tbl.item(row, c)
-                        if it is not None:
-                            it.setFlags(_editable)
+                    if col == 4:
+                        # col4(사이클) 삭제: col5(Raw) 값이 있으면 유지 + 편집 가능으로 전환
+                        item5 = tbl.item(row, 5)
+                        _col5_has_value = (item5 is not None
+                                           and item5.text().strip()
+                                           and item5.foreground().color() != _auto_fg)
+                        if _col5_has_value:
+                            # col5 기존 값 유지, 편집 가능으로만 전환
+                            item5.setFlags(_editable)
+                            # col4에 col5 역산 논리사이클 힌트 표시
+                            info = self._get_row_max_cycle_info(row)
+                            path = self._get_table_cell(row, 1)
+                            if not path:
+                                for rr in range(row - 1, -1, -1):
+                                    path = self._get_table_cell(rr, 1)
+                                    if path:
+                                        break
+                            cap_str = self._get_table_cell(row, 3)
+                            try:
+                                cap = float(cap_str) if cap_str else 0.0
+                            except ValueError:
+                                cap = 0.0
+                            cycle_map = _build_cycle_map_for_path(path, cap) if path else None
+                            hint_text = ""
+                            if cycle_map:
+                                logical = _totl_to_logical_str(cycle_map, item5.text().strip())
+                                if logical:
+                                    hint_text = logical
+                            if not hint_text and info:
+                                hint_text = f"1-{info['max_cycle']}"
+                            item = tbl.item(row, 4)
+                            if item is None:
+                                item = QtWidgets.QTableWidgetItem(hint_text)
+                                tbl.setItem(row, 4, item)
+                            else:
+                                item.setText(hint_text)
+                            item.setForeground(_auto_fg)
+                            tip = f"논리사이클 (col5 기반 역산): {hint_text}"
+                            if info:
+                                tip += f"  (최대: {info['max_cycle']})"
+                            item.setToolTip(tip)
+                            item.setFlags(_editable)
+                        else:
+                            # col5도 비어있음 → 양쪽 모두 max 힌트 복원
+                            self._restore_cycle_hint(row, col)
+                            for c in (4, 5):
+                                it = tbl.item(row, c)
+                                if it is not None:
+                                    it.setFlags(_editable)
+                    else:
+                        # col5(Raw) 삭제: 양쪽 모두 max 힌트 복원
+                        self._restore_cycle_hint(row, col)
+                        for c in (4, 5):
+                            it = tbl.item(row, c)
+                            if it is not None:
+                                it.setFlags(_editable)
                 finally:
                     tbl.blockSignals(False)
                 return
@@ -19571,16 +19650,43 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # col5(사이클Raw) 편집 → col4(사이클)에 대응 논리사이클 자동 매핑
                     logical_str = _totl_to_logical_str(cycle_map, text)
                     if logical_str:
+                        # 클램핑 여부 판별: 입력 TC가 cycle_map 범위를 초과하는지
+                        _max_tc = max(
+                            (v['all'][1] for v in cycle_map.values()
+                             if isinstance(v, dict) and 'all' in v), default=0)
+                        _input_tcs = []
+                        for _p in re.split(r'[,\s]+', text):
+                            _p = _p.strip()
+                            if '-' in _p:
+                                try:
+                                    _a, _b = map(int, _p.split('-', 1))
+                                    _input_tcs.extend(range(_a, _b + 1))
+                                except (ValueError, TypeError):
+                                    pass
+                            elif _p:
+                                try:
+                                    _input_tcs.append(int(_p))
+                                except (ValueError, TypeError):
+                                    pass
+                        _is_clamped = any(tc > _max_tc for tc in _input_tcs)
+
                         item4 = tbl.item(row, 4)
                         if item4 is None:
                             item4 = QtWidgets.QTableWidgetItem(logical_str)
                             tbl.setItem(row, 4, item4)
                         else:
                             item4.setText(logical_str)
-                        item4.setForeground(_auto_fg)
-                        cyc_tip = f"논리사이클 (자동 매핑): {logical_str}"
-                        if max_info:
-                            cyc_tip += f"  (최대: {max_info['max_cycle']})"
+                        if _is_clamped:
+                            # 클램핑 경고: 주황 폰트 + 경고 툴팁
+                            item4.setForeground(QtGui.QColor(200, 120, 0))
+                            cyc_tip = (f"⚠ 클램핑: TC={text} 범위 초과 "
+                                       f"(이 경로 최대 TC={_max_tc}) → "
+                                       f"논리사이클 {logical_str}으로 제한")
+                        else:
+                            item4.setForeground(_auto_fg)
+                            cyc_tip = f"논리사이클 (자동 매핑): {logical_str}"
+                            if max_info:
+                                cyc_tip += f"  (최대: {max_info['max_cycle']})"
                         item4.setToolTip(cyc_tip)
                         # col4 읽기전용으로 설정 (자동 매핑 값 보호)
                         item4.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable
@@ -21685,6 +21791,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def tb_info_combobox(self):
         self.tb_cycler_combobox()
+
+    def _tb_channel_copy(self) -> None:
+        """tb_channel 선택 영역을 탭 구분 텍스트로 클립보드에 복사"""
+        sel = self.tb_channel.selectedIndexes()
+        if not sel:
+            return
+        # 행/열 범위 계산
+        rows = sorted(set(idx.row() for idx in sel))
+        cols = sorted(set(idx.column() for idx in sel))
+        lines = []
+        for r in rows:
+            cells = []
+            for c in cols:
+                item = self.tb_channel.item(r, c)
+                cells.append(item.text() if item else "")
+            lines.append('\t'.join(cells))
+        QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
 
     def filter_all_channels(self) -> None:
         """전체 충방전기에서 검색 조건에 맞는 채널을 층별/충방전기별 그룹으로 출력
