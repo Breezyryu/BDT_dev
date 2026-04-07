@@ -1797,8 +1797,27 @@ def _unified_calculate_axis(
     elif data_scope == "discharge":
         df["SOC"] = df["DchgCap"]  # DOD 방향 (0~1)
     elif data_scope == "cycle":
-        # 양방향 누적: 충전(+) - 방전(-) → SOC
-        df["SOC"] = df["ChgCap"] - df["DchgCap"]
+        if axis_mode == "soc":
+            # SOC 축 모드: 충전은 ChgCap(0→1), 방전은 DchgCap(0→1) 독립 부여
+            # → 기존 chg/dchg 플롯을 하나의 그래프에 겹친 것과 동일한 결과
+            # 방전부터 시작해도 음수가 되지 않음
+            if "Condition" in df.columns:
+                soc = pd.Series(np.nan, index=df.index)
+                chg_mask = df["Condition"] == 1
+                dchg_mask = df["Condition"] == 2
+                rest_mask = df["Condition"] == 3
+                soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
+                soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
+                # 휴지 구간: 직전 비휴지 값 유지 (forward fill)
+                if rest_mask.any():
+                    soc[rest_mask] = np.nan
+                    soc = soc.ffill()
+                df["SOC"] = soc
+            else:
+                df["SOC"] = df["ChgCap"] - df["DchgCap"]
+        else:
+            # 시간 축 모드: 절대 SOC 표시 (충전+, 방전-)
+            df["SOC"] = df["ChgCap"] - df["DchgCap"]
 
     return df
 
