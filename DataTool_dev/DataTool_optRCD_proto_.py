@@ -21230,14 +21230,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             toyo_data["day"] = toyo_data['testname'].apply(self.split_value0)
             toyo_data["part"] = toyo_data['testname'].apply(self.split_value1)
             toyo_data["name"] = toyo_data['testname'].apply(self.split_value2)
-            toyo_data["path"] = toyo_data['testname']
+            # path: Chpatrn.cfg 컬럼9(folder)가 기본값, ExperimentStatusReport가 있으면 덮어씀
+            toyo_data["path"] = toyo_data["folder"]
             if toyo_num != 3:
-                toyo_data["folder"] = toyo_data2["folder"]
+                toyo_data["path"] = toyo_data2["folder"]
                 toyo_data["temp"] = toyo_data2['temp']
                 toyo_data["cyc"] = toyo_data2['cyc1'].astype(str) + " / " + toyo_data2['cyc2'].astype(str) + " / " + toyo_data2['cyc3'].astype(str)
                 toyo_data["vol"] = toyo_data2['vol'].where((toyo_data2["vol"].astype('float') < 5) & (toyo_data2["vol"].astype('float') > 2), "-")
             else:
-                toyo_data["folder"] = toyo_data['testname'].str.split(" ").str[2]
                 toyo_data["temp"] = toyo_data['testname'].str.split(" ").str[2]
                 toyo_data["cyc"] = toyo_data['testname'].str.split(" ").str[2]
                 toyo_data["vol"] = toyo_data['testname'].str.split(" ").str[2]
@@ -21746,10 +21746,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cyc = str(df.loc[ch_idx, "cyc"]) if "cyc" in df.columns else "-"
                     vol = str(df.loc[ch_idx, "vol"]) if "vol" in df.columns else "-"
                     # 셀 경로: Toyo=folder, PNE=path
-                    if "folder" in df.columns:
-                        cell_path = str(df.loc[ch_idx, "folder"])
-                    elif "path" in df.columns:
+                    if "path" in df.columns:
                         cell_path = str(df.loc[ch_idx, "path"])
+                    elif "folder" in df.columns:
+                        cell_path = str(df.loc[ch_idx, "folder"])
                     else:
                         cell_path = ""
                     if self.match_filter_text(search_text, testname, status):
