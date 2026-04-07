@@ -7084,7 +7084,7 @@ def pne_min_cap(raw_file_path, mincapacity, ini_crate):
                         inicapraw = pd.read_csv(raw_file_path + "\\Restore\\" + files, sep=",", skiprows=0, engine="c",
                                                 header=None, encoding="cp949", on_bad_lines='skip')
                         if len(inicapraw) > 2:
-                            mincapacity = int(round(abs(inicapraw.iloc[1, 9]/1000))/ini_crate)
+                            mincapacity = int(round(abs(inicapraw.iloc[2, 9]/1000))/ini_crate)
         if mincapacity != 0:
             cache['min_cap'] = mincapacity
     return mincapacity
@@ -18987,11 +18987,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
 
     def _cycle_table_paste(self):
-        """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)"""
+        """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)
+
+        여러 셀(사이클, 사이클Raw, 모드 등)을 동시에 붙여넣기 가능.
+        cellChanged 시그널을 차단하여 col4→col5 자동 매핑 간섭 방지.
+        """
         text = QtWidgets.QApplication.clipboard().text()
         if not text:
             return
         self._push_table_undo()
+        tbl = self.cycle_path_table
         # 빈 행 보존하되, 연속 2칸 이상 빈 행은 1칸으로 축소
         raw_lines = text.strip().split('\n')
         rows = []
@@ -19000,7 +19005,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             is_empty = not line.strip()
             if is_empty:
                 if not prev_empty:
-                    rows.append([''] * self.cycle_path_table.columnCount())
+                    rows.append([''] * tbl.columnCount())
                 prev_empty = True
             else:
                 rows.append(line.split('\t'))
@@ -19010,19 +19015,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rows.pop()
         if not rows:
             return
-        sel = self.cycle_path_table.selectedRanges()
+        sel = tbl.selectedRanges()
         start_row = sel[0].topRow() if sel else 0
         start_col = sel[0].leftColumn() if sel else 0
         need_rows = start_row + len(rows)
-        if need_rows > self.cycle_path_table.rowCount():
-            self.cycle_path_table.setRowCount(need_rows)
-        col_count = self.cycle_path_table.columnCount()
-        for ri, parts in enumerate(rows):
-            for ci, val in enumerate(parts):
-                c = start_col + ci
-                if c < col_count:
-                    self.cycle_path_table.setItem(
-                        start_row + ri, c, QtWidgets.QTableWidgetItem(val.strip().strip('"').strip("'")))
+        if need_rows > tbl.rowCount():
+            tbl.setRowCount(need_rows)
+        col_count = tbl.columnCount()
+        # cellChanged 차단: col4→col5 자동 매핑 간섭 방지
+        tbl.blockSignals(True)
+        try:
+            _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
+                         | QtCore.Qt.ItemFlag.ItemIsEnabled
+                         | QtCore.Qt.ItemFlag.ItemIsEditable)
+            for ri, parts in enumerate(rows):
+                for ci, val in enumerate(parts):
+                    c = start_col + ci
+                    if c < col_count:
+                        item = QtWidgets.QTableWidgetItem(
+                            val.strip().strip('"').strip("'"))
+                        # col4-6: 붙여넣기 값은 사용자 입력(검정 폰트) + 편집 가능
+                        if c in (4, 5, 6) and val.strip():
+                            item.setForeground(QtGui.QColor(0, 0, 0))
+                            item.setFlags(_editable)
+                        tbl.setItem(start_row + ri, c, item)
+        finally:
+            tbl.blockSignals(False)
+        # 붙여넣기 완료 후: 경로 셀 하이라이트 갱신
+        self._highlight_all_paths()
 
     def _cycle_table_delete(self):
         """선택 셀 내용 삭제"""
@@ -20806,14 +20826,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
                                     continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
                                     continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
-                                    _ect_csv_dir = os.path.dirname(cyclefolder)
-                                    _ect_csv_path = os.path.join(_ect_csv_dir, ect_save[i] + ".csv")
-                                    if os.path.isdir(_ect_csv_dir):
-                                        continue_df.to_csv(_ect_csv_path, index=False, sep=',',
-                                                            header=["time(s)",
-                                                                    "Voltage(V)",
-                                                                    "Current(A)",
-                                                                    "Temp."])
+                                    continue_df.to_csv(("D:\\" + ect_save[i] + ".csv"), index=False, sep=',',
+                                                        header=["time(s)",
+                                                                "Voltage(V)",
+                                                                "Current(A)",
+                                                                "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
