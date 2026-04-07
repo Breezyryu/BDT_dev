@@ -587,16 +587,52 @@ def _logical_to_totl_str(cycle_map: dict, cycle_str: str) -> str:
 def _totl_to_logical_str(cycle_map: dict, raw_str: str) -> str:
     """TotlCycle(Raw) 문자열을 논리사이클 문자열로 역변환.
 
-    cycle_map: {logical_cycle: int | tuple(start, end)} 형태.
+    cycle_map: {logical_cycle: {'all': (start, end), ...}} 형태.
     raw_str: "10-18, 25" 같은 TotlCycle 문자열.
     Returns: 대응하는 논리사이클 압축 문자열 (예: "1-3, 5").
+
+    매핑 전략:
+      1. cycle_map에 직접 매핑되는 TC → 해당 논리사이클
+      2. 매핑 안 되는 TC → 해당 TC를 포함하는 가장 가까운 논리사이클 범위 추정
+         (cycle_map 범위 사이의 갭에 있는 TC = 해당 갭 직후 논리사이클에 할당)
     """
-    # 역매핑 구축: TotlCycle → logical_cycle
+    if not cycle_map:
+        return ''
+
+    # 역매핑 구축: TotlCycle → logical_cycle (직접 매핑)
     reverse: dict[int, int] = {}
     for ln, val in cycle_map.items():
+        if not isinstance(val, dict) or 'all' not in val:
+            continue
         s, e = val['all']
         for tc in range(s, e + 1):
             reverse[tc] = ln
+
+    # 정렬된 논리사이클 목록 (갭 TC 추정용)
+    sorted_entries: list[tuple[int, int, int]] = []  # (start_tc, end_tc, logical_cycle)
+    for ln, val in sorted(cycle_map.items()):
+        if not isinstance(val, dict) or 'all' not in val:
+            continue
+        s, e = val['all']
+        sorted_entries.append((s, e, ln))
+
+    def _find_nearest_logical(tc: int) -> int | None:
+        """직접 매핑 안 되는 TC에 대해 가장 가까운 논리사이클 추정."""
+        if not sorted_entries:
+            return None
+        # TC가 어떤 논리사이클 범위 내에 있는지 확인
+        for s, e, ln in sorted_entries:
+            if s <= tc <= e:
+                return ln
+        # 범위 밖이면 가장 가까운 논리사이클 찾기
+        best_ln = None
+        best_dist = float('inf')
+        for s, e, ln in sorted_entries:
+            dist = min(abs(tc - s), abs(tc - e))
+            if dist < best_dist:
+                best_dist = dist
+                best_ln = ln
+        return best_ln
 
     # raw_str 파싱 → TotlCycle 정수 목록
     parts = [s.strip() for s in re.split(r'[,\s]+', raw_str) if s.strip()]
@@ -607,6 +643,8 @@ def _totl_to_logical_str(cycle_map: dict, raw_str: str) -> str:
                 a, b = map(int, part.split('-', 1))
                 for tc in range(a, b + 1):
                     ln = reverse.get(tc)
+                    if ln is None:
+                        ln = _find_nearest_logical(tc)
                     if ln is not None:
                         all_logical.append(ln)
             except (ValueError, TypeError):
@@ -615,6 +653,8 @@ def _totl_to_logical_str(cycle_map: dict, raw_str: str) -> str:
             try:
                 tc = int(part)
                 ln = reverse.get(tc)
+                if ln is None:
+                    ln = _find_nearest_logical(tc)
                 if ln is not None:
                     all_logical.append(ln)
             except (ValueError, TypeError):

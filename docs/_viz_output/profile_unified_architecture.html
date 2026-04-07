@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>프로파일 분석 통합 아키텍처</title>
+<style>
+:root {
+  --bg: #FFFFFF;
+  --bg-alt: #FAFAFA;
+  --text: #2D2D2D;
+  --border: #E0E0E0;
+  --primary: #3C5488;
+  --primary-light: #3C548822;
+}
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --bg-alt: #16213e;
+  --text: #e0e0e0;
+  --border: #333;
+  --primary: #4DBBD5;
+  --primary-light: #4DBBD522;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  transition: background 0.3s, color 0.3s;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+.header h1 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+.header-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.source-info {
+  font-size: 0.75rem;
+  color: var(--text);
+  opacity: 0.6;
+  padding: 4px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.search-box {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  width: 200px;
+}
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--text);
+}
+.tab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  overflow-x: auto;
+}
+.tab-btn {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text);
+  opacity: 0.6;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.tab-btn:hover { opacity: 0.8; }
+.tab-btn.active {
+  opacity: 1;
+  font-weight: 600;
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.diagram-container {
+  display: none;
+  padding: 24px;
+  min-height: calc(100vh - 180px);
+  overflow: auto;
+}
+.diagram-container.active { display: block; }
+.diagram-wrapper {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  overflow: auto;
+  position: relative;
+}
+.diagram-wrapper .mermaid {
+  display: flex;
+  justify-content: center;
+}
+.zoom-controls {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  gap: 8px;
+  z-index: 100;
+}
+.zoom-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.zoom-btn:hover { background: var(--primary-light); }
+.diagram-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--primary);
+}
+.type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--primary-light);
+  color: var(--primary);
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.no-result {
+  text-align: center;
+  padding: 60px;
+  color: var(--text);
+  opacity: 0.4;
+  font-size: 1.1rem;
+}
+/* 검색 하이라이트 */
+.highlight { background: #FFD700; color: #000; padding: 1px 2px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>프로파일 분석 통합 아키텍처</h1>
+  <div class="header-controls">
+    <input type="text" class="search-box" placeholder="노드 검색..." id="searchInput" />
+    <button class="theme-toggle" onclick="toggleTheme()" title="다크/라이트 모드">🌓</button>
+  </div>
+</div>
+
+<div class="source-info">원본: docs/code/02_변경검토/260707_analysis_profile_unified_architecture.md</div>
+
+<div class="tab-bar"><button class="tab-btn active" data-target="tab-0">UI 옵션 조합 → Legacy 모드 매핑</button><button class="tab-btn" data-target="tab-1">통합 파이프라인 (unified_profile_core) — 7 Stage</button><button class="tab-btn" data-target="tab-2">Multi-file 병합 로직 비교 (기존 vs 현재)</button><button class="tab-btn" data-target="tab-3">data_scope별 데이터 플로우 &amp; GITT/Pulse 지원</button></div>
+
+<div class="diagram-container active" id="tab-0"><div class="diagram-wrapper"><div class="diagram-title">UI 옵션 조합 → Legacy 모드 매핑<span class="type-badge">flowchart TD</span></div><div class="mermaid">
+flowchart TD
+    subgraph UI["UI 옵션 3가지"]
+        SCOPE["scope<br/>데이터 범위"]
+        AXIS["axis<br/>X축"]
+        CONT["continuity<br/>연속성"]
+    end
+
+    SCOPE --> SC["charge<br/>충전"]
+    SCOPE --> SD["discharge<br/>방전"]
+    SCOPE --> SY["cycle<br/>사이클"]
+
+    AXIS --> AT["time<br/>시간"]
+    AXIS --> AS["soc<br/>SOC"]
+
+    CONT --> CO["overlay<br/>오버레이"]
+    CONT --> CC["continuous<br/>이어서"]
+
+    SC -- "soc + overlay" --> CHG["chg 모드<br/>dQdV ✅"]
+    SD -- "soc + overlay" --> DCHG["dchg 모드<br/>dQdV ✅"]
+    SY -- "soc + overlay" --> CYCSOC["cycle_soc 모드<br/>dQdV ✅"]
+    SC -- "time + overlay" --> STEP["step 모드<br/>dQdV ❌"]
+    SD -- "time + overlay" --> STEP
+    SY -- "time + overlay" --> STEP
+    CC -- "any scope/axis" --> CONTIN["continue 모드<br/>dQdV ❌"]
+
+    style UI fill:#3C5488,color:#fff
+    style CHG fill:#00A087,color:#fff
+    style DCHG fill:#00A087,color:#fff
+    style CYCSOC fill:#00A087,color:#fff
+    style STEP fill:#4DBBD5,color:#fff
+    style CONTIN fill:#F39B7F,color:#fff
+</div></div></div>
+<div class="diagram-container" id="tab-1"><div class="diagram-wrapper"><div class="diagram-title">통합 파이프라인 (unified_profile_core) — 7 Stage<span class="type-badge">flowchart LR</span></div><div class="mermaid">
+flowchart LR
+    IN["입력<br/>channel_path<br/>논리사이클 범위<br/>mincapacity<br/>옵션들"]
+
+    subgraph S1["Stage 1: 사이클러 판별"]
+        CHK["check_cycler()"]
+        PNE["PNE<br/>바이너리"]
+        TOYO["Toyo<br/>CSV"]
+        CMAP["cycle_map 확보<br/>없으면 자동생성"]
+    end
+
+    subgraph S2["Stage 2: 원시 데이터 로딩"]
+        TLOAD["_unified_toyo_load_raw()<br/>cycle_map['all'] 범위<br/>물리파일 전부 로드"]
+        PLOAD["_unified_pne_load_raw()<br/>SaveData에서<br/>TC 범위 슬라이싱"]
+    end
+
+    subgraph S3["Stage 3: Condition 필터링"]
+        FILT["_unified_filter_condition()"]
+        C9["Cond=9(CC) →<br/>전류 부호로 재분류<br/>1:충전/2:방전/3:휴지"]
+        FSCOPE["scope별 필터<br/>charge→Cond=1<br/>discharge→Cond=2<br/>cycle→전체"]
+    end
+
+    subgraph S4["Stage 4: 정규화"]
+        NORM["_unified_normalize_*()"]
+        TIME["Time_s: diff→clip(0)→cumsum<br/>파일 경계 자동 연속화"]
+        CAP["ChgCap/DchgCap<br/>shift(-1) 시간적분"]
+        CRATE["Crate = Current / mincapacity"]
+    end
+
+    subgraph S5["Stage 5: 스텝 병합"]
+        MERGE["_unified_merge_steps()"]
+    end
+
+    subgraph S6["Stage 6: X축 & SOC"]
+        AXCALC["_unified_calculate_axis()"]
+    end
+
+    subgraph S7["Stage 7: dQdV"]
+        DQDV["_unified_calculate_dqdv()<br/>옵션일 때만"]
+    end
+
+    OUT["최종 DataFrame<br/>TimeMin, SOC, Voltage<br/>Crate, Temp, Cycle<br/>Condition, +dQdV"]
+
+    IN --> S1
+    CHK --> PNE & TOYO
+    PNE & TOYO --> CMAP
+    S1 --> S2
+    TOYO -.-> TLOAD
+    PNE -.-> PLOAD
+    S2 --> S3
+    FILT --> C9 --> FSCOPE
+    S3 --> S4
+    NORM --> TIME & CAP & CRATE
+    S4 --> S5
+    S5 --> S6
+    S6 --> S7
+    S7 --> OUT
+
+    style IN fill:#8491B4,color:#fff
+    style OUT fill:#3C5488,color:#fff
+    style S1 fill:#3C548811,stroke:#3C5488
+    style S2 fill:#E64B3511,stroke:#E64B35
+    style S3 fill:#00A08711,stroke:#00A087
+    style S4 fill:#4DBBD511,stroke:#4DBBD5
+    style S5 fill:#F39B7F11,stroke:#F39B7F
+    style S6 fill:#8491B411,stroke:#8491B4
+    style S7 fill:#91D1C211,stroke:#91D1C2
+</div></div></div>
+<div class="diagram-container" id="tab-2"><div class="diagram-wrapper"><div class="diagram-title">Multi-file 병합 로직 비교 (기존 vs 현재)<span class="type-badge">flowchart TD</span></div><div class="mermaid">
+flowchart TD
+    subgraph LEGACY["기존 방식: lasttime 누적"]
+        L1["물리파일 1 로드<br/>PassTime: 0~30"]
+        L2["다음 파일 확인<br/>maxcon == 1?"]
+        L3["물리파일 2 로드<br/>PassTime: 0~30"]
+        L4["PassTime += lasttime<br/>→ 30~60"]
+        L5["DataFrame append"]
+        L1 --> L2
+        L2 -- "Yes" --> L3 --> L4 --> L5
+        L5 --> L2
+        L2 -- "No" --> LOUT["결과: 0,10,20,30,30,40,50,60"]
+    end
+
+    subgraph CURRENT["현재 방식: diff-clip-cumsum"]
+        C1["cycle_map이<br/>연속 충전 파일을<br/>하나의 논리사이클로 그룹화"]
+        C2["_unified_toyo_load_raw()<br/>해당 범위 전부 로드<br/>[0,10,20,30, 0,10,20,30]"]
+        C3["diff(PassTime)<br/>[0,10,10,10, -30,10,10,10]"]
+        C4["clip(min=0)<br/>[0,10,10,10, 0,10,10,10]"]
+        C5["cumsum()<br/>[0,10,20,30, 30,40,50,60]"]
+        C1 --> C2 --> C3 --> C4 --> C5
+        C5 --> COUT["결과: 0,10,20,30,30,40,50,60"]
+    end
+
+    LOUT -.- EQ["수학적으로 동일 ✓"]
+    COUT -.- EQ
+
+    style LEGACY fill:#E64B3511,stroke:#E64B35
+    style CURRENT fill:#00A08711,stroke:#00A087
+    style EQ fill:#00A087,color:#fff
+    style LOUT fill:#3C5488,color:#fff
+    style COUT fill:#3C5488,color:#fff
+</div></div></div>
+<div class="diagram-container" id="tab-3"><div class="diagram-wrapper"><div class="diagram-title">data_scope별 데이터 플로우 &amp; GITT/Pulse 지원<span class="type-badge">flowchart TD</span></div><div class="mermaid">
+flowchart TD
+    RAW["원시 데이터<br/>충전+휴지+방전+보충전"]
+
+    SCOPE{"data_scope?"}
+
+    RAW --> SCOPE
+
+    SCOPE -- "charge" --> FC["Cond=1만 유지<br/>충전 프로필"]
+    SCOPE -- "discharge" --> FD["Cond=2만 유지<br/>방전 프로필"]
+    SCOPE -- "cycle" --> FA["전체 유지<br/>필터링 없음"]
+
+    FC --> AXSC{"axis?"}
+    FD --> AXSD{"axis?"}
+    FA --> AXSA{"axis?"}
+
+    AXSC -- "soc" --> CHGM["chg 모드<br/>SOC X축<br/>dQdV 계산 ✅"]
+    AXSC -- "time" --> STEPM["step 모드<br/>시간 X축"]
+    AXSD -- "soc" --> DCHGM["dchg 모드<br/>SOC X축<br/>dQdV 계산 ✅"]
+    AXSD -- "time" --> STEPM
+    AXSA -- "soc" --> CYCSOCM["cycle_soc 모드<br/>SOC = ChgCap-DchgCap<br/>dQdV 계산 ✅"]
+    AXSA -- "time" --> STEPM
+
+    FA --> GITT["GITT/DCIR/Pulse<br/>SOC 구간별<br/>펄스+휴지+보충방전<br/>전부 포함"]
+
+    style RAW fill:#8491B4,color:#fff
+    style SCOPE fill:#3C5488,color:#fff
+    style FC fill:#E64B35,color:#fff
+    style FD fill:#4DBBD5,color:#fff
+    style FA fill:#00A087,color:#fff
+    style GITT fill:#F39B7F,color:#fff
+    style CHGM fill:#00A087,color:#fff
+    style DCHGM fill:#00A087,color:#fff
+    style CYCSOCM fill:#00A087,color:#fff
+    style STEPM fill:#4DBBD5,color:#fff
+</div></div></div>
+
+<div class="zoom-controls">
+  <button class="zoom-btn" onclick="zoomIn()" title="확대">+</button>
+  <button class="zoom-btn" onclick="zoomOut()" title="축소">−</button>
+  <button class="zoom-btn" onclick="zoomReset()" title="원래 크기">⟳</button>
+</div>
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+mermaid.initialize({
+  startOnLoad: true,
+  theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+  flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+  er: { useMaxWidth: true },
+  sequence: { useMaxWidth: true },
+  themeVariables: {
+    primaryColor: '#3C5488',
+    primaryTextColor: '#fff',
+    primaryBorderColor: '#3C5488',
+    lineColor: '#8491B4',
+    secondaryColor: '#F39B7F',
+    tertiaryColor: '#FAFAFA',
+  }
+});
+</script>
+
+<script>
+// Tab 전환
+const tabs = document.querySelectorAll('.tab-btn');
+const containers = document.querySelectorAll('.diagram-container');
+
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    tabs.forEach(t => t.classList.remove('active'));
+    containers.forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.target).classList.add('active');
+  });
+});
+
+// 다크/라이트 토글
+function toggleTheme() {
+  const html = document.documentElement;
+  html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  // Mermaid 재렌더링은 페이지 새로고침으로 대체 (간단 구현)
+}
+
+// 줌 제어
+let currentZoom = 1;
+function zoomIn() {
+  currentZoom = Math.min(currentZoom + 0.15, 3);
+  applyZoom();
+}
+function zoomOut() {
+  currentZoom = Math.max(currentZoom - 0.15, 0.3);
+  applyZoom();
+}
+function zoomReset() {
+  currentZoom = 1;
+  applyZoom();
+}
+function applyZoom() {
+  document.querySelectorAll('.diagram-wrapper').forEach(w => {
+    w.style.transform = `scale(${currentZoom})`;
+    w.style.transformOrigin = 'top left';
+  });
+}
+
+// 검색
+document.getElementById('searchInput').addEventListener('input', function(e) {
+  const query = e.target.value.toLowerCase();
+  document.querySelectorAll('.mermaid svg text').forEach(el => {
+    if (query && el.textContent.toLowerCase().includes(query)) {
+      el.style.fill = '#FFD700';
+      el.style.fontWeight = 'bold';
+    } else {
+      el.style.fill = '';
+      el.style.fontWeight = '';
+    }
+  });
+});
+</script>
+
+</body>
+</html>
