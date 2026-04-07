@@ -21746,10 +21746,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     cyc = str(df.loc[ch_idx, "cyc"]) if "cyc" in df.columns else "-"
                     vol = str(df.loc[ch_idx, "vol"]) if "vol" in df.columns else "-"
                     # 셀 경로: Toyo=folder, PNE=path
-                    if "path" in df.columns:
-                        cell_path = str(df.loc[ch_idx, "path"])
-                    elif "folder" in df.columns:
+                    if "folder" in df.columns:
                         cell_path = str(df.loc[ch_idx, "folder"])
+                    elif "path" in df.columns:
+                        cell_path = str(df.loc[ch_idx, "path"])
                     else:
                         cell_path = ""
                     if self.match_filter_text(search_text, testname, status):
