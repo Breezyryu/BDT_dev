@@ -17373,10 +17373,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             # 테이블에서 읽기 — txt/csv 파일은 자동 확장, 각 소스에 고유 file_idx 부여
             _next_file_idx = 0  # 소스 파일별 고유 인덱스 (탭 분리용)
+            _is_ect = self.chk_ectpath.isChecked()
 
             if link_mode:
                 # 연결 모드: 빈 행으로 그룹 분리
-                row_groups = self._get_table_row_groups()
+                # ECT 모드: forward-fill로 빈 경로 복원 후 그룹화
+                if _is_ect:
+                    row_groups = self._get_table_row_groups_ffill()
+                else:
+                    row_groups = self._get_table_row_groups()
                 for grp_idx, grp_rows in enumerate(row_groups):
                     # 그룹 내 txt/csv 파일 행과 일반 폴더 행 분리
                     _txt_rows = []
@@ -17447,7 +17452,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ))
             else:
                 # 개별 모드: 빈 행 무시, 각 행 = 개별 그룹
-                table_rows = self._get_table_rows()
+                # ECT 모드: forward-fill로 빈 경로 복원
+                if _is_ect:
+                    table_rows = self._get_table_rows_ffill()
+                else:
+                    table_rows = self._get_table_rows()
                 for row in table_rows:
                     path = row['path']
                     ext = os.path.splitext(path)[1].lower()
@@ -18521,6 +18530,50 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             })
         return rows
 
+    def _get_table_row_groups_ffill(self) -> list[list[dict]]:
+        """테이블 행을 빈 행 기준으로 그룹 분리 (빈 경로/경로명 forward-fill).
+
+        ECT 모드에서 중복 경로가 회색 표시된 행을 복원한 뒤 그룹화.
+        _get_table_row_groups()의 ffill 버전.
+        """
+        groups = []
+        current_group = []
+        last_path = ''
+        last_name = ''
+        for r in range(self.cycle_path_table.rowCount()):
+            path = self._get_table_cell(r, 1)
+            name = self._get_table_cell(r, 0)
+            channel = self._get_table_cell(r, 2)
+            capacity = self._get_table_cell(r, 3)
+            cycle = self._get_table_cell(r, 4)
+            cycleraw = self._get_table_cell(r, 5)
+            mode = self._get_table_cell(r, 6)
+            # forward-fill: 빈 경로/경로명은 직전 유효값 사용
+            if path:
+                last_path = path
+                last_name = name
+            else:
+                path = last_path
+                if not name:
+                    name = last_name
+            # 경로도 데이터도 없으면 그룹 구분자
+            if not path and not channel and not cycle and not cycleraw:
+                if current_group:
+                    groups.append(current_group)
+                    current_group = []
+                last_path = ''
+                last_name = ''
+                continue
+            current_group.append({
+                'name': name, 'path': path,
+                'channel': channel, 'capacity': capacity,
+                'cycle': cycle, 'cycleraw': cycleraw,
+                'mode': mode,
+            })
+        if current_group:
+            groups.append(current_group)
+        return groups
+
     def _autofill_table_empty_cells(self):
         """사이클 분석 시 테이블 셀 자동 채우기
         경로(col1)를 기준으로 경로명(col0), 채널(col2), 용량(col3) 유추
@@ -18710,9 +18763,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 사이클(Raw) 자동 매핑 (논리사이클 → TotlCycle 변환)
         self._autofill_cycleraw_column()
 
+    # ECT 중복 경로/시험명 표시용 회색 색상
+    _DUP_FG_COLOR = QtGui.QColor(160, 160, 160)
+
     def _set_table_rows(self, rows):
-        """dict 리스트를 테이블에 채움. None 항목은 빈 행(그룹 구분자)."""
+        """dict 리스트를 테이블에 채움. None 항목은 빈 행(그룹 구분자).
+        _dup_path/_dup_name 플래그가 True인 셀은 회색 폰트로 표시.
+        """
         self.cycle_path_table.setRowCount(max(len(rows), 5))
+        dup_color = self._DUP_FG_COLOR
+        # 중복 플래그가 적용되는 열: name(0), path(1)
+        _dup_flag_map = {0: '_dup_name', 1: '_dup_path'}
         for r, row in enumerate(rows):
             if row is None:
                 # 그룹 구분자: 빈 행
@@ -18723,6 +18784,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 val = row.get(key, '')
                 item = QtWidgets.QTableWidgetItem(val)
                 item.setToolTip(val)
+                # ECT 중복 경로/시험명 → 회색 폰트
+                dup_flag = _dup_flag_map.get(col)
+                if dup_flag and row.get(dup_flag):
+                    item.setForeground(dup_color)
                 self.cycle_path_table.setItem(r, col, item)
 
     def _clear_table(self):
@@ -18911,17 +18976,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if row.get('cycle') and not row.get('cycleraw'):
                         row['cycleraw'] = row['cycle']
                         row['cycle'] = ''
-            # 연속 동일 경로 중복 제거 (시각적 정리)
+            # 연속 동일 경로/시험명: 값은 유지하되 중복 플래그 마킹 (회색 표시용)
             prev_path = None
+            prev_name = None
             for row in rows:
                 if row is None:
                     prev_path = None
+                    prev_name = None
                     continue
-                if prev_path and row['path'] == prev_path:
-                    row['path'] = ''
-                    row['name'] = ''
-                else:
-                    prev_path = row['path']
+                dup_path = prev_path and row['path'] == prev_path
+                dup_name = prev_name and row['name'] == prev_name
+                row['_dup_path'] = dup_path
+                row['_dup_name'] = dup_name
+                prev_path = row['path']
+                prev_name = row['name']
         else:
             self.chk_ectpath.setChecked(False)
         if rows:
