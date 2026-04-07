@@ -19043,6 +19043,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tbl.blockSignals(False)
         # 붙여넣기 완료 후: 경로 셀 하이라이트 갱신
         self._highlight_all_paths()
+        # 붙여넣기 범위에 포함된 컬럼 확인
+        _pasted_cols = set()
+        for parts in rows:
+            if parts:
+                for ci in range(len(parts)):
+                    _pasted_cols.add(start_col + ci)
+        # 경로(col1) 붙여넣기 시 메타정보 자동 채우기
+        if 1 in _pasted_cols:
+            self._update_group_separators()
+            self._autofill_table_empty_cells()
+        # 사이클Raw(col5) 붙여넣기 시 사이클(col4) 역매핑
+        if 5 in _pasted_cols:
+            for ri in range(len(rows)):
+                self._on_cycle_cell_changed(start_row + ri, 5)
+        # 사이클(col4) 붙여넣기 시 사이클Raw(col5) 매핑
+        elif 4 in _pasted_cols:
+            for ri in range(len(rows)):
+                self._on_cycle_cell_changed(start_row + ri, 4)
 
     def _cycle_table_delete(self):
         """선택 셀 내용 삭제"""
@@ -20826,11 +20844,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
                                     continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
                                     continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
-                                    continue_df.to_csv(("D:\\" + ect_save[i] + ".csv"), index=False, sep=',',
-                                                        header=["time(s)",
-                                                                "Voltage(V)",
-                                                                "Current(A)",
-                                                                "Temp."])
+                                    _ect_csv_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+                                    if not os.path.isdir(_ect_csv_dir):
+                                        _ect_csv_dir = "D:\\"
+                                    if os.path.isdir(_ect_csv_dir):
+                                        _ect_csv_path = os.path.join(_ect_csv_dir, ect_save[i] + ".csv")
+                                        continue_df.to_csv(_ect_csv_path, index=False, sep=',',
+                                                            header=["time(s)",
+                                                                    "Voltage(V)",
+                                                                    "Current(A)",
+                                                                    "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
