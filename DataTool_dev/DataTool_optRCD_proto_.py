@@ -7401,11 +7401,13 @@ def pne_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate,
 # PNE continous data scale 변경
 def pne_continue_profile_scale_change(raw_file_path, df, mincapacity):
     #단위 변환
-    df = df.reset_index()
+    if df.empty:
+        return df
+    df = df.reset_index(drop=True)
     df["TotTime[Day]"] = df["TotTime[Day]"] * 8640000
     df["TotTime[Sec]"] = (df["TotTime[Sec]"] + df["TotTime[Day]"]) / 100
     # 시작값 0으로 변경
-    df["TotTime[Sec]"] = (df["TotTime[Sec]"] - df.loc[0, "TotTime[Sec]"])
+    df["TotTime[Sec]"] = (df["TotTime[Sec]"] - df.iloc[0]["TotTime[Sec]"])
     df["TotTime[Min]"] = (df["TotTime[Sec]"]/60)
     df["Voltage[V]"] = df["Voltage[V]"]/1000000
     if is_micro_unit(raw_file_path):
