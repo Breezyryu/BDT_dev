@@ -3774,24 +3774,11 @@ def pne_build_cycle_map(
         else:
             chg_cap = pd.Series(dtype=float)
 
-        # 충방전 쌍이 있는 TC (기존 동작)
-        valid_dchg_tcs = set()
-        if not dchg_cap.empty:
-            _dchg_valid = dchg_cap.dropna().index
-            if not chg_cap.empty:
-                _chg_valid = chg_cap.dropna().index
-                valid_dchg_tcs = set(_dchg_valid.intersection(_chg_valid))
-            else:
-                valid_dchg_tcs = set(_dchg_valid)
-
-        # 충전 전용 TC (방전 없이 충전만 있는 TC) — 화성 등 독립 사이클
-        chg_only_tcs = set()
-        if not chg_cap.empty:
-            _all_chg = set(chg_cap.dropna().index)
-            _all_dchg = set(dchg_cap.dropna().index) if not dchg_cap.empty else set()
-            chg_only_tcs = _all_chg - _all_dchg
-
-        valid_totl_cycles = sorted(valid_dchg_tcs | chg_only_tcs)
+        # 모든 TC를 유효 대상으로 포함 (BAK 호환: TotlCycle 직접 사용과 동일)
+        # 충방전/충전전용/방전전용/REST전용 구분 없이 전부 매핑
+        _all_chg = set(chg_cap.dropna().index) if not chg_cap.empty else set()
+        _all_dchg = set(dchg_cap.dropna().index) if not dchg_cap.empty else set()
+        valid_totl_cycles = sorted(all_tcs)
         if not valid_totl_cycles:
             return {}, mincapacity
 
@@ -3810,8 +3797,9 @@ def pne_build_cycle_map(
         while i < len(valid_totl_cycles):
             tc = valid_totl_cycles[i]
             if tc in sig_set:
-                # 충전전용 유의 TC 뒤에 비유의 블록 → 함께 묶기
-                if (tc in chg_only_tcs
+                # 단방향 유의 TC 뒤에 비유의 블록 → 함께 묶기
+                # (충전전용/방전전용 TC는 후속 펄스 스윕의 준비 단계)
+                if (tc not in (_all_chg & _all_dchg)
                         and i + 1 < len(valid_totl_cycles)
                         and valid_totl_cycles[i + 1] not in sig_set):
                     group = [tc]

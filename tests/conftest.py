@@ -30,6 +30,8 @@ sys.path.insert(0, str(DATATOOL_DEV))
 def pytest_configure(config):
     config.addinivalue_line("markers", "gui: GUI 필요 테스트 (pytest-qt, Windows)")
     config.addinivalue_line("markers", "slow: 대용량 데이터 또는 오래 걸리는 테스트")
+    config.addinivalue_line("markers", "science: 배터리 과학 검증 테스트 (Level S)")
+    config.addinivalue_line("markers", "pybamm: PyBaMM 의존 테스트 (설치 필요)")
 
 
 # ══════════════════════════════════════════════
