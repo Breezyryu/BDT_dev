@@ -7449,9 +7449,9 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
                 Profileraw = pneProfile.Profileraw
                 if CDstate == "CHG":
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin([9,1])]
-                elif (CDstate == "DCHG") or (CDstate == "DCH"):
+                elif CDstate in ("DCH", "DCHG"):
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin([9,2])]
-                elif (CDstate == "Cycle") or (CDstate == "7cyc") or (CDstate == "GITT"):
+                elif CDstate in ("CYC", "Cycle", "7cyc", "GITT"):
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle)]
                 if Profileraw.empty:
                     # 해당 TC 범위에 데이터 없음 (시험 미도달 등) → 빈 결과 반환
@@ -18588,84 +18588,130 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tbl.blockSignals(True)
         try:
             # ── Pass 1: 각 행의 자동값 산정 ──
+            # 힌트 기반 최적화: 기존 저장값(힌트)이 있으면 경량 검증만 수행.
+            # 불일치 발견 시에만 무거운 I/O(pne_min_cap, cycle_map 등) 호출.
+            # 경량 검증: 경로 존재 확인, 폴더 스캔(scandir), 경로명 파싱(name_capacity)
             auto_vals = []  # [{'name':..,'ch':..,'cap':..} or None]
+            _path_cache: dict[str, dict] = {}  # 동일 경로 중복 스캔 방지
             for r in range(tbl.rowCount()):
                 path = self._get_table_cell(r, 1)
                 if not path:
                     auto_vals.append(None)
                     continue
-                # 경로명
-                basename = os.path.basename(path)
-                auto_name = basename
-                if "mAh_" in auto_name:
-                    auto_name = auto_name.split("mAh_", 1)[1]
-                if len(auto_name) > 30:
-                    auto_name = auto_name[:30] + "..."
-                # 채널
-                auto_ch = ""
-                if os.path.isdir(path):
-                    subfolders = sorted(
-                        [f.name for f in os.scandir(path)
-                         if f.is_dir() and "Pattern" not in f.name
-                         and _is_channel_folder(f.name)])
-                    channels = []
-                    for sf in subfolders:
-                        ch = extract_text_in_brackets(sf)
-                        channels.append(ch)
-                    if channels:
-                        auto_ch = ",".join(channels)
-                # 용량 — Phase 0 메타 스토어 우선, 폴백으로 직접 산정
-                auto_cap = None
-                meta_hit = None  # 이 경로(parent)에 해당하는 ChannelMeta
-                if _channel_meta_store and os.path.isdir(path):
-                    for sf in (f.path for f in os.scandir(path)
-                               if f.is_dir() and "Pattern" not in f.name):
-                        meta_hit = get_channel_meta(sf)
-                        if meta_hit is not None:
-                            break
-                if meta_hit is not None:
-                    auto_cap = meta_hit.min_capacity
+                # 기존 셀 값 확인 (이전 저장에서 복원된 힌트)
+                hint_name = self._get_table_cell(r, 0)
+                hint_ch = self._get_table_cell(r, 2)
+                hint_cap = self._get_table_cell(r, 3)
+                _has_hint = bool(hint_name and hint_ch and hint_cap)
+                # 경로별 캐시에서 먼저 확인
+                if path in _path_cache:
+                    cached = _path_cache[path]
+                    auto_name = hint_name or cached['name']
+                    auto_ch = hint_ch or cached['ch']
+                    auto_cap_str = hint_cap or cached['cap']
+                    auto_cyc_str = cached['cycle']
+                    auto_raw_str = cached['cycleraw']
+                    auto_cap = cached.get('_cap_num')
+                    meta_hit = cached.get('_meta_hit')
                 else:
-                    if "mAh" in path:
-                        auto_cap = name_capacity(path)
-                    if not auto_cap and os.path.isdir(path):
+                    # ── 경로명: 항상 경량 산정 (문자열 파싱만, I/O 없음) ──
+                    basename = os.path.basename(path)
+                    auto_name_fresh = basename
+                    if "mAh_" in auto_name_fresh:
+                        auto_name_fresh = auto_name_fresh.split("mAh_", 1)[1]
+                    if len(auto_name_fresh) > 30:
+                        auto_name_fresh = auto_name_fresh[:30] + "..."
+                    auto_name = hint_name or auto_name_fresh
+                    # ── 채널: 항상 scandir 수행 (가벼움) → 힌트와 교차검증 ──
+                    auto_ch_fresh = ""
+                    _dir_exists = os.path.isdir(path)
+                    _ch_subfolders = []
+                    if _dir_exists:
+                        _ch_subfolders = sorted(
+                            [f.name for f in os.scandir(path)
+                             if f.is_dir() and "Pattern" not in f.name
+                             and _is_channel_folder(f.name)])
+                        channels = []
+                        for sf in _ch_subfolders:
+                            ch = extract_text_in_brackets(sf)
+                            channels.append(ch)
+                        if channels:
+                            auto_ch_fresh = ",".join(channels)
+                    # 힌트와 비교: 불일치 시 실측값 우선
+                    if hint_ch and auto_ch_fresh and hint_ch != auto_ch_fresh:
+                        auto_ch = auto_ch_fresh  # 채널 변경 감지 → 실측 사용
+                    else:
+                        auto_ch = hint_ch or auto_ch_fresh
+                    # ── 용량: 힌트 있으면 경량 교차검증(name_capacity), 불일치 시만 무거운 I/O ──
+                    auto_cap = None
+                    meta_hit = None
+                    _name_cap = name_capacity(path) if "mAh" in path else 0
+                    if hint_cap:
+                        # 힌트 존재: 경로명 파싱과 교차검증 (I/O 없음)
                         try:
-                            first_crate = 0.2  # 기본 C-rate
-                            subs = sorted([f.path for f in os.scandir(path)
-                                           if f.is_dir() and "Pattern" not in f.name])
-                            if subs:
-                                if check_cycler(path):
-                                    auto_cap = pne_min_cap(subs[0], 0, first_crate)
-                                else:
-                                    auto_cap = toyo_min_cap(subs[0], 0, first_crate)
-                        except Exception:
+                            auto_cap = float(hint_cap)
+                        except ValueError:
                             auto_cap = None
-                auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
-                # 최대 사이클 수 — Phase 0 메타 스토어 우선
-                user_cap = self._get_table_cell(r, 3)
-                cap_for_cycle = _parse_capacity_value(user_cap)
-                if not cap_for_cycle:
-                    cap_for_cycle = auto_cap if auto_cap else 0
-                if meta_hit is not None and meta_hit.max_logical_cycle is not None:
-                    max_cyc = meta_hit.max_logical_cycle
-                else:
-                    max_cyc = _quick_max_cycle(path, cap_for_cycle)
-                auto_cyc_str = str(max_cyc) if max_cyc else ""
-                # 최대 TotlCycle (사이클(Raw) 힌트용) — Phase 0 메타 스토어 우선
-                auto_raw_str = ""
-                if auto_cyc_str:
-                    try:
-                        cm = None
-                        if meta_hit is not None and meta_hit.cycle_map:
-                            cm = meta_hit.cycle_map
+                        if _name_cap and auto_cap and abs(_name_cap - auto_cap) / max(auto_cap, 1) > 0.1:
+                            # 경로명 용량과 10% 이상 차이 → 경로 변경 가능성, 무거운 I/O로 재산정
+                            auto_cap = None
                         else:
-                            cm = _build_cycle_map_for_path(path, cap_for_cycle)
-                        if cm:
-                            all_tc = [v['all'][1] for v in cm.values() if isinstance(v, dict)]
-                            if all_tc:
-                                auto_raw_str = str(max(all_tc))
-                    except Exception:
-                        pass
+                            auto_cap_str = hint_cap
+                    if auto_cap is None:
+                        # 힌트 없거나 불일치 → 풀 스캔
+                        if _channel_meta_store and _dir_exists:
+                            for sf in (os.path.join(path, d) for d in _ch_subfolders):
+                                meta_hit = get_channel_meta(sf)
+                                if meta_hit is not None:
+                                    break
+                        if meta_hit is not None:
+                            auto_cap = meta_hit.min_capacity
+                        else:
+                            auto_cap = _name_cap if _name_cap else None
+                            if not auto_cap and _dir_exists:
+                                try:
+                                    first_crate = 0.2
+                                    subs = [os.path.join(path, d) for d in _ch_subfolders]
+                                    if subs:
+                                        if check_cycler(path):
+                                            auto_cap = pne_min_cap(subs[0], 0, first_crate)
+                                        else:
+                                            auto_cap = toyo_min_cap(subs[0], 0, first_crate)
+                                except Exception:
+                                    auto_cap = None
+                        auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
+                    # ── 최대 사이클: 힌트 있으면 생략, 없으면 산정 ──
+                    user_cap = self._get_table_cell(r, 3)
+                    cap_for_cycle = _parse_capacity_value(user_cap)
+                    if not cap_for_cycle:
+                        cap_for_cycle = auto_cap if auto_cap else 0
+                    if meta_hit is not None and meta_hit.max_logical_cycle is not None:
+                        max_cyc = meta_hit.max_logical_cycle
+                    elif _has_hint:
+                        max_cyc = None  # 힌트 완비: 무거운 cycle_map 빌드 생략
+                    else:
+                        max_cyc = _quick_max_cycle(path, cap_for_cycle)
+                    auto_cyc_str = str(max_cyc) if max_cyc else ""
+                    # ── 최대 TotlCycle 힌트 ──
+                    auto_raw_str = ""
+                    if auto_cyc_str:
+                        try:
+                            cm = None
+                            if meta_hit is not None and meta_hit.cycle_map:
+                                cm = meta_hit.cycle_map
+                            elif not _has_hint:
+                                cm = _build_cycle_map_for_path(path, cap_for_cycle)
+                            if cm:
+                                all_tc = [v['all'][1] for v in cm.values() if isinstance(v, dict)]
+                                if all_tc:
+                                    auto_raw_str = str(max(all_tc))
+                        except Exception:
+                            pass
+                    # 경로별 캐시 저장 (동일 경로 반복 스캔 방지)
+                    _path_cache[path] = {
+                        'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+                        'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
+                        '_cap_num': auto_cap, '_meta_hit': meta_hit}
                 auto_vals.append({
                     'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
                     'cycle': auto_cyc_str, 'cycleraw': auto_raw_str})
@@ -18812,6 +18858,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     }
     # ECT 형식 판별용 키워드 (cd + save 필수, cycle 또는 totlcycle 중 하나)
     _ECT_HEADER_KEYS_BASE = {'cd', 'save'}
+    # ECT mode 정규화: 구형 → 신형 변환 (하위 호환)
+    _ECT_MODE_NORMALIZE = {
+        'DCHG': 'DCH', 'dchg': 'DCH', 'Dchg': 'DCH',
+        'DCH': 'DCH', 'dch': 'DCH',
+        'CHG': 'CHG', 'chg': 'CHG', 'Chg': 'CHG',
+        'Cycle': 'CYC', 'cycle': 'CYC', 'CYCLE': 'CYC',
+        'CYC': 'CYC', 'cyc': 'CYC',
+        '7cyc': 'CYC', 'GITT': 'CYC', 'gitt': 'CYC',
+    }
     _ECT_HEADER_CYCLE_KEYS = {'cycle', 'totlcycle'}
 
     @staticmethod
@@ -18976,6 +19031,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if row.get('cycle') and not row.get('cycleraw'):
                         row['cycleraw'] = row['cycle']
                         row['cycle'] = ''
+            # mode 정규화: 구형(DCHG, Cycle) → 신형(DCH, CYC)
+            _norm = self._ECT_MODE_NORMALIZE
+            for row in rows:
+                if row is None:
+                    continue
+                m = row.get('mode', '')
+                if m in _norm:
+                    row['mode'] = _norm[m]
             # 연속 동일 경로/시험명: 값은 유지하되 중복 플래그 마킹 (회색 표시용)
             prev_path = None
             prev_name = None
