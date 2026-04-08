@@ -900,6 +900,9 @@ def resolve_tc_range(
 def _cached_pne_restore_files(raw_file_path: str) -> tuple:
     """PNE Restore 폴더의 SaveEndData, file_index, subfile 목록을 캐싱하여 반환.
 
+    SaveEndData.csv 이후 .cyc 파일에 추가된 최신 사이클 데이터를 자동 보충한다.
+    보충 발생 시 콘솔에 보충된 사이클 범위를 출력.
+
     Returns
     -------
     tuple
@@ -933,6 +936,47 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                     except pd.errors.EmptyDataError:
                         # 파일이 존재하지만 내용이 없는 경우 (빈 파일) — None 유지
                         file_index_list = None
+            # ── .cyc 보충: SaveEndData 이후 최신 사이클 반영 ──
+            cyc_files = [f for f in os.listdir(raw_file_path)
+                         if f.endswith('.cyc')]
+            if cyc_files:
+                cyc_path = os.path.join(raw_file_path, cyc_files[0])
+                try:
+                    cyc_df = _cyc_to_cycle_df(cyc_path)
+                    if len(cyc_df) > 0:
+                        if save_end_data is not None:
+                            # CSV 최신 사이클 이후 데이터 추가
+                            csv_max_tc = save_end_data[27].max()
+                            # .cyc → SaveEndData 컬럼 매핑 (13개 → 48+개 컬럼)
+                            _cyc_mapped = _cyc_df_to_save_end_format(
+                                cyc_df, save_end_data.shape[1])
+                            supplement = _cyc_mapped[
+                                _cyc_mapped[27] > csv_max_tc]
+                            if len(supplement) > 0:
+                                _ch_name = os.path.basename(raw_file_path)
+                                _cyc_tcs = supplement[27].tolist()
+                                _perf_logger.info(
+                                    f'  [.cyc 보충] {_ch_name}: '
+                                    f'CSV TC≤{int(csv_max_tc)}, '
+                                    f'.cyc TC {int(min(_cyc_tcs))}~'
+                                    f'{int(max(_cyc_tcs))} 추가 '
+                                    f'({len(supplement)}행)')
+                                save_end_data = pd.concat(
+                                    [save_end_data, supplement],
+                                    ignore_index=True)
+                        else:
+                            # CSV 없음 → .cyc 단독 재구성
+                            _cyc_mapped = _cyc_df_to_save_end_format(
+                                cyc_df, 48)
+                            if len(_cyc_mapped) > 0:
+                                _ch_name = os.path.basename(raw_file_path)
+                                _perf_logger.info(
+                                    f'  [.cyc 단독] {_ch_name}: '
+                                    f'{len(_cyc_mapped)}행 재구성')
+                                save_end_data = _cyc_mapped
+                except Exception as e:
+                    _perf_logger.warning(
+                        f'  [.cyc 보충 실패] {raw_file_path}: {e}')
         cache['pne_restore'] = (save_end_data, file_index_list, subfile)
     return cache['pne_restore']
 
@@ -6795,6 +6839,38 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=_COLS)
 
 
+def _cyc_df_to_save_end_format(cyc_df: pd.DataFrame, n_cols: int = 48) -> pd.DataFrame:
+    """_cyc_to_cycle_df의 13컬럼 결과를 SaveEndData.csv 컬럼 형식으로 역매핑.
+
+    SaveEndData의 컬럼 인덱스에 .cyc 값을 배치하여 pne_search_cycle 등과 호환.
+    매핑되지 않는 컬럼은 0으로 채움.
+
+    Parameters
+    ----------
+    cyc_df : pd.DataFrame
+        _cyc_to_cycle_df 반환값 (13컬럼: TotlCycle, Condition, ...)
+    n_cols : int
+        SaveEndData 컬럼 수 (기본 48)
+
+    Returns
+    -------
+    pd.DataFrame
+        int 인덱스 컬럼 (0 ~ n_cols-1), SaveEndData.csv와 동일 구조
+    """
+    # SaveEndData 컬럼 인덱스 ↔ cyc_df 컬럼명 매핑
+    # pne_cycle_data: save_end_cached[[27,2,10,11,8,20,45,15,17,9,24,29,6]]
+    _SAVE_END_MAP = {
+        27: 'TotlCycle', 2: 'Condition', 10: 'chgCap', 11: 'DchgCap',
+        8: 'Ocv', 20: 'imp', 45: 'volmax', 15: 'DchgEngD',
+        17: 'steptime', 9: 'Curr', 24: 'Temp', 29: 'AvgV', 6: 'EndState',
+    }
+    result = pd.DataFrame(0, index=range(len(cyc_df)), columns=range(n_cols))
+    for se_col, cyc_col in _SAVE_END_MAP.items():
+        if cyc_col in cyc_df.columns and se_col < n_cols:
+            result[se_col] = cyc_df[cyc_col].values
+    return result
+
+
 def _process_pne_cycleraw(
     Cycleraw: pd.DataFrame,
     df: pd.DataFrame,
@@ -7232,36 +7308,13 @@ def pne_cycle_data(raw_file_path, mincapacity, ini_crate, chkir, chkir2, mkdcir)
     if (raw_file_path[-4:-1]) != "ter":
         # PNE 채널, 용량 산정
         mincapacity = pne_min_cap(raw_file_path, mincapacity, ini_crate)
-        # data 기본 처리: CSV → .cyc 보충/대체 → Cycleraw 생성
+        # data 기본 처리: 캐시에서 SaveEndData 조회 (.cyc 보충은 캐시 단계에서 완료)
         Cycleraw = None
-        # 캐시에서 SaveEndData 조회
         save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
         if save_end_cached is not None and mincapacity is not None:
             Cycleraw = save_end_cached[[27, 2, 10, 11, 8, 20, 45, 15, 17, 9, 24, 29, 6]].copy()
             Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp", "volmax",
                                 "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
-        # .cyc 보충/대체 로직
-        cyc_files = [os.path.join(raw_file_path, f) for f in os.listdir(raw_file_path) if f.endswith('.cyc')]
-        cyc_path = cyc_files[0] if cyc_files else None
-        if Cycleraw is not None and cyc_path is not None:
-            # (A) CSV + .cyc 실시간 보충: CSV 최신 사이클 이후 데이터 추가
-            try:
-                cyc_df = _cyc_to_cycle_df(cyc_path)
-                if len(cyc_df) > 0:
-                    csv_max_cycle = Cycleraw["TotlCycle"].max()
-                    supplement = cyc_df[cyc_df["TotlCycle"] > csv_max_cycle]
-                    if len(supplement) > 0:
-                        Cycleraw = pd.concat([Cycleraw, supplement], ignore_index=True)
-            except Exception:
-                pass  # .cyc 보충 실패 시 CSV만 사용
-        elif Cycleraw is None and cyc_path is not None and mincapacity is not None:
-            # (B) .cyc 단독 재구성 (CSV 미존재)
-            try:
-                Cycleraw = _cyc_to_cycle_df(cyc_path)
-                if len(Cycleraw) == 0:
-                    Cycleraw = None
-            except Exception:
-                Cycleraw = None
         # ── 논리사이클 매핑 생성 (캐시 사용) ──
         _cycle_map = None
         try:
@@ -8563,7 +8616,7 @@ class Ui_sitool(object):
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
         self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "사이클(Raw)", "모드"])
+        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "Raw", "모드"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -14457,7 +14510,7 @@ class Ui_sitool(object):
         self.FdTextEdit_2.setText(_translate("sitool", "1"))
         self.FdTextEdit_4.setText(_translate("sitool", "1"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.FitTab), _translate("sitool", "실수명 예측"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.PyBaMMTab), _translate("sitool", "전기화학 시뮬레이션"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.PyBaMMTab), _translate("sitool", "전기화학Simgs"))
         self.mount_toyo.setText(_translate("sitool", "Z: 15F B Toyo"))
         self.mount_pne_1.setText(_translate("sitool", "Y: 15F B PNE1~2"))
         self.mount_pne_2.setText(_translate("sitool", "X: 15F B PNE3~5"))
@@ -17701,15 +17754,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             f'{_type_tag}  {_n_ln}개 논리사이클')
                         _cm_logged.add(fi)
 
-            # 탭 할당: 개별=group별, 통합=전체 합산
+            # 탭 할당: 개별=file_idx별 통합, 통합=전체 합산
             if is_individual:
-                tab_units = [[gi] for gi in range(len(folder_groups))]
+                # 개별 모드: file_idx별로 묶어서 탭 하나 (txt 파일 1개 = 탭 1개)
+                from collections import OrderedDict
+                _fidx_groups: OrderedDict[int, list[int]] = OrderedDict()
+                for gi, g in enumerate(folder_groups):
+                    _fidx_groups.setdefault(g.file_idx, []).append(gi)
+                tab_units = list(_fidx_groups.values())
             else:
-                # 통합 모드: 모든 그룹을 하나의 탭에 합침 (다중 소스도 동일)
+                # 통합 모드: 모든 그룹을 하나의 탭에 합침
                 tab_units = [list(range(len(folder_groups)))]
-
-            # 탭 이름: 넘버링
-            _tab_names: list[str] = [str(i) for i in range(len(tab_units))]
 
             total_tabs = len(tab_units)
             # 사용자 원본 설정 보존 (탭 단위 리셋용)
@@ -18924,19 +18979,73 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 패턴 미감지 → 전체를 path로 간주
         return '', text.strip('"').strip("'")
 
+    def _load_multi_path_files(self, filepaths: tuple | list):
+        """다중 경로파일(.txt)을 테이블에 로드
+
+        각 txt 파일의 절대 경로를 path 열(col1)에 기재하고,
+        파일명(확장자 제외)을 name 열(col0)에 표시.
+        나머지 열(ch, capacity, cycle, cycleraw, mode)은 빈칸.
+        분석 실행 시 _parse_cycle_input에서 txt 확장 → 파일별 CycleGroup 생성.
+        """
+        rows = []
+        for fp in filepaths:
+            fp = fp.strip()
+            if not fp:
+                continue
+            fname = os.path.splitext(os.path.basename(fp))[0]
+            rows.append({
+                'name': fname, 'path': fp,
+                'channel': '', 'capacity': '',
+                'cycle': '', 'cycleraw': '', 'mode': '',
+            })
+        if not rows:
+            return
+        # 테이블에 채우기
+        tbl = self.cycle_path_table
+        tbl.setRowCount(max(len(rows), 5))
+        tbl.blockSignals(True)
+        try:
+            for r, row in enumerate(rows):
+                for col, key in enumerate(['name', 'path', 'channel', 'capacity',
+                                           'cycle', 'cycleraw', 'mode']):
+                    val = row.get(key, '')
+                    item = QtWidgets.QTableWidgetItem(val)
+                    item.setToolTip(val)
+                    tbl.setItem(r, col, item)
+            # 나머지 빈 행 초기화
+            for r in range(len(rows), tbl.rowCount()):
+                for col in range(7):
+                    tbl.setItem(r, col, QtWidgets.QTableWidgetItem(''))
+        finally:
+            tbl.blockSignals(False)
+        # ECT 해제 (개별 txt 파일 모드)
+        self.chk_ectpath.setChecked(False)
+        self._update_ect_columns_state()
+        # 경로 존재 확인 표시
+        self._highlight_all_paths()
+
     def _load_path_file_to_table(self):
         """Path 파일(.txt)을 읽어 테이블에 채움
         헤더 기반 열 자동 감지로 모든 이전 형식 지원:
           4열(신규), 2열(이전1/2), 3열(이전3), 1열(이전4)
         헤더가 없는 레거시 파일도 자동 감지하여 처리.
+
+        다중 선택 지원:
+          1개 선택 → 기존 동작 (파일 내용을 테이블에 펼침)
+          2개 이상 → 각 txt 파일 경로를 테이블 행에 기재 (파일별 통합 탭용)
         """
         root = Tk()
         root.withdraw()
-        fp = filedialog.askopenfilename(
+        fps = filedialog.askopenfilenames(
             initialdir="d://", title="Path 파일 선택",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
-        if not fp:
+        if not fps:
             return
+        # 다중 선택: 2개 이상이면 txt 파일 경로를 테이블에 기재
+        if len(fps) >= 2:
+            self._load_multi_path_files(fps)
+            return
+        fp = fps[0]
         rows = []  # dict 또는 None(빈 행)
         link_mode = None
         # utf-8-sig: BOM 자동 제거
@@ -20200,9 +20309,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._update_group_separators()
 
     def eventFilter(self, obj, event):
-        """경로 테이블에서 Enter 키로 마지막 행 자동 확장"""
+        """경로 테이블 키 이벤트 처리
+
+        - Ctrl+V: 셀 편집 모드에서도 커스텀 paste 호출 (여러 셀 동시 붙여넣기)
+        - Ctrl+C: 셀 편집 모드에서도 커스텀 copy 호출
+        - Ctrl+Z: 테이블 Undo
+        - Delete: 선택 셀 삭제
+        - Enter: 마지막 행에서 자동 확장
+        """
         if obj is self.cycle_path_table and event.type() == QtCore.QEvent.Type.KeyPress:
             key = event.key()
+            mods = event.modifiers()
+            ctrl = mods & QtCore.Qt.KeyboardModifier.ControlModifier
+            if ctrl and key == QtCore.Qt.Key.Key_V:
+                # 셀 편집 모드 종료 후 커스텀 paste 실행
+                self.cycle_path_table.closePersistentEditor(
+                    self.cycle_path_table.currentItem())
+                self._cycle_table_paste()
+                return True
+            if ctrl and key == QtCore.Qt.Key.Key_C:
+                self._cycle_table_copy()
+                return True
+            if ctrl and key == QtCore.Qt.Key.Key_Z:
+                self._undo_table()
+                return True
+            if key == QtCore.Qt.Key.Key_Delete:
+                self._cycle_table_delete()
+                return True
             if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
                 row = self.cycle_path_table.currentRow()
                 if row >= self.cycle_path_table.rowCount() - 1:
