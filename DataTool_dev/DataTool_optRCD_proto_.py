@@ -22257,8 +22257,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cell_path = str(df.loc[ch_idx, "folder"])
                     else:
                         cell_path = ""
+                    # 온도 추출
+                    temp_str = "-"
+                    if "temp" in df.columns:
+                        try:
+                            raw_temp = df.loc[ch_idx, "temp"]
+                            t_val = float(raw_temp)
+                            # PNE: mC 단위 (×1000), Toyo: °C 문자열
+                            if abs(t_val) > 200:
+                                temp_str = f"{t_val / 1000:.1f}"
+                            else:
+                                temp_str = f"{t_val:.1f}"
+                        except (ValueError, TypeError):
+                            temp_str = str(raw_temp) if raw_temp else "-"
                     if self.match_filter_text(search_text, testname, status):
-                        # 이 충방전기가 속한 층 찾기
+                        # 이 충방전��가 속한 층 찾���
                         floor_name = ""
                         for fn, fc in floor_cyclers:
                             if cycler_text in fc:
@@ -22269,7 +22282,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if cycler_text not in matched_by_floor[floor_name]:
                             matched_by_floor[floor_name][cycler_text] = []
                         matched_by_floor[floor_name][cycler_text].append(
-                            (ch_idx, testname, status, cyc, vol, cell_path))
+                            (ch_idx, testname, status, cyc, vol, temp_str, cell_path))
                         total_matched += 1
                         if status in ("작업중", "충전", "방전", "진행", "휴지"):
                             working_count += 1
@@ -22302,20 +22315,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             for cycler_text in matched_by_floor[floor_name]:
                 row_count += 1  # 충방전기 헤더
                 row_count += len(matched_by_floor[floor_name][cycler_text])
-        # 7열 리스트: 충방전기 | 채널 | 상태 | Step/Cycle | 전압 | 테스트명 | 셀 경로
-        num_cols = 7
+        # 8열 리스트: 충방전기 | 채널 | 상태 | Step/Cycle | 전압 | 온도 | 테스트명 | 셀 경로
+        num_cols = 8
         self.tb_channel.setColumnCount(num_cols)
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
         self.tb_channel.setHorizontalHeaderLabels(
-            ["충방전기", "채널", "상태", "Step/Cycle/총Cycle", "전압", "테스트명", "셀 경로"])
-        for ci in range(5):
+            ["충방전기", "채널", "상태", "Step/Cycle/총Cycle", "전압", "온도", "테스트명", "셀 경로"])
+        for ci in range(6):
             self.tb_channel.horizontalHeader().setSectionResizeMode(
                 ci, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.tb_channel.horizontalHeader().setSectionResizeMode(
-            5, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.tb_channel.horizontalHeader().setSectionResizeMode(
             6, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(
+            7, QtWidgets.QHeaderView.ResizeMode.Stretch)
         # 행 높이 줄이기
         self.tb_channel.verticalHeader().setDefaultSectionSize(22)
         self.tb_channel.setUpdatesEnabled(False)
@@ -22371,44 +22384,50 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self.tb_channel.setItem(row, col, filler)
                 row += 1
                 # ── 데이터 행 ──
-                for ch_no, testname, status, cyc, vol, cell_path in channels:
+                for ch_no, testname, status, cyc, vol, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
+                    _font9 = QtGui.QFont("Malgun gothic", 9)
                     item_cycler = QtWidgets.QTableWidgetItem(f"    {cycler_text}")
-                    item_cycler.setFont(QtGui.QFont("Malgun gothic", 9))
+                    item_cycler.setFont(_font9)
                     if bg_color:
                         item_cycler.setBackground(bg_color)
                     self.tb_channel.setItem(row, 0, item_cycler)
                     item_ch = QtWidgets.QTableWidgetItem(str(ch_no).zfill(3))
-                    item_ch.setFont(QtGui.QFont("Malgun gothic", 9))
+                    item_ch.setFont(_font9)
                     if bg_color:
                         item_ch.setBackground(bg_color)
                     self.tb_channel.setItem(row, 1, item_ch)
                     item_status = QtWidgets.QTableWidgetItem(status)
-                    item_status.setFont(QtGui.QFont("Malgun gothic", 9))
+                    item_status.setFont(_font9)
                     if bg_color:
                         item_status.setBackground(bg_color)
                     self.tb_channel.setItem(row, 2, item_status)
                     item_cyc = QtWidgets.QTableWidgetItem(cyc)
-                    item_cyc.setFont(QtGui.QFont("Malgun gothic", 9))
+                    item_cyc.setFont(_font9)
                     if bg_color:
                         item_cyc.setBackground(bg_color)
                     self.tb_channel.setItem(row, 3, item_cyc)
                     item_vol = QtWidgets.QTableWidgetItem(vol)
-                    item_vol.setFont(QtGui.QFont("Malgun gothic", 9))
+                    item_vol.setFont(_font9)
                     if bg_color:
                         item_vol.setBackground(bg_color)
                     self.tb_channel.setItem(row, 4, item_vol)
+                    item_temp = QtWidgets.QTableWidgetItem(temp_str)
+                    item_temp.setFont(_font9)
+                    if bg_color:
+                        item_temp.setBackground(bg_color)
+                    self.tb_channel.setItem(row, 5, item_temp)
                     item_test = QtWidgets.QTableWidgetItem(testname)
-                    item_test.setFont(QtGui.QFont("Malgun gothic", 9))
+                    item_test.setFont(_font9)
                     if bg_color:
                         item_test.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 5, item_test)
+                    self.tb_channel.setItem(row, 6, item_test)
                     item_path = QtWidgets.QTableWidgetItem(cell_path)
                     item_path.setFont(QtGui.QFont("Malgun gothic", 8))
                     item_path.setForeground(QtGui.QColor(120, 120, 120))
                     if bg_color:
                         item_path.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 6, item_path)
+                    self.tb_channel.setItem(row, 7, item_path)
                     row += 1
         self.tb_channel.setUpdatesEnabled(True)
         # 요약 정보
@@ -26643,7 +26662,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ax_r.set_yticks(np.linspace(_r1, _r2, _nt))
 
         # [1.2] Electrode Balance — SoC_Cell vs OCP
-        # X축: SoC_Cell [%] (100→0 반전), 좌Y: PE OCP + Cell V, 우Y: NE OCP
+        # X축: SoC_Cell [%] (0→100), 좌Y: PE OCP + Cell V, 우Y: NE OCP
         ax = axes_g[0, 1]
         _has_12 = (pos_ocp is not None and neg_ocp is not None
                    and pos_lith is not None and neg_lith is not None)
@@ -26731,7 +26750,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ax.tick_params(axis='y', colors=palette[1])
             ax_r12.yaxis.label.set_color(palette[0])
             ax_r12.tick_params(axis='y', colors=palette[0])
-            ax.set_xlim([110, -10])  # 100%→0% 반전
+            ax.set_xlim([-10, 110])  # 0%→100%
             ax.set_ylim([2.5, 4.5])
             ax_r12.set_ylim([-0.05, 1.0])
             # 좌우 Y축 tick 위치 일치
@@ -26807,8 +26826,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ax.set_title("Voltage Components", fontsize=TS, fontweight=TW)
 
         # [1.5] Electrode Balance — Stoichiometry vs OCP
-        # X축: Stoichiometry (x) 0~1, 좌Y: PE OCP, 우Y: NE OCP
-        # 전체 OCP 커브(연장선)와 실사용 영역(굵은선)을 함께 표시
+        # X축: PE는 y=1-x, NE는 x, 좌Y: PE OCP, 우Y: NE OCP
+        # PE/NE OCP가 같은 방향으로 증가하도록 PE를 y=1-x로 변환
         ax = axes_g[1, 1]
         _has_13 = (pos_ocp is not None and neg_ocp is not None
                    and pos_lith is not None and neg_lith is not None)
@@ -26829,7 +26848,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _sto_full = np.linspace(0.001, 0.999, 500)
             if _f_pos is not None:
                 _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
-                ax.plot(_sto_full, _ocp_pos_full, color=palette[1],
+                ax.plot(1.0 - _sto_full, _ocp_pos_full, color=palette[1],
                         linewidth=0.8, alpha=0.2, linestyle='-')
             ax_r13 = ax.twinx()
             if _f_neg is not None:
@@ -26837,12 +26856,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax_r13.plot(_sto_full, _ocp_neg_full, color=palette[0],
                             linewidth=0.8, alpha=0.2, linestyle='-')
 
-            # ── 양극 OCP 실사용 영역 (좌Y, 빨간) ──
-            ax.plot(pos_lith, pos_ocp, color=palette[1],
+            # ── 양극 OCP 실사용 영역 (좌Y, 빨간) — y=1-x ──
+            _pos_y = 1.0 - pos_lith
+            ax.plot(_pos_y, pos_ocp, color=palette[1],
                     linewidth=LW + 0.5, alpha=LA, label="PE OCP")
-            ax.plot(pos_lith[0], pos_ocp[0], 'o', color=palette[1],
+            ax.plot(_pos_y[0], pos_ocp[0], 'o', color=palette[1],
                     markersize=5, zorder=5)
-            ax.plot(pos_lith[-1], pos_ocp[-1], 's', color=palette[1],
+            ax.plot(_pos_y[-1], pos_ocp[-1], 's', color=palette[1],
                     markersize=5, zorder=5)
 
             # ── 음극 OCP 실사용 영역 (우Y, 파란) ──
@@ -26854,7 +26874,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         markersize=5, zorder=5)
 
             # stoichiometry 범위 주석
-            ax.annotate(f"PE: x={pos_lith[0]:.3f}→{pos_lith[-1]:.3f}",
+            ax.annotate(f"PE: y(1−x)={_pos_y[0]:.3f}→{_pos_y[-1]:.3f}",
                         xy=(0.02, 0.97), xycoords='axes fraction',
                         fontsize=6.5, color=palette[1], va='top')
             ax_r13.annotate(f"NE: x={neg_lith[0]:.3f}→{neg_lith[-1]:.3f}",
@@ -26880,7 +26900,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ax_r13.set_yticks(np.linspace(-0.05, 1.0, _nt))
         else:
             _no_data(ax, "Electrode OCP\ndata not available")
-        graph_base_parameter(ax, "Stoichiometry (x)", "PE Voltage [V]")
+        graph_base_parameter(ax, "PE: y(1−x) / NE: x", "PE Voltage [V]")
         ax.set_title("Electrode Balance", fontsize=TS, fontweight=TW)
 
         # [1.3] Cell Temperature
