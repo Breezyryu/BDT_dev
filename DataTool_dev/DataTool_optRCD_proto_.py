@@ -17436,13 +17436,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 else:
                     row_groups = self._get_table_row_groups()
                 for grp_idx, grp_rows in enumerate(row_groups):
-                    # 그룹 내 txt/csv 파일 행과 일반 폴더 행 분리
+                    # 그룹 내 파일 유형별 분리: txt/csv, xls/xlsx(신뢰성), 폴더
                     _txt_rows = []
+                    _excel_rows = []
                     _folder_rows = []
                     for r in grp_rows:
                         _tp = r['path']
-                        if _tp.lower().endswith(('.txt', '.csv')) and os.path.isfile(_tp):
+                        _ext = os.path.splitext(_tp)[1].lower()
+                        if _ext in ('.txt', '.csv') and os.path.isfile(_tp):
                             _txt_rows.append(r)
+                        elif _ext in ('.xls', '.xlsx'):
+                            _excel_rows.append(r)
                         else:
                             _folder_rows.append(r)
 
@@ -17453,6 +17457,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if _expanded_groups:
                             groups.extend(_expanded_groups)
                             _next_file_idx += 1
+
+                    # xls/xlsx 파일 행: 각 파일을 excel 그룹으로 생성
+                    for _er in _excel_rows:
+                        _ep = _er['path']
+                        _cap = _parse_capacity_value(_er.get('capacity', ''))
+                        _caps = [_cap] if _cap > 0 else []
+                        groups.append(CycleGroup(
+                            name=_er['name'] or os.path.splitext(os.path.basename(_ep))[0],
+                            paths=[_ep], path_names=[_er['name']],
+                            data_type='excel', file_idx=_next_file_idx, source_file=_ep,
+                            per_path_capacities=_caps,
+                        ))
+                        _next_file_idx += 1
 
                     # 일반 폴더 행 처리 (기존 로직)
                     if _folder_rows:
@@ -17597,18 +17614,35 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
             for g in excel_groups:
                 for datafilepath in g.paths:
-                    # 용량: 파일명에서 자동 추출, 없으면 0
-                    if "mAh" in datafilepath:
+                    # 용량: 테이블 입력값 우선, 없으면 파일명에서 자동 추출
+                    _tbl_cap = (g.per_path_capacities[0]
+                                if g.per_path_capacities else 0)
+                    if _tbl_cap > 0:
+                        mincapacity = _tbl_cap
+                    elif "mAh" in datafilepath:
                         mincapacity = name_capacity(datafilepath)
                     else:
                         mincapacity = 0
+
+                    if not mincapacity or mincapacity <= 0:
+                        QtWidgets.QMessageBox.warning(
+                            self, "용량 미입력",
+                            f"파일명에서 용량을 추출할 수 없습니다.\n"
+                            f"경로 테이블 용량 열에 값을 입력하세요.\n{datafilepath}")
+                        continue
 
                     filename = os.path.splitext(os.path.basename(datafilepath))[0]
                     try:
                         wb = xw.Book(datafilepath)
                         df = wb.sheets("Plot Base Data").used_range.offset(1, 0).options(
                             pd.DataFrame, index=False, header=False).value
-                        xw.apps.active.quit()
+                        wb.close()
+                        # xlwings가 생성한 Excel 인스턴스 정리 (사용자 Excel 보호)
+                        try:
+                            if not xw.apps.active.books:
+                                xw.apps.active.quit()
+                        except Exception:
+                            pass
                         df = df.drop(0).iloc[:, 1::2]
                         df.reset_index(drop=True, inplace=True)
                         df.index = df.index + 1
@@ -17643,8 +17677,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         dfs_output.append(df)
                         col_name_output += col_name
                     except Exception as e:
-                        print(f"오류 발생: {e}")
-                        raise
+                        # xlwings Excel 인스턴스 정리
+                        try:
+                            xw.apps.active.quit()
+                        except Exception:
+                            pass
+                        logger.error("신뢰성 Excel 처리 오류: %s — %s",
+                                     datafilepath, e)
+                        QtWidgets.QMessageBox.warning(
+                            self, "Excel 읽기 오류",
+                            f"{type(e).__name__}: {e}\n\n{datafilepath}")
+                        continue
 
                     done_excel += 1
                     self.progressBar.setValue(int(done_excel / total_excel * 100))
