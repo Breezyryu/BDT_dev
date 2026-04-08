@@ -17611,8 +17611,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             filename = ""
             total_excel = sum(len(g.paths) for g in excel_groups)
             done_excel = 0
+            # 신뢰성 데이터: 모든 Excel 파일을 하나의 그룹(동일 색상)으로 처리
+            group_color = graphcolor[colorno % len(graphcolor)]
+            _group_legend_done = False
 
             for g in excel_groups:
+
                 for datafilepath in g.paths:
                     # 용량: 테이블 입력값 우선, 없으면 파일명에서 자동 추출
                     _tbl_cap = (g.per_path_capacities[0]
@@ -17666,14 +17670,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             df.reset_index(drop=True, inplace=True)
                             df.index = df.index + 1
 
-                        columncount = 0
-                        for col, column in df.items():
-                            lgnd = filename if columncount == 0 else ""
+                        # 같은 그룹: 동일 색상, 범례는 첫 채널에만
+                        for _, column in df.items():
+                            lgnd = filename if not _group_legend_done else ""
                             graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
                                         "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
-                                        graphcolor[colorno % len(graphcolor)])
-                            columncount += 1
-                            colorno = (colorno + 1) % len(graphcolor)
+                                        group_color)
+                            _group_legend_done = True
                         dfs_output.append(df)
                         col_name_output += col_name
                     except Exception as e:
@@ -17691,6 +17694,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                     done_excel += 1
                     self.progressBar.setValue(int(done_excel / total_excel * 100))
+
+            colorno += 1  # 신뢰성 그룹 전체에서 1색상만 사용 → 처리 후 1회 증가
 
             dfoutput = pd.concat(dfs_output, axis=1) if dfs_output else pd.DataFrame()
             if self.saveok.isChecked() and save_file_name:
@@ -18672,6 +18677,93 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             groups.append(current_group)
         return groups
 
+    @staticmethod
+    def _read_excel_meta(filepath: str) -> dict | None:
+        """신뢰성 XLS 파일의 'Graph Base Value' 시트에서 메타정보 추출
+
+        Returns
+        -------
+        dict | None
+            {'ch': '27,28,41,...', 'max_cycle': 1190, 'name': 'Exam Name'}
+            시트가 없거나 읽기 실패 시 None
+        """
+        try:
+            wb = xw.Book(filepath)
+            sheet_names = [s.name for s in wb.sheets]
+            if "Graph Base Value" not in sheet_names:
+                wb.close()
+                try:
+                    if not xw.apps.active.books:
+                        xw.apps.active.quit()
+                except Exception:
+                    pass
+                return None
+            df = wb.sheets("Graph Base Value").used_range.options(
+                pd.DataFrame, index=False, header=False).value
+            wb.close()
+            try:
+                if not xw.apps.active.books:
+                    xw.apps.active.quit()
+            except Exception:
+                pass
+            if df is None or df.empty:
+                return None
+            # 헤더 행 찾기: 'CH No' 또는 'NO'가 있는 행
+            header_row = None
+            for i in range(min(10, len(df))):
+                row_vals = [str(v).strip() if pd.notna(v) else ''
+                            for v in df.iloc[i]]
+                if 'NO' in row_vals or 'CH No' in row_vals:
+                    header_row = i
+                    break
+            if header_row is None:
+                return None
+            # 헤더에서 CH No 열 인덱스 찾기
+            header_vals = [str(v).strip() if pd.notna(v) else ''
+                           for v in df.iloc[header_row]]
+            ch_col = None
+            cyc_end_col = None
+            name_col = None
+            for ci, hv in enumerate(header_vals):
+                if hv == 'CH No':
+                    ch_col = ci
+                elif hv == 'Cycle(End)':
+                    cyc_end_col = ci
+                elif hv == 'Exam. Name':
+                    name_col = ci
+            if ch_col is None:
+                return None
+            # 데이터 행 추출 (헤더 다음 행부터)
+            data_rows = df.iloc[header_row + 1:]
+            ch_list = []
+            max_cycle = 0
+            exam_name = ""
+            for _, row in data_rows.iterrows():
+                ch_val = row.iloc[ch_col]
+                if pd.isna(ch_val):
+                    break
+                ch_list.append(str(int(float(ch_val))))
+                if cyc_end_col is not None and pd.notna(row.iloc[cyc_end_col]):
+                    cyc = int(float(row.iloc[cyc_end_col]))
+                    if cyc > max_cycle:
+                        max_cycle = cyc
+                if not exam_name and name_col is not None and pd.notna(row.iloc[name_col]):
+                    exam_name = str(row.iloc[name_col]).strip()
+            if not ch_list:
+                return None
+            return {
+                'ch': ','.join(ch_list),
+                'max_cycle': max_cycle if max_cycle > 0 else None,
+                'name': exam_name,
+            }
+        except Exception as e:
+            logger.warning("XLS 메타 읽기 실패: %s — %s", filepath, e)
+            try:
+                xw.apps.active.quit()
+            except Exception:
+                pass
+            return None
+
     def _autofill_table_empty_cells(self):
         """사이클 분석 시 테이블 셀 자동 채우기
         경로(col1)를 기준으로 경로명(col0), 채널(col2), 용량(col3) 유추
@@ -18720,6 +18812,46 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if len(auto_name_fresh) > 30:
                         auto_name_fresh = auto_name_fresh[:30] + "..."
                     auto_name = hint_name or auto_name_fresh
+
+                    # ── XLS/XLSX 파일: Graph Base Value에서 메타정보 추출 ──
+                    _ext = os.path.splitext(path)[1].lower()
+                    _is_excel = _ext in ('.xls', '.xlsx')
+                    if _is_excel and not _has_hint:
+                        _xls_meta = self._read_excel_meta(path)
+                        if _xls_meta:
+                            auto_ch = hint_ch or _xls_meta['ch']
+                            _name_cap = name_capacity(path) if "mAh" in path else 0
+                            auto_cap = float(hint_cap) if hint_cap else (_name_cap or None)
+                            auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
+                            auto_cyc_str = str(_xls_meta['max_cycle']) if _xls_meta.get('max_cycle') else ""
+                            auto_raw_str = ""
+                            meta_hit = None
+                            _path_cache[path] = {
+                                'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+                                'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
+                                '_cap_num': auto_cap, '_meta_hit': meta_hit}
+                            auto_vals.append({
+                                'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+                                'cycle': auto_cyc_str, 'cycleraw': auto_raw_str})
+                            continue  # 다음 행으로
+                    elif _is_excel and _has_hint:
+                        # 힌트 완비: Excel I/O 생략
+                        auto_ch = hint_ch
+                        _name_cap = name_capacity(path) if "mAh" in path else 0
+                        auto_cap = float(hint_cap) if hint_cap else (_name_cap or None)
+                        auto_cap_str = hint_cap or (str(int(auto_cap)) if auto_cap and auto_cap > 0 else "")
+                        auto_cyc_str = ""
+                        auto_raw_str = ""
+                        meta_hit = None
+                        _path_cache[path] = {
+                            'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+                            'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
+                            '_cap_num': auto_cap, '_meta_hit': meta_hit}
+                        auto_vals.append({
+                            'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+                            'cycle': auto_cyc_str, 'cycleraw': auto_raw_str})
+                        continue  # 다음 행으로
+
                     # ── 채널: 항상 scandir 수행 (가벼움) → 힌트와 교차검증 ──
                     auto_ch_fresh = ""
                     _dir_exists = os.path.isdir(path)
