@@ -19117,17 +19117,58 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             lines.append('\t'.join(cols))
         QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
 
+    @staticmethod
+    def _win32_clipboard_text() -> str:
+        """Win32 API로 클립보드 텍스트 직접 읽기 (엑셀 점유 시에도 동작).
+
+        Qt QClipboard가 'Unable to obtain clipboard' 에러를 내는 경우 폴백.
+        """
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            CF_UNICODETEXT = 13
+            # 최대 5회 재시도 (10ms 간격)
+            for _ in range(5):
+                if user32.OpenClipboard(0):
+                    break
+                import time
+                time.sleep(0.01)
+            else:
+                return ''
+            try:
+                h = user32.GetClipboardData(CF_UNICODETEXT)
+                if not h:
+                    return ''
+                ptr = kernel32.GlobalLock(h)
+                if not ptr:
+                    return ''
+                try:
+                    return ctypes.wstring_at(ptr)
+                finally:
+                    kernel32.GlobalUnlock(h)
+            finally:
+                user32.CloseClipboard()
+        except Exception:
+            return ''
+
     def _cycle_table_paste(self):
         """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)
 
         여러 셀(사이클, 사이클Raw, 모드 등)을 동시에 붙여넣기 가능.
         cellChanged 시그널을 차단하여 col4→col5 자동 매핑 간섭 방지.
+        엑셀 등 외부 앱 클립보드 점유 시 Win32 API 폴백.
         """
+        # Qt 클립보드 우선, 실패 시 Win32 직접 접근
         text = QtWidgets.QApplication.clipboard().text()
+        if not text:
+            text = self._win32_clipboard_text()
         if not text:
             return
         self._push_table_undo()
         tbl = self.cycle_path_table
+        # \r\n → \n 통일 후 파싱 (Windows 클립보드 호환)
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
         # 빈 행 보존하되, 연속 2칸 이상 빈 행은 1칸으로 축소
         raw_lines = text.strip().split('\n')
         rows = []
