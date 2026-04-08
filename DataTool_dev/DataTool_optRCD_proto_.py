@@ -8026,7 +8026,7 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
     -------
     pybamm.Solution
     """
-    # 1) 모델 생성
+    # 1) 모델 생성 — 리튬 석출(plating) 서브모델 포함
     model_map = {
         "SPM": pybamm.lithium_ion.SPM,
         "SPMe": pybamm.lithium_ion.SPMe,
@@ -8034,31 +8034,67 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
     }
     if model_name not in model_map:
         raise ValueError(f"지원하지 않는 모델: {model_name}")
-    model = model_map[model_name]()
+    model = model_map[model_name]({
+        "lithium plating": "irreversible",
+        "thermal": "lumped",
+    })
 
-    # 2) 파라미터 적용
-    param = model.default_parameter_values
+    # 2) 파라미터 적용 — OKane2022 기본 (plating 파라미터 포함)
+    param = pybamm.ParameterValues("OKane2022")
     # 테이블 값 → PyBaMM 파라미터 매핑
     _key_map = {
+        # ── Geometry ──
         "양극 두께":              ("Positive electrode thickness [m]", 1e-6),
         "양극 입자 반경":          ("Positive particle radius [m]", 1e-6),
         "양극 활물질 비율":        ("Positive electrode active material volume fraction", 1),
-        "양극 Bruggeman":         ("Positive electrode Bruggeman coefficient (electrolyte)", 1),
+        "양극 기공률":            ("Positive electrode porosity", 1),
         "음극 두께":              ("Negative electrode thickness [m]", 1e-6),
         "음극 입자 반경":          ("Negative particle radius [m]", 1e-6),
         "음극 활물질 비율":        ("Negative electrode active material volume fraction", 1),
-        "음극 Bruggeman":         ("Negative electrode Bruggeman coefficient (electrolyte)", 1),
+        "음극 기공률":            ("Negative electrode porosity", 1),
         "분리막 두께":             ("Separator thickness [m]", 1e-6),
-        "분리막 Bruggeman":       ("Separator Bruggeman coefficient (electrolyte)", 1),
-        "전해질 농도":             ("Initial concentration in electrolyte [mol.m-3]", 1),
-        "전극 면적":              ("Electrode width [m]", 1),
+        "분리막 기공률":           ("Separator porosity", 1),
+        "전극 면적(폭)":          ("Electrode width [m]", 1),
+        "전극 높이":              ("Electrode height [m]", 1),
+        "적층 수":                ("Number of electrodes connected in parallel to make a cell", 1),
         "셀 용량":                ("Nominal cell capacity [A.h]", 1),
+        # ── Transport ──
+        "양극 고상확산계수":       ("Positive electrode diffusivity [m2.s-1]", 1),
+        "음극 고상확산계수":       ("Negative electrode diffusivity [m2.s-1]", 1),
+        "전해질 확산계수":         ("Electrolyte diffusivity [m2.s-1]", 1),
+        "전해질 이온전도도":       ("Electrolyte conductivity [S.m-1]", 1),
+        "양극 전자전도도":         ("Positive electrode conductivity [S.m-1]", 1),
+        "음극 전자전도도":         ("Negative electrode conductivity [S.m-1]", 1),
+        "전해질 농도":             ("Initial concentration in electrolyte [mol.m-3]", 1),
+        "양극 Bruggeman":         ("Positive electrode Bruggeman coefficient (electrolyte)", 1),
+        "음극 Bruggeman":         ("Negative electrode Bruggeman coefficient (electrolyte)", 1),
+        "분리막 Bruggeman":       ("Separator Bruggeman coefficient (electrolyte)", 1),
+        # ── Kinetics ──
+        "양극 교환전류밀도":       ("Positive electrode exchange-current density [A.m-2]", 1),
+        "음극 교환전류밀도":       ("Negative electrode exchange-current density [A.m-2]", 1),
+        "양극 최대농도":           ("Maximum concentration in positive electrode [mol.m-3]", 1),
+        "음극 최대농도":           ("Maximum concentration in negative electrode [mol.m-3]", 1),
+        "Plating 속도상수":       ("Lithium plating kinetic rate constant [m.s-1]", 1),
+        "Plating 전달계수":       ("Lithium plating transfer coefficient", 1),
+        # ── Thermodynamics ──
+        "양극 OCP":               ("Positive electrode OCP [V]", 1),
+        "음극 OCP":               ("Negative electrode OCP [V]", 1),
         "온도":                   ("Ambient temperature [K]", 1),  # 별도 변환
+        "열전달 계수":             ("Total heat transfer coefficient [W.m-2.K-1]", 1),
+        "상한 전압":              ("Upper voltage cut-off [V]", 1),
+        "하한 전압":              ("Lower voltage cut-off [V]", 1),
     }
     for kr_name, val_str in params_dict.items():
         if kr_name in _key_map:
             pybamm_key, scale = _key_map[kr_name]
-            val = float(val_str)
+            # 함수형 파라미터 유지: "f(...)" 또는 "auto" → 건너뜀
+            _stripped = val_str.strip()
+            if _stripped.lower() == "auto" or _stripped.startswith("f("):
+                continue
+            try:
+                val = float(_stripped)
+            except ValueError:
+                continue  # 파싱 불가 → 건너뜀
             if kr_name == "온도":
                 val = val + 273.15  # °C → K
             else:
@@ -8066,6 +8102,9 @@ def run_pybamm_simulation(model_name, params_dict, experiment_config):
             # 상수값만 덮어씀 (함수형 파라미터는 건너뜀)
             try:
                 param[pybamm_key] = val
+                # 온도: Initial temperature도 동기화
+                if kr_name == "온도":
+                    param["Initial temperature [K]"] = val
             except Exception:
                 pass
 
@@ -13453,54 +13492,105 @@ class Ui_sitool(object):
         self.pybamm_param_combo.setMinimumSize(QtCore.QSize(220, 25))
         self.pybamm_param_combo.setFont(font)
         self.pybamm_param_combo.addItems([
-            "Chen2020 - Gr(Si)/NMC811",
-            "Ecker2015 - Gr/NMC111",
-            "Marquis2019 - Gr/NMC",
-            "Mohtat2020 - Gr/NMC111",
-            "NCA_Kim2011 - Gr/NCA",
             "OKane2022 - Gr(Si)/NMC811",
-            "ORegan2022 - Gr(Si)/NMC811",
             "사용자 정의",
         ])
         self.pybamm_param_combo.setObjectName("pybamm_param_combo")
         self.pybamm_preset_hlayout.addWidget(self.pybamm_param_combo)
         self.pybamm_edit_btn = QtWidgets.QPushButton(parent=self.pybamm_param_group)
-        self.pybamm_edit_btn.setMinimumSize(QtCore.QSize(80, 25))
-        self.pybamm_edit_btn.setMaximumSize(QtCore.QSize(80, 25))
+        self.pybamm_edit_btn.setMinimumSize(QtCore.QSize(40, 22))
+        self.pybamm_edit_btn.setMaximumSize(QtCore.QSize(50, 22))
         self.pybamm_edit_btn.setFont(font)
-        self.pybamm_edit_btn.setText("파라미터 편집")
+        self.pybamm_edit_btn.setText("편집")
         self.pybamm_edit_btn.setCheckable(True)
         self.pybamm_edit_btn.setChecked(False)
         self.pybamm_edit_btn.setObjectName("pybamm_edit_btn")
         self.pybamm_preset_hlayout.addWidget(self.pybamm_edit_btn)
         self.pybamm_param_vlayout.addLayout(self.pybamm_preset_hlayout)
         self.pybamm_param_table = QtWidgets.QTableWidget(parent=self.pybamm_param_group)
-        self.pybamm_param_table.setMinimumSize(QtCore.QSize(320, 460))
-        self.pybamm_param_table.setMaximumSize(QtCore.QSize(320, 460))
         self.pybamm_param_table.setFont(font)
         self.pybamm_param_table.setColumnCount(3)
         self.pybamm_param_table.setHorizontalHeaderLabels(["파라미터", "값", "단위"])
         self.pybamm_param_table.setColumnWidth(0, 150)
         self.pybamm_param_table.setColumnWidth(1, 80)
         self.pybamm_param_table.setColumnWidth(2, 60)
-        self.pybamm_param_table.setRowCount(14)
+        # 카테고리 헤더 + 파라미터 행 정의
+        # None = 카테고리 헤더 (편집 불가, 배경색으로 구분)
         _pybamm_param_rows = [
-            ("양극 두께", "75.6", "μm"), ("양극 입자 반경", "5.22", "μm"),
+            # ── Geometry ──
+            None,  # 카테고리 헤더: "▸ Geometry"
+            ("양극 두께", "75.6", "μm"),
+            ("양극 입자 반경", "5.22", "μm"),
             ("양극 활물질 비율", "0.665", "-"),
-            ("양극 Bruggeman", "1.5", "-"),
-            ("음극 두께", "85.2", "μm"), ("음극 입자 반경", "5.86", "μm"),
+            ("양극 기공률", "0.335", "-"),
+            ("음극 두께", "85.2", "μm"),
+            ("음극 입자 반경", "5.86", "μm"),
             ("음극 활물질 비율", "0.75", "-"),
+            ("음극 기공률", "0.25", "-"),
+            ("분리막 두께", "12.0", "μm"),
+            ("분리막 기공률", "0.47", "-"),
+            ("전극 면적(폭)", "1.58", "m"),
+            ("전극 높이", "0.065", "m"),
+            ("적층 수", "1", "-"),
+            ("셀 용량", "5.0", "Ah"),
+            # ── Transport ──
+            None,  # 카테고리 헤더: "▸ Transport"
+            ("양극 고상확산계수", "", "m²/s"),
+            ("음극 고상확산계수", "", "m²/s"),
+            ("전해질 확산계수", "", "m²/s"),
+            ("전해질 이온전도도", "", "S/m"),
+            ("양극 전자전도도", "0.18", "S/m"),
+            ("음극 전자전도도", "215.0", "S/m"),
+            ("전해질 농도", "1000", "mol/m³"),
+            ("양극 Bruggeman", "1.5", "-"),
             ("음극 Bruggeman", "1.5", "-"),
-            ("분리막 두께", "12.0", "μm"), ("분리막 Bruggeman", "1.5", "-"),
-            ("전해질 농도", "1000", "mol/m³"), ("전극 면적", "1.58", "m²"),
-            ("셀 용량", "5.0", "Ah"), ("온도", "25", "°C"),
+            ("분리막 Bruggeman", "1.5", "-"),
+            # ── Kinetics ──
+            None,  # 카테고리 헤더: "▸ Kinetics"
+            ("양극 교환전류밀도", "", "A/m²"),
+            ("음극 교환전류밀도", "", "A/m²"),
+            ("양극 최대농도", "63104", "mol/m³"),
+            ("음극 최대농도", "33133", "mol/m³"),
+            ("Plating 속도상수", "1e-9", "m/s"),
+            ("Plating 전달계수", "0.65", "-"),
+            # ── Thermodynamics ──
+            None,  # 카테고리 헤더: "▸ Thermodynamics"
+            ("양극 OCP", "", "V"),
+            ("음극 OCP", "", "V"),
+            ("온도", "25", "°C"),
+            ("열전달 계수", "10.0", "W/m²K"),
+            ("상한 전압", "4.2", "V"),
+            ("하한 전압", "2.5", "V"),
         ]
-        for _row, (_name, _val, _unit) in enumerate(_pybamm_param_rows):
-            self.pybamm_param_table.setItem(_row, 0, QtWidgets.QTableWidgetItem(_name))
-            self.pybamm_param_table.setItem(_row, 1, QtWidgets.QTableWidgetItem(_val))
-            self.pybamm_param_table.setItem(_row, 2, QtWidgets.QTableWidgetItem(_unit))
-            self.pybamm_param_table.item(_row, 0).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
-            self.pybamm_param_table.item(_row, 2).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+        _category_names = ["▸ Geometry", "▸ Transport", "▸ Kinetics", "▸ Thermodynamics"]
+        _cat_idx = 0
+        _cat_bg = QtGui.QColor(230, 237, 246)
+        _cat_font = QtGui.QFont(font)
+        _cat_font.setBold(True)
+        self.pybamm_param_table.setRowCount(len(_pybamm_param_rows))
+        for _row, _entry in enumerate(_pybamm_param_rows):
+            if _entry is None:
+                # 카테고리 헤더 행
+                _hdr = _category_names[_cat_idx] if _cat_idx < len(_category_names) else ""
+                _cat_idx += 1
+                for _c in range(3):
+                    _item = QtWidgets.QTableWidgetItem(_hdr if _c == 0 else "")
+                    _item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+                    _item.setBackground(_cat_bg)
+                    _item.setFont(_cat_font)
+                    self.pybamm_param_table.setItem(_row, _c, _item)
+                self.pybamm_param_table.setSpan(_row, 0, 1, 3)
+                self.pybamm_param_table.setRowHeight(_row, 22)
+            else:
+                _name, _val, _unit = _entry
+                self.pybamm_param_table.setItem(_row, 0, QtWidgets.QTableWidgetItem(_name))
+                self.pybamm_param_table.setItem(_row, 1, QtWidgets.QTableWidgetItem(_val))
+                self.pybamm_param_table.setItem(_row, 2, QtWidgets.QTableWidgetItem(_unit))
+                self.pybamm_param_table.item(_row, 0).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+                self.pybamm_param_table.item(_row, 2).setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+        _tbl_h = len(_pybamm_param_rows) * 24 + 30
+        self.pybamm_param_table.setMinimumSize(QtCore.QSize(320, _tbl_h))
+        self.pybamm_param_table.setMaximumSize(QtCore.QSize(320, _tbl_h))
         self.pybamm_param_table.setObjectName("pybamm_param_table")
         self.pybamm_param_table.setVisible(False)
         self.pybamm_param_vlayout.addWidget(self.pybamm_param_table)
@@ -26629,12 +26719,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_run_btn.setDisabled(True)
         QtWidgets.QApplication.processEvents()
 
-        # 1) UI에서 파라미터 수집
+        # 1) UI에서 파라미터 수집 (카테고리 헤더 행 건너뜀)
         params_dict = {}
         for row in range(self.pybamm_param_table.rowCount()):
+            if self.pybamm_param_table.columnSpan(row, 0) > 1:
+                continue  # 카테고리 헤더
             name_item = self.pybamm_param_table.item(row, 0)
             val_item = self.pybamm_param_table.item(row, 1)
-            if name_item and val_item:
+            if name_item and val_item and val_item.text().strip():
                 params_dict[name_item.text()] = val_item.text()
         self.progressBar.setValue(10)
         QtWidgets.QApplication.processEvents()
@@ -26727,6 +26819,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         neg_ocp         = _safe("X-averaged negative electrode open-circuit potential [V]")
         if neg_ocp is None:
             neg_ocp = _safe("Negative electrode open-circuit potential [V]")
+        # SPM/SPMe/DFN에서 neg_potential이 ~0 (기준 전극) → OCP + η로 재계산
+        if (neg_potential is not None and neg_ocp is not None
+                and np.max(np.abs(neg_potential)) < 1e-3):
+            _neg_rxn_ovp = _safe("X-averaged negative electrode reaction overpotential [V]")
+            if _neg_rxn_ovp is not None:
+                neg_potential = neg_ocp + _neg_rxn_ovp
         # 1.4 전극 리튬화 정도
         pos_lith = _safe("X-averaged positive electrode extent of lithiation")
         neg_lith = _safe("X-averaged negative electrode extent of lithiation")
@@ -26740,47 +26838,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         heat_ohmic = _safe("Volume-averaged Ohmic heating [W.m-3]")
         heat_irrev = _safe("Volume-averaged irreversible electrochemical heating [W.m-3]")
         heat_rev   = _safe("Volume-averaged reversible heating [W.m-3]")
-
-        # ── 상세 Plot 변수 ──
-        # 2.1 과전압 분해  ── 양극/음극 평균 후 합산
-        _pos_rxn = _safe("X-averaged positive electrode reaction overpotential [V]")
-        _neg_rxn = _safe("X-averaged negative electrode reaction overpotential [V]")
-        ovp_reaction = None
-        if _pos_rxn is not None and _neg_rxn is not None:
-            ovp_reaction = _pos_rxn + _neg_rxn
-        elif _pos_rxn is not None:
-            ovp_reaction = _pos_rxn
-        elif _neg_rxn is not None:
-            ovp_reaction = _neg_rxn
-        ovp_elyte_ohm = _safe("X-averaged electrolyte ohmic losses [V]")
-        ovp_solid_ohm = _safe("X-averaged solid phase ohmic losses [V]")
-        _pos_conc = _safe("X-averaged positive electrode concentration overpotential [V]")
-        _neg_conc = _safe("X-averaged negative electrode concentration overpotential [V]")
-        ovp_conc = None
-        if _pos_conc is not None and _neg_conc is not None:
-            ovp_conc = _pos_conc + _neg_conc
-        elif _pos_conc is not None:
-            ovp_conc = _pos_conc
-        elif _neg_conc is not None:
-            ovp_conc = _neg_conc
-        # 2.2 입자 농도
-        c_pos_surf = _safe("X-averaged positive particle surface concentration [mol.m-3]")
-        c_pos_bulk = _safe("X-averaged positive particle concentration [mol.m-3]")
-        c_neg_surf = _safe("X-averaged negative particle surface concentration [mol.m-3]")
-        c_neg_bulk = _safe("X-averaged negative particle concentration [mol.m-3]")
-        # 2.3 전해질 농도
-        elyte_c_pos = _safe("X-averaged positive electrolyte concentration [mol.m-3]")
-        elyte_c_sep = _safe("X-averaged separator electrolyte concentration [mol.m-3]")
-        elyte_c_neg = _safe("X-averaged negative electrolyte concentration [mol.m-3]")
-        # 2.4 전해질 전위
-        elyte_p_pos = _safe("X-averaged positive electrolyte potential [V]")
-        elyte_p_sep = _safe("X-averaged separator electrolyte potential [V]")
-        elyte_p_neg = _safe("X-averaged negative electrolyte potential [V]")
-        # 2.5 계면 전류 밀도
-        j_pos = _safe("X-averaged positive electrode interfacial current density [A.m-2]")
-        j_neg = _safe("X-averaged negative electrode interfacial current density [A.m-2]")
-        # 2.6 리튬 석출 위험도
-        plating_ovp = _safe("X-averaged lithium plating reaction overpotential [V]")
+        # 1.7 리튬 석출 과전압 (lithium plating 서브모델 활성 시)
+        plating_ovp = _safe("X-averaged negative electrode lithium plating reaction overpotential [V]")
+        if plating_ovp is None:
+            plating_ovp = _safe("X-averaged lithium plating reaction overpotential [V]")
 
         self.progressBar.setValue(75)
 
@@ -26842,17 +26903,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _has_12 = (pos_ocp is not None and neg_ocp is not None
                    and pos_lith is not None and neg_lith is not None)
         if _has_12:
-            # 전체 OCP 함수 가져오기
-            _f_pos, _f_neg = None, None
-            try:
-                _fp = param_vals["Positive electrode OCP [V]"]
-                _fn = param_vals["Negative electrode OCP [V]"]
-                if callable(_fp):
-                    _f_pos = _fp
-                if callable(_fn):
-                    _f_neg = _fn
-            except Exception:
-                pass
+            from scipy.interpolate import interp1d
 
             # Stoichiometry → SoC_Cell 선형 매핑
             _sto_p0, _sto_pN = pos_lith[0], pos_lith[-1]
@@ -26866,19 +26917,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             else:
                 _soc_sim = np.linspace(0, 100, len(pos_lith))
 
-            # 전체 OCP 커브 (연한 배경) — sto → SoC 선형 외삽
+            # 전체 OCP 커브 (연한 배경) — 시뮬레이션 데이터 외삽
             _sto_full = np.linspace(0.001, 0.999, 500)
-            if _f_pos is not None and abs(_d_p) > 1e-10:
-                _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
+            try:
+                _interp_pos = interp1d(pos_lith, pos_ocp, kind='linear',
+                                       fill_value='extrapolate')
                 _soc_pe_full = 100.0 * (_sto_full - _sto_p0) / _d_p
-                ax.plot(_soc_pe_full, _ocp_pos_full, color=palette[1],
+                ax.plot(_soc_pe_full, _interp_pos(_sto_full), color=palette[1],
                         linewidth=0.8, alpha=0.7, linestyle='-')
+            except Exception:
+                pass
             ax_r12 = ax.twinx()
-            if _f_neg is not None and abs(_d_n) > 1e-10:
-                _ocp_neg_full = np.asarray(_f_neg(_sto_full), dtype=float).ravel()
+            try:
+                _interp_neg = interp1d(neg_lith, neg_ocp, kind='linear',
+                                       fill_value='extrapolate')
                 _soc_ne_full = 100.0 * (_sto_full - _sto_n0) / _d_n
-                ax_r12.plot(_soc_ne_full, _ocp_neg_full, color=palette[0],
+                ax_r12.plot(_soc_ne_full, _interp_neg(_sto_full), color=palette[0],
                             linewidth=0.8, alpha=0.7, linestyle='-')
+            except Exception:
+                pass
 
             # ── 양극 OCP 실사용 영역 (좌Y, 빨간) ──
             ax.plot(_soc_sim, pos_ocp, color=palette[1],
@@ -26972,7 +27029,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         + (_vc_neg_rxn if _vc_neg_rxn is not None else _zeros))
             bottom = top + (-1) * _neg_ovp
             ax.fill_between(t_min, bottom, top, alpha=0.6,
-                            label="Neg Overpotential", color=palette[2])
+                            label="Negax Overpotential", color=palette[2])
             top = bottom
             # ④ Pos Overpotential 합 (particle conc. + reaction)
             _pos_ovp = ((_vc_pos_pco if _vc_pos_pco is not None else _zeros)
@@ -27007,29 +27064,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _has_13 = (pos_ocp is not None and neg_ocp is not None
                    and pos_lith is not None and neg_lith is not None)
         if _has_13:
-            # 전체 OCP 함수 가져오기
-            _f_pos, _f_neg = None, None
+            from scipy.interpolate import interp1d
+
+            # 전체 OCP 커브 (연한 배경) — 시뮬레이션 데이터 외삽
+            _sto_full = np.linspace(0.001, 0.999, 500)
             try:
-                _fp = param_vals["Positive electrode OCP [V]"]
-                _fn = param_vals["Negative electrode OCP [V]"]
-                if callable(_fp):
-                    _f_pos = _fp
-                if callable(_fn):
-                    _f_neg = _fn
+                _interp_pos = interp1d(pos_lith, pos_ocp, kind='linear',
+                                       fill_value='extrapolate')
+                ax.plot(1.0 - _sto_full, _interp_pos(_sto_full), color=palette[1],
+                        linewidth=0.8, alpha=0.2, linestyle='-')
             except Exception:
                 pass
-
-            # 전체 OCP 커브 (연한 배경)
-            _sto_full = np.linspace(0.001, 0.999, 500)
-            if _f_pos is not None:
-                _ocp_pos_full = np.asarray(_f_pos(_sto_full), dtype=float).ravel()
-                ax.plot(1.0 - _sto_full, _ocp_pos_full, color=palette[1],
-                        linewidth=0.8, alpha=0.2, linestyle='-')
             ax_r13 = ax.twinx()
-            if _f_neg is not None:
-                _ocp_neg_full = np.asarray(_f_neg(_sto_full), dtype=float).ravel()
-                ax_r13.plot(_sto_full, _ocp_neg_full, color=palette[0],
+            try:
+                _interp_neg = interp1d(neg_lith, neg_ocp, kind='linear',
+                                       fill_value='extrapolate')
+                ax_r13.plot(_sto_full, _interp_neg(_sto_full), color=palette[0],
                             linewidth=0.8, alpha=0.2, linestyle='-')
+            except Exception:
+                pass
 
             # ── 양극 OCP 실사용 영역 (좌Y, 빨간) — y=1-x ──
             _pos_y = 1.0 - pos_lith
@@ -27049,7 +27102,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         markersize=5, zorder=5)
 
             # stoichiometry 범위 주석
-            ax.annotate(f"PE: y(1−x)={_pos_y[0]:.3f}→{_pos_y[-1]:.3f}",
+            ax.annotate(f"PE: y(1-x)={_pos_y[0]:.3f}→{_pos_y[-1]:.3f}",
                         xy=(0.02, 0.97), xycoords='axes fraction',
                         fontsize=6.5, color=palette[1], va='top')
             ax_r13.annotate(f"NE: x={neg_lith[0]:.3f}→{neg_lith[-1]:.3f}",
@@ -27075,36 +27128,69 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ax_r13.set_yticks(np.linspace(-0.05, 1.0, _nt))
         else:
             _no_data(ax, "Electrode OCP\ndata not available")
-        graph_base_parameter(ax, "PE: y(1−x) / NE: x", "PE Voltage [V]")
+        graph_base_parameter(ax, "PE: y(1-x) / NE: x", "PE Voltage [V]")
         ax.set_title("Electrode Balance", fontsize=TS, fontweight=TW)
 
-        # [1.3] Cell Temperature
+        # [1.3] Cell Temperature (좌Y) + Heat Generation Sources (우Y)
         ax = axes_g[0, 2]
-        if T_cell is not None:
-            ax.plot(t_min, T_cell, color=palette[2], linewidth=LW, alpha=LA)
-        else:
-            _no_data(ax, "Temperature data\nnot available")
+        _has_temp = T_cell is not None
+        _has_heat = any(x is not None for x in [heat_ohmic, heat_irrev, heat_rev])
+        if _has_temp:
+            ax.plot(t_min, T_cell, color=palette[2], linewidth=LW + 0.3,
+                    alpha=LA, label="Cell Temp")
+            ax.set_ylabel("Cell Temperature [°C]", fontsize=THEME['LABEL_SIZE'] - 1,
+                          fontweight='bold', color=palette[2])
+            ax.tick_params(axis='y', colors=palette[2])
+        if _has_heat:
+            ax_heat = ax.twinx()
+            if heat_ohmic is not None:
+                ax_heat.plot(t_min, heat_ohmic, color=palette[3], linewidth=LW,
+                             alpha=0.7, linestyle='--', label="Ohmic")
+            if heat_irrev is not None:
+                ax_heat.plot(t_min, heat_irrev, color=palette[1], linewidth=LW,
+                             alpha=0.7, linestyle='--', label="Irreversible")
+            if heat_rev is not None:
+                ax_heat.plot(t_min, heat_rev, color=palette[4], linewidth=LW,
+                             alpha=0.7, linestyle='--', label="Reversible")
+            ax_heat.set_ylabel("Heat [W/m³]", fontsize=THEME['LABEL_SIZE'] - 1,
+                               fontweight='bold')
+            ax_heat.tick_params(direction='in', labelsize=THEME['TICK_SIZE'])
+            # 범례 합치기
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax_heat.get_legend_handles_labels()
+            ax.legend(h1 + h2, l1 + l2, fontsize=7, loc='best')
+        elif _has_temp:
+            ax.legend(fontsize=7, loc='best')
+        if not _has_temp and not _has_heat:
+            _no_data(ax, "Temperature / Heat data\nnot available")
         graph_base_parameter(ax, "Time [min]", "Cell Temperature [°C]")
-        ax.set_title("Cell Temperature", fontsize=TS, fontweight=TW)
+        ax.set_title("Temperature & Heat", fontsize=TS, fontweight=TW)
 
-        # [1.6] Heat Generation Sources
+        # [1.6] Lithium Plating Risk — Anode Potential + Plating η
         ax = axes_g[1, 2]
-        _has_16 = False
-        if heat_ohmic is not None:
-            ax.plot(t_min, heat_ohmic, color=palette[3], linewidth=LW, alpha=LA, label="Ohmic")
-            _has_16 = True
-        if heat_irrev is not None:
-            ax.plot(t_min, heat_irrev, color=palette[1], linewidth=LW, alpha=LA, label="Irreversible")
-            _has_16 = True
-        if heat_rev is not None:
-            ax.plot(t_min, heat_rev, color=palette[4], linewidth=LW, alpha=LA, label="Reversible")
-            _has_16 = True
-        if not _has_16:
-            _no_data(ax, "Heat generation data\nnot available")
+        _has_plating = False
+        if neg_potential is not None:
+            ax.plot(t_min, neg_potential, color=palette[0], linewidth=LW + 0.3,
+                    alpha=LA, label="Anode potential")
+            _has_plating = True
+        if plating_ovp is not None:
+            ax.plot(t_min, plating_ovp, color=palette[8], linewidth=LW,
+                    alpha=LA, linestyle='--', label="Plating η")
+            _has_plating = True
+        if _has_plating:
+            # 위험 기준선: 0V (석출 시작), 0.2V (안전 마진)
+            ax.axhline(y=0, color='#DC0000', linewidth=1.0, linestyle='-',
+                       alpha=0.7, label="0 V (plating onset)")
+            ax.axhline(y=0.2, color='#F39B7F', linewidth=0.8, linestyle=':',
+                       alpha=0.7, label="0.2 V (safety margin)")
+            # 0V 이하 영역 음영 표시
+            _y_min = ax.get_ylim()[0]
+            ax.axhspan(_y_min, 0, alpha=0.08, color='#DC0000')
+            ax.legend(fontsize=7, loc='best')
         else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Heat [W/m³]")
-        ax.set_title("Heat Generation Sources", fontsize=TS, fontweight=TW)
+            _no_data(ax, "Plating / Anode potential\nnot available\n(OKane2022 모델 필요)")
+        graph_base_parameter(ax, "Time [min]", "Potential [V]")
+        ax.set_title("Lithium Plating Risk", fontsize=TS, fontweight=TW)
 
         fig_g.tight_layout(pad=2.0)
         tab_g, lay_g, canvas_g, toolbar_g = self._create_plot_tab(fig_g, 1)
@@ -27113,141 +27199,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         scroll_g.setWidgetResizable(True)
         scroll_g.setWidget(canvas_g)
         lay_g.addWidget(scroll_g)
-        inner_tab.addTab(tab_g, "📊 일반 Plot")
-
-        # ================================================================
-        # ██  탭 2: 상세 Plot (Detailed Diagnostics)  ─  2×3  ██
-        # ================================================================
-        fig_d, axes_d = plt.subplots(2, 3, figsize=(18, 10))
-        fig_d.set_facecolor(THEME['FIG_FACECOLOR'])
-        for _ax_row in axes_d:
-            for _ax in _ax_row:
-                _ax.set_facecolor(THEME['AX_FACECOLOR'])
-
-        # [2.1] Overpotential Breakdown
-        ax = axes_d[0, 0]
-        _has_21 = False
-        if ovp_reaction is not None:
-            ax.plot(t_min, ovp_reaction, color=palette[0], linewidth=LW, alpha=LA, label="Reaction η")
-            _has_21 = True
-        if ovp_elyte_ohm is not None:
-            ax.plot(t_min, ovp_elyte_ohm, color=palette[1], linewidth=LW, alpha=LA, label="Electrolyte Ohmic")
-            _has_21 = True
-        if ovp_solid_ohm is not None:
-            ax.plot(t_min, ovp_solid_ohm, color=palette[2], linewidth=LW, alpha=LA, label="Solid-phase Ohmic")
-            _has_21 = True
-        if ovp_conc is not None:
-            ax.plot(t_min, ovp_conc, color=palette[3], linewidth=LW, alpha=LA, label="Concentration η")
-            _has_21 = True
-        if not _has_21:
-            _no_data(ax, "Overpotential data\nnot available")
-        else:
-            ax.legend(fontsize=7, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Overpotential [V]")
-        ax.set_title("Overpotential Breakdown", fontsize=TS, fontweight=TW)
-
-        # [2.2] Solid-Phase Diffusion (입자 표면/내부 농도)
-        ax = axes_d[0, 1]
-        _has_22 = False
-        if c_pos_surf is not None:
-            ax.plot(t_min, c_pos_surf, color=palette[1], linewidth=LW, alpha=LA, label="Cathode surface")
-            _has_22 = True
-        if c_pos_bulk is not None:
-            ax.plot(t_min, c_pos_bulk, color=palette[1], linewidth=LW, alpha=0.35, linestyle='--', label="Cathode bulk")
-            _has_22 = True
-        if c_neg_surf is not None:
-            ax.plot(t_min, c_neg_surf, color=palette[0], linewidth=LW, alpha=LA, label="Anode surface")
-            _has_22 = True
-        if c_neg_bulk is not None:
-            ax.plot(t_min, c_neg_bulk, color=palette[0], linewidth=LW, alpha=0.35, linestyle='--', label="Anode bulk")
-            _has_22 = True
-        if not _has_22:
-            _no_data(ax, "Particle concentration\nnot available")
-        else:
-            ax.legend(fontsize=7, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Concentration [mol/m³]")
-        ax.set_title("Solid-Phase Diffusion", fontsize=TS, fontweight=TW)
-
-        # [2.3] Electrolyte Li⁺ Concentration
-        ax = axes_d[0, 2]
-        _has_23 = False
-        if elyte_c_pos is not None:
-            ax.plot(t_min, elyte_c_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode region")
-            _has_23 = True
-        if elyte_c_sep is not None:
-            ax.plot(t_min, elyte_c_sep, color=palette[2], linewidth=LW, alpha=LA, label="Separator")
-            _has_23 = True
-        if elyte_c_neg is not None:
-            ax.plot(t_min, elyte_c_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode region")
-            _has_23 = True
-        if not _has_23:
-            _no_data(ax, "Electrolyte concentration\nnot available\n(SPMe/DFN only)")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Electrolyte Conc. [mol/m³]")
-        ax.set_title("Electrolyte Li⁺ Concentration", fontsize=TS, fontweight=TW)
-
-        # [2.4] Electrolyte Potential Gradient
-        ax = axes_d[1, 0]
-        _has_24 = False
-        if elyte_p_pos is not None:
-            ax.plot(t_min, elyte_p_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode region")
-            _has_24 = True
-        if elyte_p_sep is not None:
-            ax.plot(t_min, elyte_p_sep, color=palette[2], linewidth=LW, alpha=LA, label="Separator")
-            _has_24 = True
-        if elyte_p_neg is not None:
-            ax.plot(t_min, elyte_p_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode region")
-            _has_24 = True
-        if not _has_24:
-            _no_data(ax, "Electrolyte potential\nnot available\n(SPMe/DFN only)")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Electrolyte Potential [V]")
-        ax.set_title("Electrolyte Potential Gradient", fontsize=TS, fontweight=TW)
-
-        # [2.5] Interfacial Current Density
-        ax = axes_d[1, 1]
-        _has_25 = False
-        if j_pos is not None:
-            ax.plot(t_min, j_pos, color=palette[1], linewidth=LW, alpha=LA, label="Cathode j")
-            _has_25 = True
-        if j_neg is not None:
-            ax.plot(t_min, j_neg, color=palette[0], linewidth=LW, alpha=LA, label="Anode j")
-            _has_25 = True
-        if not _has_25:
-            _no_data(ax, "Interfacial current\nnot available")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Current Density [A/m²]")
-        ax.set_title("Interfacial Current Density", fontsize=TS, fontweight=TW)
-
-        # [2.6] Lithium Plating Risk
-        ax = axes_d[1, 2]
-        _has_26 = False
-        if plating_ovp is not None:
-            ax.plot(t_min, plating_ovp, color=palette[8], linewidth=LW, alpha=LA, label="Plating η")
-            ax.axhline(y=0, color='#333333', linewidth=0.8, linestyle=':', alpha=0.6)
-            _has_26 = True
-        if neg_potential is not None:
-            ax.plot(t_min, neg_potential, color=palette[0], linewidth=LW, alpha=0.4,
-                    linestyle='--', label="Anode potential (ref)")
-            _has_26 = True
-        if not _has_26:
-            _no_data(ax, "Plating data not available\n(OKane2022 등 전용 모델 필요)")
-        else:
-            ax.legend(fontsize=8, loc='best')
-        graph_base_parameter(ax, "Time [min]", "Overpotential [V]")
-        ax.set_title("Lithium Plating Risk", fontsize=TS, fontweight=TW)
-
-        fig_d.tight_layout(pad=2.0)
-        tab_d, lay_d, canvas_d, toolbar_d = self._create_plot_tab(fig_d, 2)
-        lay_d.addWidget(toolbar_d)
-        scroll_d = QtWidgets.QScrollArea()
-        scroll_d.setWidgetResizable(True)
-        scroll_d.setWidget(canvas_d)
-        lay_d.addWidget(scroll_d)
-        inner_tab.addTab(tab_d, "🔬 상세 Plot")
+        inner_tab.addTab(tab_g, "일반 Plot")
 
         # 상위 탭에 Run 추가 (누적)
         self.pybamm_plot_tab.addTab(inner_tab, run_tab_title)
@@ -27274,7 +27226,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _pybamm_toggle_param_table(self, checked):
         """파라미터 테이블 표시/숨김 토글"""
         self.pybamm_param_table.setVisible(checked)
-        self.pybamm_edit_btn.setText("편집 닫기" if checked else "파라미터 편집")
+        self.pybamm_edit_btn.setText("닫기" if checked else "편집")
         # ── 핵심 수정: param_group 최소높이를 테이블 포함 여부에 따라 명시 설정 ──
         # 테이블이 visible이어도 GroupBox의 minimumSize(70)가 layout에 전파되어
         # 충전/방전/GITT처럼 exp_group이 큰 모드에서 param_group이 압축됨.
@@ -27694,106 +27646,153 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 steps.append(text.strip())
         return steps
 
+    @staticmethod
+    def _pybamm_eval_func_params():
+        """OKane2022 함수형 파라미터의 대표값을 계산하여 dict로 반환
+
+        Returns: {한글키: "f(인자) ≈ 대표값"} — 함수 유지 + 참고값 표시
+        """
+        if not HAS_PYBAMM:
+            return {}
+        try:
+            p = pybamm.ParameterValues("OKane2022")
+        except Exception:
+            return {}
+
+        T = 298.15  # 25°C
+        c_e = 1000.0  # 전해질 기준 농도
+        c_s_max_p = p["Maximum concentration in positive electrode [mol.m-3]"]
+        c_s_max_n = p["Maximum concentration in negative electrode [mol.m-3]"]
+        result = {}
+
+        def _to_float(v):
+            """PyBaMM Scalar/Interpolant → Python float 변환"""
+            if hasattr(v, 'evaluate'):
+                return float(v.evaluate())
+            return float(v)
+
+        def _fmt(val):
+            """숫자를 간결한 공학 표기로 변환"""
+            if abs(val) == 0:
+                return "0"
+            exp = int(np.floor(np.log10(abs(val))))
+            if -2 <= exp <= 3:
+                return f"{val:.4g}"
+            mantissa = val / 10**exp
+            return f"{mantissa:.2f}e{exp}"
+
+        # Transport — D_s(sto, T)
+        for kr, pkey, args in [
+            ("양극 고상확산계수", "Positive electrode diffusivity [m2.s-1]",
+             (0.5, T)),
+            ("음극 고상확산계수", "Negative electrode diffusivity [m2.s-1]",
+             (0.5, T)),
+            ("전해질 확산계수", "Electrolyte diffusivity [m2.s-1]",
+             (c_e, T)),
+            ("전해질 이온전도도", "Electrolyte conductivity [S.m-1]",
+             (c_e, T)),
+        ]:
+            try:
+                f = p[pkey]
+                val = _to_float(f(*args))
+                sig = "sto,T" if "electrode" in pkey.lower() and "electrolyte" not in pkey.lower() else "c_e,T"
+                result[kr] = f"f({sig}) ≈ {_fmt(val)}"
+            except Exception:
+                result[kr] = "f(...)"
+
+        # Kinetics — j0(c_e, c_s_surf, c_s_max, T)
+        for kr, pkey, csmax in [
+            ("양극 교환전류밀도", "Positive electrode exchange-current density [A.m-2]", c_s_max_p),
+            ("음극 교환전류밀도", "Negative electrode exchange-current density [A.m-2]", c_s_max_n),
+        ]:
+            try:
+                f = p[pkey]
+                val = _to_float(f(c_e, 0.5 * csmax, csmax, T))
+                result[kr] = f"f(c,sto,T) ≈ {_fmt(val)}"
+            except Exception:
+                result[kr] = "f(c,sto,T)"
+
+        # Thermodynamics — OCP(sto)
+        for kr, pkey, sto_ref in [
+            ("양극 OCP", "Positive electrode OCP [V]", 0.5),
+            ("음극 OCP", "Negative electrode OCP [V]", 0.5),
+        ]:
+            try:
+                f = p[pkey]
+                val = _to_float(f(sto_ref))
+                result[kr] = f"f(sto) ≈ {_fmt(val)} V"
+            except Exception:
+                # Interpolant 등 평가 불가 → 함수명 표시
+                _fname = getattr(f, '__name__', type(f).__name__)
+                result[kr] = f"f(sto) [{_fname}]"
+
+        return result
+
     def _pybamm_load_preset(self, index):
-        """프리셋 파라미터 세트 로드"""
-        # 순서: 양극두께 양극입자 양극활물질 양극Brug
-        #       음극두께 음극입자 음극활물질 음극Brug
-        #       분리막두께 분리막Brug 전해질농도 전극면적 셀용량 온도
+        """프리셋 파라미터 세트 로드 — 카테고리 헤더 행은 건너뜀"""
+        # 값 순서: 테이블의 데이터 행 순서와 동일 (카테고리 헤더 제외)
+        # 함수형 파라미터는 None → 대표값으로 자동 계산
         presets = {
-            "Chen2020 - Gr(Si)/NMC811": [
-                "75.6", "5.22", "0.665", "1.5",
-                "85.2", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "1.58", "5.0", "25",
-            ],
-            "Ecker2015 - Gr/NMC111": [
-                "54.0", "6.5", "0.408", "1.54",
-                "74.0", "13.7", "0.372", "1.64",
-                "20.0", "1.98", "1000", "0.085", "0.156", "25",
-            ],
-            "Marquis2019 - Gr/NMC": [
-                "100.0", "10.0", "0.5", "1.5",
-                "100.0", "10.0", "0.6", "1.5",
-                "25.0", "1.5", "1000", "0.207", "0.68", "25",
-            ],
-            "Mohtat2020 - Gr/NMC111": [
-                "67.0", "3.5", "0.445", "1.5",
-                "62.0", "2.5", "0.61", "1.5",
-                "12.0", "1.5", "1000", "0.205", "5.0", "25",
-            ],
-            "NCA_Kim2011 - Gr/NCA": [
-                "50.0", "1.63", "0.41", "2.0",
-                "70.0", "0.508", "0.51", "2.0",
-                "25.0", "2.0", "1200", "0.14", "0.43", "25",
-            ],
             "OKane2022 - Gr(Si)/NMC811": [
-                "75.6", "5.22", "0.665", "1.5",
-                "85.2", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "1.58", "5.0", "25",
-            ],
-            "ORegan2022 - Gr(Si)/NMC811": [
-                "75.6", "5.22", "0.665", "1.5",
-                "85.2", "5.86", "0.75", "1.5",
-                "12.0", "1.5", "1000", "1.58", "5.0", "25",
+                # Geometry (14개)
+                "75.6", "5.22", "0.665", "0.335",
+                "85.2", "5.86", "0.75", "0.25",
+                "12.0", "0.47",
+                "1.58", "0.065", "1", "5.0",
+                # Transport (10개) — None = 함수형
+                None, None, None, None,
+                "0.18", "215.0", "1000", "1.5", "1.5", "1.5",
+                # Kinetics (6개)
+                None, None, "63104", "33133", "1e-9", "0.65",
+                # Thermodynamics (6개)
+                None, None, "25", "10.0", "4.2", "2.5",
             ],
         }
         combo_text = self.pybamm_param_combo.currentText()
         if combo_text in presets:
             values = presets[combo_text]
-            for row, val in enumerate(values):
-                self.pybamm_param_table.item(row, 1).setText(val)
+            # 함수형 파라미터 대표값 계산
+            _func_vals = self._pybamm_eval_func_params()
+            _auto_fg = QtGui.QColor(100, 100, 160)
+            _auto_font = QtGui.QFont(self.pybamm_param_table.font())
+            _auto_font.setItalic(True)
+            _normal_fg = QtGui.QColor(0, 0, 0)
+            _normal_font = QtGui.QFont(self.pybamm_param_table.font())
+            _normal_font.setItalic(False)
+            # 데이터 행만 순회 (카테고리 헤더=span 행 건너뜀)
+            _val_idx = 0
+            for row in range(self.pybamm_param_table.rowCount()):
+                if self.pybamm_param_table.columnSpan(row, 0) > 1:
+                    continue  # 카테고리 헤더 행
+                if _val_idx < len(values):
+                    item = self.pybamm_param_table.item(row, 1)
+                    preset_val = values[_val_idx]
+                    if preset_val is None:
+                        # 함수형 파라미터: 한글키로 대표값 조회
+                        kr_name = self.pybamm_param_table.item(row, 0).text()
+                        display = _func_vals.get(kr_name, "f(...)")
+                        item.setText(display)
+                        item.setForeground(_auto_fg)
+                        item.setFont(_auto_font)
+                        item.setToolTip(
+                            "함수형 파라미터 (농도/stoichiometry/온도 의존)\n"
+                            "이 값은 SOC 50%, 25°C 기준 대표값입니다.\n"
+                            "숫자만 입력하면 상수로 대체됩니다.")
+                    else:
+                        item.setText(preset_val)
+                        item.setForeground(_normal_fg)
+                        item.setFont(_normal_font)
+                        item.setToolTip("")
+                    _val_idx += 1
 
         # ── 프리셋별 충방전 패턴 연동 ──
         patterns = {
-            #  chg_steps (CC, CC, CCCV, CCCV 4스텝 구조),  dchg_steps
-            #  전압 스텝: v_max-0.3, v_max-0.2, v_max-0.1(+CV), v_max(+CV)
-            "Chen2020 - Gr(Si)/NMC811":     (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-            "Ecker2015 - Gr/NMC111":    (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-            "Marquis2019 - Gr/NMC":  (["CC  |  Charge at 2.0C until 3.8V",
-                             "CC  |  Charge at 1.6C until 3.9V",
-                             "CC  |  Charge at 1.3C until 4.0V",
-                             "CV  |  Hold at 4.0V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.1V",
-                             "CV  |  Hold at 4.1V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 3.105V"]),
-            "Mohtat2020 - Gr/NMC111":   (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.8V"]),
-            "NCA_Kim2011 - Gr/NCA":  (["CC  |  Charge at 2.0C until 3.9V",
-                             "CC  |  Charge at 1.6C until 4.0V",
-                             "CC  |  Charge at 1.3C until 4.1V",
-                             "CV  |  Hold at 4.1V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.2V",
-                             "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 0.5C until 2.7V"]),
             "OKane2022 - Gr(Si)/NMC811":    (["CC  |  Charge at 2.0C until 3.9V",
                              "CC  |  Charge at 1.6C until 4.0V",
                              "CC  |  Charge at 1.3C until 4.1V",
                              "CV  |  Hold at 4.1V until 1.0C",
                              "CC  |  Charge at 1.0C until 4.2V",
                              "CV  |  Hold at 4.2V until 0.1C"],
-                            ["CC  |  Discharge at 1C until 2.5V"]),
-            "ORegan2022 - Gr(Si)/NMC811":   (["CC  |  Charge at 2.0C until 4.1V",
-                             "CC  |  Charge at 1.6C until 4.2V",
-                             "CC  |  Charge at 1.3C until 4.3V",
-                             "CV  |  Hold at 4.3V until 1.0C",
-                             "CC  |  Charge at 1.0C until 4.4V",
-                             "CV  |  Hold at 4.4V until 0.1C"],
                             ["CC  |  Discharge at 1C until 2.5V"]),
         }
         if combo_text in patterns:
