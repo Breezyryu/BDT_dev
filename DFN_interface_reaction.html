@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>DFN 모델 — 활물질 계면 반응 시뮬레이션</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0F1B2D; font-family: 'Segoe UI', sans-serif; color: #E2E8F0; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+  .container { width: 1100px; }
+  h1 { text-align: center; font-size: 22px; color: #00A087; margin-bottom: 4px; letter-spacing: 2px; }
+  .subtitle { text-align: center; font-size: 13px; color: #94A3B8; margin-bottom: 20px; }
+  .main-canvas { position: relative; width: 1100px; height: 620px; background: #1A2744; border-radius: 12px; border: 1px solid #2D4A6F; overflow: hidden; }
+
+  /* SVG layer */
+  svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+  /* Legend */
+  .legend { display: flex; gap: 20px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #94A3B8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* Equation boxes */
+  .eq-box { position: absolute; background: rgba(15,27,45,0.92); border: 1px solid #2D4A6F; border-radius: 8px; padding: 8px 12px; font-size: 11px; line-height: 1.6; }
+  .eq-box .eq-title { color: #00A087; font-weight: 700; font-size: 10px; letter-spacing: 1px; margin-bottom: 4px; }
+  .eq-box .eq-formula { font-family: 'Consolas', monospace; color: #E2E8F0; font-size: 12px; }
+  .eq-box .eq-note { color: #64748B; font-size: 10px; margin-top: 3px; }
+
+  /* Annotations */
+  .anno { position: absolute; font-size: 11px; color: #94A3B8; text-align: center; pointer-events: none; }
+  .anno.bold { color: #E2E8F0; font-weight: 600; font-size: 12px; }
+  .anno.accent { color: #00A087; font-weight: 600; }
+  .anno.warn { color: #E64B35; font-weight: 600; }
+  .anno.blue { color: #4DBBD5; }
+  .anno.gold { color: #D4A84B; }
+
+  /* Heat flow label */
+  .heat-label { position: absolute; background: rgba(230,75,53,0.15); border: 1px solid #E64B35; border-radius: 6px; padding: 5px 10px; font-size: 10px; color: #F39B7F; }
+
+  /* Phase labels */
+  .phase-label { position: absolute; font-size: 10px; letter-spacing: 2px; color: #475569; font-weight: 700; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>DFN 모델 — 활물질 입자 계면 반응</h1>
+  <div class="subtitle">OKane2022 기반: 인터칼레이션 + SEI 성장 + 리튬 석출 + Lumped Thermal</div>
+
+  <div class="main-canvas">
+    <svg viewBox="0 0 1100 620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- Gradients -->
+        <radialGradient id="particleGrad" cx="40%" cy="40%">
+          <stop offset="0%" stop-color="#3C7A8A" />
+          <stop offset="100%" stop-color="#1B3D4F" />
+        </radialGradient>
+        <radialGradient id="particleGlow" cx="50%" cy="50%">
+          <stop offset="0%" stop-color="#00A087" stop-opacity="0.15" />
+          <stop offset="100%" stop-color="#00A087" stop-opacity="0" />
+        </radialGradient>
+        <linearGradient id="seiGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#D4A84B" stop-opacity="0.5" />
+          <stop offset="100%" stop-color="#D4A84B" stop-opacity="0.2" />
+        </linearGradient>
+        <linearGradient id="electrolyteGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#1E3A5F" />
+          <stop offset="100%" stop-color="#1A2744" />
+        </linearGradient>
+        <!-- Arrow marker -->
+        <marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#00A087" />
+        </marker>
+        <marker id="arrowR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#E64B35" />
+        </marker>
+        <marker id="arrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#4DBBD5" />
+        </marker>
+        <marker id="arrowY" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#D4A84B" />
+        </marker>
+        <marker id="arrowW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#94A3B8" />
+        </marker>
+      </defs>
+
+      <!-- ===== BACKGROUND REGIONS ===== -->
+      <!-- Electrolyte region (right side) -->
+      <rect x="520" y="30" width="560" height="440" rx="8" fill="url(#electrolyteGrad)" stroke="#2D4A6F" stroke-width="0.5" opacity="0.5" />
+
+      <!-- ===== ACTIVE MATERIAL PARTICLE ===== -->
+      <!-- Glow -->
+      <circle cx="280" cy="260" r="200" fill="url(#particleGlow)" />
+      <!-- Main particle -->
+      <circle cx="280" cy="260" r="170" fill="url(#particleGrad)" stroke="#2C8A7A" stroke-width="2" />
+      <!-- Inner structure lines (layered crystal) -->
+      <ellipse cx="280" cy="260" rx="130" ry="130" fill="none" stroke="#2C8A7A" stroke-width="0.5" stroke-dasharray="8,6" opacity="0.4" />
+      <ellipse cx="280" cy="260" rx="90" ry="90" fill="none" stroke="#2C8A7A" stroke-width="0.5" stroke-dasharray="6,8" opacity="0.3" />
+      <ellipse cx="280" cy="260" rx="50" ry="50" fill="none" stroke="#2C8A7A" stroke-width="0.5" stroke-dasharray="4,8" opacity="0.2" />
+
+      <!-- Li atoms inside particle (diffusing) -->
+      <circle cx="220" cy="200" r="6" fill="#00A087" opacity="0.6" />
+      <circle cx="260" cy="170" r="5" fill="#00A087" opacity="0.5" />
+      <circle cx="310" cy="220" r="6" fill="#00A087" opacity="0.7" />
+      <circle cx="250" cy="290" r="5" fill="#00A087" opacity="0.4" />
+      <circle cx="340" cy="280" r="6" fill="#00A087" opacity="0.6" />
+      <circle cx="280" cy="320" r="5" fill="#00A087" opacity="0.5" />
+      <circle cx="200" cy="270" r="5" fill="#00A087" opacity="0.3" />
+      <circle cx="320" cy="180" r="4" fill="#00A087" opacity="0.4" />
+      <circle cx="230" cy="340" r="4" fill="#00A087" opacity="0.3" />
+
+      <!-- Diffusion arrow inside particle (r direction) -->
+      <line x1="200" y1="260" x2="390" y2="260" stroke="#00A087" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.5" marker-end="url(#arrowG)" />
+
+      <!-- ===== SEI LAYER ===== -->
+      <!-- SEI arc (on the right side of particle) -->
+      <path d="M 450 130 A 190 190 0 0 1 450 390" fill="none" stroke="#D4A84B" stroke-width="14" opacity="0.35" />
+      <path d="M 450 130 A 190 190 0 0 1 450 390" fill="none" stroke="#D4A84B" stroke-width="2" opacity="0.8" stroke-dasharray="6,3" />
+      <!-- SEI inner boundary -->
+      <path d="M 438 140 A 178 178 0 0 1 438 380" fill="none" stroke="#D4A84B" stroke-width="1" opacity="0.4" />
+
+      <!-- ===== ELECTROLYTE Li⁺ IONS ===== -->
+      <!-- Li+ ions in electrolyte -->
+      <g font-size="11" font-family="Consolas" fill="#4DBBD5" font-weight="bold">
+        <text x="540" y="140">Li⁺</text>
+        <text x="600" y="200">Li⁺</text>
+        <text x="560" y="290">Li⁺</text>
+        <text x="620" y="350">Li⁺</text>
+        <text x="540" y="400">Li⁺</text>
+        <text x="590" y="120">Li⁺</text>
+      </g>
+      <!-- Li+ migration arrows toward particle -->
+      <line x1="535" y1="285" x2="475" y2="270" stroke="#4DBBD5" stroke-width="1.5" marker-end="url(#arrowB)" opacity="0.7" />
+      <line x1="590" y1="195" x2="470" y2="210" stroke="#4DBBD5" stroke-width="1.5" marker-end="url(#arrowB)" opacity="0.7" />
+      <line x1="610" y1="345" x2="470" y2="330" stroke="#4DBBD5" stroke-width="1.5" marker-end="url(#arrowB)" opacity="0.5" />
+
+      <!-- ===== REACTION ①: INTERCALATION (main) ===== -->
+      <!-- Big green arrow through SEI into particle -->
+      <line x1="500" y1="260" x2="455" y2="260" stroke="#00A087" stroke-width="3" marker-end="url(#arrowG)" />
+      <!-- Label -->
+      <g transform="translate(480, 238)">
+        <rect x="-5" y="-12" width="55" height="16" rx="3" fill="#00A087" opacity="0.2" />
+        <text x="22" y="0" text-anchor="middle" font-size="10" fill="#00A087" font-weight="bold" font-family="Consolas">① 인터칼</text>
+      </g>
+
+      <!-- ===== REACTION ②: SEI GROWTH ===== -->
+      <!-- Arrow consuming Li+ to grow SEI -->
+      <line x1="530" y1="170" x2="462" y2="155" stroke="#D4A84B" stroke-width="2" marker-end="url(#arrowY)" stroke-dasharray="5,3" />
+      <g transform="translate(500, 147)">
+        <rect x="-5" y="-12" width="70" height="16" rx="3" fill="#D4A84B" opacity="0.15" />
+        <text x="30" y="0" text-anchor="middle" font-size="10" fill="#D4A84B" font-weight="bold" font-family="Consolas">② SEI 성장</text>
+      </g>
+
+      <!-- ===== REACTION ③: LITHIUM PLATING ===== -->
+      <!-- Plating deposits on SEI surface -->
+      <!-- Metallic Li dots on SEI -->
+      <circle cx="456" cy="360" r="5" fill="#E64B35" opacity="0.7" />
+      <circle cx="462" cy="375" r="4" fill="#E64B35" opacity="0.6" />
+      <circle cx="450" cy="345" r="4" fill="#E64B35" opacity="0.5" />
+      <circle cx="468" cy="388" r="3" fill="#E64B35" opacity="0.5" />
+      <!-- Arrow -->
+      <line x1="530" y1="380" x2="478" y2="372" stroke="#E64B35" stroke-width="2" marker-end="url(#arrowR)" />
+      <g transform="translate(505, 398)">
+        <rect x="-5" y="-12" width="68" height="16" rx="3" fill="#E64B35" opacity="0.15" />
+        <text x="28" y="0" text-anchor="middle" font-size="10" fill="#E64B35" font-weight="bold" font-family="Consolas">③ Li 석출</text>
+      </g>
+
+      <!-- ===== THERMAL FEEDBACK ===== -->
+      <!-- Heat arrows from reactions -->
+      <path d="M 480 260 Q 520 450 700 500" fill="none" stroke="#E64B35" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.6" marker-end="url(#arrowR)" />
+      <path d="M 480 170 Q 560 420 700 500" fill="none" stroke="#E64B35" stroke-width="1" stroke-dasharray="4,3" opacity="0.4" marker-end="url(#arrowR)" />
+
+      <!-- Thermal model box -->
+      <rect x="660" y="485" width="260" height="80" rx="8" fill="#2A1520" stroke="#E64B35" stroke-width="1.5" opacity="0.9" />
+      <text x="790" y="508" text-anchor="middle" font-size="11" fill="#E64B35" font-weight="bold" font-family="Segoe UI">🌡 Lumped Thermal Model</text>
+      <text x="790" y="528" text-anchor="middle" font-size="10" fill="#F39B7F" font-family="Consolas">ρCp·dT/dt = Q_gen − h(T−T_amb)</text>
+      <text x="790" y="548" text-anchor="middle" font-size="9" fill="#94A3B8" font-family="Segoe UI">셀 전체 = 단일 대표 온도 T</text>
+
+      <!-- Feedback arrow: T → reaction rates -->
+      <path d="M 660 520 Q 400 560 350 430" fill="none" stroke="#F39B7F" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowR)" opacity="0.5" />
+
+      <!-- ===== VOLTAGE LABELS ===== -->
+      <!-- φs (solid potential) -->
+      <line x1="280" y1="85" x2="280" y2="60" stroke="#94A3B8" stroke-width="1" marker-end="url(#arrowW)" />
+      <!-- φe (electrolyte potential) -->
+      <line x1="580" y1="85" x2="580" y2="60" stroke="#94A3B8" stroke-width="1" marker-end="url(#arrowW)" />
+      <!-- η = φs - φe - U(cs) -->
+
+      <!-- ===== BOUNDARY LABELS ===== -->
+      <!-- r = 0 center -->
+      <circle cx="280" cy="260" r="3" fill="#94A3B8" />
+
+      <!-- r = Rp surface -->
+      <line x1="438" y1="470" x2="438" y2="430" stroke="#94A3B8" stroke-width="0.8" stroke-dasharray="3,3" />
+
+    </svg>
+
+    <!-- ===== TEXT ANNOTATIONS ===== -->
+    <!-- Phase labels -->
+    <div class="phase-label" style="left:180px; top:38px;">고상 (Solid Phase)</div>
+    <div class="phase-label" style="left:695px; top:38px;">전해질 (Electrolyte)</div>
+
+    <!-- Potential labels -->
+    <div class="anno bold" style="left:250px; top:40px;">φₛ</div>
+    <div class="anno bold" style="left:558px; top:40px;">φₑ</div>
+
+    <!-- Particle labels -->
+    <div class="anno" style="left:215px; top:248px; color:#2C8A7A; font-size:13px; font-weight:700;">활물질 입자</div>
+    <div class="anno" style="left:210px; top:268px; color:#64748B; font-size:10px;">(Active Material)</div>
+    <div class="anno" style="left:248px; top:300px; font-size:10px; color:#00A087;">r = 0</div>
+
+    <!-- r direction label -->
+    <div class="anno" style="left:305px; top:272px; font-size:9px; color:#00A087;">Dₛ 확산 (r 방향) →</div>
+
+    <!-- SEI label -->
+    <div class="anno gold" style="left:415px; top:230px; font-size:11px; writing-mode:vertical-rl;">SEI 층</div>
+
+    <!-- Surface labels -->
+    <div class="anno" style="left:400px; top:455px; font-size:9px;">r = Rₚ<br>(표면)</div>
+
+    <!-- ===== EQUATION BOXES ===== -->
+    <!-- Box 1: Butler-Volmer (intercalation) -->
+    <div class="eq-box" style="right:30px; top:62px; width:280px;">
+      <div class="eq-title">① 인터칼레이션 (Butler-Volmer)</div>
+      <div class="eq-formula">jₙ = j₀{exp(αₐFη/RT) − exp(−αcFη/RT)}</div>
+      <div class="eq-note">η = φₛ − φₑ − U(cₛ,surf) &nbsp;← 과전압</div>
+      <div class="eq-note">j₀ = k₀ · cₑ^αₐ · cₛ,surf^αₐ · (cₛ,max − cₛ,surf)^αc</div>
+      <div class="eq-note" style="color:#00A087; margin-top:5px;">▸ 정상적인 Li⁺ 삽입/탈리 반응 (가역)</div>
+    </div>
+
+    <!-- Box 2: SEI growth -->
+    <div class="eq-box" style="right:30px; top:218px; width:280px;">
+      <div class="eq-title" style="color:#D4A84B;">② SEI 성장 (비가역 부반응)</div>
+      <div class="eq-formula">j_SEI = −j₀,SEI · exp(−αFη_SEI/RT)</div>
+      <div class="eq-note">전해질 분해 → 음극 표면에 SEI 층 성장</div>
+      <div class="eq-note">SEI 두께 ∝ √t (확산 율속)</div>
+      <div class="eq-note" style="color:#D4A84B; margin-top:5px;">▸ LLI의 주요 원인 → 용량 감소</div>
+      <div class="eq-note" style="color:#D4A84B;">▸ R_SEI 증가 → DCIR 상승</div>
+    </div>
+
+    <!-- Box 3: Li plating -->
+    <div class="eq-box" style="right:30px; top:385px; width:280px;">
+      <div class="eq-title" style="color:#E64B35;">③ 리튬 석출 (Plating)</div>
+      <div class="eq-formula">j_plating when φₛ − φₑ − U_Li < 0</div>
+      <div class="eq-note">음극 전위 < 0V vs Li/Li⁺ → 금속 Li 석출</div>
+      <div class="eq-note">고위험: 저온, 고 C-rate 충전, 고 SOC</div>
+      <div class="eq-note" style="color:#E64B35; margin-top:5px;">▸ 심각한 LLI + 안전 리스크</div>
+      <div class="eq-note" style="color:#E64B35;">▸ 부분 가역 (stripping 가능)</div>
+    </div>
+
+    <!-- Thermal feedback annotation -->
+    <div class="anno" style="left:360px; top:510px; font-size:9px; color:#F39B7F;">
+      T 피드백 →<br>Arrhenius<br>Dₛ, k₀, κ
+    </div>
+
+    <!-- Q_gen breakdown -->
+    <div class="anno" style="left:560px; top:470px; font-size:9px; color:#E64B35;">
+      Q = Q_ohm + Q_irrev + Q_rev<br>
+      <span style="color:#94A3B8;">↑ 세 반응 모두 발열 기여</span>
+    </div>
+
+    <!-- Overpotential annotation -->
+    <div class="anno" style="left:430px; top:68px; width:120px; font-size:10px; color:#64748B;">
+      과전압 η<br>= φₛ − φₑ − U(cₛ)
+    </div>
+
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#00A087;"></div>Li⁺ 인터칼레이션 (가역 반응)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#D4A84B;"></div>SEI 성장 (비가역, LLI)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#E64B35;"></div>리튬 석출 (Plating, 안전 리스크)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4DBBD5;"></div>전해질 Li⁺ 이온</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#F39B7F;"></div>열 피드백 (Lumped Thermal)</div>
+  </div>
+</div>
+</body>
+</html>
