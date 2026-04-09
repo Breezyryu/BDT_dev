@@ -5404,11 +5404,11 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
         }
 
         if type_name in ('CHG_CC', 'CHG_CCCV'):
-            # 충전 스텝 공통 필드
-            voltage_mV = struct.unpack_from('<I', blk, 12)[0]
-            current_mA = struct.unpack_from('<I', blk, 20)[0]
-            time_limit = struct.unpack_from('<I', blk, 24)[0]
-            cap_limit = struct.unpack_from('<I', blk, 104)[0]
+            # 충전 스텝 공통 필드 (값은 IEEE 754 float로 저장됨)
+            voltage_mV = struct.unpack_from('<f', blk, 12)[0]
+            current_mA = struct.unpack_from('<f', blk, 20)[0]
+            time_limit = struct.unpack_from('<f', blk, 24)[0]
+            cap_limit = struct.unpack_from('<f', blk, 104)[0]
             step_info.update({
                 'voltage_mV': voltage_mV,
                 'current_mA': current_mA,
@@ -5416,18 +5416,18 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
                 'capacity_limit_mAh': cap_limit,
             })
             if type_name == 'CHG_CCCV':
-                cv_voltage = struct.unpack_from('<I', blk, 28)[0]
-                cv_cutoff = struct.unpack_from('<I', blk, 32)[0]
+                cv_voltage = struct.unpack_from('<f', blk, 28)[0]
+                cv_cutoff = struct.unpack_from('<f', blk, 32)[0]
                 step_info['cv_voltage_mV'] = cv_voltage
                 step_info['cv_cutoff_mA'] = cv_cutoff
             charge_steps.append(step_info)
 
         elif type_name == 'DCHG_CC':
-            # 방전 스텝: 전압 오프셋이 +16 (CHG와 다름)
-            voltage_mV = struct.unpack_from('<I', blk, 16)[0]
-            current_mA = struct.unpack_from('<I', blk, 20)[0]
-            time_limit = struct.unpack_from('<I', blk, 24)[0]
-            cap_limit = struct.unpack_from('<I', blk, 104)[0]
+            # 방전 스텝: 전압 오프셋이 +16 (CHG와 다름, float)
+            voltage_mV = struct.unpack_from('<f', blk, 16)[0]
+            current_mA = struct.unpack_from('<f', blk, 20)[0]
+            time_limit = struct.unpack_from('<f', blk, 24)[0]
+            cap_limit = struct.unpack_from('<f', blk, 104)[0]
             step_info.update({
                 'voltage_mV': voltage_mV,
                 'current_mA': current_mA,
@@ -5442,11 +5442,11 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
             loop_steps.append(step_info)
 
         elif type_name in ('REST', 'REST_SAFE'):
-            time_limit = struct.unpack_from('<I', blk, 24)[0]
+            time_limit = struct.unpack_from('<f', blk, 24)[0]
             step_info['time_limit_s'] = time_limit
 
         elif type_name == 'GOTO':
-            # GOTO 대상 스텝: +56 offset (LOOP와 같은 위치)
+            # GOTO 대상 스텝: +56 offset (LOOP와 같은 위치, 정수)
             goto_target = struct.unpack_from('<I', blk, 56)[0]
             step_info['goto_target'] = goto_target
 
