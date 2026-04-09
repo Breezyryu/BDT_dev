@@ -8548,6 +8548,11 @@ class Ui_sitool(object):
         item.setBackground(brush)
         self.tableWidget.setItem(2, 3, item)
         item = QtWidgets.QTableWidgetItem()
+        brush = QtGui.QBrush(QtGui.QColor(214, 185, 100))
+        brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
+        item.setBackground(brush)
+        self.tableWidget.setItem(2, 4, item)
+        item = QtWidgets.QTableWidgetItem()
         brush = QtGui.QBrush(QtGui.QColor(173, 181, 189))
         brush.setStyle(QtCore.Qt.BrushStyle.SolidPattern)
         item.setForeground(brush)
@@ -14261,6 +14266,8 @@ class Ui_sitool(object):
         item.setText(_translate("sitool", "완료 (셀 있음)"))
         item = self.tableWidget.item(2, 3)
         item.setText(_translate("sitool", "작업멈춤"))
+        item = self.tableWidget.item(2, 4)
+        item.setText(_translate("sitool", "중단점 도달"))
         item = self.tableWidget.item(2, 5)
         item.setText(_translate("sitool", "강조할 문자 필터"))
         self.tableWidget.setSortingEnabled(__sortingEnabled)
@@ -22020,6 +22027,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.df["chno"] = self.df.index
             # 데이터 경로 변경
             self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
+            # 작업멈춤 세부 분류 (.log 기반)
+            self.df = self._refine_paused_status(self.df)
             return self.df
     
     def pne_table_make(self, num_i, num_j, pne_num, blkname):
@@ -22071,6 +22080,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.df["chno"] = self.df.index
             # 데이터 경로 변경
             self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
+            # 작업멈춤 세부 분류 (.log 기반)
+            self.df = self._refine_paused_status(self.df)
             usedchnlno = len(self.df[(self.df.use =="완료") | (self.df.use == "대기") | (self.df.use == "준비")])
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(usedchnlno)))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - usedchnlno)))
@@ -22096,6 +22107,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         bg_level = 2
                     elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤":
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,155,154))
+                        bg_level = 3
+                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "중단점 도달":
+                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,185,100))
                         bg_level = 3
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
@@ -22162,7 +22176,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     # 상태 키워드 매핑 (키워드 추가 시 여기만 수정)
     FILTER_STATUS_KEYWORDS = {
         "유휴": ["완료", "준비", "작업정지"],
-        "작업멈춤": ["작업멈춤"],
+        "작업멈춤": ["작업멈춤", "중단점 도달"],
+        "중단점": ["중단점 도달"],
     }
 
     def match_filter_text(self, search_text, testname, status):
@@ -22197,6 +22212,58 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if all_match:
                 return True
         return False
+
+    @staticmethod
+    def _classify_paused_reason(channel_path: str) -> str:
+        """작업멈춤 채널의 .log 파일에서 중단 사유를 분류
+
+        Parameters
+        ----------
+        channel_path : str
+            채널 데이터 폴더 경로 (예: Y:\\DAT_30\\[027]\\)
+
+        Returns
+        -------
+        str
+            "중단점 도달" (Code:153) 또는 "작업멈춤" (기타/판별 불가)
+        """
+        try:
+            if not os.path.isdir(channel_path):
+                return "작업멈춤"
+            # .log 파일 찾기 (채널 폴더 내)
+            log_files = [f.path for f in os.scandir(channel_path)
+                         if f.name.endswith('.log') and f.is_file()]
+            if not log_files:
+                return "작업멈춤"
+            # 가장 최근 .log 파일의 마지막 4KB만 읽기 (전체 파싱 불필요)
+            log_path = max(log_files, key=os.path.getmtime)
+            file_size = os.path.getsize(log_path)
+            with open(log_path, 'r', encoding='cp949', errors='ignore') as f:
+                if file_size > 4096:
+                    f.seek(file_size - 4096)
+                    f.readline()  # 잘린 첫 줄 버림
+                tail = f.read()
+            # Code:153 = 사용자 작업멈춤 지령 → "중단점 도달"
+            if "Code:153" in tail:
+                return "중단점 도달"
+            return "작업멈춤"
+        except Exception:
+            return "작업멈춤"
+
+    def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
+        """작업멈춤 채널에 대해 .log 기반 세부 분류 적용
+
+        "작업멈춤" 상태인 행만 대상으로 .log 파일을 확인하여
+        "중단점 도달" 등으로 세분화. 소수 채널만 I/O 발생.
+        """
+        mask = df["use"] == "작업멈춤"
+        if not mask.any():
+            return df
+        for idx in df.index[mask]:
+            ch_path = df.at[idx, "path"] if "path" in df.columns else ""
+            if ch_path:
+                df.at[idx, "use"] = self._classify_paused_reason(ch_path)
+        return df
 
     def change_drive(self, df, changed):
         # 상세 데이터부터 범용 데이터 순으로 바꾸기 진행
@@ -22496,6 +22563,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "준비": QtGui.QColor(176, 203, 176),
             "완료": QtGui.QColor(234, 239, 230),
             "작업멈춤": QtGui.QColor(214, 155, 154),
+            "중단점 도달": QtGui.QColor(214, 185, 100),
         }
         # floor_cyclers 순서를 유지하여 출력
         for floor_name, floor_cycler_list in floor_cyclers:
