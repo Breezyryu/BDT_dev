@@ -1146,30 +1146,45 @@ def _unified_pne_load_raw(
         tc_min, tc_max = cycle_start, cycle_end
         logical_to_totl = None
 
-    # 파일 범위 결정
-    subfile = [f for f in os.listdir(restore_dir) if f.endswith(".csv")]
-    filepos = pne_search_cycle(restore_dir, tc_min, tc_max)
-
-    if filepos[0] != -1:
-        file_slice = subfile[filepos[0]:(filepos[1] + 1)]
-    elif filepos[0] == -1 and tc_min == 1:
-        file_slice = subfile[0:(filepos[1] + 1)]
+    # ── raw 캐시 조회 (동일 채널+TC 범위 → I/O 스킵) ──
+    _ch_cache = _get_channel_cache(raw_file_path)
+    _raw_cache = _ch_cache.get('unified_raw')
+    if _raw_cache is not None and _raw_cache[0] == (tc_min, tc_max):
+        raw = _raw_cache[1].copy()
+        _perf_logger.debug(f'  [unified_raw] 캐시 히트: TC {tc_min}~{tc_max}')
     else:
-        file_slice = []
+        # ── .cyc 우선 로드 시도 ──
+        _cyc_raw = _try_cyc_profile(raw_file_path, tc_min, tc_max)
+        if _cyc_raw is not None:
+            raw = _cyc_raw
+        else:
+            # ── CSV fallback (기존 경로) ──
+            subfile = [f for f in os.listdir(restore_dir) if f.endswith(".csv")]
+            filepos = pne_search_cycle(restore_dir, tc_min, tc_max)
 
-    dfs = []
-    for fname in file_slice:
-        if "SaveData" in fname:
-            fpath = os.path.join(restore_dir, fname)
-            dfs.append(pd.read_csv(
-                fpath, sep=",", skiprows=0, engine="c",
-                header=None, encoding="cp949", on_bad_lines='skip',
-            ))
+            if filepos[0] != -1:
+                file_slice = subfile[filepos[0]:(filepos[1] + 1)]
+            elif filepos[0] == -1 and tc_min == 1:
+                file_slice = subfile[0:(filepos[1] + 1)]
+            else:
+                file_slice = []
 
-    if not dfs:
-        return None
+            dfs = []
+            for fname in file_slice:
+                if "SaveData" in fname:
+                    fpath = os.path.join(restore_dir, fname)
+                    dfs.append(pd.read_csv(
+                        fpath, sep=",", skiprows=0, engine="c",
+                        header=None, encoding="cp949", on_bad_lines='skip',
+                    ))
 
-    raw = pd.concat(dfs, ignore_index=True)
+            if not dfs:
+                return None
+
+            raw = pd.concat(dfs, ignore_index=True)
+
+        # 캐시 저장
+        _ch_cache['unified_raw'] = ((tc_min, tc_max), raw.copy())
 
     # 사이클 범위 필터
     if cycle_map and totl_cycles:
@@ -1690,8 +1705,25 @@ def _unified_merge_steps(
     charge/discharge 모드에서만 스텝 간 시간/용량 누적.
     """
     if data_scope == "cycle":
-        # 사이클 모드: 시간순 정렬만, 스텝 병합 불필요
-        return df.sort_values("Time_s").reset_index(drop=True)
+        # 사이클 모드: 시간순 정렬 + 충전/방전 각각 스텝별 용량 누적
+        df = df.sort_values("Time_s").reset_index(drop=True)
+        if "Step" in df.columns and "Condition" in df.columns:
+            for cond, cap_col in [(1, "ChgCap"), (2, "DchgCap")]:
+                mask = df["Condition"] == cond
+                if not mask.any() or cap_col not in df.columns:
+                    continue
+                steps = df.loc[mask, "Step"].unique()
+                if len(steps) <= 1:
+                    continue
+                steps = sorted(steps)
+                offset = 0.0
+                for si in steps:
+                    step_mask = mask & (df["Step"] == si)
+                    if not step_mask.any():
+                        continue
+                    df.loc[step_mask, cap_col] = df.loc[step_mask, cap_col] + offset
+                    offset = df.loc[step_mask, cap_col].max()
+        return df
 
     # --- multi-TC: TotTime 기반 절대 시간 보존 + 용량 누적 보정 ---
     # 다수 TC를 하나의 논리사이클로 매핑하는 경우,
@@ -1729,14 +1761,17 @@ def _unified_merge_steps(
 
     cap_col = "ChgCap" if data_scope == "charge" else "DchgCap"
 
-    parts = [df.loc[df["Step"] == stepmin].copy()]
+    first = df.loc[df["Step"] == stepmin].copy()
+    first["Time_s"] = first["Time_s"] - first["Time_s"].min()
+    parts = [first]
     for si in range(1, int(stepmax - stepmin) + 1):
         part = df.loc[df["Step"] == stepmin + si].copy()
         if part.empty:
             continue
         prev_max_time = parts[-1]["Time_s"].max() if not parts[-1].empty else 0
         prev_max_cap = parts[-1][cap_col].max() if not parts[-1].empty else 0
-        part["Time_s"] = part["Time_s"] + prev_max_time
+        # 스텝 내 시간을 0부터 시작으로 리셋 후 이전 스텝에 이어붙임
+        part["Time_s"] = part["Time_s"] - part["Time_s"].min() + prev_max_time
         part[cap_col] = part[cap_col] + prev_max_cap
         parts.append(part)
 
@@ -6685,7 +6720,7 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
     fids = hdr['fids']
     fid_pos = _build_fid_pos(fids)
 
-    _COLS = ["TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp",
+    _COLS = ["RecIndex", "TotlCycle", "Condition", "chgCap", "DchgCap", "Ocv", "imp",
              "volmax", "DchgEngD", "steptime", "Curr", "Temp", "AvgV", "EndState"]
 
     data = _read_cyc_records(cyc_path)
@@ -6694,6 +6729,7 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
         return pd.DataFrame(columns=_COLS)
 
     # 필수/옵션 FieldID 인덱스
+    p_idx = fid_pos[22]       # Index (레코드 번호)
     p_time = fid_pos[6]       # StepTime (sec)
     p_volt = fid_pos[1]       # 전압 (mV)
     p_curr = fid_pos[2]       # 전류 (mA)
@@ -6799,7 +6835,9 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
         avgv = int(float(last[p_avgv]) * 1000) if p_avgv is not None else 0
         deng = float(last[p_deng]) if p_deng is not None else 0.0
 
+        rec_index = int(float(last[p_idx]))
         rows.append({
+            'RecIndex': rec_index,
             'TotlCycle': totl_cycle, 'Condition': stype,
             'chgCap': chg_uah, 'DchgCap': dchg_uah,
             'Ocv': volt_uv, 'imp': imp_val,
@@ -6826,7 +6864,9 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
             lavg = int(float(lr[p_avgv]) * 1000) if p_avgv is not None else 0
             ldeng = float(lr[p_deng]) if p_deng is not None else 0.0
 
+            loop_index = int(float(lr[p_idx]))
             rows.append({
+                'RecIndex': loop_index,
                 'TotlCycle': totl_cycle, 'Condition': 8,
                 'chgCap': lch, 'DchgCap': ld,
                 'Ocv': lv, 'imp': 0,
@@ -6860,6 +6900,7 @@ def _cyc_df_to_save_end_format(cyc_df: pd.DataFrame, n_cols: int = 48) -> pd.Dat
     # SaveEndData 컬럼 인덱스 ↔ cyc_df 컬럼명 매핑
     # pne_cycle_data: save_end_cached[[27,2,10,11,8,20,45,15,17,9,24,29,6]]
     _SAVE_END_MAP = {
+        0: 'RecIndex',
         27: 'TotlCycle', 2: 'Condition', 10: 'chgCap', 11: 'DchgCap',
         8: 'Ocv', 20: 'imp', 45: 'volmax', 15: 'DchgEngD',
         17: 'steptime', 9: 'Curr', 24: 'Temp', 29: 'AvgV', 6: 'EndState',
@@ -6869,6 +6910,256 @@ def _cyc_df_to_save_end_format(cyc_df: pd.DataFrame, n_cols: int = 48) -> pd.Dat
         if cyc_col in cyc_df.columns and se_col < n_cols:
             result[se_col] = cyc_df[cyc_col].values
     return result
+
+
+# ── .cyc 우선 프로파일 분석 유틸리티 ─────────────────────────────
+
+# .cyc FieldID → CSV 컬럼 매핑 정의 (프로파일 분석 필수)
+# 형식: csv_col_index: (target_fid, scale_factor)
+_CYC_PROFILE_FID_MAP = {
+    0:  (22, 1),       # Index:     FID22, ×1
+    8:  (1,  1000),    # Voltage:   FID 1, mV→μV
+    9:  (2,  1000),    # Current:   FID 2, mA→μA
+    10: (26, 1000),    # ChgCap:    FID26, mAh→μAh
+    11: (27, 1000),    # DchgCap:   FID27, mAh→μAh
+    14: (34, 1),       # ChgWh:     FID34, ×1
+    15: (35, 1),       # DchgWh:    FID35, ×1
+    17: (6,  100),     # StepTime:  FID 6, s→cs
+    18: (42, 1),       # TotDay:    FID42, ×1 (일 단위)
+    19: (7,  100),     # TotTime:   FID 7, s→cs (일 내 초)
+    21: (12, 1000),    # Temp1:     FID12, °C→m°C
+}
+
+
+def _build_cyc_fid_pos_map(fids: list[int]) -> dict[int, tuple[int, int | float]]:
+    """FieldID 배열에서 프로파일 분석에 필요한 CSV 컬럼별 위치+스케일 매핑 생성.
+
+    Returns
+    -------
+    dict
+        {csv_col_index: (record_position, scale_factor)}
+        매핑 불가 시 해당 키 제외
+    """
+    # FID → 레코드 내 위치 (첫 등장 우선)
+    fid_to_pos = {}
+    for i, fid in enumerate(fids):
+        if fid not in fid_to_pos:
+            fid_to_pos[fid] = i
+
+    result = {}
+    for csv_col, (target_fid, scale) in _CYC_PROFILE_FID_MAP.items():
+        if target_fid in fid_to_pos:
+            result[csv_col] = (fid_to_pos[target_fid], scale)
+    return result
+
+
+def _validate_cyc_for_profile(cyc_path: str) -> bool:
+    """.cyc 파일 무결성 검증 (끝부분 Index 연속성).
+
+    파일 끝 10개 레코드의 Index(FID22) 값이 연속 정수인지 확인.
+    손상 파일(바이트 정렬 불일치)은 False 반환.
+    """
+    try:
+        hdr = _parse_cyc_header(cyc_path)
+        total = hdr['total_records']
+        if total < 10:
+            # 레코드 10개 미만 — 전체 검증
+            data = _read_cyc_records(cyc_path, 0, total)
+        else:
+            data = _read_cyc_records(cyc_path, total - 10, 10)
+
+        p_idx = 0  # FID22(Index)는 항상 FieldID 배열 첫 번째
+        for fid_i, fid in enumerate(hdr['fids']):
+            if fid == 22:
+                p_idx = fid_i
+                break
+
+        indices = data[:, p_idx]
+        expected_start = total - len(data) + 1  # 1-based
+        expected = np.arange(expected_start, expected_start + len(data), dtype=np.float32)
+        return bool(np.all(np.abs(indices - expected) < 0.5))
+    except Exception:
+        return False
+
+
+def _build_cyc_step_meta(save_end: pd.DataFrame) -> np.ndarray:
+    """SaveEndData에서 스텝별 메타 테이블 생성 (프로파일 .cyc 역조회용).
+
+    각 스텝의 (start_index, end_index, TotalCycle, StepType, StepNo) 정보를 담은
+    numpy 배열을 생성. .cyc 레코드의 Index로 이진 탐색하여 메타 정보를 부여할 때 사용.
+
+    Returns
+    -------
+    np.ndarray
+        shape (N, 5), dtype int64
+        컬럼: [start_idx, end_idx, total_cycle, step_type, step_no]
+    """
+    end_indices = save_end[0].values.astype(np.int64)
+    total_cycles = save_end[27].values.astype(np.int64)
+    step_types = save_end[2].values.astype(np.int64)
+    step_nos = save_end[7].values.astype(np.int64)
+
+    n = len(end_indices)
+    meta = np.zeros((n, 5), dtype=np.int64)
+    meta[:, 1] = end_indices        # end_idx
+    meta[:, 2] = total_cycles       # total_cycle
+    meta[:, 3] = step_types         # step_type
+    meta[:, 4] = step_nos           # step_no
+
+    # start_idx: 이전 스텝 end_idx + 1 (첫 스텝은 1)
+    meta[0, 0] = 1
+    if n > 1:
+        meta[1:, 0] = end_indices[:-1] + 1
+
+    return meta
+
+
+def _cyc_seek_profile(cyc_path: str, start_index: int, end_index: int,
+                      save_end: pd.DataFrame, n_csv_cols: int = 48) -> pd.DataFrame:
+    """.cyc 바이너리에서 Index 범위의 레코드를 seek+read하여 CSV 형식으로 반환.
+
+    SaveEndData.csv와 동일한 숫자 인덱스 컬럼(0~47)의 DataFrame을 생성.
+    StepType(col[2]), StepNo(col[7]), TotalCycle(col[27])은 SaveEndData에서 역조회.
+
+    Parameters
+    ----------
+    cyc_path : str
+        .cyc 파일 경로
+    start_index : int
+        시작 Index (1-based, 포함)
+    end_index : int
+        종료 Index (1-based, 포함)
+    save_end : pd.DataFrame
+        SaveEndData DataFrame (숫자 컬럼 인덱스)
+    n_csv_cols : int
+        CSV 컬럼 수 (기본 48)
+
+    Returns
+    -------
+    pd.DataFrame
+        CSV SaveData와 동일한 형태 (숫자 컬럼 0~47, 단위도 동일)
+    """
+    hdr = _parse_cyc_header(cyc_path)
+    rec_size = hdr['rec_size']
+    n_fields = hdr['n_fields']
+    fids = hdr['fids']
+
+    # Index 범위 → 바이트 오프셋 (Index는 1-based, 레코드는 0-based)
+    rec_start = start_index - 1
+    rec_count = end_index - start_index + 1
+    byte_offset = hdr['data_start'] + rec_start * rec_size
+
+    with open(cyc_path, 'rb') as f:
+        f.seek(byte_offset)
+        raw = f.read(rec_count * rec_size)
+
+    actual_count = len(raw) // rec_size
+    if actual_count == 0:
+        return pd.DataFrame(columns=range(n_csv_cols))
+
+    data = np.frombuffer(raw[:actual_count * rec_size], dtype='<f4').reshape(actual_count, n_fields)
+
+    # CSV 컬럼 매핑 + 단위 변환
+    fid_map = _build_cyc_fid_pos_map(fids)
+    result = np.zeros((actual_count, n_csv_cols), dtype=np.float64)
+
+    for csv_col, (pos, scale) in fid_map.items():
+        if csv_col < n_csv_cols:
+            result[:, csv_col] = np.round(data[:, pos].astype(np.float64) * scale)
+
+    # 메타 컬럼 보완: col[2](StepType), col[7](StepNo), col[27](TotalCycle)
+    step_meta = _build_cyc_step_meta(save_end)
+    meta_end_indices = step_meta[:, 1]  # 각 스텝의 end_index
+
+    record_indices = result[:, 0].astype(np.int64)  # .cyc Index 값
+    # 각 레코드가 어떤 스텝에 속하는지 이진 탐색
+    step_positions = np.searchsorted(meta_end_indices, record_indices, side='left')
+    step_positions = np.clip(step_positions, 0, len(step_meta) - 1)
+
+    result[:, 2] = step_meta[step_positions, 3]   # StepType
+    result[:, 7] = step_meta[step_positions, 4]   # StepNo
+    result[:, 27] = step_meta[step_positions, 2]  # TotalCycle
+
+    df = pd.DataFrame(result, columns=range(n_csv_cols))
+    # 정수 컬럼을 int로 변환 (CSV 원본과 동일)
+    int_cols = [0, 2, 7, 8, 9, 10, 11, 17, 18, 19, 21, 27]
+    for c in int_cols:
+        if c < n_csv_cols:
+            df[c] = df[c].astype(np.int64)
+
+    return df
+
+
+def _try_cyc_profile(raw_file_path: str, inicycle: int,
+                     endcycle: int) -> pd.DataFrame | None:
+    """.cyc 바이너리 프로파일 접근 시도. 실패 시 None 반환 (CSV fallback용).
+
+    채널 캐시를 활용하여 무결성 검증은 최초 1회만 수행.
+    SaveEndData에서 대상 사이클의 Index 범위를 조회한 뒤 .cyc seek.
+    """
+    import time as _time
+
+    cache = _get_channel_cache(raw_file_path)
+
+    # 1) .cyc 경로 확인 (캐시)
+    if 'cyc_path' not in cache:
+        if os.path.isdir(raw_file_path):
+            cyc_files = [f for f in os.listdir(raw_file_path) if f.endswith('.cyc')]
+            cache['cyc_path'] = os.path.join(raw_file_path, cyc_files[0]) if cyc_files else None
+        else:
+            cache['cyc_path'] = None
+    cyc_path = cache.get('cyc_path')
+    if not cyc_path or not os.path.isfile(cyc_path):
+        return None
+
+    # 2) 무결성 검증 (최초 1회, 캐시)
+    if 'cyc_profile_ok' not in cache:
+        cache['cyc_profile_ok'] = _validate_cyc_for_profile(cyc_path)
+        if not cache['cyc_profile_ok']:
+            _perf_logger.info(f'  [.cyc 프로파일] 무결성 실패 → CSV fallback: '
+                              f'{os.path.basename(raw_file_path)}')
+    if not cache['cyc_profile_ok']:
+        return None
+
+    # 3) SaveEndData 로드 (이미 캐시되어 있음)
+    save_end, file_index, _ = _cached_pne_restore_files(raw_file_path)
+    if save_end is None:
+        return None
+
+    try:
+        t0 = _time.perf_counter()
+
+        # 4) SaveEndData에서 대상 사이클의 Index 범위 조회
+        #    보충행(col[0]=0)은 유효 Index가 없으므로 제외
+        cycle_mask = (save_end[27] >= inicycle) & (save_end[27] <= endcycle) & (save_end[0] > 0)
+        cycle_rows = save_end.loc[cycle_mask]
+        if cycle_rows.empty:
+            return None
+
+        # 시작 Index: 대상 사이클 범위의 첫 스텝 이전 스텝 end_index + 1
+        first_step_pos = cycle_rows.index[0]
+        if first_step_pos > 0:
+            start_index = int(save_end.iloc[first_step_pos - 1][0]) + 1
+        else:
+            start_index = 1
+
+        # 종료 Index: 대상 사이클 범위의 마지막 스텝 end_index
+        end_index = int(cycle_rows[0].max())
+
+        # 5) .cyc seek+read → CSV 형식 DataFrame
+        result = _cyc_seek_profile(cyc_path, start_index, end_index, save_end,
+                                   save_end.shape[1])
+
+        elapsed = (_time.perf_counter() - t0) * 1000
+        _perf_logger.info(f'  [.cyc 프로파일] {os.path.basename(raw_file_path)}: '
+                          f'TC {inicycle}~{endcycle}, '
+                          f'{len(result)}행, {elapsed:.1f}ms')
+        return result
+
+    except Exception as e:
+        _perf_logger.warning(f'  [.cyc 프로파일 실패] {raw_file_path}: {e}')
+        cache['cyc_profile_ok'] = False  # 이후 CSV fallback
+        return None
 
 
 def _process_pne_cycleraw(
@@ -16527,8 +16818,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             cyccount, cyccountmax) * 0.5
                         self.progressBar.setValue(int(progressdata))
                         namelist = FolderBase.split("\\")
-                        headername = f"{namelist[-2]}, {namelist[-1]}, {CycNo}cy, "
-                        lgnd = "%04d" % CycNo
+                        if isinstance(CycNo, tuple):
+                            headername = f"{namelist[-2]}, {namelist[-1]}, {CycNo[0]}~{CycNo[1]}cy, "
+                            lgnd = f"{CycNo[0]:04d}-{CycNo[1]:04d}"
+                        else:
+                            headername = f"{namelist[-2]}, {namelist[-1]}, {CycNo}cy, "
+                            lgnd = "%04d" % CycNo
                         # 데이터 로드 (캐시 → 폴백)
                         temp = loaded_data.get((i, j, CycNo))
                         if temp is None:
@@ -16542,7 +16837,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             has_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, _ = _make_channel_labels(namelist, all_data_name, i)
-                            cyc_label = "%04d" % CycNo
+                            cyc_label = f"{CycNo[0]:04d}-{CycNo[1]:04d}" if isinstance(CycNo, tuple) else "%04d" % CycNo
                             if ch_label in channel_map:
                                 channel_map[ch_label]['artists'].extend(_artists)
                             else:
@@ -16600,7 +16895,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ch_label, sub_label = _make_channel_labels(
                                 last_namelist, all_data_name, i)
                             sub_key = ch_label + " " + sub_label
-                            cyc_label = "%04d" % CycNo
+                            cyc_label = f"{CycNo[0]:04d}-{CycNo[1]:04d}" if isinstance(CycNo, tuple) else "%04d" % CycNo
                             if ch_label in all_ch_map:
                                 all_ch_map[ch_label]['artists'].extend(_artists)
                             else:
@@ -21005,6 +21300,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _compat_data = {}
         data_attr = "df"
 
+        # continue 모드: CycleNo를 step_ranges 형식(tuple)으로 교체
+        # _load_unified_batch_task가 반환하는 키 = (start, end) tuple
+        if legacy_mode == "continue":
+            CycleNo = [(min(CycleNo), max(CycleNo))]
+
         for key, (cap, result) in loaded_data.items():
             _compat_data[key] = [cap, result]
 
@@ -21192,10 +21492,63 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             legend_pos = ["lower right"] * 3 + ["upper right"] * 3
             axes_order = [0, 1, 2, 3, 4, 5]
 
-        else:
-            # Continue 모드 — 기존 pro_continue_confirm_button으로 위임
-            self.pro_continue_confirm_button()
-            return
+        elif legacy_mode == "continue":
+            # Continue 모드 — unified 경로 통합
+            def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
+                          writer, save_file_name, writecolno, CycNo):
+                p = temp[1].df
+                if p.empty or len(p) < 2:
+                    return (writecolno, [])
+                ax1, ax2, ax3, ax4, ax5, ax6 = axes
+                _artists = []
+                _artists.append(graph_continue(p.TimeMin, p.Vol, ax1,
+                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "Time(min)", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_continue(p.TimeMin, p.Vol, ax4,
+                    self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                    "Time(min)", "Voltage(V)", temp_lgnd))
+                _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
+                    -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd))
+                _artists.append(graph_continue(p.TimeMin, p.SOC, ax3,
+                    0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
+                _artists.append(graph_continue(p.TimeMin, p.Temp, ax6,
+                    -15, 60, 5, "Time(min)", "Temp.", lgnd))
+                # Excel 저장
+                if self.saveok.isChecked() and save_file_name:
+                    has_timesec = "TimeSec" in p.columns and "Curr" in p.columns
+                    if has_timesec:
+                        _save_df = p[["TimeSec", "Vol", "Curr", "Crate", "SOC", "Temp"]].copy()
+                        _save_df.to_excel(writer, sheet_name="Profile",
+                            startcol=writecolno, index=False,
+                            header=[headername + c for c in
+                                    ["time(s)", "Voltage(V)", "Current(A)",
+                                     "Crate", "SOC", "Temp."]])
+                        writecolno += 6
+                    else:
+                        _save_df = p[["TimeMin", "SOC", "Vol", "Crate", "Temp"]].copy()
+                        _save_df.to_excel(writer, sheet_name="Profile",
+                            startcol=writecolno, index=False,
+                            header=[headername + c for c in
+                                    ["Time(min)", "SOC", "Voltage(V)",
+                                     "Crate", "Temp."]])
+                        writecolno += 5
+                return (writecolno, _artists)
+
+            def _fallback(FolderBase, CycNo, is_pne):
+                _meta = _channel_meta_store.get(FolderBase)
+                _cm = _meta.cycle_map if _meta else None
+                r = unified_profile_core(
+                    FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
+                    data_scope=options["data_scope"], axis_mode="time",
+                    continuity="continuous",
+                    include_rest=options["include_rest"],
+                    cycle_map=_cm,
+                )
+                return [r.mincapacity, r]
+
+            legend_pos = ["lower left", "lower right", "upper right",
+                          "lower right", "lower left", "upper right"]
+            axes_order = [0, 1, 2, 3, 4, 5]
 
         # ── 5. 통합 렌더링 루프 ──
         self._profile_render_loop(
