@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BDT 변경 로그 타임라인</title>
+<style>
+:root {
+  --bg: #FFFFFF;
+  --bg-alt: #FAFAFA;
+  --text: #2D2D2D;
+  --border: #E0E0E0;
+  --primary: #3C5488;
+  --primary-light: #3C548822;
+}
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --bg-alt: #16213e;
+  --text: #e0e0e0;
+  --border: #333;
+  --primary: #4DBBD5;
+  --primary-light: #4DBBD522;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  transition: background 0.3s, color 0.3s;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+.header h1 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+.header-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.source-info {
+  font-size: 0.75rem;
+  color: var(--text);
+  opacity: 0.6;
+  padding: 4px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.search-box {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  width: 200px;
+}
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--text);
+}
+.tab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  overflow-x: auto;
+}
+.tab-btn {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text);
+  opacity: 0.6;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.tab-btn:hover { opacity: 0.8; }
+.tab-btn.active {
+  opacity: 1;
+  font-weight: 600;
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.diagram-container {
+  display: none;
+  padding: 24px;
+  min-height: calc(100vh - 180px);
+  overflow: auto;
+}
+.diagram-container.active { display: block; }
+.diagram-wrapper {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  overflow: auto;
+  position: relative;
+}
+.diagram-wrapper .mermaid {
+  display: flex;
+  justify-content: center;
+}
+.zoom-controls {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  gap: 8px;
+  z-index: 100;
+}
+.zoom-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.zoom-btn:hover { background: var(--primary-light); }
+.diagram-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--primary);
+}
+.type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--primary-light);
+  color: var(--primary);
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.no-result {
+  text-align: center;
+  padding: 60px;
+  color: var(--text);
+  opacity: 0.4;
+  font-size: 1.1rem;
+}
+/* 검색 하이라이트 */
+.highlight { background: #FFD700; color: #000; padding: 1px 2px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>BDT 변경 로그 타임라인</h1>
+  <div class="header-controls">
+    <input type="text" class="search-box" placeholder="노드 검색..." id="searchInput" />
+    <button class="theme-toggle" onclick="toggleTheme()" title="다크/라이트 모드">🌓</button>
+  </div>
+</div>
+
+<div class="source-info">원본: docs/code/01_변경로그/ (24개 파일, 2026-02-09 ~ 2026-04-06)</div>
+
+<div class="tab-bar"><button class="tab-btn active" data-target="tab-0">변경로그 타임라인</button><button class="tab-btn" data-target="tab-1">변경 카테고리 분포</button></div>
+
+<div class="diagram-container active" id="tab-0"><div class="diagram-wrapper"><div class="diagram-title">변경로그 타임라인<span class="type-badge">timeline</span></div><div class="mermaid">
+timeline
+    title BDT 변경로그 타임라인 (2026-02-09 ~ 2026-04-06)
+    section 02/09
+        🔧 _append → pd.concat 일괄 교체 : fix
+    section 02/12
+        📝 변경 이력 정리 : changelog
+    section 03/10
+        ♻️ 파일명에서 'Battery' 제거 : refactor
+        🔧 SOC70 DCIR 분기 조건 수정 : fix
+        ♻️ 현황 탭 배경색 C레벨 변경 : refactor
+    section 03/18
+        🔧 Cycle 직접 경로 입력 버그 수정 : fix
+    section 03/19
+        ♻️ Instruction 파일 전면 개선 : refactor
+    section 04/04
+        ♻️ 프로필 분석 버튼 4개 → 1개 통합 : refactor
+        ✨ 통합 프로필 배치 로더 추가 : impl
+        ✨ 프로필 분석 UI 통합 : impl
+        ✨ unified_profile_core() 엔진 추가 : impl
+        🔧 통합 프로필 Phase 4 버그 수정 : fix
+        ✨ 논리사이클 Phase A : impl
+        ✨ 논리사이클 Phase A-2 : impl
+        ✨ 논리사이클 Phase B 라벨 : impl
+        ✨ 논리사이클 사이클 데이터 통합 : impl
+        🔧 GITT/DCIR 스윕 cycle_map 버그 : fix
+    section 04/05
+        ✨ test_profile_analysis.py 추가 : impl
+        ♻️ 논리사이클 재정의 : refactor
+        🔧 Condition=9 펄스 필터 수정 : fix
+    section 04/06
+        📝 전체 Git 변경이력 : changelog
+</div></div></div>
+<div class="diagram-container" id="tab-1"><div class="diagram-wrapper"><div class="diagram-title">변경 카테고리 분포<span class="type-badge">flowchart</span></div><div class="mermaid">
+flowchart TD
+    A["📊 BDT 변경 분포<br/>(22개 항목)"] --> B["카테고리 분류"]
+    B --> C["🔧 버그수정<br/>(6개)"]
+    B --> D["✨ 기능구현<br/>(8개)"]
+    B --> E["♻️ 리팩토링<br/>(5개)"]
+    B --> F["📝 문서<br/>(2개)"]
+
+    C --> C1["SOC70 DCIR"]
+    C --> C2["pd.concat"]
+    C --> C3["경로입력"]
+    C --> C4["프로필+펄스"]
+    C --> C5["cycle_map"]
+
+    D --> D1["프로필 배치"]
+    D --> D2["프로필 UI"]
+    D --> D3["프로필 엔진"]
+    D --> D4["논리사이클 A/B"]
+    D --> D5["테스트 자동화"]
+
+    E --> E1["파일명 정리"]
+    E --> E2["배경색 UI"]
+    E --> E3["Instruction"]
+    E --> E4["버튼 통합"]
+    E --> E5["논리사이클"]
+
+    style A fill:#3C5488,color:#fff
+    style B fill:#4DBBD5,color:#fff
+    style C fill:#E64B35,color:#fff
+    style D fill:#00A087,color:#fff
+    style E fill:#F39B7F,color:#fff
+    style F fill:#8491B4,color:#fff
+</div></div></div>
+
+<div class="zoom-controls">
+  <button class="zoom-btn" onclick="zoomIn()" title="확대">+</button>
+  <button class="zoom-btn" onclick="zoomOut()" title="축소">−</button>
+  <button class="zoom-btn" onclick="zoomReset()" title="원래 크기">⟳</button>
+</div>
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+mermaid.initialize({
+  startOnLoad: true,
+  theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+  flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+  er: { useMaxWidth: true },
+  sequence: { useMaxWidth: true },
+  themeVariables: {
+    primaryColor: '#3C5488',
+    primaryTextColor: '#fff',
+    primaryBorderColor: '#3C5488',
+    lineColor: '#8491B4',
+    secondaryColor: '#F39B7F',
+    tertiaryColor: '#FAFAFA',
+  }
+});
+</script>
+
+<script>
+// Tab 전환
+const tabs = document.querySelectorAll('.tab-btn');
+const containers = document.querySelectorAll('.diagram-container');
+
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    tabs.forEach(t => t.classList.remove('active'));
+    containers.forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.target).classList.add('active');
+  });
+});
+
+// 다크/라이트 토글
+function toggleTheme() {
+  const html = document.documentElement;
+  html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  // Mermaid 재렌더링은 페이지 새로고침으로 대체 (간단 구현)
+}
+
+// 줌 제어
+let currentZoom = 1;
+function zoomIn() {
+  currentZoom = Math.min(currentZoom + 0.15, 3);
+  applyZoom();
+}
+function zoomOut() {
+  currentZoom = Math.max(currentZoom - 0.15, 0.3);
+  applyZoom();
+}
+function zoomReset() {
+  currentZoom = 1;
+  applyZoom();
+}
+function applyZoom() {
+  document.querySelectorAll('.diagram-wrapper').forEach(w => {
+    w.style.transform = `scale(${currentZoom})`;
+    w.style.transformOrigin = 'top left';
+  });
+}
+
+// 검색
+document.getElementById('searchInput').addEventListener('input', function(e) {
+  const query = e.target.value.toLowerCase();
+  document.querySelectorAll('.mermaid svg text').forEach(el => {
+    if (query && el.textContent.toLowerCase().includes(query)) {
+      el.style.fill = '#FFD700';
+      el.style.fontWeight = 'bold';
+    } else {
+      el.style.fill = '';
+      el.style.fontWeight = '';
+    }
+  });
+});
+</script>
+
+</body>
+</html>

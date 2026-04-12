@@ -22,3 +22,5 @@ analysis_dev_env/
 data/
 .claude/
 CLAUDE.md
+# Added by code-review-graph
+.code-review-graph/

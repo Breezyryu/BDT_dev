@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BDT Profile UI Redesign — Before / After</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+    background: #E8EAF0;
+    color: #1A1A1A;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ── Page Layout ── */
+  .page-header {
+    background: #3C5488;
+    color: #fff;
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .page-header h1 { font-size: 18px; font-weight: 700; }
+  .page-header .badge {
+    font-size: 11px;
+    background: rgba(255,255,255,.18);
+    border-radius: 4px;
+    padding: 3px 10px;
+  }
+
+  .tab-bar {
+    display: flex;
+    background: #fff;
+    border-bottom: 1px solid #D0D4DB;
+    padding: 0 32px;
+  }
+  .tab-bar button {
+    border: none;
+    background: none;
+    padding: 10px 22px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #666;
+    border-bottom: 2px solid transparent;
+    transition: .15s;
+  }
+  .tab-bar button.active {
+    color: #3C5488;
+    font-weight: 700;
+    border-bottom-color: #3C5488;
+  }
+  .tab-bar button:hover { color: #3C5488; }
+
+  .panels-wrap {
+    display: flex;
+    gap: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .panel {
+    flex: 1;
+    min-width: 380px;
+    max-width: 480px;
+    padding: 20px 24px;
+    display: none;
+  }
+  .panel.visible { display: block; }
+
+  .panel-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #999;
+    margin-bottom: 12px;
+  }
+
+  /* ── Comparison layout ── */
+  .compare-wrap {
+    display: flex;
+    gap: 24px;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .compare-col {
+    flex: 1;
+    min-width: 0;
+  }
+  .compare-col h3 {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .compare-col h3 .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .compare-col h3 .dot.red { background: #E64B35; }
+  .compare-col h3 .dot.green { background: #00A087; }
+
+  /* ── Current (Before) Mock ── */
+  .current-mock {
+    background: #F0F0F0;
+    border: 1px solid #C0C0C0;
+    border-radius: 4px;
+    padding: 14px;
+    font-size: 12px;
+  }
+  .current-mock .cm-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .current-mock .cm-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 12px;
+  }
+  .current-mock .cm-radio::before {
+    content: '';
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    border: 2px solid #888;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .current-mock .cm-radio.sel::before {
+    border-color: #3C5488;
+    background: radial-gradient(#3C5488 40%, transparent 42%);
+  }
+  .current-mock .cm-chk {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 12px;
+  }
+  .current-mock .cm-chk::before {
+    content: '';
+    width: 13px; height: 13px;
+    border-radius: 2px;
+    border: 2px solid #888;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .current-mock .cm-chk.sel::before {
+    border-color: #3C5488;
+    background: #3C5488;
+  }
+  .current-mock .cm-input {
+    border: 1px solid #AAA;
+    background: #fff;
+    padding: 3px 6px;
+    width: 60px;
+    font-size: 11px;
+    color: #333;
+  }
+  .current-mock .cm-label {
+    font-size: 11px;
+    color: #555;
+    min-width: 80px;
+  }
+  .current-mock .cm-bar {
+    height: 26px;
+    background: linear-gradient(90deg, #7FAADC 0%, #7FAADC 35%, #4DBBD5 35%, #4DBBD5 70%, #3C5488 70%);
+    border-radius: 3px;
+    margin: 8px 0;
+    position: relative;
+  }
+  .current-mock .cm-bar-label {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: #fff;
+    background: rgba(0,0,0,.25);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  .current-mock .cm-btn {
+    border: 1px solid #B0B0B0;
+    background: #F5F5F5;
+    padding: 5px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  .current-mock .cm-btn.primary {
+    background: #fff;
+    font-weight: 600;
+  }
+  .current-mock .cm-grid {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr;
+    gap: 5px 8px;
+    align-items: center;
+    margin: 8px 0;
+  }
+  .current-mock .cm-sep {
+    border-top: 1px solid #CCC;
+    margin: 10px 0;
+  }
+  .current-mock .cm-btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .current-mock .cm-btns .cm-btn { flex: 1; text-align: center; }
+
+  .issue-tag {
+    display: inline-block;
+    font-size: 10px;
+    background: #FDECEA;
+    color: #C62828;
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  /* ── Proposed (After) Mock — PyQt6 look ── */
+  .proposed-mock {
+    background: #FFFFFF;
+    border: 1px solid #C0C0C0;
+    border-radius: 4px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+
+  .pm-section {
+    border-bottom: 1px solid #E8E8E8;
+  }
+  .pm-section:last-child { border-bottom: none; }
+
+  .pm-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: #F7F8FA;
+    cursor: pointer;
+    user-select: none;
+  }
+  .pm-section-header:hover { background: #EEF0F5; }
+  .pm-section-header h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: #3C5488;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pm-section-header .icon {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #888;
+  }
+  .pm-section-header .chevron {
+    font-size: 10px;
+    color: #AAA;
+    transition: transform .2s;
+  }
+  .pm-section-header.collapsed .chevron { transform: rotate(-90deg); }
+
+  .pm-section-body {
+    padding: 10px 14px;
+  }
+  .pm-section-body.collapsed { display: none; }
+
+  /* Timeline bar in proposed */
+  .pm-timeline {
+    padding: 8px 14px;
+    background: #FAFBFC;
+    border-bottom: 1px solid #E8E8E8;
+  }
+  .pm-timeline-label {
+    font-size: 10px;
+    color: #888;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pm-timeline-bar {
+    height: 30px;
+    background: #E8EAF0;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    position: relative;
+  }
+  .pm-timeline-bar .seg {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: rgba(255,255,255,.85);
+    font-weight: 600;
+    letter-spacing: .3px;
+  }
+  .pm-timeline-bar .seg.selected {
+    outline: 2px solid #FFD54F;
+    outline-offset: -2px;
+    z-index: 1;
+  }
+  .pm-ticks {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 2px;
+    font-size: 9px;
+    color: #AAA;
+  }
+  .pm-timeline-btns {
+    display: flex;
+    gap: 4px;
+  }
+  .pm-timeline-btns button {
+    border: 1px solid #D0D4DB;
+    background: #fff;
+    padding: 1px 6px;
+    font-size: 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #555;
+  }
+  .pm-timeline-btns button.active {
+    background: #3C5488;
+    color: #fff;
+    border-color: #3C5488;
+  }
+
+  /* Segmented control */
+  .pm-seg-ctrl {
+    display: inline-flex;
+    border: 1px solid #D0D4DB;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #F5F5F5;
+  }
+  .pm-seg-ctrl button {
+    border: none;
+    background: none;
+    padding: 5px 14px;
+    font-size: 11px;
+    cursor: pointer;
+    color: #666;
+    border-right: 1px solid #D0D4DB;
+    transition: .15s;
+  }
+  .pm-seg-ctrl button:last-child { border-right: none; }
+  .pm-seg-ctrl button.active {
+    background: #3C5488;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  /* Options grid in proposed */
+  .pm-opts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .pm-opt-card {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .pm-opt-card label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .pm-opt-card .pm-input {
+    border: 1px solid #D0D4DB;
+    border-radius: 3px;
+    padding: 5px 8px;
+    font-size: 12px;
+    background: #fff;
+    width: 100%;
+    color: #333;
+    transition: border-color .15s;
+  }
+  .pm-opt-card .pm-input:focus {
+    outline: none;
+    border-color: #3C5488;
+    box-shadow: 0 0 0 2px rgba(60,84,136,.12);
+  }
+  .pm-opt-card .pm-hint {
+    font-size: 10px;
+    color: #AAA;
+  }
+
+  /* Checkbox / toggle in proposed */
+  .pm-toggle-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .pm-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #444;
+    cursor: pointer;
+  }
+  .pm-toggle .pm-toggle-box {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 2px solid #B0B8C4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: #fff;
+    transition: .15s;
+  }
+  .pm-toggle.on .pm-toggle-box {
+    background: #3C5488;
+    border-color: #3C5488;
+  }
+
+  /* Action bar */
+  .pm-action-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 14px;
+    background: #F7F8FA;
+    border-top: 1px solid #E8E8E8;
+  }
+  .pm-btn {
+    flex: 1;
+    border: 1px solid #D0D4DB;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: center;
+    transition: .15s;
+    background: #fff;
+    color: #555;
+  }
+  .pm-btn:hover { background: #F0F0F0; }
+  .pm-btn.primary {
+    background: #3C5488;
+    color: #fff;
+    border-color: #3C5488;
+    font-weight: 700;
+  }
+  .pm-btn.primary:hover { background: #2D4070; }
+  .pm-btn.secondary {
+    background: #F5F5F5;
+    color: #777;
+  }
+  .pm-btn .btn-icon { font-size: 14px; margin-right: 4px; }
+
+  /* Analysis notes */
+  .analysis {
+    padding: 24px 32px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  .analysis h2 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: #3C5488;
+    border-bottom: 2px solid #3C5488;
+    padding-bottom: 6px;
+  }
+  .analysis-card {
+    background: #fff;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .analysis-card h3 {
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .analysis-card p {
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 4px;
+  }
+  .analysis-card .before-after {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 12px;
+    margin-top: 8px;
+    font-size: 12px;
+    align-items: start;
+  }
+  .analysis-card .ba-col {
+    background: #F9F9F9;
+    border-radius: 4px;
+    padding: 8px 10px;
+  }
+  .analysis-card .ba-col.before { border-left: 3px solid #E64B35; }
+  .analysis-card .ba-col.after { border-left: 3px solid #00A087; }
+  .analysis-card .ba-arrow {
+    display: flex;
+    align-items: center;
+    font-size: 18px;
+    color: #CCC;
+    padding-top: 8px;
+  }
+  .analysis-card .ba-col strong {
+    font-size: 11px;
+    color: #888;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  /* responsive */
+  @media (max-width: 900px) {
+    .compare-wrap { flex-direction: column; }
+    .compare-col { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ Page Header ══ -->
+<div class="page-header">
+  <h1>BDT Profile UI Redesign</h1>
+  <span class="badge">UX Proposal — 2026-04-12</span>
+</div>
+
+<div class="tab-bar" id="tabBar">
+  <button class="active" data-tab="compare">Before / After</button>
+  <button data-tab="analysis">UX 분석 상세</button>
+</div>
+
+<!-- ══ TAB: Compare ══ -->
+<div class="compare-wrap panel visible" id="tab-compare">
+  <!-- BEFORE -->
+  <div class="compare-col">
+    <h3><span class="dot red"></span>현행 (Before)</h3>
+
+    <div class="current-mock">
+      <!-- Row: View mode -->
+      <div class="cm-row">
+        <span class="cm-radio sel">사이클 통합</span>
+        <span class="cm-radio">셀별 통합</span>
+        <span class="cm-radio">전체 통합</span>
+        <span class="cm-chk">dQdV X/Y축 변환</span>
+        <span class="cm-chk">코인셀</span>
+      </div>
+
+      <!-- Timeline bar -->
+      <div class="cm-bar" style="margin: 10px 0;">
+        <span class="cm-bar-label">TC</span>
+      </div>
+      <div style="text-align: right; margin-bottom: 6px;">
+        <span style="font-size: 10px; color: #888;">10 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 20 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 24</span>
+        <span style="font-size: 9px; margin-left: 4px; background: #eee; padding: 1px 4px; border-radius: 2px;">▶</span>
+      </div>
+
+      <div class="cm-sep"></div>
+
+      <!-- Grid inputs — flat, no grouping -->
+      <div class="cm-grid">
+        <span class="cm-label">전압 Y축 하한</span>
+        <input class="cm-input" value="2.5">
+        <span class="cm-label">전압 Y축 상한</span>
+        <input class="cm-input" value="4.7">
+
+        <span class="cm-label">전압 Y축 간격</span>
+        <input class="cm-input" value="0.1">
+        <span class="cm-label">Smooth (0 이면 자동)</span>
+        <input class="cm-input" value="0">
+
+        <span class="cm-label">컷오프 (전류,전압)</span>
+        <input class="cm-input" value="0">
+        <span class="cm-label">dQdV 축늘리기</span>
+        <input class="cm-input" value="1">
+      </div>
+      <span class="issue-tag">문제: 6개 입력이 무분류 나열</span>
+
+      <div class="cm-sep"></div>
+
+      <!-- Radio options — dense, labels only -->
+      <div class="cm-row">
+        <span style="font-size: 11px; color: #888;">데이터:</span>
+        <span class="cm-radio sel">사이클</span>
+        <span class="cm-radio">충전</span>
+        <span class="cm-radio">방전</span>
+        <span style="font-size: 11px; color: #888; margin-left: 12px;">연속성:</span>
+        <span class="cm-radio">오버레이</span>
+        <span class="cm-radio sel">이어서</span>
+      </div>
+      <span class="issue-tag">문제: 두 그룹이 한 줄에 혼합</span>
+
+      <div class="cm-row" style="margin-top: 4px;">
+        <span style="font-size: 11px; color: #888;">X축:</span>
+        <span class="cm-radio">SOC(DOD)</span>
+        <span class="cm-radio sel">시간</span>
+        <span class="cm-chk">Rest</span>
+        <span class="cm-chk sel">CV</span>
+        <span class="cm-chk">루프</span>
+      </div>
+      <span class="issue-tag">문제: 라디오+체크박스 혼재</span>
+
+      <div class="cm-sep"></div>
+
+      <!-- Buttons — all same weight -->
+      <div class="cm-btns">
+        <span class="cm-btn primary">프로필 분석</span>
+        <span class="cm-btn">DCIR</span>
+        <span class="cm-btn" style="color: #AAA;">탭 초기화</span>
+      </div>
+      <span class="issue-tag">문제: 주요 액션 구분 약함</span>
+    </div>
+  </div>
+
+  <!-- AFTER -->
+  <div class="compare-col">
+    <h3><span class="dot green"></span>개선안 (After)</h3>
+
+    <div class="proposed-mock">
+
+      <!-- ① View Mode — segmented control -->
+      <div style="padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; background: #F7F8FA; border-bottom: 1px solid #E8E8E8;">
+        <div class="pm-seg-ctrl">
+          <button class="active" onclick="segClick(this)">사이클 통합</button>
+          <button onclick="segClick(this)">셀별 통합</button>
+          <button onclick="segClick(this)">전체 통합</button>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <label class="pm-toggle" onclick="this.classList.toggle('on')">
+            <span class="pm-toggle-box">&#10003;</span> dQdV
+          </label>
+          <label class="pm-toggle" onclick="this.classList.toggle('on')">
+            <span class="pm-toggle-box">&#10003;</span> 코인셀
+          </label>
+        </div>
+      </div>
+
+      <!-- ② Timeline -->
+      <div class="pm-timeline">
+        <div class="pm-timeline-label">
+          <span>사이클 타임라인</span>
+          <div class="pm-timeline-btns">
+            <button>논리</button>
+            <button class="active">TC</button>
+            <button>▶ 상세</button>
+          </div>
+        </div>
+        <div class="pm-timeline-bar">
+          <div class="seg" style="flex:4; background: #7FAADC;">Aging</div>
+          <div class="seg" style="flex:1; background: #E64B35; font-size: 8px;">RPT</div>
+          <div class="seg selected" style="flex:4; background: #4DBBD5;">Aging</div>
+          <div class="seg" style="flex:1; background: #E64B35; font-size: 8px;">RPT</div>
+          <div class="seg" style="flex:3; background: #3C5488;">Aging</div>
+        </div>
+        <div class="pm-ticks">
+          <span>1</span><span>5</span><span>10</span><span>15</span><span>20</span><span>24</span>
+        </div>
+      </div>
+
+      <!-- ③ Data Scope — collapsible section -->
+      <div class="pm-section">
+        <div class="pm-section-header" onclick="toggleSection(this)">
+          <h4><span class="icon">&#9654;</span> 데이터 범위</h4>
+          <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pm-section-body">
+          <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center;">
+            <div>
+              <label style="font-size: 10px; color: #888; font-weight: 600;">데이터</label>
+              <div class="pm-seg-ctrl" style="margin-top: 3px;">
+                <button class="active" onclick="segClick(this)">사이클</button>
+                <button onclick="segClick(this)">충전</button>
+                <button onclick="segClick(this)">방전</button>
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: #888; font-weight: 600;">연속성</label>
+              <div class="pm-seg-ctrl" style="margin-top: 3px;">
+                <button onclick="segClick(this)">오버레이</button>
+                <button class="active" onclick="segClick(this)">이어서</button>
+              </div>
+            </div>
+            <div>
+              <label style="font-size: 10px; color: #888; font-weight: 600;">X축</label>
+              <div class="pm-seg-ctrl" style="margin-top: 3px;">
+                <button onclick="segClick(this)">SOC/DOD</button>
+                <button class="active" onclick="segClick(this)">시간</button>
+              </div>
+            </div>
+          </div>
+          <div class="pm-toggle-row" style="margin-top: 10px;">
+            <label class="pm-toggle" onclick="this.classList.toggle('on')">
+              <span class="pm-toggle-box">&#10003;</span> Rest 포함
+            </label>
+            <label class="pm-toggle on" onclick="this.classList.toggle('on')">
+              <span class="pm-toggle-box">&#10003;</span> CV 포함
+            </label>
+            <label class="pm-toggle" onclick="this.classList.toggle('on')">
+              <span class="pm-toggle-box">&#10003;</span> 루프 포함
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ④ Chart Settings — collapsible -->
+      <div class="pm-section">
+        <div class="pm-section-header" onclick="toggleSection(this)">
+          <h4><span class="icon">&#9881;</span> 그래프 설정</h4>
+          <span class="chevron">&#9660;</span>
+        </div>
+        <div class="pm-section-body">
+          <div class="pm-opts-grid">
+            <div class="pm-opt-card">
+              <label>전압 Y축 범위</label>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <input class="pm-input" value="2.5" style="width: 55px;">
+                <span style="color: #AAA;">~</span>
+                <input class="pm-input" value="4.7" style="width: 55px;">
+                <span style="font-size: 10px; color: #AAA;">V</span>
+              </div>
+            </div>
+            <div class="pm-opt-card">
+              <label>Y축 간격</label>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <input class="pm-input" value="0.1" style="width: 55px;">
+                <span style="font-size: 10px; color: #AAA;">V</span>
+              </div>
+            </div>
+            <div class="pm-opt-card">
+              <label>Smoothing</label>
+              <input class="pm-input" value="0" placeholder="0 = 자동">
+              <span class="pm-hint">0 입력 시 자동 결정</span>
+            </div>
+            <div class="pm-opt-card">
+              <label>컷오프 C-rate</label>
+              <input class="pm-input" value="0" placeholder="전류, 전압">
+            </div>
+            <div class="pm-opt-card">
+              <label>dQdV Y축 스케일</label>
+              <input class="pm-input" value="1">
+              <span class="pm-hint">1 = 기본 비율</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑤ Action buttons — clear hierarchy -->
+      <div class="pm-action-bar">
+        <button class="pm-btn primary" style="flex: 2;">
+          <span class="btn-icon">&#9654;</span> 프로필 분석
+        </button>
+        <button class="pm-btn">DCIR</button>
+        <button class="pm-btn secondary">초기화</button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══ TAB: Analysis ══ -->
+<div class="analysis panel" id="tab-analysis">
+  <h2>UX 문제점 분석 및 개선 제안</h2>
+
+  <!-- Issue 1 -->
+  <div class="analysis-card">
+    <h3>1. 정보 계층 부재 — 모든 옵션이 동일한 무게</h3>
+    <p>현행 UI는 6개 입력 필드, 3개 라디오 그룹, 3개 체크박스가 모두 같은 시각적 무게로 나열되어 있어, 사용자가 "어떤 설정이 핵심이고 어떤 것이 부가인지" 파악하는 데 인지 비용이 높습니다.</p>
+    <div class="before-after">
+      <div class="ba-col before">
+        <strong>Before</strong>
+        전압 Y축 하한 / 상한 / 간격 / Smooth / 컷오프 / dQdV 축늘리기가 <b>2열 그리드</b>에 무분류 나열. 처음 쓰는 사용자는 어떤 값부터 봐야 하는지 모름.
+      </div>
+      <div class="ba-arrow">&rarr;</div>
+      <div class="ba-col after">
+        <strong>After</strong>
+        <b>접을 수 있는 섹션</b>으로 분리: "데이터 범위"(핵심)와 "그래프 설정"(부가). 자주 바꾸는 옵션은 펼쳐두고, 한번 정하면 안 바꾸는 설정은 접어둠.
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 2 -->
+  <div class="analysis-card">
+    <h3>2. 라디오 버튼 그룹 경계 모호</h3>
+    <p>"데이터: 사이클/충전/방전"과 "연속성: 오버레이/이어서"가 한 줄에 텍스트 라벨만으로 구분되어, 어디까지가 한 그룹인지 시각적으로 불명확합니다. 두 번째 줄은 라디오(X축)와 체크박스(Rest, CV, 루프)가 혼재해서 더 혼란스럽습니다.</p>
+    <div class="before-after">
+      <div class="ba-col before">
+        <strong>Before</strong>
+        <code>데이터: ○사이클 ○충전 ○방전 &nbsp; 연속성: ○오버레이 ●이어서</code><br>
+        라벨 텍스트만으로 그룹 구분. 시선이 빠르게 스캔할 때 그룹 경계를 놓치기 쉬움.
+      </div>
+      <div class="ba-arrow">&rarr;</div>
+      <div class="ba-col after">
+        <strong>After</strong>
+        <b>Segmented Control</b> (세그먼트 버튼)로 각 그룹을 물리적 박스로 분리. 그룹 위에 미니 라벨("데이터", "연속성", "X축")을 배치하여 소속을 명확히 함.
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 3 -->
+  <div class="analysis-card">
+    <h3>3. 주요 액션 버튼의 시각적 위계 부족</h3>
+    <p>"프로필 분석", "DCIR", "탭 초기화" 버튼이 모두 같은 크기·스타일입니다. 가장 많이 누르는 "프로필 분석"과 파괴적 액션인 "초기화"가 동등하게 보이면, 실수 클릭 확률이 높아집니다.</p>
+    <div class="before-after">
+      <div class="ba-col before">
+        <strong>Before</strong>
+        <code>[프로필 분석] [DCIR] [탭 초기화]</code><br>
+        3개 버튼 동일 크기·색상. Primary action 구분 없음.
+      </div>
+      <div class="ba-arrow">&rarr;</div>
+      <div class="ba-col after">
+        <strong>After</strong>
+        <b>프로필 분석</b>: Navy filled + 2x 너비 (Primary)<br>
+        <b>DCIR</b>: White bordered (Secondary)<br>
+        <b>초기화</b>: Light gray (Tertiary/Danger)
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 4 -->
+  <div class="analysis-card">
+    <h3>4. 입력 필드의 맥락 정보 부족</h3>
+    <p>"Smooth (0 이면 자동)" — 괄호 안 힌트가 라벨에 붙어 있어 읽기 불편합니다. "컷오프 (전류,전압)"도 무엇을 넣어야 하는지 직관적이지 않습니다. 단위 표시도 없습니다.</p>
+    <div class="before-after">
+      <div class="ba-col before">
+        <strong>Before</strong>
+        라벨: <code>Smooth (0 이면 자동)</code><br>
+        힌트가 라벨과 같은 줄에 괄호로 들어가 있어 라벨 자체가 길어짐. 단위(V, C-rate) 표시 없음.
+      </div>
+      <div class="ba-arrow">&rarr;</div>
+      <div class="ba-col after">
+        <strong>After</strong>
+        라벨: <b>Smoothing</b> (짧은 대문자)<br>
+        플레이스홀더: <code>0 = 자동</code><br>
+        하단 힌트: <span style="color:#AAA;font-size:11px;">0 입력 시 자동 결정</span><br>
+        단위: 입력 필드 우측에 <b>V</b>, <b>C</b> 등 명시
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 5 -->
+  <div class="analysis-card">
+    <h3>5. 사이클 타임라인 바의 정보 밀도 개선</h3>
+    <p>현행 타임라인은 색상 블록만 표시하고 카테고리 라벨이 없어, 어떤 블록이 Aging이고 RPT인지 바 위에서 직접 읽을 수 없습니다. TC/상세 토글 버튼도 작아서 발견하기 어렵습니다.</p>
+    <div class="before-after">
+      <div class="ba-col before">
+        <strong>Before</strong>
+        색상만 있는 바 + 우측 끝 [TC] [▶] 소형 버튼<br>
+        블록 의미를 알려면 ▶ 팝업을 열어야 함
+      </div>
+      <div class="ba-arrow">&rarr;</div>
+      <div class="ba-col after">
+        <strong>After</strong>
+        각 블록에 <b>카테고리 라벨</b> 인라인 표시 (Aging, RPT 등)<br>
+        상단에 <b>논리/TC/상세</b> 세그먼트 토글로 모드 전환<br>
+        선택된 블록은 <b>노란 테두리</b>로 하이라이트
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 6 -->
+  <div class="analysis-card">
+    <h3>6. 전압 범위 입력의 물리적 직관성</h3>
+    <p>"Y축 하한"과 "Y축 상한"이 별도 줄에 있어 범위 개념이 시각적으로 드러나지 않습니다.</p>
+    <div class="before-after">
+      <div class="ba-col before">
+        <strong>Before</strong>
+        <code>전압 Y축 하한 [2.5] &nbsp; 전압 Y축 상한 [4.7]</code><br>
+        두 입력이 물리적으로 떨어져 있어 "범위" 개념 약함
+      </div>
+      <div class="ba-arrow">&rarr;</div>
+      <div class="ba-col after">
+        <strong>After</strong>
+        <code>[2.5] ~ [4.7] V</code> — 한 줄에 하한~상한을 <b>인라인 레인지</b>로 묶고 단위(V) 명시. 라벨은 상단에 "전압 Y축 범위" 하나로 통합.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab-bar button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('visible');
+    });
+  });
+
+  // Segmented control click
+  function segClick(btn) {
+    btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  // Section collapse toggle
+  function toggleSection(header) {
+    header.classList.toggle('collapsed');
+    const body = header.nextElementSibling;
+    body.classList.toggle('collapsed');
+  }
+</script>
+</body>
+</html>
