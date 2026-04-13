@@ -664,10 +664,10 @@ def enrich_newdata_with_meta(nd: 'pd.DataFrame', channel_path: str) -> None:
     if not meta or not meta.classified:
         return
 
-    # classified를 논리사이클 번호 → category 딕셔너리로 변환
+    # classified를 TC 번호 → category 딕셔너리로 변환
     cat_map = {entry['cycle']: entry['category'] for entry in meta.classified}
 
-    # NewData의 Cycle 컬럼(논리사이클 번호)으로 매핑
+    # NewData의 Cycle 컬럼(TC 번호)으로 매핑
     if 'Cycle' in nd.columns:
         nd['Category'] = nd['Cycle'].map(cat_map).fillna('')
 
@@ -3827,13 +3827,12 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
             )
         except Exception:
             _cycle_map = None
-        if _cycle_map and len(df.NewData) > 0:
-            # Toyo: Cycle 열은 항상 순번 부여 (호환성)
-            # cycle_map은 df.cycle_map에 보존 (프로필 파이프라인에서 사용)
-            df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
-        else:
-            # cycle_map 없음: 기존 방식 (순번)
-            df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+        if len(df.NewData) > 0:
+            # TC 1원화: OriCyc(TC)를 Cycle로 사용
+            if 'OriCyc' in df.NewData.columns and df.NewData['OriCyc'].notna().any():
+                df.NewData.insert(0, "Cycle", df.NewData['OriCyc'].astype(int).values)
+            else:
+                df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
         df.cycle_map = _cycle_map if _cycle_map else {}
         # ── 충전 전용 사이클 df.NewData에 추가 (스윕 시험만) ──
         # 스윕 시험에서 cycle_map에는 있지만 df.NewData에 없는 논리사이클 = 충전 전용 (화성 등)
@@ -8718,17 +8717,22 @@ def _process_pne_cycleraw(
                         _grouped[_req] = np.nan
                 df.NewData = _grouped
             elif _logical_col.notna().any():
-                # 일반 시험: 순번 부여 (1, 2, 3, ...) — 호환성 유지
-                # cycle_map은 df.cycle_map에 보존 (프로필 파이프라인에서 사용)
-                df.NewData.insert(0, 'Cycle', range(1, len(df.NewData) + 1))
+                # 일반 시험: TC 1원화 — OriCyc(TC)를 Cycle로 사용
+                df.NewData.insert(0, 'Cycle', df.NewData['OriCyc'].astype(int).values)
             else:
-                # 매핑 실패 시 폴백: 순번 부여
+                # 매핑 실패 시 폴백: OriCyc 사용, 없으면 순번
                 if '_ln' in df.NewData.columns:
                     df.NewData.drop(columns=['_ln'], inplace=True)
-                df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+                if 'OriCyc' in df.NewData.columns and df.NewData['OriCyc'].notna().any():
+                    df.NewData.insert(0, "Cycle", df.NewData['OriCyc'].astype(int).values)
+                else:
+                    df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
         else:
-            # cycle_map 없음: 기존 방식 (순번 1, 2, 3, ...)
-            df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+            # cycle_map 없음: TC 1원화 — OriCyc 사용, 없으면 순번
+            if 'OriCyc' in df.NewData.columns and df.NewData['OriCyc'].notna().any():
+                df.NewData.insert(0, "Cycle", df.NewData['OriCyc'].astype(int).values)
+            else:
+                df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
 
     # ── 충전/방전 종료 전압 트래킹: ChgVolt(상한 V), DchgVolt(하한 V), ChgSteps ──
     if hasattr(df, 'NewData') and len(df.NewData) > 0 and 'Ocv' in Cycleraw.columns and not df.NewData['OriCyc'].isna().any():
