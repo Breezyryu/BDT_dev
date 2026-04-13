@@ -999,7 +999,7 @@ def _merge_step_profiles(df: pd.DataFrame, cap_col: str = "Chgcap") -> pd.DataFr
 # Unified Profile Core — 통합 프로필 파싱 엔진
 # ============================================================================
 # 기존 5개 Profile 파싱 함수(step/rate/chg/dchg/continue)를 하나로 통합.
-# 4개 옵션(data_scope, axis_mode, continuity, include_rest)으로 모든 조합 지원.
+# 3개 직교 옵션(data_scope, axis_mode, overlap)으로 모든 조합 지원.
 # ============================================================================
 
 @dataclass
@@ -1796,13 +1796,205 @@ def _unified_merge_steps(
     return pd.concat(parts).reset_index(drop=True)
 
 
+# ============================================================================
+# Overlap 시간축 핸들러 — 사이클 간/내 시간 배치 방식별 분리
+# ============================================================================
+# 각 핸들러는 df["Time_s"]를 제자리 수정하고, 필요 시 NaN 경계 행을 삽입한다.
+# overlap 값: "continuous" | "split" | "sequential" | "connected"
+
+
+def _insert_nan_between_groups(
+    df: pd.DataFrame,
+    group_col: str,
+    group_vals: list,
+) -> pd.DataFrame:
+    """group_col 값이 바뀌는 경계에 NaN 행 삽입 (matplotlib 선 끊기용).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        원본 데이터.
+    group_col : str
+        그룹 구분 컬럼명 (예: "Cycle", "Condition").
+    group_vals : list
+        순서대로 처리할 그룹 값 목록.
+    """
+    if len(group_vals) <= 1:
+        return df
+    parts: list[pd.DataFrame] = []
+    for i, gval in enumerate(group_vals):
+        parts.append(df[df[group_col] == gval])
+        if i < len(group_vals) - 1:
+            nan_row = {col: np.nan for col in df.columns}
+            if "Cycle" in df.columns:
+                seg = df[df[group_col] == gval]
+                nan_row["Cycle"] = (
+                    seg["Cycle"].iloc[0] if not seg.empty else np.nan)
+            parts.append(pd.DataFrame([nan_row]))
+    return pd.concat(parts, ignore_index=True)
+
+
+def _axis_continuous(df: pd.DataFrame, data_scope: str) -> pd.DataFrame:
+    """이어서 — 사이클 간 시간 연속, 시작점만 0 보정."""
+    if not df.empty:
+        df["Time_s"] -= df["Time_s"].iloc[0]
+    return df
+
+
+def _axis_split(df: pd.DataFrame, data_scope: str) -> pd.DataFrame:
+    """분리 겹침 — 충전/방전 각각 time=0 시작, 별도 선으로 겹침.
+
+    - cycle 스코프: Condition별(충전=1, 방전=2) 독립 시간 리셋 + NaN 경계
+    - charge/discharge 스코프: 사이클별 시작점 0 리셋 (단일 Condition이므로 동일)
+    """
+    if data_scope == "cycle" and "Condition" in df.columns:
+        # Condition별 독립 시간 리셋
+        for cyc in df["Cycle"].unique():
+            mask_cyc = df["Cycle"] == cyc
+            for cond in df.loc[mask_cyc, "Condition"].unique():
+                if cond == 3:  # 휴지는 리셋 대상 아님
+                    continue
+                mask = mask_cyc & (df["Condition"] == cond)
+                if mask.any():
+                    df.loc[mask, "Time_s"] -= df.loc[mask, "Time_s"].min()
+        # Condition 경계에 NaN 삽입
+        parts: list[pd.DataFrame] = []
+        for cyc in df["Cycle"].unique():
+            cyc_df = df.loc[df["Cycle"] == cyc]
+            conds = sorted(cyc_df["Condition"].unique())
+            for i, cond in enumerate(conds):
+                parts.append(cyc_df.loc[cyc_df["Condition"] == cond])
+                if i < len(conds) - 1:
+                    nan_row = {col: np.nan for col in df.columns}
+                    nan_row["Cycle"] = cyc
+                    parts.append(pd.DataFrame([nan_row]))
+        if parts:
+            df = pd.concat(parts, ignore_index=True)
+    else:
+        # charge/discharge 단독: 사이클별 시작점 0 리셋
+        for cyc in df["Cycle"].unique():
+            mask = df["Cycle"] == cyc
+            if mask.any():
+                df.loc[mask, "Time_s"] -= df.loc[mask, "Time_s"].min()
+    return df
+
+
+def _axis_sequential(df: pd.DataFrame, data_scope: str) -> pd.DataFrame:
+    """순차 겹침 — 사이클별 time=0, 충전→방전 순차 연결.
+
+    사이클 내에서 충전→휴지→방전이 자연 시간 순서대로 이어지고,
+    사이클 간에는 NaN 경계로 분리된다.
+    charge/discharge 스코프에서는 split과 동일.
+    """
+    # 사이클별 시작점 0 리셋
+    for cyc in df["Cycle"].unique():
+        mask_cyc = df["Cycle"] == cyc
+        if mask_cyc.any():
+            df.loc[mask_cyc, "Time_s"] -= df.loc[mask_cyc, "Time_s"].min()
+    # 사이클 간 NaN 경계 삽입
+    cycles = sorted(df["Cycle"].unique())
+    df = _insert_nan_between_groups(df, "Cycle", cycles)
+    return df
+
+
+def _axis_connected(df: pd.DataFrame, data_scope: str) -> pd.DataFrame:
+    """히스테리시스 — 충전 끝점 = 방전 시작점, 닫힌 루프.
+
+    사이클별 시작점 0 리셋 후 사이클 간 NaN 경계.
+    sequential과 시간축 처리는 동일하지만, SOC 계산에서 차이 발생.
+    """
+    # 시간축: sequential과 동일 (사이클별 리셋 + NaN 경계)
+    return _axis_sequential(df, data_scope)
+
+
+def _axis_sweep_blocks(df: pd.DataFrame, data_scope: str) -> pd.DataFrame:
+    """스윕 데이터 전용 — Block(충전=1, 방전=2)별 시간 리셋.
+
+    Block 컬럼이 있는 스윕 시험 데이터 전용 핸들러.
+    """
+    for blk_val in sorted(df["Block"].unique()):
+        if blk_val <= 0:
+            continue
+        blk_mask = df["Block"] == blk_val
+        if blk_mask.any():
+            df.loc[blk_mask, "Time_s"] -= df.loc[blk_mask, "Time_s"].min()
+    # Block 경계에 NaN 삽입
+    if data_scope == "cycle":
+        active_blocks = sorted(g for g in df["Block"].unique() if g > 0)
+        df = _insert_nan_between_groups(df, "Block", active_blocks)
+    return df
+
+
+_OVERLAP_HANDLERS = {
+    "continuous": _axis_continuous,
+    "split":      _axis_split,
+    "sequential": _axis_sequential,
+    "connected":  _axis_connected,
+}
+
+
+def _calc_soc(
+    df: pd.DataFrame,
+    data_scope: str,
+    axis_mode: str,
+    overlap: str,
+) -> pd.Series:
+    """SOC 컬럼 계산 — data_scope × axis_mode × overlap 조합에 따라 분기.
+
+    Returns
+    -------
+    pd.Series
+        SOC 값. df.index와 동일 인덱스.
+    """
+    if data_scope == "charge":
+        return df["ChgCap"]  # 정규화됨 (0~1)
+    if data_scope == "discharge":
+        return df["DchgCap"]  # DOD 방향 (0~1)
+
+    # data_scope == "cycle"
+    if axis_mode == "soc" and overlap == "connected":
+        # 히스테리시스: 충전 SOC 0→peak, 방전 SOC peak→0
+        if "Condition" in df.columns:
+            soc = pd.Series(np.nan, index=df.index)
+            for cyc in df["Cycle"].unique():
+                cyc_mask = df["Cycle"] == cyc
+                if not cyc_mask.any():
+                    continue
+                chg_mask = cyc_mask & (df["Condition"] == 1)
+                dchg_mask = cyc_mask & (df["Condition"] == 2)
+                if chg_mask.any():
+                    soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
+                peak = (df.loc[chg_mask, "ChgCap"].max()
+                        if chg_mask.any() else 1.0)
+                if dchg_mask.any():
+                    soc[dchg_mask] = peak - df.loc[dchg_mask, "DchgCap"]
+            return soc.ffill()
+        return df["ChgCap"] - df["DchgCap"]
+
+    if axis_mode == "soc":
+        # SOC 축 (split 등): 충전/방전 독립 SOC 부여
+        if "Condition" in df.columns:
+            soc = pd.Series(np.nan, index=df.index)
+            chg_mask = df["Condition"] == 1
+            dchg_mask = df["Condition"] == 2
+            rest_mask = df["Condition"] == 3
+            soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
+            soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
+            if rest_mask.any():
+                soc[rest_mask] = np.nan
+                soc = soc.ffill()
+            return soc
+        return df["ChgCap"] - df["DchgCap"]
+
+    # 시간 축: 절대 SOC (충전+, 방전-)
+    return df["ChgCap"] - df["DchgCap"]
+
+
 def _unified_calculate_axis(
     df: pd.DataFrame,
     axis_mode: str,
     data_scope: str,
-    continuity: str,
-    *,
-    loop: bool = False,
+    overlap: str,
 ) -> pd.DataFrame:
     """X축(Time/SOC) 및 사이클 연속성 처리.
 
@@ -1814,11 +2006,8 @@ def _unified_calculate_axis(
         "time" | "soc"
     data_scope : str
         "charge" | "discharge" | "cycle"
-    continuity : str
-        "overlay" | "continuous"
-    loop : bool
-        True이면 충방전 히스테리시스 루프 형태.
-        충전 SOC 0→1, 방전 SOC 1→0 (closed-loop voltage profile).
+    overlap : str
+        "continuous" | "split" | "sequential" | "connected"
 
     Returns
     -------
@@ -1827,153 +2016,15 @@ def _unified_calculate_axis(
     """
     df = df.copy()
 
-    _has_blocks = "Block" in df.columns
-
-    # 시간축 처리
-    if continuity == "overlay":
-        if _has_blocks:
-            # ── Block 기반 오버레이 (스윕 데이터) ──
-            # 각 Block(1=충전,2=방전)별 시간 시작점 0으로 리셋
-            for blk_val in sorted(df["Block"].unique()):
-                if blk_val <= 0:
-                    continue
-                blk_mask = df["Block"] == blk_val
-                if not blk_mask.any():
-                    continue
-                blk_start = df.loc[blk_mask, "Time_s"].min()
-                df.loc[blk_mask, "Time_s"] -= blk_start
-
-            # Block 경계에 NaN 행 삽입 → matplotlib 선 끊기
-            if data_scope == "cycle":
-                active_blocks = sorted(
-                    g for g in df["Block"].unique() if g > 0)
-                if len(active_blocks) > 1:
-                    parts = []
-                    for i, blk_val in enumerate(active_blocks):
-                        blk_df = df[df["Block"] == blk_val]
-                        parts.append(blk_df)
-                        if i < len(active_blocks) - 1:
-                            nan_row = {col: np.nan for col in df.columns}
-                            nan_row["Cycle"] = (
-                                blk_df["Cycle"].iloc[0]
-                                if "Cycle" in blk_df.columns else np.nan)
-                            parts.append(pd.DataFrame([nan_row]))
-                    df = pd.concat(parts, ignore_index=True)
-
-        elif data_scope == "cycle" and loop:
-            # ── 히스테리시스 루프: 사이클 내 연결(루프), 사이클 간 끊기 ──
-            # 충전→방전 선이 연결되어야 closed-loop 형성
-            for cyc in df["Cycle"].unique():
-                mask_cyc = df["Cycle"] == cyc
-                cyc_start = df.loc[mask_cyc, "Time_s"].min()
-                df.loc[mask_cyc, "Time_s"] -= cyc_start
-            # 사이클 간 NaN 경계 삽입 (다른 사이클 루프끼리 연결 방지)
-            cycles = sorted(df["Cycle"].unique())
-            if len(cycles) > 1:
-                parts = []
-                for i, cyc in enumerate(cycles):
-                    parts.append(df[df["Cycle"] == cyc])
-                    if i < len(cycles) - 1:
-                        nan_row = {col: np.nan for col in df.columns}
-                        nan_row["Cycle"] = cyc
-                        parts.append(pd.DataFrame([nan_row]))
-                df = pd.concat(parts, ignore_index=True)
-
-        elif data_scope == "cycle":
-            # ── 사이클 오버레이: Condition별 시간 리셋 (3cedcec 방식) ──
-            # 충전/방전 각각 time=0부터 시작하도록 Condition별 독립 리셋
-            for cyc in df["Cycle"].unique():
-                mask_cyc = df["Cycle"] == cyc
-                for cond in df.loc[mask_cyc, "Condition"].unique():
-                    if cond == 3:
-                        continue
-                    mask = mask_cyc & (df["Condition"] == cond)
-                    cond_start = df.loc[mask, "Time_s"].min()
-                    df.loc[mask, "Time_s"] = df.loc[mask, "Time_s"] - cond_start
-            # Condition 경계에 NaN 행 삽입 → matplotlib 선 끊기
-            nan_rows = []
-            for cyc in df["Cycle"].unique():
-                cyc_df = df.loc[df["Cycle"] == cyc]
-                conds = cyc_df["Condition"].unique()
-                if len(conds) > 1:
-                    nan_row = {col: np.nan for col in df.columns}
-                    nan_row["Cycle"] = cyc
-                    nan_rows.append(nan_row)
-            if nan_rows:
-                parts = []
-                for cyc in df["Cycle"].unique():
-                    cyc_df = df.loc[df["Cycle"] == cyc]
-                    conds = sorted(cyc_df["Condition"].unique())
-                    for i, cond in enumerate(conds):
-                        parts.append(cyc_df.loc[cyc_df["Condition"] == cond])
-                        if i < len(conds) - 1:
-                            nan_row = {col: np.nan for col in df.columns}
-                            nan_row["Cycle"] = cyc
-                            parts.append(pd.DataFrame([nan_row]))
-                df = pd.concat(parts, ignore_index=True)
-        else:
-            # 충전/방전 단독: 사이클별 시작점 0으로 리셋
-            for cyc in df["Cycle"].unique():
-                mask = df["Cycle"] == cyc
-                cyc_start = df.loc[mask, "Time_s"].min()
-                df.loc[mask, "Time_s"] = df.loc[mask, "Time_s"] - cyc_start
-    elif continuity == "continuous":
-        # 사이클 간 시간 연속 (이미 TotTime 기반이면 그대로)
-        # 시작점만 0으로 보정
-        if not df.empty:
-            df["Time_s"] = df["Time_s"] - df["Time_s"].iloc[0]
+    # 스윕 데이터(Block 컬럼 존재)는 전용 핸들러
+    if "Block" in df.columns:
+        df = _axis_sweep_blocks(df, data_scope)
+    else:
+        handler = _OVERLAP_HANDLERS.get(overlap, _axis_split)
+        df = handler(df, data_scope)
 
     df["TimeMin"] = df["Time_s"] / 60.0
-
-    # SOC 계산
-    if data_scope == "charge":
-        df["SOC"] = df["ChgCap"]  # 이미 정규화됨 (0~1)
-    elif data_scope == "discharge":
-        df["SOC"] = df["DchgCap"]  # DOD 방향 (0~1)
-    elif data_scope == "cycle":
-        if axis_mode == "soc" and loop:
-            # 히스테리시스 루프: 충전 SOC 0→peak, 방전 SOC peak→0
-            # Condition별 ChgCap/DchgCap를 직접 사용 → 정확한 0~1 범위
-            if "Condition" in df.columns:
-                soc = pd.Series(np.nan, index=df.index)
-                for cyc in df["Cycle"].unique():
-                    cyc_mask = df["Cycle"] == cyc
-                    if not cyc_mask.any():
-                        continue
-                    chg_mask = cyc_mask & (df["Condition"] == 1)
-                    dchg_mask = cyc_mask & (df["Condition"] == 2)
-                    # 충전: SOC = ChgCap (0 → peak)
-                    if chg_mask.any():
-                        soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
-                    # 방전: SOC = peak - DchgCap (peak → ~0)
-                    peak = (df.loc[chg_mask, "ChgCap"].max()
-                            if chg_mask.any() else 1.0)
-                    if dchg_mask.any():
-                        soc[dchg_mask] = peak - df.loc[dchg_mask, "DchgCap"]
-                # 휴지 구간: forward fill
-                df["SOC"] = soc.ffill()
-            else:
-                df["SOC"] = df["ChgCap"] - df["DchgCap"]
-        elif axis_mode == "soc":
-            # SOC 축 모드(펼침): 충전 ChgCap(0→1), 방전 DchgCap(0→1) 독립 부여
-            # → 기존 chg/dchg 플롯을 하나의 그래프에 겹친 것과 동일한 결과
-            if "Condition" in df.columns:
-                soc = pd.Series(np.nan, index=df.index)
-                chg_mask = df["Condition"] == 1
-                dchg_mask = df["Condition"] == 2
-                rest_mask = df["Condition"] == 3
-                soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
-                soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
-                # 휴지 구간: 직전 비휴지 값 유지 (forward fill)
-                if rest_mask.any():
-                    soc[rest_mask] = np.nan
-                    soc = soc.ffill()
-                df["SOC"] = soc
-            else:
-                df["SOC"] = df["ChgCap"] - df["DchgCap"]
-        else:
-            # 시간 축 모드: 절대 SOC 표시 (충전+, 방전-)
-            df["SOC"] = df["ChgCap"] - df["DchgCap"]
+    df["SOC"] = _calc_soc(df, data_scope, axis_mode, overlap)
 
     return df
 
@@ -2043,20 +2094,19 @@ def unified_profile_core(
     *,
     data_scope: str = "charge",
     axis_mode: str = "soc",
-    continuity: str = "overlay",
+    overlap: str = "split",
     include_rest: bool = False,
     include_cv: bool = True,
     calc_dqdv: bool = False,
     smooth_degree: int = 0,
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
-    loop: bool = False,
     is_pne: bool | None = None,
 ) -> UnifiedProfileResult:
     """통합 프로필 파싱 엔진.
 
     5개 기존 함수(step/rate/chg/dchg/continue)를 대체하는 공통 코어.
-    4개 옵션 조합으로 14가지 유효 모드를 지원한다.
+    3개 직교 옵션(data_scope × axis_mode × overlap)으로 유효 모드를 지원한다.
 
     Parameters
     ----------
@@ -2072,8 +2122,9 @@ def unified_profile_core(
         "charge" | "discharge" | "cycle"
     axis_mode : str
         "time" | "soc"
-    continuity : str
-        "overlay"(시작점 동일) | "continuous"(이어서)
+    overlap : str
+        "continuous"(이어서) | "split"(분리 겹침) |
+        "sequential"(순차 겹침) | "connected"(히스테리시스)
     include_rest : bool
         True이면 휴지 구간 포함.
     calc_dqdv : bool
@@ -2093,25 +2144,20 @@ def unified_profile_core(
     UnifiedProfileResult
         통합 프로필 결과. metadata에 cycle_map 포함.
 
-    Raises
-    ------
-    ValueError
-        잘못된 옵션 조합 (예: continuity="continuous" + axis_mode="soc").
-
     Notes
     -----
-    옵션 의존성:
-      - axis_mode="soc" → continuity는 자동으로 "overlay" 강제.
-      - continuity="continuous" → axis_mode는 자동으로 "time" 강제.
+    옵션 강제 규칙:
+      - axis_mode="soc" + overlap in ("continuous", "sequential") → "split" 강제
+      - data_scope != "cycle" + overlap in ("sequential", "connected") → "split" 강제
     논리사이클:
       - cycle_range는 논리사이클 번호. cycle_map을 통해 물리파일에 접근.
       - cycle_map이 None이면 자동으로 toyo_build_cycle_map / pne_build_cycle_map 호출.
     """
-    # === 옵션 의존성 강제 ===
-    if axis_mode == "soc" and continuity == "continuous":
-        continuity = "overlay"  # SOC 축에서 "이어서"는 무효
-    if continuity == "continuous" and axis_mode == "soc":
-        axis_mode = "time"      # "이어서"일 때 Time 강제
+    # === 옵션 강제 규칙 ===
+    if axis_mode == "soc" and overlap in ("continuous", "sequential"):
+        overlap = "split"
+    if data_scope != "cycle" and overlap in ("sequential", "connected"):
+        overlap = "split"
 
     cycle_start, cycle_end = cycle_range
 
@@ -2176,8 +2222,8 @@ def unified_profile_core(
     merged = _unified_merge_steps(
         normalized, data_scope, multi_tc=_is_multi_tc)
 
-    # Stage 5.5: Block 컬럼 할당 (스윕 + cycle + overlay 한정)
-    if _is_sweep and data_scope == "cycle" and continuity == "overlay":
+    # Stage 5.5: Block 컬럼 할당 (스윕 + cycle + 비연속 모드 한정)
+    if _is_sweep and data_scope == "cycle" and overlap != "continuous":
         if "RawCycle" in merged.columns:
             block = np.zeros(len(merged), dtype=int)
             for ln in range(cycle_start, cycle_end + 1):
@@ -2195,8 +2241,7 @@ def unified_profile_core(
             merged['Block'] = block
 
     # Stage 6: X축 및 SOC 계산
-    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity,
-                                        loop=loop)
+    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
 
     # === Cutoff 필터 ===
     if cutoff > 0:
@@ -2228,7 +2273,7 @@ def unified_profile_core(
     with_axis["Vol"] = with_axis["Voltage"]
     # Cycle, Condition 유지 (플롯에서 사이클별 색상 구분용)
     output_cols = base_cols + ["Vol", "Cycle", "Condition"]
-    if continuity == "continuous":
+    if overlap == "continuous":
         with_axis["TimeSec"] = with_axis["Time_s"]
         with_axis["Curr"] = with_axis["Current_mA"] / 1000  # mA → A
         output_cols = ["TimeSec"] + output_cols + ["Curr"]
@@ -2249,7 +2294,7 @@ def unified_profile_core(
             "options": {
                 "data_scope": data_scope,
                 "axis_mode": axis_mode,
-                "continuity": continuity,
+                "overlap": overlap,
                 "include_rest": include_rest,
                 "calc_dqdv": calc_dqdv,
             },
@@ -2274,34 +2319,30 @@ def _unified_process_single_cycle_from_raw(
     *,
     data_scope: str = "charge",
     axis_mode: str = "soc",
-    continuity: str = "overlay",
+    overlap: str = "split",
     include_rest: bool = False,
     include_cv: bool = True,
     calc_dqdv: bool = False,
     smooth_degree: int = 0,
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
-    loop: bool = False,
 ) -> UnifiedProfileResult:
     """이미 로드된 원시 데이터에서 단일 사이클 프로필을 파싱.
 
     _unified_pne_load_raw()로 한번에 로드한 PNE 원시 데이터에서
     특정 사이클만 슬라이싱하여 Stage 2~6을 실행한다.
-    Toyo도 동일한 로직을 사용할 수 있으나 사이클별 파일이므로
-    unified_profile_core()를 직접 호출하는 것이 더 효율적이다.
 
     Parameters
     ----------
     raw_cycle : pd.DataFrame
-        _unified_pne_load_raw() 또는 _unified_toyo_load_raw() 출력에서
-        특정 사이클만 슬라이싱한 DataFrame.
+        슬라이싱된 단일 사이클 DataFrame.
     mincapacity : float
         공칭 용량 (mAh).
     raw_file_path : str
         사이클러 경로 (PNE 정규화에서 is_micro 판별용).
     is_pne : bool
         True=PNE, False=Toyo.
-    data_scope, axis_mode, continuity, include_rest, calc_dqdv,
+    data_scope, axis_mode, overlap, include_rest, calc_dqdv,
     smooth_degree, cutoff : 동일 옵션.
 
     Returns
@@ -2309,11 +2350,11 @@ def _unified_process_single_cycle_from_raw(
     UnifiedProfileResult
         단일 사이클 프로필 결과.
     """
-    # 옵션 의존성 강제
-    if axis_mode == "soc" and continuity == "continuous":
-        continuity = "overlay"
-    if continuity == "continuous" and axis_mode == "soc":
-        axis_mode = "time"
+    # 옵션 강제 규칙
+    if axis_mode == "soc" and overlap in ("continuous", "sequential"):
+        overlap = "split"
+    if data_scope != "cycle" and overlap in ("sequential", "connected"):
+        overlap = "split"
 
     cycle_val = raw_cycle["Cycle"].iloc[0] if not raw_cycle.empty else 0
 
@@ -2357,8 +2398,7 @@ def _unified_process_single_cycle_from_raw(
         normalized, data_scope, multi_tc=_is_multi_tc)
 
     # Stage 5: X축 및 SOC 계산
-    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, continuity,
-                                        loop=loop)
+    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
 
     # Cutoff 필터
     if cutoff > 0:
@@ -2384,7 +2424,7 @@ def _unified_process_single_cycle_from_raw(
 
     with_axis["Vol"] = with_axis["Voltage"]
     output_cols = base_cols + ["Vol", "Cycle", "Condition"]
-    if continuity == "continuous":
+    if overlap == "continuous":
         with_axis["TimeSec"] = with_axis["Time_s"]
         with_axis["Curr"] = with_axis["Current_mA"] / 1000
         output_cols = ["TimeSec"] + output_cols + ["Curr"]
@@ -2408,14 +2448,13 @@ def unified_profile_batch(
     *,
     data_scope: str = "charge",
     axis_mode: str = "soc",
-    continuity: str = "overlay",
+    overlap: str = "split",
     include_rest: bool = False,
     include_cv: bool = True,
     calc_dqdv: bool = False,
     smooth_degree: int = 0,
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
-    loop: bool = False,
     is_pne: bool | None = None,
 ) -> dict:
     """통합 프로필 배치 로딩.
@@ -2437,8 +2476,8 @@ def unified_profile_batch(
         "charge" | "discharge" | "cycle"
     axis_mode : str
         "time" | "soc"
-    continuity : str
-        "overlay" | "continuous"
+    overlap : str
+        "continuous" | "split" | "sequential" | "connected"
     include_rest : bool
         True이면 휴지 포함.
     calc_dqdv : bool
@@ -2454,14 +2493,7 @@ def unified_profile_batch(
     -------
     dict
         {cycle_no: [mincapacity, UnifiedProfileResult]} 형식.
-        기존 배치 함수의 {cycle_no: [mincapacity, df]} 반환과 호환.
-        continuity="continuous"일 때는 {(start, end): [mincapacity, UnifiedProfileResult]}.
-
-    Notes
-    -----
-    PNE 최적화: SaveData를 cycle_list 전체 범위로 1회만 디스크 I/O.
-    Toyo: 사이클별 개별 파일이므로 unified_profile_core() 루프 호출.
-    cycle_list의 번호는 논리사이클 번호이며 cycle_map을 통해 물리파일에 접근.
+        overlap="continuous"일 때는 {(start, end): [mincapacity, UnifiedProfileResult]}.
     """
     if is_pne is None:
         is_pne = is_pne_folder(raw_file_path)
@@ -2478,8 +2510,8 @@ def unified_profile_batch(
 
     results = {}
 
-    # === Continue 모드 (사이클 범위 단위) ===
-    if continuity == "continuous":
+    # === Continuous 모드 (사이클 범위 단위) ===
+    if overlap == "continuous":
         if len(cycle_list) >= 2:
             cycle_range = (min(cycle_list), max(cycle_list))
         elif len(cycle_list) == 1:
@@ -2490,14 +2522,14 @@ def unified_profile_batch(
         result = unified_profile_core(
             raw_file_path, cycle_range, mincapacity, inirate,
             data_scope=data_scope, axis_mode=axis_mode,
-            continuity=continuity, include_rest=include_rest,
+            overlap=overlap, include_rest=include_rest,
             calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
-            cutoff=cutoff, cycle_map=cycle_map, loop=loop,
+            cutoff=cutoff, cycle_map=cycle_map,
         )
         results[cycle_range] = [mincapacity, result]
         return results
 
-    # === Overlay 모드 (사이클별 개별 처리) ===
+    # === 비연속 모드 (사이클별 개별 처리) ===
     if is_pne:
         # PNE: 대규모 배치 메모리 피크 방지를 위해 사이클 청크 단위 로딩
         _sorted_cycles = sorted(set(cycle_list))
@@ -2529,9 +2561,9 @@ def unified_profile_batch(
                 result = _unified_process_single_cycle_from_raw(
                     raw_cycle, mincapacity, raw_file_path, is_pne=True,
                     data_scope=data_scope, axis_mode=axis_mode,
-                    continuity=continuity, include_rest=include_rest, include_cv=include_cv,
+                    overlap=overlap, include_rest=include_rest, include_cv=include_cv,
                     calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
-                    cutoff=cutoff, cycle_map=cycle_map, loop=loop,
+                    cutoff=cutoff, cycle_map=cycle_map,
                 )
                 results[cyc] = [mincapacity, result]
 
@@ -2543,9 +2575,9 @@ def unified_profile_batch(
             result = unified_profile_core(
                 raw_file_path, (cyc, cyc), mincapacity, inirate,
                 data_scope=data_scope, axis_mode=axis_mode,
-                continuity=continuity, include_rest=include_rest, include_cv=include_cv,
+                overlap=overlap, include_rest=include_rest, include_cv=include_cv,
                 calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
-                cutoff=cutoff, cycle_map=cycle_map, loop=loop,
+                cutoff=cutoff, cycle_map=cycle_map,
             )
             results[cyc] = [mincapacity, result]
 
@@ -2607,7 +2639,7 @@ def unified_profile_batch_continue(
         result = unified_profile_core(
             raw_file_path, (start, end), mincapacity, inirate,
             data_scope=data_scope, axis_mode="time",
-            continuity="continuous", include_rest=include_rest,
+            overlap="continuous", include_rest=include_rest,
             calc_dqdv=False, smooth_degree=0, cutoff=0.0,
             cycle_map=cycle_map,
         )
@@ -10739,20 +10771,22 @@ class Ui_sitool(object):
 
         self._profile_opt_row1.addSpacing(8)
 
-        self.profile_cont_group = QtWidgets.QButtonGroup(self.tab_6)
-        _cont_seg, _cont_btns = self._make_seg_group(
-            ["오버레이", "이어서"], self._data_scope_groupbox,
-            self.profile_cont_group, _pf_font, checked_idx=1)
-        self.profile_cont_overlay = _cont_btns[0]
-        self.profile_cont_continuous = _cont_btns[1]
-        self._profile_opt_row1.addWidget(_cont_seg)
+        self.profile_overlap_group = QtWidgets.QButtonGroup(self.tab_6)
+        _ovlp_seg, _ovlp_btns = self._make_seg_group(
+            ["이어서", "분리", "순차", "연결"], self._data_scope_groupbox,
+            self.profile_overlap_group, _pf_font, checked_idx=1)
+        self.profile_ovlp_continuous = _ovlp_btns[0]   # id=0
+        self.profile_ovlp_split = _ovlp_btns[1]        # id=1
+        self.profile_ovlp_sequential = _ovlp_btns[2]   # id=2
+        self.profile_ovlp_connected = _ovlp_btns[3]    # id=3
+        self._profile_opt_row1.addWidget(_ovlp_seg)
 
-        self._profile_opt_row1.addSpacing(8)
-
+        # 하위 호환: 기존 위젯 참조 유지 (숨김, 신호 연결 방지용)
+        self.profile_cont_group = self.profile_overlap_group
+        self.profile_cont_overlay = self.profile_ovlp_split
+        self.profile_cont_continuous = self.profile_ovlp_continuous
         self.profile_loop_chk = QtWidgets.QCheckBox(parent=self._data_scope_groupbox)
-        self.profile_loop_chk.setFont(_pf_font)
-        self.profile_loop_chk.setObjectName("profile_loop_chk")
-        self._profile_opt_row1.addWidget(self.profile_loop_chk)
+        self.profile_loop_chk.setVisible(False)  # 제거 대신 숨김 (하위 호환)
 
         self._profile_opt_row1.addStretch()
         _ds_layout.addLayout(self._profile_opt_row1)
@@ -16084,11 +16118,15 @@ class Ui_sitool(object):
         self.profile_axis_label.setText(_translate("sitool", "X축:"))
         self.profile_rest_chk.setText(_translate("sitool", "Rest"))
         self.profile_cv_chk.setText(_translate("sitool", "CV"))
-        self.profile_loop_chk.setText(_translate("sitool", "루프"))
-        self.profile_loop_chk.setToolTip(
-            "충방전 히스테리시스 루프 표시\n"
-            "충전: SOC 0→1, 방전: SOC 1→0\n"
-            "(사이클 + 오버레이 + SOC 조건에서 활성화)")
+        # overlap 4단 버튼 툴팁
+        self.profile_ovlp_continuous.setToolTip(
+            "이어서: 사이클 간 시간 연속 타임라인")
+        self.profile_ovlp_split.setToolTip(
+            "분리: 충전/방전 각각 t=0에서 시작, 겹쳐서 표시")
+        self.profile_ovlp_sequential.setToolTip(
+            "순차: 사이클별 t=0, 충전→방전 순차 연결")
+        self.profile_ovlp_connected.setToolTip(
+            "연결: 충전 끝점 = 방전 시작점 (히스테리시스)")
         self.ProfileConfirm.setText(_translate("sitool", "프로필 분석"))
         self.DCIRConfirm.setText(_translate("sitool", "DCIR"))
         self.profile_tab_reset.setText(_translate("sitool", "초기화"))
@@ -16527,12 +16565,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 옵션 의존성 시그널 (라디오 버튼 그룹 + 토글)
         self.profile_scope_group.idToggled.connect(self._profile_opt_scope_changed)
         self.profile_axis_group.idToggled.connect(self._profile_opt_axis_changed)
-        self.profile_cont_group.idToggled.connect(self._profile_opt_cont_changed)
-        # 히스테리시스 루프 체크 시 SOC 축 강제 선택
-        self.profile_loop_chk.toggled.connect(
-            lambda chk: self.profile_axis_soc.setChecked(True) if chk else None)
-        # 초기 상태 반영: 충전(id=0)이므로 이어서 비활성화
-        self._profile_opt_scope_changed(0, True)
+        self.profile_overlap_group.idToggled.connect(self._profile_opt_cont_changed)
+        # 초기 상태 반영: 사이클(id=0)이므로 overlap 가용성 갱신
+        self._update_overlap_availability()
         # ── 사이클 타임라인 바 ↔ 텍스트 양방향 동기화 ──
         self._timeline_syncing = False
         self.cycle_timeline.selectionChanged.connect(
@@ -18833,7 +18868,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     result = unified_profile_core(
                         folder_path, (cyc, cyc), mincapacity, firstCrate,
                         data_scope="cycle", axis_mode="time",
-                        continuity="continuous", include_rest=True,
+                        overlap="continuous", include_rest=True,
                         cycle_map=cm, is_pne=is_pne,
                     )
                     if result and hasattr(result, 'df') and not result.df.empty:
@@ -18994,7 +19029,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         (folder_path, cycle_list, mincapacity, inirate,
          options, folder_idx, subfolder_idx, cycle_map) = task_info
         try:
-            if options.get("continuity") == "continuous":
+            if options.get("overlap") == "continuous":
                 # Continue 모드: step_ranges 형식으로 변환
                 step_ranges = options.get("step_ranges", [])
                 if not step_ranges and cycle_list:
@@ -19010,14 +19045,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     folder_path, cycle_list, mincapacity, inirate,
                     data_scope=options.get("data_scope", "charge"),
                     axis_mode=options.get("axis_mode", "soc"),
-                    continuity=options.get("continuity", "overlay"),
+                    overlap=options.get("overlap", "split"),
                     include_rest=options.get("include_rest", False),
                     include_cv=options.get("include_cv", True),
                     calc_dqdv=options.get("calc_dqdv", False),
                     smooth_degree=options.get("smooth_degree", 0),
                     cutoff=options.get("cutoff", 0.0),
                     cycle_map=cycle_map,
-                    loop=options.get("loop", False),
                 )
             return (folder_idx, subfolder_idx, batch_results)
         except Exception as e:
@@ -19052,7 +19086,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         inirate : float
             초기 C-rate.
         options : dict
-            통합 옵션: data_scope, axis_mode, continuity, include_rest,
+            통합 옵션: data_scope, axis_mode, overlap, include_rest,
             calc_dqdv, smooth_degree, cutoff, step_ranges(continue용).
         max_workers : int | None
             스레드 수 (None=자동).
@@ -19169,9 +19203,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _lbl = '_nolegend_'  # 첫 라인 이후 범례 숨김
             # 축 설정 (graph_step과 동일)
             for _ax, _yl, _yh, _yg, _xl, _ylabel in [
-                (step_ax1, self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap, "Time(min)", "Voltage(V)"),
-                (step_ax3, self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap, "Time(min)", "Voltage(V)"),
-                (step_ax2, self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap, "Time(min)", "Voltage(V)"),
+                (step_ax1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)"),
+                (step_ax3, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)"),
+                (step_ax2, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)"),
                 (step_ax5, 0, 3.4, 0.2, "Time(min)", "C-rate"),
                 (step_ax4, 0, 1.2, 0.1, "Time(min)", "SOC"),
                 (step_ax6, -15, 60, 5, "Time(min)", "Temperature (℃)"),
@@ -22977,39 +23011,45 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     # 통합 프로필 분석 핸들러 (Phase 4)
     # ════════════════════════════════════════════════════════════════
 
-    def _update_loop_chk_state(self) -> None:
-        """히스테리시스 루프 체크박스 활성화 상태 갱신.
+    def _update_overlap_availability(self) -> None:
+        """overlap 버튼 활성/비활성 상태 갱신.
 
-        사이클 + 오버레이 조건에서만 활성화.
+        무효 조합 시 해당 버튼 비활성화 + 유효한 기본값으로 강제 전환.
         """
         is_cycle = (self.profile_scope_group.checkedId() == 0)
-        is_overlay = (self.profile_cont_group.checkedId() == 0)
-        self.profile_loop_chk.setEnabled(is_cycle and is_overlay)
-        if not (is_cycle and is_overlay):
-            self.profile_loop_chk.setChecked(False)
+        is_soc = (self.profile_axis_group.checkedId() == 0)
+
+        # 충전/방전: sequential, connected 비활성
+        self.profile_ovlp_sequential.setEnabled(is_cycle)
+        self.profile_ovlp_connected.setEnabled(is_cycle)
+
+        # SOC축: continuous, sequential 비활성
+        self.profile_ovlp_continuous.setEnabled(not is_soc)
+        if is_soc:
+            self.profile_ovlp_sequential.setEnabled(False)
+
+        # 현재 선택이 비활성 버튼이면 split으로 강제
+        cur_id = self.profile_overlap_group.checkedId()
+        cur_btn = self.profile_overlap_group.button(cur_id)
+        if cur_btn and not cur_btn.isEnabled():
+            self.profile_ovlp_split.setChecked(True)
 
     def _profile_opt_scope_changed(self, btn_id: int, checked: bool = True) -> None:
-        """데이터 범위 변경 시 의존성 처리.
+        """데이터 범위 변경 시 overlap 의존성 처리.
 
         Parameters
         ----------
         btn_id : int
             QButtonGroup id — 0: 사이클, 1: 충전, 2: 방전
         checked : bool
-            라디오 버튼 체크 상태 (idToggled 시그널은 id, checked 두 인자)
+            라디오 버튼 체크 상태
         """
         if not checked:
-            return  # 해제 이벤트는 무시
-        is_cycle = (btn_id == 0)
-        self.profile_cont_overlay.setEnabled(is_cycle)
-        self.profile_cont_continuous.setEnabled(is_cycle)
-        if not is_cycle:
-            # 충전/방전에서는 오버레이 강제
-            self.profile_cont_overlay.setChecked(True)
-        self._update_loop_chk_state()
+            return
+        self._update_overlap_availability()
 
     def _profile_opt_axis_changed(self, btn_id: int, checked: bool = True) -> None:
-        """X축 라디오 변경 시 처리.
+        """X축 라디오 변경 시 overlap 의존성 처리.
 
         Parameters
         ----------
@@ -23020,24 +23060,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         if not checked:
             return
-        if btn_id == 0:  # SOC 선택 → 오버레이 강제
-            self.profile_cont_overlay.setChecked(True)
+        self._update_overlap_availability()
 
     def _profile_opt_cont_changed(self, btn_id: int, checked: bool = True) -> None:
-        """연속성 변경 시 의존성 처리: 이어서 선택 → SOC→시간 강제.
+        """overlap 변경 시 의존성 처리.
 
         Parameters
         ----------
         btn_id : int
-            QButtonGroup id — 0: 오버레이, 1: 이어서
+            QButtonGroup id — 0: 이어서, 1: 분리, 2: 순차, 3: 연결
         checked : bool
             라디오 버튼 체크 상태
         """
         if not checked:
             return
-        if btn_id == 1:  # 이어서
-            self.profile_axis_time.setChecked(True)  # 시간 강제
-        self._update_loop_chk_state()
+        if btn_id == 0:  # 이어서 → 시간 축 강제
+            self.profile_axis_time.setChecked(True)
 
     def _on_timeline_selection_changed(self, row_idx: int, text: str) -> None:
         """타임라인 바 → 경로 테이블 해당 행 + stepnum 동기화.
@@ -23816,35 +23854,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         Returns
         -------
         dict
-            data_scope, axis_mode, continuity, include_rest, calc_dqdv 키.
+            data_scope, axis_mode, overlap, include_rest, calc_dqdv 키.
         """
         scope_map = {0: "cycle", 1: "charge", 2: "discharge"}
-        cont_map = {0: "overlay", 1: "continuous"}
+        overlap_map = {0: "continuous", 1: "split", 2: "sequential", 3: "connected"}
 
         data_scope = scope_map.get(self.profile_scope_group.checkedId(), "cycle")
         axis_mode = "time" if self.profile_axis_group.checkedId() == 1 else "soc"
-        continuity = cont_map.get(self.profile_cont_group.checkedId(), "overlay")
+        overlap = overlap_map.get(self.profile_overlap_group.checkedId(), "split")
         include_rest = self.profile_rest_chk.isChecked()
 
-        # SOC 축이면 dQ/dV 자동 활성화 (기존 chg/dchg 동작)
+        # 강제 규칙 (UI에서 비활성이어도 방어적으로 재적용)
+        if axis_mode == "soc" and overlap in ("continuous", "sequential"):
+            overlap = "split"
+        if data_scope != "cycle" and overlap in ("sequential", "connected"):
+            overlap = "split"
+
         calc_dqdv = (axis_mode == "soc")
-
-        # 히스테리시스 루프: 사이클+오버레이+SOC 조건에서만 유효
-        loop = (self.profile_loop_chk.isChecked()
-                and data_scope == "cycle"
-                and continuity == "overlay"
-                and axis_mode == "soc")
-
         include_cv = self.profile_cv_chk.isChecked()
 
         return {
             "data_scope": data_scope,
             "axis_mode": axis_mode,
-            "continuity": continuity,
+            "overlap": overlap,
             "include_rest": include_rest,
             "include_cv": include_cv,
             "calc_dqdv": calc_dqdv,
-            "loop": loop,
         }
 
     def _map_options_to_legacy_mode(self, options: dict) -> str:
@@ -23855,7 +23890,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         str
             "step" | "chg" | "dchg" | "cycle_soc" | "continue"
         """
-        if options["continuity"] == "continuous":
+        if options["overlap"] == "continuous":
             return "continue"
         if options["axis_mode"] == "soc" and options["data_scope"] == "charge":
             return "chg"
@@ -23863,7 +23898,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return "dchg"
         if options["axis_mode"] == "soc" and options["data_scope"] == "cycle":
             return "cycle_soc"
-        # time + overlay → step 스타일
+        # time + 비연속 → step 스타일
         return "step"
 
     @log_perf
@@ -23877,7 +23912,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         legacy_mode = self._map_options_to_legacy_mode(options)
 
         # ECT 경로 체크 시 기존 Continue(ECT) 핸들러로 위임
-        if options["continuity"] == "continuous" and self.chk_ectpath.isChecked():
+        if options["overlap"] == "continuous" and self.chk_ectpath.isChecked():
             self.ect_confirm_button()
             return
 
@@ -24005,7 +24040,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _compat_data[key] = val
 
         # ── 3-b. 히스테리시스 모드: SOC 절대좌표 보정 ──
-        if options.get('loop') and options.get('axis_mode') == 'soc':
+        if options.get('overlap') == 'connected' and options.get('axis_mode') == 'soc':
             self._apply_hysteresis_soc_offsets(
                 _compat_data, all_data_folder, mincapacity, data_attr)
 
@@ -24021,7 +24056,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 r = unified_profile_core(
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope=options["data_scope"], axis_mode="time",
-                    continuity="overlay", include_rest=options["include_rest"],
+                    overlap="split", include_rest=options["include_rest"],
                 )
                 return [r.mincapacity, r]
 
@@ -24141,7 +24176,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         elif legacy_mode == "cycle_soc":
             # 사이클+SOC+오버레이: 충전(0→1)+방전(1→0) 루프를 SOC 축에 표시
-            _is_hysteresis = options.get('loop', False)
+            _is_hysteresis = (options.get('overlap') == 'connected')
 
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
@@ -24291,7 +24326,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope="cycle", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree, include_rest=options["include_rest"],
-                    loop=options.get("loop", False),
+                    overlap=options.get("overlap", "split"),
                 )
                 return [r.mincapacity, r]
 
@@ -24348,7 +24383,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 r = unified_profile_core(
                     FolderBase, _cr, mincapacity, firstCrate,
                     data_scope=options["data_scope"], axis_mode="time",
-                    continuity="continuous",
+                    overlap="continuous",
                     include_rest=options["include_rest"],
                     cycle_map=_cm,
                 )
@@ -24380,7 +24415,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             n_channels=_n_channels,
             n_folders=_n_folders,
             view_mode=_view_mode,
-            is_hysteresis=options.get('loop', False),
+            is_hysteresis=(options.get('overlap') == 'connected'),
             is_link=_link_mode,
             data_scope=options.get('data_scope', 'cycle'),
         )
