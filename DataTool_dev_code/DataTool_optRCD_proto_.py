@@ -555,114 +555,6 @@ def _compress_int_ranges(nums: list[int]) -> str:
     return ', '.join(ranges)
 
 
-def _logical_to_totl_str(cycle_map: dict, cycle_str: str) -> str:
-    """논리사이클 문자열을 TotlCycle 문자열로 변환.
-
-    cycle_map 값이 int이면 단일 TC, tuple이면 (start, end) 범위.
-    예: cycle_str="1-3", cycle_map={1:10, 2:11, 3:(12,18)}
-        → "10-18"
-    """
-    parts = [s.strip() for s in re.split(r'[,\s]+', cycle_str) if s.strip()]
-    all_tcs: list[int] = []
-    for part in parts:
-        if '-' in part:
-            try:
-                a, b = map(int, part.split('-', 1))
-                for ln in range(a, b + 1):
-                    val = cycle_map.get(ln)
-                    if val is None:
-                        continue
-                    s, e = val['all']
-                    all_tcs.extend(range(s, e + 1))
-            except (ValueError, TypeError):
-                pass
-        else:
-            try:
-                ln = int(part)
-                val = cycle_map.get(ln)
-                if val is None:
-                    continue
-                s, e = val['all']
-                all_tcs.extend(range(s, e + 1))
-            except (ValueError, TypeError):
-                pass
-    return _compress_int_ranges(all_tcs)
-
-
-def _totl_to_logical_str(cycle_map: dict, raw_str: str) -> str:
-    """TotlCycle(Raw) 문자열을 논리사이클 문자열로 역변환.
-
-    cycle_map: {logical_cycle: {'all': (start, end), ...}} 형태.
-    raw_str: "10-18, 25" 같은 TotlCycle 문자열.
-    Returns: 대응하는 논리사이클 압축 문자열 (예: "1-3, 5").
-
-    매핑 전략 (bisect 기반 구간 탐색):
-      1. cycle_map 범위에 직접 포함되는 TC → 해당 논리사이클
-      2. 갭 TC (어떤 범위에도 속하지 않음):
-         - 범위 밖(최소 미만): 첫 논리사이클로 클램핑
-         - 범위 밖(최대 초과): 마지막 논리사이클로 클램핑
-         - 범위 사이 갭: 직후 논리사이클에 할당 (앞으로 흡수)
-      3. 범위 문자열 입력 시 시작/끝 TC만 매핑 후 논리사이클 범위로 확장
-         (중간 TC 개별 조회 제거 → O(구간수) 성능)
-    """
-    if not cycle_map:
-        return ''
-
-    # 정렬된 구간 배열 구축 (bisect용)
-    _entries: list[tuple[int, int, int]] = []  # (start_tc, end_tc, logical_cycle)
-    for ln, val in sorted(cycle_map.items()):
-        if not isinstance(val, dict) or 'all' not in val:
-            continue
-        s, e = val['all']
-        _entries.append((s, e, ln))
-
-    if not _entries:
-        return ''
-
-    # bisect용 시작점 배열 (이진 탐색 키)
-    _starts = [s for s, _, _ in _entries]
-
-    def _tc_to_logical(tc: int) -> int:
-        """단일 TC → 논리사이클 변환 (bisect 기반 O(log n)).
-
-        구간 매핑 규칙:
-          TC ∈ [start_i, end_i] → logical_i (직접 매핑)
-          TC < 전체 최소       → 첫 논리사이클 (클램핑)
-          TC > 전체 최대       → 마지막 논리사이클 (클램핑)
-          TC ∈ 갭(end_i, start_i+1) → logical_i+1 (직후 구간에 흡수)
-        """
-        idx = bisect.bisect_right(_starts, tc) - 1
-        if idx < 0:
-            return _entries[0][2]          # 전체 최소 미만 → 첫 논리사이클
-        s, e, ln = _entries[idx]
-        if tc <= e:
-            return ln                      # 구간 내 직접 매핑
-        # tc > e: 구간 idx 이후의 갭
-        if idx + 1 < len(_entries):
-            return _entries[idx + 1][2]    # 직후 논리사이클로 흡수
-        return ln                          # 전체 최대 초과 → 마지막 논리사이클
-
-    # raw_str 파싱 → 논리사이클 수집
-    # 범위("a-b") 입력: 시작/끝 TC만 매핑 후 논리사이클 범위로 확장
-    parts = [s.strip() for s in re.split(r'[,\s]+', raw_str) if s.strip()]
-    all_logical: set[int] = set()
-    for part in parts:
-        if '-' in part:
-            try:
-                a, b = map(int, part.split('-', 1))
-                ln_a = _tc_to_logical(a)
-                ln_b = _tc_to_logical(b)
-                all_logical.update(range(min(ln_a, ln_b), max(ln_a, ln_b) + 1))
-            except (ValueError, TypeError):
-                pass
-        else:
-            try:
-                all_logical.add(_tc_to_logical(int(part)))
-            except (ValueError, TypeError):
-                pass
-    return _compress_int_ranges(list(all_logical))
-
-
 def _build_cycle_map_for_path(data_path: str, capacity: float) -> dict | None:
     """데이터 경로에서 cycle_map을 빌드 (첫 채널 기준).
 
@@ -18567,24 +18459,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             all_ch_map, all_sub_map, all_sub2_map = {}, {}, {}
 
         # ── 논리사이클→TC 변환 헬퍼 ──
-        def _resolve_cyc_to_tc(folder_base: str, cyc_no, _is_pne: bool):
-            """논리사이클 → 프로파일 함수용 TC 변환.
-
-            1:1 논리사이클: 시작 TC 반환 (int)
-            다중TC 논리사이클: (시작TC, 끝TC) 반환 (tuple)
-            cycle_map 없으면 원본 반환 (레거시 호환).
-            """
-            meta = get_channel_meta(folder_base)
-            if meta and meta.cycle_map:
-                cm = meta.cycle_map
-                if isinstance(cyc_no, tuple):
-                    s_tc = cm.get(cyc_no[0], {}).get('all', (cyc_no[0],))[0]
-                    e_tc = cm.get(cyc_no[1], {}).get('all', (cyc_no[1],))[-1]
-                    return (s_tc, e_tc)
-                elif isinstance(cyc_no, int) and cyc_no in cm:
-                    s, e = cm[cyc_no]['all']
-                    return s if s == e else (s, e)
-            return cyc_no  # 폴백: 원본 반환
+        # TC 1원화: CycleNo가 이미 TC이므로 변환 불필요
+        # (구 _resolve_cyc_to_tc 삭제)
 
         # 렌더 전 탭 수 기록 (색상/범례 적용 시 새 탭만 처리)
         self._pre_render_tab_count = self.cycle_tab.count()
@@ -18640,9 +18516,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         temp = loaded_data.get((i, j, CycNo))
                         if temp is None:
                             try:
-                                _tc = _resolve_cyc_to_tc(FolderBase, CycNo, is_pne)
-                                if not isinstance(_tc, tuple):
-                                    temp = fallback_fn(FolderBase, _tc, is_pne)
+                                # TC 1원화: CycNo가 이미 TC이므로 직접 사용
+                                temp = fallback_fn(FolderBase, CycNo, is_pne)
                             except Exception as e:
                                 _render_errors.append(f'{os.path.basename(FolderBase)} cy{CycNo}')
                                 logger.warning('프로파일 폴백 로딩 오류: %s cy%s — %s',
@@ -18728,9 +18603,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         temp = loaded_data.get((i, j, CycNo))
                         if temp is None:
                             try:
-                                _tc = _resolve_cyc_to_tc(FolderBase, CycNo, is_pne)
-                                if not isinstance(_tc, tuple):
-                                    temp = fallback_fn(FolderBase, _tc, is_pne)
+                                # TC 1원화: CycNo가 이미 TC이므로 직접 사용
+                                temp = fallback_fn(FolderBase, CycNo, is_pne)
                             except Exception as e:
                                 _render_errors.append(f'{os.path.basename(FolderBase)} cy{CycNo}')
                                 logger.warning('AllProfile 폴백 로딩 오류: %s cy%s — %s',
@@ -18811,9 +18685,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         temp = loaded_data.get((i, j, CycNo))
                         if temp is None:
                             try:
-                                _tc = _resolve_cyc_to_tc(FolderBase, CycNo, is_pne)
-                                if not isinstance(_tc, tuple):
-                                    temp = fallback_fn(FolderBase, _tc, is_pne)
+                                # TC 1원화: CycNo가 이미 TC이므로 직접 사용
+                                temp = fallback_fn(FolderBase, CycNo, is_pne)
                             except Exception as e:
                                 _render_errors.append(f'{os.path.basename(FolderBase)} cy{CycNo}')
                                 logger.warning('CellProfile 폴백 로딩 오류: %s cy%s — %s',
@@ -23580,24 +23453,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if self._detail_panel.isVisible():
             self._show_detail_panel()
 
-    def _convert_tc_to_logical(self, tc_text: str) -> str:
-        """TC 텍스트 → 논리사이클 텍스트 변환 (첫 경로의 cycle_map 사용)."""
-        tbl = self.cycle_path_table
-        for r in range(tbl.rowCount()):
-            path = self._get_table_cell(r, 1)
-            if not path:
-                continue
-            cap_str = self._get_table_cell(r, 3)
-            try:
-                cap = float(cap_str) if cap_str else 0.0
-            except ValueError:
-                cap = 0.0
-            cm = _build_cycle_map_for_path(path, cap)
-            if cm:
-                return _totl_to_logical_str(cm, tc_text)
-            break
-        return ''
-
     def _table_row_to_bar_row(self, table_row: int) -> int:
         """테이블 행 번호 → 바 행 인덱스 (데이터 행 순번)."""
         tbl = self.cycle_path_table
@@ -24141,7 +23996,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if not _has_multi:
                 _link_mode = False
 
-        # ── 1-b. 논리사이클 최대값 초과 검증 ──
+        # ── 1-b. TC 최대값 초과 검증 ──
         if _link_mode:
             # 연결 모드: 첫 번째 그룹의 전체 경로 max_logical_cycle 합산
             max_lc = 0
@@ -24163,9 +24018,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             CycleNo = [c for c in CycleNo if c <= max_lc]
             if invalid_cycles:
                 err_msg(
-                    "사이클 범위 초과",
-                    f"입력한 사이클 {invalid_cycles}이(가) "
-                    f"최대 논리사이클({max_lc})을 초과합니다.\n"
+                    "TC 범위 초과",
+                    f"입력한 TC {invalid_cycles}이(가) "
+                    f"최대 TC({max_lc})를 초과합니다.\n"
                     f"유효 범위: 1 ~ {max_lc}",
                 )
             if not CycleNo:
