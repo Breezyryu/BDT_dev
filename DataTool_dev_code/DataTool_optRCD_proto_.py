@@ -21911,13 +21911,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rows.pop()
         if not rows:
             return
+        # 모드 컬럼 보정: 필드 6개 + 마지막이 모드 키워드 → col5(Raw)에 빈값 삽입
+        _KNOWN_MODES = {'CHG', 'DCH', 'DCHG', 'CYC', 'Cycle', '7cyc', 'GITT'}
+        col_count = tbl.columnCount()
+        for i, parts in enumerate(rows):
+            if (len(parts) == col_count - 1
+                    and parts
+                    and parts[-1].strip() in _KNOWN_MODES):
+                parts.insert(col_count - 2, '')  # col5(Raw) 자리에 빈값 삽입
         sel = tbl.selectedRanges()
         start_row = sel[0].topRow() if sel else 0
         start_col = sel[0].leftColumn() if sel else 0
         need_rows = start_row + len(rows)
         if need_rows > tbl.rowCount():
             tbl.setRowCount(need_rows)
-        col_count = tbl.columnCount()
         # cellChanged 차단: col4→col5 자동 매핑 간섭 방지
         tbl.blockSignals(True)
         try:
@@ -25987,8 +25994,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f.seek(file_size - 4096)
                     f.readline()  # 잘린 첫 줄 버림
                 tail = f.read()
-            # Code:숫자 뒤의 사유 문자열 추출 (마지막 매칭 사용)
-            matches = re.findall(r'Code:\d+\s+(.+)', tail)
+            # ── 판별 우선순위 ──
+            # 1) 중단점 예약 도달: "Reserve Cycle:xx, Step:yy" 포함
+            reserve_m = re.search(
+                r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', tail)
+            if reserve_m:
+                rc, rs = reserve_m.group(1), reserve_m.group(2)
+                return f"중단점 도달 (C{rc}/S{rs})"
+            # 2) 사용자 수동 멈춤: "즉시 멈춤 시행" 있지만 Reserve 없음
+            if "즉시 멈춤 시행" in tail:
+                return "작업멈춤"
+            # 3) Code:숫자 뒤의 사유 문자열 추출 (마지막 매칭 사용)
+            #    "Code:209 / 전류 이상" → "전류 이상", "Code:153 중단점 도달" → "중단점 도달"
+            matches = re.findall(r'Code:\d+\s*/?\s*(.+)', tail)
             if matches:
                 return matches[-1].strip()
             return "작업멈춤"
