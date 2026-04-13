@@ -10852,20 +10852,10 @@ class Ui_sitool(object):
         self._timeline_scroll.setMinimumHeight(self.cycle_timeline._min_h)
         self._timeline_scroll.setMaximumHeight(self.cycle_timeline._max_h)
         self._timeline_row.addWidget(self._timeline_scroll, 1)
-        # TC 토글 + 상세 펼침 버튼 (상하 배치)
+        # 상세 펼침 버튼
         _btn_col = QtWidgets.QVBoxLayout()
         _btn_col.setContentsMargins(0, 0, 0, 0)
         _btn_col.setSpacing(2)
-        self._tc_toggle = QtWidgets.QPushButton("TC", parent=self.tab_6)
-        self._tc_toggle.setCheckable(True)
-        self._tc_toggle.setFixedSize(28, 20)
-        self._tc_toggle.setFont(QtGui.QFont("맑은 고딕", 7, QtGui.QFont.Weight.Bold))
-        self._tc_toggle.setToolTip("논리사이클 ↔ TotlCycle 전환")
-        self._tc_toggle.setStyleSheet(
-            "QPushButton { border: 1px solid #B0B0B0; border-radius: 3px; "
-            "background: #F5F5F5; color: #666; padding: 0px; }"
-            "QPushButton:checked { background: #3C5488; color: white; }")
-        _btn_col.addWidget(self._tc_toggle)
         self._detail_toggle = QtWidgets.QPushButton("▶", parent=self.tab_6)
         self._detail_toggle.setCheckable(True)
         self._detail_toggle.setFixedSize(28, 20)
@@ -16732,11 +16722,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._profile_opt_scope_changed(0, True)
         # ── 사이클 타임라인 바 ↔ 텍스트 양방향 동기화 ──
         self._timeline_syncing = False
-        self._timeline_tc_mode = False  # False=논리사이클, True=TC
         self.cycle_timeline.selectionChanged.connect(
             lambda row, text: self._on_timeline_selection_changed(row, text))
         self.stepnum.textChanged.connect(self._on_stepnum_text_changed)
-        self._tc_toggle.toggled.connect(self._on_tc_toggle_changed)
         self._detail_toggle.toggled.connect(self._on_detail_toggle_changed)
         # 기존 버튼 시그널 (숨김 — 하위 호환)
         self.StepConfirm.clicked.connect(self.step_confirm_button)
@@ -21909,11 +21897,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _cycle_table_paste(self):
         """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)
 
-        여러 셀(사이클, 사이클Raw, 모드 등)을 동시에 붙여넣기 가능.
-        cellChanged 시그널을 차단하여 col4→col5 자동 매핑 간섭 방지.
+        6열 테이블 대응: [시험명, 경로, 채널, 용량, TC, 모드]
         엑셀 등 외부 앱 클립보드 점유 시 Win32 API 폴백.
         """
-        # Qt 클립보드 우선, 실패 시 Win32 직접 접근
         text = QtWidgets.QApplication.clipboard().text()
         if not text:
             text = self._win32_clipboard_text()
@@ -21921,9 +21907,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return
         self._push_table_undo()
         tbl = self.cycle_path_table
-        # \r\n → \n 통일 후 파싱 (Windows 클립보드 호환)
         text = text.replace('\r\n', '\n').replace('\r', '\n')
-        # 빈 행 보존하되, 연속 2칸 이상 빈 행은 1칸으로 축소
         raw_lines = text.strip().split('\n')
         rows = []
         prev_empty = False
@@ -21936,26 +21920,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             else:
                 rows.append(line.split('\t'))
                 prev_empty = False
-        # 맨 끝 빈 행 제거
         while rows and all(c == '' for c in rows[-1]):
             rows.pop()
         if not rows:
             return
-        # 모드 컬럼 보정: 필드 6개 + 마지막이 모드 키워드 → col5(Raw)에 빈값 삽입
+        # 모드 보정: 필드가 col_count-1개이고 마지막이 모드 키워드 → TC 자리에 빈값 삽입
         _KNOWN_MODES = {'CHG', 'DCH', 'DCHG', 'CYC', 'Cycle', '7cyc', 'GITT'}
         col_count = tbl.columnCount()
         for i, parts in enumerate(rows):
             if (len(parts) == col_count - 1
                     and parts
                     and parts[-1].strip() in _KNOWN_MODES):
-                parts.insert(col_count - 2, '')  # col5(Raw) 자리에 빈값 삽입
+                parts.insert(col_count - 2, '')  # col4(TC) 자리에 빈값 삽입
         sel = tbl.selectedRanges()
         start_row = sel[0].topRow() if sel else 0
         start_col = sel[0].leftColumn() if sel else 0
         need_rows = start_row + len(rows)
         if need_rows > tbl.rowCount():
             tbl.setRowCount(need_rows)
-        # cellChanged 차단: col4→col5 자동 매핑 간섭 방지
         tbl.blockSignals(True)
         try:
             _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
@@ -21967,39 +21949,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     if c < col_count:
                         item = QtWidgets.QTableWidgetItem(
                             val.strip().strip('"').strip("'"))
-                        # col4-6: 붙여넣기 값은 사용자 입력(검정 폰트) + 편집 가능
-                        if c in (4, 5, 6) and val.strip():
+                        # col4(TC), col5(모드): 검정 폰트 + 편집 가능
+                        if c in (4, 5) and val.strip():
                             item.setForeground(QtGui.QColor(0, 0, 0))
                             item.setFlags(_editable)
                         tbl.setItem(start_row + ri, c, item)
         finally:
             tbl.blockSignals(False)
-        # 붙여넣기 완료 후: 경로 셀 하이라이트 갱신
         self._highlight_all_paths()
-        # 붙여넣기 범위에 포함된 컬럼 확인
         _pasted_cols = set()
         for parts in rows:
             if parts:
                 for ci in range(len(parts)):
                     _pasted_cols.add(start_col + ci)
-        # 경로(col1) 붙여넣기 시 메타정보 자동 채우기
         if 1 in _pasted_cols:
             self._update_group_separators()
             self._autofill_table_empty_cells()
-        # 사이클(col4) / Raw(col5) 자동 매핑 — 행별 판단
-        if 4 in _pasted_cols or 5 in _pasted_cols:
-            for ri, parts in enumerate(rows):
-                # 각 행에서 col4, col5에 실제 값이 붙여넣기됐는지 확인
-                _ci4 = 4 - start_col
-                _ci5 = 5 - start_col
-                _has4 = (0 <= _ci4 < len(parts) and parts[_ci4].strip())
-                _has5 = (0 <= _ci5 < len(parts) and parts[_ci5].strip())
-                if _has4 and _has5:
-                    pass  # 양쪽 모두 명시적 입력 → 자동 매핑 안 함
-                elif _has5:
-                    self._on_cycle_cell_changed(start_row + ri, 5)
-                elif _has4:
-                    self._on_cycle_cell_changed(start_row + ri, 4)
 
     def _cycle_table_delete(self):
         """선택 셀 내용 삭제"""
@@ -22326,7 +22291,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return {'max_cycle': str(max_cyc), 'max_raw': max_raw or str(max_cyc)}
 
     def _restore_cycle_hint(self, row: int, col: int):
-        """셀이 비워졌을 때 회색 max 힌트를 복원 (양쪽 모두 복원)."""
+        """col4(TC) 셀이 비워졌을 때 회색 max TC 힌트를 복원."""
         info = self._get_row_max_cycle_info(row)
         if not info:
             return
@@ -22334,7 +22299,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _auto_fg = QtGui.QColor(160, 160, 160)
         tbl.blockSignals(True)
         try:
-            # col4 복원
             item4 = tbl.item(row, 4)
             if item4 is None:
                 item4 = QtWidgets.QTableWidgetItem(f"1-{info['max_cycle']}")
@@ -22342,54 +22306,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             else:
                 item4.setText(f"1-{info['max_cycle']}")
             item4.setForeground(_auto_fg)
-            item4.setToolTip(f"최대 사이클: {info['max_cycle']}")
-            # col5 복원
-            item5 = tbl.item(row, 5)
-            if item5 is None:
-                item5 = QtWidgets.QTableWidgetItem(f"1-{info['max_raw']}")
-                tbl.setItem(row, 5, item5)
-            else:
-                item5.setText(f"1-{info['max_raw']}")
-            item5.setForeground(_auto_fg)
-            item5.setToolTip(f"최대 TotlCycle(Raw): {info['max_raw']}")
+            item4.setToolTip(f"최대 TC: {info['max_cycle']}")
         finally:
             tbl.blockSignals(False)
 
     def _on_cycle_cell_changed(self, row: int, col: int):
-        """사이클(col4) 또는 사이클(Raw)(col5) 셀 변경 시 양방향 연동.
+        """col4(TC) 셀 변경 시 타임라인 바 + stepnum 동기화.
 
-        col4 편집 → 검정 폰트 + col5에 대응 TotlCycle 회색 자동 갱신
-                  + 타임라인 바 동기화 + stepnum 동기화
-        col5 편집 → 검정 폰트 + col4에 대응 논리사이클 회색 자동 갱신
-        비우면 → 회색 max 힌트 복원 (양쪽 모두)
+        col4 편집 → 검정 폰트 + 타임라인 바 동기화 + stepnum 동기화
+        비우면 → 회색 max TC 힌트 복원
         """
-        if col not in (4, 5):
+        if col != 4:
             return
-        # 테이블 편집 → 타임라인 바 + stepnum 동기화
-        # col4 편집: 논리 모드에서 바 반영 + stepnum 동기화
-        # col5 편집: TC 모드에서 바 반영 + col4에 논리 변환
+        # 타임라인 바 + stepnum 동기화
         if not getattr(self, '_timeline_syncing', False):
-            tc_mode = getattr(self, '_timeline_tc_mode', False)
-            # 테이블 행 → 바 행 매핑 (데이터 행 순번)
             bar_row = self._table_row_to_bar_row(row)
-            if col == 4 and not tc_mode:
-                text = self._get_table_cell(row, 4)
-                if text:
-                    self._timeline_syncing = True
-                    self._set_bar_selection_for_row(bar_row, text)
-                    self.stepnum.setPlainText(text)
-                    self._timeline_syncing = False
-            elif col == 5 and tc_mode:
-                text = self._get_table_cell(row, 5)
-                if text:
-                    self._timeline_syncing = True
-                    self._set_bar_selection_for_row(bar_row, text)
-                    # col4에 논리사이클 변환값 자동 기록
-                    logical = self._convert_tc_to_logical(text)
-                    if logical:
-                        self._write_cycle_to_table(logical, col=4)
-                        self.stepnum.setPlainText(logical)
-                    self._timeline_syncing = False
+            text = self._get_table_cell(row, 4)
+            if text:
+                self._timeline_syncing = True
+                self._set_bar_selection_for_row(bar_row, text)
+                self.stepnum.setPlainText(text)
+                self._timeline_syncing = False
         # Undo 복원 중이면 무시
         if getattr(self, '_table_undo_restoring', False):
             return
@@ -22401,197 +22338,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             text = item.text().strip()
             _auto_fg = QtGui.QColor(160, 160, 160)
 
-            # ── 셀이 비워졌을 때 ──
+            # ── TC 셀이 비워졌을 때 → max TC 힌트 복원 ──
             if not text:
-                _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
-                             | QtCore.Qt.ItemFlag.ItemIsEnabled
-                             | QtCore.Qt.ItemFlag.ItemIsEditable)
                 tbl.blockSignals(True)
                 try:
-                    if col == 4:
-                        # col4(사이클) 삭제: col5(Raw) 값이 있으면 유지 + 편집 가능으로 전환
-                        item5 = tbl.item(row, 5)
-                        _col5_has_value = (item5 is not None
-                                           and item5.text().strip()
-                                           and item5.foreground().color() != _auto_fg)
-                        if _col5_has_value:
-                            # col5 기존 값 유지, 편집 가능으로만 전환
-                            item5.setFlags(_editable)
-                            # col4에 col5 역산 논리사이클 힌트 표시
-                            path = self._get_table_cell(row, 1)
-                            if not path:
-                                for rr in range(row - 1, -1, -1):
-                                    path = self._get_table_cell(rr, 1)
-                                    if path:
-                                        break
-                            cap_str = self._get_table_cell(row, 3)
-                            try:
-                                cap = float(cap_str) if cap_str else 0.0
-                            except ValueError:
-                                cap = 0.0
-                            cycle_map = _build_cycle_map_for_path(path, cap) if path else None
-                            # max_info도 같은 cycle_map에서 산출 (이중 빌드 방지)
-                            info = None
-                            max_cyc = _quick_max_cycle(path, cap) if path else None
-                            if max_cyc:
-                                max_raw = ''
-                                if cycle_map:
-                                    all_tc = [v['all'][1] for v in cycle_map.values()
-                                              if isinstance(v, dict)
-                                              and isinstance(v.get('all'), (list, tuple))
-                                              and len(v['all']) >= 2]
-                                    if all_tc:
-                                        max_raw = str(max(all_tc))
-                                info = {'max_cycle': str(max_cyc),
-                                        'max_raw': max_raw or str(max_cyc)}
-                            hint_text = ""
-                            if cycle_map:
-                                logical = _totl_to_logical_str(cycle_map, item5.text().strip())
-                                if logical:
-                                    hint_text = logical
-                            if not hint_text and info:
-                                hint_text = f"1-{info['max_cycle']}"
-                            item = tbl.item(row, 4)
-                            if item is None:
-                                item = QtWidgets.QTableWidgetItem(hint_text)
-                                tbl.setItem(row, 4, item)
-                            else:
-                                item.setText(hint_text)
-                            item.setForeground(_auto_fg)
-                            tip = f"논리사이클 (col5 기반 역산): {hint_text}"
-                            if info:
-                                tip += f"  (최대: {info['max_cycle']})"
-                            item.setToolTip(tip)
-                            item.setFlags(_editable)
-                        else:
-                            # col5도 비어있음 → 양쪽 모두 max 힌트 복원
-                            self._restore_cycle_hint(row, col)
-                            for c in (4, 5):
-                                it = tbl.item(row, c)
-                                if it is not None:
-                                    it.setFlags(_editable)
-                    else:
-                        # col5(Raw) 삭제: 양쪽 모두 max 힌트 복원
-                        self._restore_cycle_hint(row, col)
-                        for c in (4, 5):
-                            it = tbl.item(row, c)
-                            if it is not None:
-                                it.setFlags(_editable)
+                    self._restore_cycle_hint(row, col)
                 finally:
                     tbl.blockSignals(False)
                 return
 
-            # ── 아이템 속성 변경 시 cellChanged 재발화 방지 ──
+            # ── TC 입력값 → 검정 폰트 + 최대 TC 툴팁 ──
             tbl.blockSignals(True)
             try:
-                # 사용자 입력 → 검정 폰트로 변경
                 item.setForeground(QtGui.QColor(0, 0, 0))
-
-                # ── 경로 및 cycle_map 준비 (양방향 공통, 1회만 빌드) ──
-                path = self._get_table_cell(row, 1)
-                if not path:
-                    for rr in range(row - 1, -1, -1):
-                        path = self._get_table_cell(rr, 1)
-                        if path:
-                            break
-                if not path:
-                    return
-                cap_str = self._get_table_cell(row, 3)
-                try:
-                    cap = float(cap_str) if cap_str else 0.0
-                except ValueError:
-                    cap = 0.0
-                cycle_map = _build_cycle_map_for_path(path, cap)
-
-                # cycle_map에서 max_info 직접 산출 (이중 빌드 방지)
-                max_info = None
-                max_cyc = _quick_max_cycle(path, cap)
-                if max_cyc:
-                    max_raw = ''
-                    if cycle_map:
-                        all_tc = [v['all'][1] for v in cycle_map.values()
-                                  if isinstance(v, dict)
-                                  and isinstance(v.get('all'), (list, tuple))
-                                  and len(v['all']) >= 2]
-                        if all_tc:
-                            max_raw = str(max(all_tc))
-                    max_info = {'max_cycle': str(max_cyc),
-                                'max_raw': max_raw or str(max_cyc)}
-
-                # tooltip에 max 값 유지 (입력 중에도 최대값 확인 가능)
-                if col == 4 and max_info:
-                    item.setToolTip(f"입력: {text}  (최대: {max_info['max_cycle']})")
-                elif col == 5 and max_info:
-                    item.setToolTip(f"입력: {text}  (최대 Raw: {max_info['max_raw']})")
-
-                if not cycle_map:
-                    return
-
-                _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
-                             | QtCore.Qt.ItemFlag.ItemIsEnabled
-                             | QtCore.Qt.ItemFlag.ItemIsEditable)
-
-                if col == 4:
-                    # col4(사이클) 편집 → col5(사이클Raw)에 대응 TotlCycle 자동 매핑
-                    totl_str = _logical_to_totl_str(cycle_map, text)
-                    if totl_str:
-                        item5 = tbl.item(row, 5)
-                        if item5 is None:
-                            item5 = QtWidgets.QTableWidgetItem(totl_str)
-                            tbl.setItem(row, 5, item5)
-                        else:
-                            item5.setText(totl_str)
-                        item5.setForeground(_auto_fg)
-                        raw_tip = f"TotlCycle (자동 매핑): {totl_str}"
-                        if max_info:
-                            raw_tip += f"  (최대 Raw: {max_info['max_raw']})"
-                        item5.setToolTip(raw_tip)
-                        # col5 편집 가능 유지 — 사용자가 직접 수정 가능
-                        item5.setFlags(_editable)
-                elif col == 5:
-                    # col5(사이클Raw) 편집 → col4(사이클)에 대응 논리사이클 자동 매핑
-                    logical_str = _totl_to_logical_str(cycle_map, text)
-                    if logical_str:
-                        # 클램핑 여부 판별: 입력 TC가 cycle_map 범위를 초과하는지
-                        _max_tc = max(
-                            (v['all'][1] for v in cycle_map.values()
-                             if isinstance(v, dict) and 'all' in v), default=0)
-                        _input_tcs = []
-                        for _p in re.split(r'[,\s]+', text):
-                            _p = _p.strip()
-                            if '-' in _p:
-                                try:
-                                    _a, _b = map(int, _p.split('-', 1))
-                                    _input_tcs.extend(range(_a, _b + 1))
-                                except (ValueError, TypeError):
-                                    pass
-                            elif _p:
-                                try:
-                                    _input_tcs.append(int(_p))
-                                except (ValueError, TypeError):
-                                    pass
-                        _is_clamped = any(tc > _max_tc for tc in _input_tcs)
-
-                        item4 = tbl.item(row, 4)
-                        if item4 is None:
-                            item4 = QtWidgets.QTableWidgetItem(logical_str)
-                            tbl.setItem(row, 4, item4)
-                        else:
-                            item4.setText(logical_str)
-                        if _is_clamped:
-                            # 클램핑 경고: 주황 폰트 + 경고 툴팁
-                            item4.setForeground(QtGui.QColor(200, 120, 0))
-                            cyc_tip = (f"⚠ 클램핑: TC={text} 범위 초과 "
-                                       f"(이 경로 최대 TC={_max_tc}) → "
-                                       f"논리사이클 {logical_str}으로 제한")
-                        else:
-                            item4.setForeground(_auto_fg)
-                            cyc_tip = f"논리사이클 (자동 매핑): {logical_str}"
-                            if max_info:
-                                cyc_tip += f"  (최대: {max_info['max_cycle']})"
-                        item4.setToolTip(cyc_tip)
-                        # col4 편집 가능 유지 — 사용자가 직접 수정 가능
-                        item4.setFlags(_editable)
+                # max TC 산출 (툴팁용)
+                meta = self._resolve_path_meta(self._get_table_cell(row, 1))
+                if meta:
+                    max_tc = meta.get('cycle', '')
+                    if max_tc:
+                        item.setToolTip(f"입력: {text}  (최대 TC: {max_tc})")
             finally:
                 tbl.blockSignals(False)
         except Exception:
@@ -22828,47 +22593,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             for grp_rows in groups:
                 if link_mode and len(grp_rows) > 1:
                     # ── 연결 모드: 첫 행 = 누적 합산, 나머지 = 빈칸 ──
-                    cumul_cyc = sum(row_info[r]['cycle'] for r in grp_rows
-                                   if row_info[r])
-                    cumul_raw = sum(row_info[r]['raw'] for r in grp_rows
+                    cumul_tc = sum(row_info[r]['cycle'] for r in grp_rows
                                    if row_info[r])
                     for idx, r in enumerate(grp_rows):
                         item4 = tbl.item(r, 4)
-                        item5 = tbl.item(r, 5)
                         if idx == 0:
-                            # 첫 행: 누적값 표시
-                            txt4 = f"1-{cumul_cyc}" if cumul_cyc > 0 else ""
-                            txt5 = f"1-{cumul_raw}" if cumul_raw > 0 else ""
+                            txt4 = f"1-{cumul_tc}" if cumul_tc > 0 else ""
                             if item4 is None:
                                 item4 = QtWidgets.QTableWidgetItem(txt4)
                                 tbl.setItem(r, 4, item4)
                             else:
                                 item4.setText(txt4)
                             item4.setForeground(_auto_fg)
-                            item4.setToolTip(f"누적 사이클: {cumul_cyc}")
-                            if item5 is None:
-                                item5 = QtWidgets.QTableWidgetItem(txt5)
-                                tbl.setItem(r, 5, item5)
-                            else:
-                                item5.setText(txt5)
-                            item5.setForeground(_auto_fg)
-                            item5.setToolTip(f"누적 TotlCycle: {cumul_raw}")
+                            item4.setToolTip(f"누적 TC: {cumul_tc}")
                         else:
-                            # 후속 행: 빈칸
                             if item4:
                                 item4.setText('')
                                 item4.setToolTip('')
-                            if item5:
-                                item5.setText('')
-                                item5.setToolTip('')
                 else:
-                    # ── 비연결 모드 또는 단일 경로: 개별 max_cycle 복원 ──
+                    # ── 비연결 모드 또는 단일 경로: 개별 max TC 복원 ──
                     for r in grp_rows:
                         info = row_info[r]
                         if not info:
                             continue
                         mc = info['cycle']
-                        mr = info['raw']
                         item4 = tbl.item(r, 4)
                         txt4 = f"1-{mc}" if mc > 0 else ""
                         if item4 is None:
@@ -22877,16 +22625,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             item4.setText(txt4)
                         item4.setForeground(_auto_fg)
-                        item4.setToolTip(f"최대 사이클: {mc}")
-                        item5 = tbl.item(r, 5)
-                        txt5 = f"1-{mr}" if mr > 0 else ""
-                        if item5 is None:
-                            item5 = QtWidgets.QTableWidgetItem(txt5)
-                            tbl.setItem(r, 5, item5)
-                        else:
-                            item5.setText(txt5)
-                        item5.setForeground(_auto_fg)
-                        item5.setToolTip(f"최대 TotlCycle: {mr}")
+                        item4.setToolTip(f"최대 TC: {mc}")
         finally:
             tbl.blockSignals(False)
 
@@ -23508,8 +23247,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """타임라인 바 → 경로 테이블 해당 행 + stepnum 동기화.
 
         row_idx: 바 행 인덱스 → 테이블의 해당 경로 행에 기록.
-        논리 모드: 바 선택(논리) → col4에 직접 기록
-        TC 모드:   바 선택(TC) → col5에 기록 + col4에 논리사이클 변환값 자동 기록
+        바 선택(TC) → col4(TC)에 직접 기록.
         """
         if self._timeline_syncing:
             return
@@ -23517,15 +23255,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 펼침 패널 갱신
         if self._detail_toggle.isChecked():
             self._refresh_timeline_detail()
-        if self._timeline_tc_mode:
-            self._write_cycle_to_table(text, col=5, bar_row=row_idx)
-            logical = self._convert_tc_to_logical(text)
-            if logical:
-                self._write_cycle_to_table(logical, col=4, bar_row=row_idx)
-            self.stepnum.setPlainText(logical or text)
-        else:
-            self._write_cycle_to_table(text, col=4, bar_row=row_idx)
-            self.stepnum.setPlainText(text)
+        self._write_cycle_to_table(text, col=4, bar_row=row_idx)
+        self.stepnum.setPlainText(text)
         # 선택 상태 레이블 갱신
         self._update_timeline_selection_label(text)
         self._timeline_syncing = False
@@ -23541,17 +23272,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_timeline.set_selection_from_text(text)
         self._write_cycle_to_table(text, col=4)
         self._timeline_syncing = False
-
-    def _on_tc_toggle_changed(self, checked: bool) -> None:
-        """TC/논리사이클 토글 변경 → 타임라인 바 블록 교체."""
-        self._timeline_tc_mode = checked
-        self._timeline_syncing = True
-        self.cycle_timeline._selections.clear()
-        self._update_cycle_timeline()
-        self._timeline_syncing = False
-        # 펼침 패널 갱신
-        if self._detail_toggle.isChecked():
-            self._refresh_timeline_detail()
 
     def _update_timeline_selection_label(self, text: str) -> None:
         """사이클 바 선택 상태를 레이블에 표시."""
@@ -23576,9 +23296,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 except ValueError:
                     pass
         if nums:
-            mode = "TC" if self._timeline_tc_mode else "사이클"
             self._timeline_selection_label.setText(
-                f"  선택: {text.strip()}  ({len(nums)}개 {mode})")
+                f"  선택: {text.strip()}  ({len(nums)}개 TC)")
         else:
             self._timeline_selection_label.setText(f"  선택: {text.strip()}")
 
@@ -23956,8 +23675,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         link_mode = self.chk_link_cycle.isChecked() and self._has_table_data()
 
-        # 경로별 대표 채널(최대 사이클)에서 블록 생성
-        tc_mode = self._timeline_tc_mode
+        # 경로별 대표 채널(최대 TC)에서 블록 생성 (TC 1원화)
         rows = []  # [(label, blocks), ...]
         for folder in folders:
             try:
@@ -23968,7 +23686,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if f.is_dir() and _is_channel_folder(f.name)])
                 if not channels:
                     continue
-                # 최대 사이클 채널 선택 (Phase 0 메타 기반)
+                # 최대 TC 채널 선택 (Phase 0 메타 기반)
                 best_ch = channels[0]
                 best_lc = 0
                 for ch in channels:
@@ -23977,33 +23695,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         best_lc = m.max_logical_cycle
                         best_ch = ch
                 blocks = []
-                if tc_mode:
-                    # TC 모드: 루프(논리사이클) 단위로 TC를 묶어 표시
-                    meta = get_channel_meta(best_ch)
-                    if meta and meta.classified and meta.cycle_map:
-                        blocks = _build_timeline_blocks_tc_by_loop(
-                            meta.classified, cycle_map=meta.cycle_map)
-                    else:
-                        # 메타 없으면 기존 충방전 패턴 기반 폴백
-                        is_pne = is_pne_folder(folder_str)
-                        if is_pne:
-                            save_end = get_channel_save_end_data(best_ch)
-                            if save_end is not None:
-                                blocks = _build_timeline_blocks(save_end)
-                        else:
-                            blocks = _build_timeline_blocks_toyo(best_ch)
+                # TC 블록: classified 기반 (카테고리별 TC 묶음)
+                meta = get_channel_meta(best_ch)
+                if meta and meta.classified:
+                    blocks = _build_timeline_blocks_tc_by_loop(
+                        meta.classified, cycle_map=meta.cycle_map)
                 else:
-                    meta = get_channel_meta(best_ch)
-                    if meta and meta.classified:
-                        blocks = _build_timeline_blocks_classified(
-                            meta.classified, cycle_map=meta.cycle_map)
+                    # classified 없으면 StepType 패턴 기반 폴백
+                    is_pne = is_pne_folder(folder_str)
+                    if is_pne:
+                        save_end = get_channel_save_end_data(best_ch)
+                        if save_end is not None:
+                            blocks = _build_timeline_blocks(save_end)
                     else:
-                        is_pne = is_pne_folder(folder_str)
-                        if is_pne:
-                            save_end = get_channel_save_end_data(best_ch)
-                            if save_end is not None:
-                                blocks = _build_timeline_blocks(save_end)
-                        else:
                             blocks = _build_timeline_blocks_toyo(best_ch)
                 if blocks:
                     label = os.path.basename(folder_str)[:30]
