@@ -800,6 +800,8 @@ def _reset_all_caches():
     _get_toyo_cycle_map.cache_clear()
     _get_pne_sch_struct.cache_clear()
     _find_sch_file.cache_clear()
+    # 경로 메타 인스턴스 캐시 초기화
+    WindowClass._path_meta_cache.clear()
 
 
 def clear_channel_cache():
@@ -7764,6 +7766,76 @@ def _build_timeline_blocks_classified(
     return blocks
 
 
+def _build_timeline_blocks_tc_by_loop(
+    classified: list[dict],
+    cycle_map: dict | None = None,
+) -> list[dict]:
+    """TC 모드용 타임라인 블록: TC(=루프) 단위로 카테고리별 묶음.
+
+    충방전기가 카운트하는 TC가 곧 루프 1회이므로,
+    classified의 TC별 카테고리를 그대로 사용하여
+    연속 동일 카테고리 구간을 1블록으로 합친다.
+    _CLASSIFIED_COLORS 색상 체계 사용 (논리 모드와 동일 색상).
+
+    Parameters
+    ----------
+    classified : list[dict]
+        [{'cycle': TC번호, 'category': 'RPT'|'가속수명'|...}, ...]
+    cycle_map : dict | None
+        미사용 (시그니처 호환용).
+
+    Returns
+    -------
+    list[dict]
+        [{'start': TC시작, 'end': TC끝, 'pattern': '가속수명', 'count': n}, ...]
+    """
+    if not classified:
+        return []
+
+    # TC별 카테고리 매핑 (TC 번호순)
+    tc_cats: dict[int, str] = {}
+    for cl in classified:
+        tc = cl['cycle']
+        tc_cats[int(tc)] = cl['category']
+
+    if not tc_cats:
+        return []
+
+    sorted_tcs = sorted(tc_cats.keys())
+
+    # initial 구분: 첫 TC = '초기 반사이클' 유지, 이후 initial = '반사이클'
+    first_tc = sorted_tcs[0]
+    for tc in sorted_tcs:
+        if tc_cats[tc] == 'initial' and tc != first_tc:
+            tc_cats[tc] = '반사이클'
+
+    # 연속 동일 카테고리 합침
+    blocks = []
+    block_start = sorted_tcs[0]
+    block_cat = tc_cats[block_start]
+
+    for i in range(1, len(sorted_tcs)):
+        tc = sorted_tcs[i]
+        cat = tc_cats[tc]
+        if cat != block_cat or tc != sorted_tcs[i - 1] + 1:
+            blocks.append({
+                'start': block_start,
+                'end': sorted_tcs[i - 1],
+                'pattern': block_cat,
+                'count': sorted_tcs[i - 1] - block_start + 1,
+            })
+            block_start = tc
+            block_cat = cat
+
+    blocks.append({
+        'start': block_start,
+        'end': sorted_tcs[-1],
+        'pattern': block_cat,
+        'count': sorted_tcs[-1] - block_start + 1,
+    })
+    return blocks
+
+
 def _build_timeline_blocks(save_end: 'pd.DataFrame') -> list[dict]:
     """SaveEndData에서 타임라인 블록 목록 생성.
 
@@ -10469,7 +10541,7 @@ class Ui_sitool(object):
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
         self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "Raw", "모드"])
+        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "Loop", "모드"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -21001,15 +21073,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if col == 1:
             self._highlight_path_cell(row)
             self._update_group_separators()
-            # 경로 입력 시 자동 채우기 (디바운스: 300ms)
+            # 경로 입력 시 해당 행만 자동 채우기 (디바운스: 300ms)
+            self._autofill_pending_row = row
             if hasattr(self, '_autofill_timer'):
                 self._autofill_timer.stop()
             else:
                 self._autofill_timer = QtCore.QTimer(self)
                 self._autofill_timer.setSingleShot(True)
                 self._autofill_timer.timeout.connect(
-                    self._autofill_table_empty_cells)
+                    self._autofill_pending_row_handler)
             self._autofill_timer.start(300)
+
+    def _autofill_pending_row_handler(self):
+        """디바운스 타이머 만료 → 단일 행 자동 채우기 실행."""
+        row = getattr(self, '_autofill_pending_row', None)
+        if row is not None:
+            self._autofill_row(row)
+            self._highlight_path_cell(row)
 
     # ── 테이블 ↔ 데이터 유틸리티 ──
 
@@ -21152,333 +21232,351 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             groups.append(current_group)
         return groups
 
+    # ── 경로 메타데이터 인스턴스 캐시 ──
+    _path_meta_cache: dict[str, dict] = {}
+
+    def _resolve_path_meta(self, path: str) -> dict | None:
+        """경로 1개에 대한 모든 메타데이터를 한 번에 산출.
+
+        인스턴스 캐시를 사용하여 동일 경로 중복 I/O 방지.
+        cycle_map도 1회만 빌드하여 max_cycle + max_tc 동시 산출.
+
+        Returns
+        -------
+        dict | None
+            {'name', 'ch', 'cap', 'cycle', 'cycleraw', '_cap_num', '_meta_hit'}
+            경로가 유효하지 않으면 None.
+        """
+        if not path:
+            return None
+        # 인스턴스 캐시 히트
+        if path in self._path_meta_cache:
+            return self._path_meta_cache[path]
+
+        # ── 경로명: 문자열 파싱 (I/O 없음) ──
+        basename = os.path.basename(path)
+        auto_name = basename
+        if "mAh_" in auto_name:
+            auto_name = auto_name.split("mAh_", 1)[1]
+        if len(auto_name) > 30:
+            auto_name = auto_name[:30] + "..."
+
+        # ── XLS/XLSX 파일: 경량 파싱만 ──
+        _ext = os.path.splitext(path)[1].lower()
+        if _ext in ('.xls', '.xlsx'):
+            _name_cap = name_capacity(path) if "mAh" in path else 0
+            result = {
+                'name': auto_name, 'ch': '',
+                'cap': str(int(_name_cap)) if _name_cap else '',
+                'cycle': '', 'cycleraw': '',
+                '_cap_num': _name_cap or None, '_meta_hit': None}
+            self._path_meta_cache[path] = result
+            return result
+
+        # ── 채널: scandir (가벼움) ──
+        auto_ch = ""
+        _dir_exists = os.path.isdir(path)
+        _ch_subfolders = []
+        if _dir_exists:
+            _ch_subfolders = sorted(
+                [f.name for f in os.scandir(path)
+                 if f.is_dir() and "Pattern" not in f.name
+                 and _is_channel_folder(f.name)])
+            channels = [extract_text_in_brackets(sf) for sf in _ch_subfolders]
+            if channels:
+                auto_ch = ",".join(channels)
+
+        # ── 용량: ChannelMeta 캐시 → 경로명 파싱 → 파일 I/O 폴백 ──
+        auto_cap = None
+        meta_hit = None
+        _name_cap = name_capacity(path) if "mAh" in path else 0
+        if _channel_meta_store and _dir_exists:
+            for sf in (os.path.join(path, d) for d in _ch_subfolders):
+                meta_hit = get_channel_meta(sf)
+                if meta_hit is not None:
+                    break
+        if meta_hit is not None:
+            auto_cap = meta_hit.min_capacity
+        else:
+            auto_cap = _name_cap if _name_cap else None
+            if not auto_cap and _dir_exists:
+                try:
+                    subs = [os.path.join(path, d) for d in _ch_subfolders]
+                    if subs:
+                        if check_cycler(path):
+                            auto_cap = pne_min_cap(subs[0], 0, 0.2)
+                        else:
+                            auto_cap = toyo_min_cap(subs[0], 0, 0.2)
+                except Exception:
+                    auto_cap = None
+        auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
+
+        # ── 최대 사이클 + 최대 TC: cycle_map 1회 빌드 ──
+        cap_for_cycle = auto_cap if auto_cap else 0
+        auto_cyc_str = ""
+        auto_raw_str = ""
+        if meta_hit is not None and meta_hit.max_logical_cycle is not None:
+            max_cyc = meta_hit.max_logical_cycle
+        else:
+            max_cyc = _quick_max_cycle(path, cap_for_cycle)
+        if max_cyc:
+            auto_cyc_str = str(max_cyc)
+        # cycle_map에서 max_tc 산출
+        if auto_cyc_str:
+            try:
+                cm = None
+                if meta_hit is not None and meta_hit.cycle_map:
+                    cm = meta_hit.cycle_map
+                else:
+                    cm = _build_cycle_map_for_path(path, cap_for_cycle)
+                if cm:
+                    all_tc = [v['all'][1] for v in cm.values()
+                              if isinstance(v, dict)
+                              and isinstance(v.get('all'), (list, tuple))
+                              and len(v['all']) >= 2]
+                    if all_tc:
+                        auto_raw_str = str(max(all_tc))
+            except Exception:
+                pass
+
+        result = {
+            'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
+            'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
+            '_cap_num': auto_cap, '_meta_hit': meta_hit}
+        self._path_meta_cache[path] = result
+        return result
+
+    def _autofill_row(self, row: int, *, link_info: dict | None = None) -> None:
+        """단일 행의 빈 셀을 경로 기반 메타데이터로 자동 채우기.
+
+        Parameters
+        ----------
+        row : int
+            대상 테이블 행 번호.
+        link_info : dict | None
+            연결 모드 정보. {'is_first': bool, 'first_meta': dict}.
+            None이면 연결 모드 아님.
+        """
+        tbl = self.cycle_path_table
+        path = self._get_table_cell(row, 1)
+        if not path:
+            return
+
+        # 기존 셀에 힌트가 있으면 메타 캐시와 교차검증
+        hint_name = self._get_table_cell(row, 0)
+        hint_ch = self._get_table_cell(row, 2)
+        hint_cap = self._get_table_cell(row, 3)
+        _has_hint = bool(hint_name and hint_ch and hint_cap)
+
+        # 힌트 완비 시 캐시에 이미 있으면 경량 검증만
+        meta = self._resolve_path_meta(path)
+        if meta is None:
+            return
+
+        # 힌트와 교차검증: 불일치 시 실측 우선
+        auto_name = hint_name or meta['name']
+        auto_ch = meta['ch']
+        if hint_ch and auto_ch and hint_ch != auto_ch:
+            auto_ch = auto_ch  # 실측 우선
+        else:
+            auto_ch = hint_ch or auto_ch
+        # 용량: 힌트와 교차검증
+        auto_cap_str = meta['cap']
+        if hint_cap:
+            _name_cap = name_capacity(path) if "mAh" in path else 0
+            try:
+                hint_val = float(hint_cap)
+                if _name_cap and abs(_name_cap - hint_val) / max(hint_val, 1) > 0.1:
+                    pass  # 10% 이상 차이 → 실측 사용
+                else:
+                    auto_cap_str = hint_cap  # 힌트 유지
+            except ValueError:
+                pass
+
+        # ── 연결 모드: 중복 제거 ──
+        link_mode = link_info is not None
+        is_grp_first = link_info['is_first'] if link_mode else True
+        first_meta = link_info.get('first_meta') if link_mode else None
+
+        auto = {'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str}
+        cols = [
+            (0, auto['name'], first_meta['name'] if first_meta else ''),
+            (2, auto['ch'],   first_meta['ch'] if first_meta else ''),
+            (3, auto['cap'],  first_meta['cap'] if first_meta else ''),
+        ]
+
+        tbl.blockSignals(True)
+        try:
+            for col, auto_val, first_val in cols:
+                existing = self._get_table_cell(row, col)
+                # 연결 모드 후속 행: 중복이면 공란
+                if link_mode and not is_grp_first and col == 0:
+                    skip_dup = True
+                else:
+                    skip_dup = (link_mode and not is_grp_first
+                                and auto_val and first_val
+                                and auto_val.strip() == first_val.strip())
+                if not existing:
+                    if auto_val and not skip_dup:
+                        item = tbl.item(row, col)
+                        if item is None:
+                            item = QtWidgets.QTableWidgetItem(auto_val)
+                            tbl.setItem(row, col, item)
+                        else:
+                            item.setText(auto_val)
+                        item.setToolTip(auto_val)
+                else:
+                    if auto_val:
+                        item = tbl.item(row, col)
+                        if item:
+                            font = item.font()
+                            font.setBold(existing.strip() != auto_val.strip())
+                            item.setFont(font)
+
+            # ── col4(사이클) 힌트 ──
+            cyc_existing = self._get_table_cell(row, 4)
+            cyc_auto = meta.get('cycle', '')
+            if link_mode and not is_grp_first:
+                item4 = tbl.item(row, 4)
+                if item4:
+                    item4.setText('')
+                    item4.setToolTip('')
+            else:
+                if cyc_auto and not cyc_existing:
+                    item4 = tbl.item(row, 4)
+                    if item4 is None:
+                        item4 = QtWidgets.QTableWidgetItem(f"1-{cyc_auto}")
+                        tbl.setItem(row, 4, item4)
+                    else:
+                        item4.setText(f"1-{cyc_auto}")
+                    item4.setForeground(QtGui.QColor(160, 160, 160))
+                    item4.setToolTip(f"최대 사이클: {cyc_auto}")
+                elif cyc_auto and cyc_existing:
+                    item4 = tbl.item(row, 4)
+                    if item4:
+                        item4.setToolTip(f"입력: {cyc_existing}  (최대: {cyc_auto})")
+
+            # ── col5(Loop) 힌트 ──
+            raw_existing = self._get_table_cell(row, 5)
+            raw_auto = meta.get('cycleraw', '')
+            if link_mode and not is_grp_first:
+                item5 = tbl.item(row, 5)
+                if item5:
+                    item5.setText('')
+                    item5.setToolTip('')
+            else:
+                if raw_auto and not raw_existing:
+                    item5 = tbl.item(row, 5)
+                    if item5 is None:
+                        item5 = QtWidgets.QTableWidgetItem(f"1-{raw_auto}")
+                        tbl.setItem(row, 5, item5)
+                    else:
+                        item5.setText(f"1-{raw_auto}")
+                    item5.setForeground(QtGui.QColor(160, 160, 160))
+                    item5.setToolTip(f"최대 Loop(TC): {raw_auto}")
+                elif raw_auto and raw_existing:
+                    item5 = tbl.item(row, 5)
+                    if item5:
+                        item5.setToolTip(f"입력: {raw_existing}  (최대 Loop: {raw_auto})")
+        finally:
+            tbl.blockSignals(False)
+
     def _autofill_table_empty_cells(self):
-        """사이클 분석 시 테이블 셀 자동 채우기
-        경로(col1)를 기준으로 경로명(col0), 채널(col2), 용량(col3) 유추
-        - 빈 셀: 자동 산정값으로 채움
-        - 기존값 있음 + 자동값과 동일: 폰트 유지
-        - 기존값 있음 + 자동값과 다름: 기존값 유지, bold 폰트 처리
-        - 연결 모드: 그룹 내 첫 행과 동일한 값은 후속 행에 채우지 않음
-          다른 값만 후속 행에 표시
+        """전체 테이블 자동 채우기 — _autofill_row 기반.
+
+        경로파일 로드, Ctrl+V, 사이클 분석 실행 등 전체 행 갱신이 필요할 때 사용.
+        연결 모드: 그룹 내 사이클/Loop 누적 합산 후 첫 행 힌트에 반영.
         """
         tbl = self.cycle_path_table
         link_mode = self.chk_link_cycle.isChecked()
+
+        # ── 행별 메타 산출 + 셀 채우기 ──
+        first_meta = None  # 연결 그룹 첫 행의 메타
+        for r in range(tbl.rowCount()):
+            path = self._get_table_cell(r, 1)
+            if not path:
+                first_meta = None  # 빈 행 = 그룹 구분자
+                continue
+            meta = self._resolve_path_meta(path)
+            is_grp_first = (first_meta is None)
+            if is_grp_first:
+                first_meta = meta
+            if link_mode:
+                self._autofill_row(r, link_info={
+                    'is_first': is_grp_first, 'first_meta': first_meta})
+            else:
+                self._autofill_row(r)
+
+        # ── 연결 모드: 사이클/Loop 누적 합산 (첫 행 힌트 보정) ──
+        if link_mode:
+            self._autofill_link_cumulative_hints()
+
+        # ── 후처리 ──
+        self._highlight_all_paths()
+        self._highlight_channel_mismatch()
+        self._highlight_capacity_mismatch()
+        self._autofill_cycleraw_column()
+
+    def _autofill_link_cumulative_hints(self):
+        """연결 모드: 그룹 내 사이클/Loop 최대값을 누적 합산하여 첫 행 힌트 보정."""
+        tbl = self.cycle_path_table
+        _auto_fg = QtGui.QColor(160, 160, 160)
         tbl.blockSignals(True)
         try:
-            # ── Pass 1: 각 행의 자동값 산정 ──
-            # 힌트 기반 최적화: 기존 저장값(힌트)이 있으면 경량 검증만 수행.
-            # 불일치 발견 시에만 무거운 I/O(pne_min_cap, cycle_map 등) 호출.
-            # 경량 검증: 경로 존재 확인, 폴더 스캔(scandir), 경로명 파싱(name_capacity)
-            auto_vals = []  # [{'name':..,'ch':..,'cap':..} or None]
-            _path_cache: dict[str, dict] = {}  # 동일 경로 중복 스캔 방지
+            grp_start = None  # 그룹 첫 행 인덱스
             for r in range(tbl.rowCount()):
                 path = self._get_table_cell(r, 1)
                 if not path:
-                    auto_vals.append(None)
+                    grp_start = None
                     continue
-                # 기존 셀 값 확인 (이전 저장에서 복원된 힌트)
-                hint_name = self._get_table_cell(r, 0)
-                hint_ch = self._get_table_cell(r, 2)
-                hint_cap = self._get_table_cell(r, 3)
-                _has_hint = bool(hint_name and hint_ch and hint_cap)
-                # 경로별 캐시에서 먼저 확인
-                if path in _path_cache:
-                    cached = _path_cache[path]
-                    auto_name = hint_name or cached['name']
-                    auto_ch = hint_ch or cached['ch']
-                    auto_cap_str = hint_cap or cached['cap']
-                    auto_cyc_str = cached['cycle']
-                    auto_raw_str = cached['cycleraw']
-                    auto_cap = cached.get('_cap_num')
-                    meta_hit = cached.get('_meta_hit')
-                else:
-                    # ── 경로명: 항상 경량 산정 (문자열 파싱만, I/O 없음) ──
-                    basename = os.path.basename(path)
-                    auto_name_fresh = basename
-                    if "mAh_" in auto_name_fresh:
-                        auto_name_fresh = auto_name_fresh.split("mAh_", 1)[1]
-                    if len(auto_name_fresh) > 30:
-                        auto_name_fresh = auto_name_fresh[:30] + "..."
-                    auto_name = hint_name or auto_name_fresh
-
-                    # ── XLS/XLSX 파일: 파일명에서만 경량 파싱 (Excel 열지 않음) ──
-                    _ext = os.path.splitext(path)[1].lower()
-                    _is_excel = _ext in ('.xls', '.xlsx')
-                    if _is_excel:
-                        auto_ch = hint_ch or ""
-                        _name_cap = name_capacity(path) if "mAh" in path else 0
-                        auto_cap = float(hint_cap) if hint_cap else (_name_cap or None)
-                        auto_cap_str = hint_cap or (str(int(auto_cap)) if auto_cap and auto_cap > 0 else "")
-                        auto_cyc_str = ""
-                        auto_raw_str = ""
-                        meta_hit = None
-                        _path_cache[path] = {
-                            'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
-                            'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
-                            '_cap_num': auto_cap, '_meta_hit': meta_hit}
-                        auto_vals.append({
-                            'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
-                            'cycle': auto_cyc_str, 'cycleraw': auto_raw_str})
-                        continue  # 다음 행으로
-
-                    # ── 채널: 항상 scandir 수행 (가벼움) → 힌트와 교차검증 ──
-                    auto_ch_fresh = ""
-                    _dir_exists = os.path.isdir(path)
-                    _ch_subfolders = []
-                    if _dir_exists:
-                        _ch_subfolders = sorted(
-                            [f.name for f in os.scandir(path)
-                             if f.is_dir() and "Pattern" not in f.name
-                             and _is_channel_folder(f.name)])
-                        channels = []
-                        for sf in _ch_subfolders:
-                            ch = extract_text_in_brackets(sf)
-                            channels.append(ch)
-                        if channels:
-                            auto_ch_fresh = ",".join(channels)
-                    # 힌트와 비교: 불일치 시 실측값 우선
-                    if hint_ch and auto_ch_fresh and hint_ch != auto_ch_fresh:
-                        auto_ch = auto_ch_fresh  # 채널 변경 감지 → 실측 사용
-                    else:
-                        auto_ch = hint_ch or auto_ch_fresh
-                    # ── 용량: 힌트 있으면 경량 교차검증(name_capacity), 불일치 시만 무거운 I/O ──
-                    auto_cap = None
-                    meta_hit = None
-                    _name_cap = name_capacity(path) if "mAh" in path else 0
-                    if hint_cap:
-                        # 힌트 존재: 경로명 파싱과 교차검증 (I/O 없음)
-                        try:
-                            auto_cap = float(hint_cap)
-                        except ValueError:
-                            auto_cap = None
-                        if _name_cap and auto_cap and abs(_name_cap - auto_cap) / max(auto_cap, 1) > 0.1:
-                            # 경로명 용량과 10% 이상 차이 → 경로 변경 가능성, 무거운 I/O로 재산정
-                            auto_cap = None
-                        else:
-                            auto_cap_str = hint_cap
-                    if auto_cap is None:
-                        # 힌트 없거나 불일치 → 풀 스캔
-                        if _channel_meta_store and _dir_exists:
-                            for sf in (os.path.join(path, d) for d in _ch_subfolders):
-                                meta_hit = get_channel_meta(sf)
-                                if meta_hit is not None:
-                                    break
-                        if meta_hit is not None:
-                            auto_cap = meta_hit.min_capacity
-                        else:
-                            auto_cap = _name_cap if _name_cap else None
-                            if not auto_cap and _dir_exists:
+                if grp_start is None:
+                    grp_start = r
+                    # 그룹 첫 행: 후속 행들의 사이클/Loop 합산
+                    cumul_cyc, cyc_parts = 0, []
+                    cumul_raw, raw_parts = 0, []
+                    for rr in range(r, tbl.rowCount()):
+                        pp = self._get_table_cell(rr, 1)
+                        if not pp and rr > r:
+                            break  # 다음 그룹
+                        m = self._resolve_path_meta(pp) if pp else None
+                        if m:
+                            c = m.get('cycle', '')
+                            rc = m.get('cycleraw', '')
+                            if c:
                                 try:
-                                    first_crate = 0.2
-                                    subs = [os.path.join(path, d) for d in _ch_subfolders]
-                                    if subs:
-                                        if check_cycler(path):
-                                            auto_cap = pne_min_cap(subs[0], 0, first_crate)
-                                        else:
-                                            auto_cap = toyo_min_cap(subs[0], 0, first_crate)
-                                except Exception:
-                                    auto_cap = None
-                        auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
-                    # ── 최대 사이클: 힌트 있으면 생략, 없으면 산정 ──
-                    user_cap = self._get_table_cell(r, 3)
-                    cap_for_cycle = _parse_capacity_value(user_cap)
-                    if not cap_for_cycle:
-                        cap_for_cycle = auto_cap if auto_cap else 0
-                    if meta_hit is not None and meta_hit.max_logical_cycle is not None:
-                        max_cyc = meta_hit.max_logical_cycle
-                    elif _has_hint:
-                        max_cyc = None  # 힌트 완비: 무거운 cycle_map 빌드 생략
-                    else:
-                        max_cyc = _quick_max_cycle(path, cap_for_cycle)
-                    auto_cyc_str = str(max_cyc) if max_cyc else ""
-                    # ── 최대 TotlCycle 힌트 ──
-                    auto_raw_str = ""
-                    if auto_cyc_str:
-                        try:
-                            cm = None
-                            if meta_hit is not None and meta_hit.cycle_map:
-                                cm = meta_hit.cycle_map
-                            elif not _has_hint:
-                                cm = _build_cycle_map_for_path(path, cap_for_cycle)
-                            if cm:
-                                all_tc = [v['all'][1] for v in cm.values()
-                                          if isinstance(v, dict)
-                                          and isinstance(v.get('all'), (list, tuple))
-                                          and len(v['all']) >= 2]
-                                if all_tc:
-                                    auto_raw_str = str(max(all_tc))
-                        except Exception:
-                            pass
-                    # 경로별 캐시 저장 (동일 경로 반복 스캔 방지)
-                    _path_cache[path] = {
-                        'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
-                        'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
-                        '_cap_num': auto_cap, '_meta_hit': meta_hit}
-                auto_vals.append({
-                    'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
-                    'cycle': auto_cyc_str, 'cycleraw': auto_raw_str})
-
-            # ── Pass 2: 셀 채우기 (연결 모드 시 그룹 내 중복 제거) ──
-            grp_first = None  # 그룹 첫 행의 auto값 dict
-            for r in range(tbl.rowCount()):
-                if auto_vals[r] is None:
-                    grp_first = None
-                    continue
-                auto = auto_vals[r]
-                is_grp_first = (grp_first is None)
-                if is_grp_first:
-                    grp_first = auto
-                # (col, 이 행의 자동값, 그룹 첫 행의 자동값)
-                cols = [
-                    (0, auto['name'], grp_first['name']),
-                    (2, auto['ch'],   grp_first['ch']),
-                    (3, auto['cap'],  grp_first['cap']),
-                    (6, '',           ''),  # 모드: 자동 채움 없음 (사용자 수동 입력)
-                ]
-                for col, auto_val, first_val in cols:
-                    existing = self._get_table_cell(r, col)
-                    # 연결 모드 후속 행:
-                    #   col 0(경로명): 항상 공란 (첫 행에만 표시)
-                    #   col 2,3(채널,용량): 첫 행과 동일하면 공란
-                    if link_mode and not is_grp_first and col == 0:
-                        skip_dup = True
-                    else:
-                        skip_dup = (link_mode and not is_grp_first
-                                    and auto_val and first_val
-                                    and auto_val.strip() == first_val.strip())
-                    if not existing:
-                        if auto_val and not skip_dup:
-                            item = tbl.item(r, col)
-                            if item is None:
-                                item = QtWidgets.QTableWidgetItem(auto_val)
-                                tbl.setItem(r, col, item)
-                            else:
-                                item.setText(auto_val)
-                            item.setToolTip(auto_val)
-                    else:
-                        # 기존값 bold 비교
-                        if auto_val:
-                            item = tbl.item(r, col)
-                            if item:
-                                font = item.font()
-                                font.setBold(
-                                    existing.strip() != auto_val.strip())
-                                item.setFont(font)
-                # ── col 4 (사이클): max cycle을 회색 힌트로 표시 ──
-                cyc_existing = self._get_table_cell(r, 4)
-                cyc_auto = auto.get('cycle', '')
-
-                if link_mode and not is_grp_first:
-                    # 연결 모드 후속 행: 사이클 빈칸 처리
-                    item4 = tbl.item(r, 4)
-                    if item4:
-                        item4.setText('')
-                        item4.setToolTip('')
-                else:
-                    # 연결 모드 첫 행: 그룹 내 전체 경로의 누적 사이클 합산
-                    _cyc_parts = []  # 합산 내역 (툴팁용)
-                    if link_mode and is_grp_first and cyc_auto:
-                        _cumul_cyc = 0
-                        for _av in auto_vals[r:]:
-                            if _av is None:
-                                break
-                            _c = _av.get('cycle', '')
-                            if _c:
-                                try:
-                                    _v = int(_c)
-                                    _cumul_cyc += _v
-                                    _cyc_parts.append(_v)
+                                    v = int(c); cumul_cyc += v; cyc_parts.append(v)
                                 except ValueError:
                                     pass
-                        if _cumul_cyc > 0:
-                            cyc_auto = str(_cumul_cyc)
-
-                    if cyc_auto and not cyc_existing:
-                        item = tbl.item(r, 4)
-                        if item is None:
-                            item = QtWidgets.QTableWidgetItem(f"1-{cyc_auto}")
-                            tbl.setItem(r, 4, item)
-                        else:
-                            item.setText(f"1-{cyc_auto}")
-                        item.setForeground(QtGui.QColor(160, 160, 160))
-                        if len(_cyc_parts) > 1:
-                            _detail = ' + '.join(str(p) for p in _cyc_parts)
-                            item.setToolTip(f"최대 사이클: {cyc_auto}  ({_detail})")
-                        else:
-                            item.setToolTip(f"최대 사이클: {cyc_auto}")
-                    elif cyc_auto and cyc_existing:
-                        item = tbl.item(r, 4)
-                        if item:
-                            if len(_cyc_parts) > 1:
-                                _detail = ' + '.join(str(p) for p in _cyc_parts)
-                                item.setToolTip(
-                                    f"입력: {cyc_existing}  (최대: {cyc_auto} = {_detail})")
-                            else:
-                                item.setToolTip(
-                                    f"입력: {cyc_existing}  (최대: {cyc_auto})")
-
-                # ── col 5 (사이클(Raw)): max TotlCycle을 회색 힌트로 표시 ──
-                raw_existing = self._get_table_cell(r, 5)
-                raw_auto = auto.get('cycleraw', '')
-
-                if link_mode and not is_grp_first:
-                    # 연결 모드 후속 행: Raw 사이클도 빈칸 처리
-                    item5 = tbl.item(r, 5)
-                    if item5:
-                        item5.setText('')
-                        item5.setToolTip('')
-                else:
-                    # 연결 모드 첫 행: Raw 사이클도 누적 합산
-                    _raw_parts = []  # 합산 내역 (툴팁용)
-                    if link_mode and is_grp_first and raw_auto:
-                        _cumul_raw = 0
-                        for _av in auto_vals[r:]:
-                            if _av is None:
-                                break
-                            _rc = _av.get('cycleraw', '')
-                            if _rc:
+                            if rc:
                                 try:
-                                    _v = int(_rc)
-                                    _cumul_raw += _v
-                                    _raw_parts.append(_v)
+                                    v = int(rc); cumul_raw += v; raw_parts.append(v)
                                 except ValueError:
                                     pass
-                        if _cumul_raw > 0:
-                            raw_auto = str(_cumul_raw)
-
-                    if raw_auto and not raw_existing:
+                    # 합산 결과를 첫 행 힌트에 반영
+                    if len(cyc_parts) > 1 and cumul_cyc > 0:
+                        cyc_existing = self._get_table_cell(r, 4)
+                        item4 = tbl.item(r, 4)
+                        if item4 and not cyc_existing:
+                            detail = ' + '.join(str(p) for p in cyc_parts)
+                            item4.setText(f"1-{cumul_cyc}")
+                            item4.setForeground(_auto_fg)
+                            item4.setToolTip(f"최대 사이클: {cumul_cyc}  ({detail})")
+                        elif item4 and cyc_existing:
+                            detail = ' + '.join(str(p) for p in cyc_parts)
+                            item4.setToolTip(f"입력: {cyc_existing}  (최대: {cumul_cyc} = {detail})")
+                    if len(raw_parts) > 1 and cumul_raw > 0:
+                        raw_existing = self._get_table_cell(r, 5)
                         item5 = tbl.item(r, 5)
-                        if item5 is None:
-                            item5 = QtWidgets.QTableWidgetItem(f"1-{raw_auto}")
-                            tbl.setItem(r, 5, item5)
-                        else:
-                            item5.setText(f"1-{raw_auto}")
-                        item5.setForeground(QtGui.QColor(160, 160, 160))
-                        if len(_raw_parts) > 1:
-                            _detail = ' + '.join(str(p) for p in _raw_parts)
-                            item5.setToolTip(f"최대 TotlCycle(Raw): {raw_auto}  ({_detail})")
-                        else:
-                            item5.setToolTip(f"최대 TotlCycle(Raw): {raw_auto}")
-                    elif raw_auto and raw_existing:
-                        item5 = tbl.item(r, 5)
-                        if item5:
-                            if len(_raw_parts) > 1:
-                                _detail = ' + '.join(str(p) for p in _raw_parts)
-                                item5.setToolTip(
-                                    f"입력: {raw_existing}  (최대 Raw: {raw_auto} = {_detail})")
-                            else:
-                                item5.setToolTip(
-                                    f"입력: {raw_existing}  (최대 Raw: {raw_auto})")
+                        if item5 and not raw_existing:
+                            detail = ' + '.join(str(p) for p in raw_parts)
+                            item5.setText(f"1-{cumul_raw}")
+                            item5.setForeground(_auto_fg)
+                            item5.setToolTip(f"최대 Loop(TC): {cumul_raw}  ({detail})")
+                        elif item5 and raw_existing:
+                            detail = ' + '.join(str(p) for p in raw_parts)
+                            item5.setToolTip(f"입력: {raw_existing}  (최대 Loop: {cumul_raw} = {detail})")
         finally:
             tbl.blockSignals(False)
-        # 경로 하이라이트 갱신
-        self._highlight_all_paths()
-        # 연결 모드: 채널 불일치 빨간 폰트 표시
-        self._highlight_channel_mismatch()
-        # 연결 모드: 용량 불일치 빨간 폰트 표시
-        self._highlight_capacity_mismatch()
-        # 사이클(Raw) 자동 매핑 (논리사이클 → TotlCycle 변환)
-        self._autofill_cycleraw_column()
 
     # ECT 중복 경로/시험명 표시용 회색 색상
     _DUP_FG_COLOR = QtGui.QColor(160, 160, 160)
@@ -21512,6 +21610,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.setRowCount(5)
         self.cycle_path_table.setColumnCount(7)
         self.cycle_path_table.clearContents()
+        self._path_meta_cache.clear()
         self._update_ect_columns_state()
 
     # 인식 가능한 헤더 키워드 (소문자)
@@ -21956,14 +22055,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if 1 in _pasted_cols:
             self._update_group_separators()
             self._autofill_table_empty_cells()
-        # 사이클Raw(col5) 붙여넣기 시 사이클(col4) 역매핑
-        if 5 in _pasted_cols:
-            for ri in range(len(rows)):
-                self._on_cycle_cell_changed(start_row + ri, 5)
-        # 사이클(col4) 붙여넣기 시 사이클Raw(col5) 매핑
-        elif 4 in _pasted_cols:
-            for ri in range(len(rows)):
-                self._on_cycle_cell_changed(start_row + ri, 4)
+        # 사이클(col4) / Raw(col5) 자동 매핑 — 행별 판단
+        if 4 in _pasted_cols or 5 in _pasted_cols:
+            for ri, parts in enumerate(rows):
+                # 각 행에서 col4, col5에 실제 값이 붙여넣기됐는지 확인
+                _ci4 = 4 - start_col
+                _ci5 = 5 - start_col
+                _has4 = (0 <= _ci4 < len(parts) and parts[_ci4].strip())
+                _has5 = (0 <= _ci5 < len(parts) and parts[_ci5].strip())
+                if _has4 and _has5:
+                    pass  # 양쪽 모두 명시적 입력 → 자동 매핑 안 함
+                elif _has5:
+                    self._on_cycle_cell_changed(start_row + ri, 5)
+                elif _has4:
+                    self._on_cycle_cell_changed(start_row + ri, 4)
 
     def _cycle_table_delete(self):
         """선택 셀 내용 삭제"""
@@ -22551,6 +22656,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if not cycle_map:
                     return
 
+                _editable = (QtCore.Qt.ItemFlag.ItemIsSelectable
+                             | QtCore.Qt.ItemFlag.ItemIsEnabled
+                             | QtCore.Qt.ItemFlag.ItemIsEditable)
+
                 if col == 4:
                     # col4(사이클) 편집 → col5(사이클Raw)에 대응 TotlCycle 자동 매핑
                     totl_str = _logical_to_totl_str(cycle_map, text)
@@ -22566,9 +22675,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if max_info:
                             raw_tip += f"  (최대 Raw: {max_info['max_raw']})"
                         item5.setToolTip(raw_tip)
-                        # col5 읽기전용으로 설정 (자동 매핑 값 보호)
-                        item5.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable
-                                       | QtCore.Qt.ItemFlag.ItemIsEnabled)
+                        # col5 편집 가능 유지 — 사용자가 직접 수정 가능
+                        item5.setFlags(_editable)
                 elif col == 5:
                     # col5(사이클Raw) 편집 → col4(사이클)에 대응 논리사이클 자동 매핑
                     logical_str = _totl_to_logical_str(cycle_map, text)
@@ -22611,9 +22719,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             if max_info:
                                 cyc_tip += f"  (최대: {max_info['max_cycle']})"
                         item4.setToolTip(cyc_tip)
-                        # col4 읽기전용으로 설정 (자동 매핑 값 보호)
-                        item4.setFlags(QtCore.Qt.ItemFlag.ItemIsSelectable
-                                       | QtCore.Qt.ItemFlag.ItemIsEnabled)
+                        # col4 편집 가능 유지 — 사용자가 직접 수정 가능
+                        item4.setFlags(_editable)
             finally:
                 tbl.blockSignals(False)
         except Exception:
@@ -24000,13 +24107,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         best_ch = ch
                 blocks = []
                 if tc_mode:
-                    is_pne = is_pne_folder(folder_str)
-                    if is_pne:
-                        save_end = get_channel_save_end_data(best_ch)
-                        if save_end is not None:
-                            blocks = _build_timeline_blocks(save_end)
+                    # TC 모드: 루프(논리사이클) 단위로 TC를 묶어 표시
+                    meta = get_channel_meta(best_ch)
+                    if meta and meta.classified and meta.cycle_map:
+                        blocks = _build_timeline_blocks_tc_by_loop(
+                            meta.classified, cycle_map=meta.cycle_map)
                     else:
-                        blocks = _build_timeline_blocks_toyo(best_ch)
+                        # 메타 없으면 기존 충방전 패턴 기반 폴백
+                        is_pne = is_pne_folder(folder_str)
+                        if is_pne:
+                            save_end = get_channel_save_end_data(best_ch)
+                            if save_end is not None:
+                                blocks = _build_timeline_blocks(save_end)
+                        else:
+                            blocks = _build_timeline_blocks_toyo(best_ch)
                 else:
                     meta = get_channel_meta(best_ch)
                     if meta and meta.classified:
@@ -24953,10 +25067,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
         # 테이블에 데이터 있으면 테이블에서 읽기, 없으면 파일 선택
         if self._has_table_data():
-            # ECT 테이블 매핑: 사이클(Raw)(col5)을 TotlCycle 기준으로 사용
+            # ECT 테이블 매핑: col5(Raw) 우선, 비어있으면 col4(사이클)→TC 자동 변환
             table_rows = self._get_table_rows_ffill()
             ect_path = np.array([r['path'] for r in table_rows])
-            ect_cycle = np.array([r['cycleraw'] for r in table_rows])
+            ect_cycle_list = []
+            for r in table_rows:
+                raw_val = r.get('cycleraw', '').strip()
+                if raw_val:
+                    ect_cycle_list.append(raw_val)
+                else:
+                    # col5 비어있음 → col4(논리사이클)를 TC로 변환
+                    cyc_val = r.get('cycle', '').strip()
+                    if cyc_val:
+                        _path = r.get('path', '')
+                        _cap_str = r.get('capacity', '')
+                        try:
+                            _cap = float(_cap_str) if _cap_str else 0.0
+                        except (ValueError, TypeError):
+                            _cap = 0.0
+                        _cm = _build_cycle_map_for_path(_path, _cap) if _path else None
+                        if _cm:
+                            tc_str = _logical_to_totl_str(_cm, cyc_val)
+                            ect_cycle_list.append(tc_str if tc_str else cyc_val)
+                        else:
+                            ect_cycle_list.append(cyc_val)
+                    else:
+                        ect_cycle_list.append('')
+            ect_cycle = np.array(ect_cycle_list)
             ect_CD = np.array([r['mode'] for r in table_rows])
             ect_save = np.array([r['name'] for r in table_rows])
         else:
@@ -25030,23 +25167,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     ch_label = temp_lgnd or lgnd
                                     _color = mcolors.to_hex(_artists[0].get_color())
                                     channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                    # Data output option
-                                    continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
-                                    # 각 열을 소수점 자리수에 맞게 반올림
-                                    continue_df['TimeSec'] = continue_df['TimeSec'].round(1)  # 소수점 1자리
-                                    continue_df['Vol'] = continue_df['Vol'].round(4)           # 소수점 4자리
-                                    continue_df['Curr'] = continue_df['Curr'].round(4)         # 소수점 4자리
-                                    continue_df['Temp'] = continue_df['Temp'].round(1)         # 소수점 1자리
-                                    _ect_csv_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-                                    if not os.path.isdir(_ect_csv_dir):
-                                        _ect_csv_dir = "D:\\"
-                                    if os.path.isdir(_ect_csv_dir):
-                                        _ect_csv_path = os.path.join(_ect_csv_dir, ect_save[i] + ".csv")
-                                        continue_df.to_csv(_ect_csv_path, index=False, sep=',',
-                                                            header=["time(s)",
-                                                                    "Voltage(V)",
-                                                                    "Current(A)",
-                                                                    "Temp."])
+                                    # Data output option — ECT용 데이터 저장 체크 시에만 CSV 출력
+                                    if self.ect_saveok.isChecked():
+                                        continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
+                                        continue_df['TimeSec'] = continue_df['TimeSec'].round(1)
+                                        continue_df['Vol'] = continue_df['Vol'].round(4)
+                                        continue_df['Curr'] = continue_df['Curr'].round(4)
+                                        continue_df['Temp'] = continue_df['Temp'].round(1)
+                                        _ect_csv_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+                                        if not os.path.isdir(_ect_csv_dir):
+                                            _ect_csv_dir = "D:\\"
+                                        if os.path.isdir(_ect_csv_dir):
+                                            _ect_csv_path = os.path.join(_ect_csv_dir, ect_save[i] + ".csv")
+                                            continue_df.to_csv(_ect_csv_path, index=False, sep=',',
+                                                                header=["time(s)",
+                                                                        "Voltage(V)",
+                                                                        "Current(A)",
+                                                                        "Temp."])
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
