@@ -1879,18 +1879,9 @@ def _unified_calculate_axis(
                         parts.append(pd.DataFrame([nan_row]))
                 df = pd.concat(parts, ignore_index=True)
 
-        elif data_scope == "cycle" and axis_mode == "time":
-            # ── 시간 축 + 사이클 오버레이: 사이클별 시작점만 0 리셋 ──
-            # 충전→휴지→방전 전체 타임라인을 사이클 내에서 유지한다.
-            # (Condition별 리셋하면 충방전이 x=0에서 겹쳐 대칭으로 보임)
-            for cyc in df["Cycle"].unique():
-                mask_cyc = df["Cycle"] == cyc
-                cyc_start = df.loc[mask_cyc, "Time_s"].min()
-                df.loc[mask_cyc, "Time_s"] -= cyc_start
-
         elif data_scope == "cycle":
-            # ── SOC 축 + 사이클 오버레이: Condition별 독립 축 ──
-            # 충전 SOC 0→1, 방전 SOC 0→1 각각 독립
+            # ── 사이클 오버레이: Condition별 시간 리셋 (3cedcec 방식) ──
+            # 충전/방전 각각 time=0부터 시작하도록 Condition별 독립 리셋
             for cyc in df["Cycle"].unique():
                 mask_cyc = df["Cycle"] == cyc
                 for cond in df.loc[mask_cyc, "Condition"].unique():
