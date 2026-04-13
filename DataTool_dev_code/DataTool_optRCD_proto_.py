@@ -1515,10 +1515,11 @@ def _unified_filter_condition(
     if _curr_col:
         cc_mask = df["Condition"] == 9
         if cc_mask.any():
-            curr = df.loc[cc_mask, _curr_col]
-            df.loc[cc_mask & (curr > 0).values, "Condition"] = 1   # CC 충전
-            df.loc[cc_mask & (curr < 0).values, "Condition"] = 2   # CC 방전
-            df.loc[cc_mask & (curr == 0).values, "Condition"] = 3  # 전류 0 → 휴지
+            cc_idx = df.index[cc_mask]
+            curr_vals = df.loc[cc_idx, _curr_col].values  # numpy array
+            df.loc[cc_idx[curr_vals > 0], "Condition"] = 1   # CC 충전
+            df.loc[cc_idx[curr_vals < 0], "Condition"] = 2   # CC 방전
+            df.loc[cc_idx[curr_vals == 0], "Condition"] = 3  # 전류 0 → 휴지
 
     # --- 필터 적용 ---
     if data_scope == "charge":
@@ -19029,7 +19030,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 )
             return (folder_idx, subfolder_idx, batch_results)
         except Exception as e:
+            import traceback
             print(f"[통합 배치 로딩 오류] {folder_path}: {e}")
+            traceback.print_exc()
             return (folder_idx, subfolder_idx, None)
 
     @log_perf
