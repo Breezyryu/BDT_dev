@@ -1984,12 +1984,22 @@ def _unified_calculate_axis(
                         parts.append(pd.DataFrame([nan_row]))
                 df = pd.concat(parts, ignore_index=True)
 
+        elif data_scope == "cycle" and axis_mode == "time":
+            # ── 시간 축 + 사이클 오버레이: 사이클별 시작점만 0 리셋 ──
+            # 충전→휴지→방전 전체 타임라인을 사이클 내에서 유지한다.
+            # (Condition별 리셋하면 충방전이 x=0에서 겹쳐 대칭으로 보임)
+            for cyc in df["Cycle"].unique():
+                mask_cyc = df["Cycle"] == cyc
+                cyc_start = df.loc[mask_cyc, "Time_s"].min()
+                df.loc[mask_cyc, "Time_s"] -= cyc_start
+
         elif data_scope == "cycle":
-            # ── 기존 Condition 기반 오버레이 (비스윕, 펼침) ──
+            # ── SOC 축 + 사이클 오버레이: Condition별 독립 축 ──
+            # 충전 SOC 0→1, 방전 SOC 0→1 각각 독립
             for cyc in df["Cycle"].unique():
                 mask_cyc = df["Cycle"] == cyc
                 for cond in df.loc[mask_cyc, "Condition"].unique():
-                    if cond == 3:  # Rest는 리셋 불필요
+                    if cond == 3:
                         continue
                     mask = mask_cyc & (df["Condition"] == cond)
                     cond_start = df.loc[mask, "Time_s"].min()
@@ -10010,24 +10020,56 @@ class Ui_sitool(object):
     @staticmethod
     def _make_seg_group(labels, parent, button_group, font,
                         checked_idx=0):
-        """라디오 버튼 그룹 생성 (PyQt6 기본 스타일).
+        """세그먼티드 컨트롤(묶음 토글 버튼) 생성.
 
         Returns
         -------
         container : QWidget
             버튼들을 감싸는 컨테이너 위젯
-        buttons : list[QRadioButton]
+        buttons : list[QPushButton]
             생성된 버튼 목록 (인덱스 = button_group id)
         """
+        _base = (
+            "QPushButton {{ border: 1px solid #B0B0B0; background: #F5F5F5;"
+            " padding: 3px 8px; {pos} }}"
+            " QPushButton:checked {{ background: #3C5488; color: white;"
+            " border-color: #3C5488; }}"
+            " QPushButton:hover:!checked {{ background: #E0E0E0; }}")
+        _pos = {
+            "left": "border-top-left-radius: 3px; border-bottom-left-radius: 3px;",
+            "mid":  "border-left: none;",
+            "right": "border-left: none;"
+                     " border-top-right-radius: 3px;"
+                     " border-bottom-right-radius: 3px;",
+            "solo": "border-radius: 3px;",
+        }
+
         container = QtWidgets.QWidget(parent)
         h = QtWidgets.QHBoxLayout(container)
         h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(6)
+        h.setSpacing(0)
 
+        _fb = QtGui.QFont(font)
+        _fb.setBold(True)
+        _fm = QtGui.QFontMetrics(_fb)
+
+        n = len(labels)
         buttons = []
         for i, text in enumerate(labels):
-            btn = QtWidgets.QRadioButton(text, parent=container)
+            btn = QtWidgets.QPushButton(text, parent=container)
+            btn.setCheckable(True)
             btn.setFont(font)
+            btn.setFixedHeight(26)
+            btn.setMinimumWidth(_fm.horizontalAdvance(text) + 20)
+            if n == 1:
+                pos = "solo"
+            elif i == 0:
+                pos = "left"
+            elif i == n - 1:
+                pos = "right"
+            else:
+                pos = "mid"
+            btn.setStyleSheet(_base.format(pos=_pos[pos]))
             if i == checked_idx:
                 btn.setChecked(True)
             button_group.addButton(btn, i)
@@ -10664,45 +10706,19 @@ class Ui_sitool(object):
         self.verticalLayout_4.setObjectName("verticalLayout_4")
         self.horizontalLayout_15 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_15.setObjectName("horizontalLayout_15")
-        self.CycProfile = QtWidgets.QRadioButton(parent=self.tab_6)
-        self.CycProfile.setMinimumSize(QtCore.QSize(0, 30))
-        self.CycProfile.setMaximumSize(QtCore.QSize(300, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.CycProfile.setFont(font)
-        self.CycProfile.setChecked(True)
-        self.CycProfile.setObjectName("CycProfile")
-        self.horizontalLayout_15.addWidget(self.CycProfile)
-        self.CellProfile = QtWidgets.QRadioButton(parent=self.tab_6)
-        self.CellProfile.setMinimumSize(QtCore.QSize(0, 30))
-        self.CellProfile.setMaximumSize(QtCore.QSize(300, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.CellProfile.setFont(font)
-        self.CellProfile.setObjectName("CellProfile")
-        self.horizontalLayout_15.addWidget(self.CellProfile)
-        self.AllProfile = QtWidgets.QRadioButton(parent=self.tab_6)
-        self.AllProfile.setMinimumSize(QtCore.QSize(0, 30))
-        self.AllProfile.setMaximumSize(QtCore.QSize(300, 30))
-        font = QtGui.QFont()
-        font.setFamily("맑은 고딕")
-        font.setPointSize(10)
-        font.setBold(False)
-        font.setWeight(50)
-        self.AllProfile.setFont(font)
-        self.AllProfile.setObjectName("AllProfile")
-        self.horizontalLayout_15.addWidget(self.AllProfile)
-        # 3개 통합 모드를 명시적 QButtonGroup으로 묶기 (1개 필수 선택)
+        # 통합 모드: 세그먼티드 버튼 그룹으로 생성
+        _pv_font = QtGui.QFont("맑은 고딕", 10)
         self.profile_view_group = QtWidgets.QButtonGroup(self.tab_6)
-        self.profile_view_group.addButton(self.CycProfile, 0)
-        self.profile_view_group.addButton(self.CellProfile, 1)
-        self.profile_view_group.addButton(self.AllProfile, 2)
+        self._profile_view_seg, _pv_btns = self._make_seg_group(
+            ["사이클 통합", "셀별 통합", "전체 통합"], self.tab_6,
+            self.profile_view_group, _pv_font, checked_idx=0)
+        self.CycProfile = _pv_btns[0]
+        self.CycProfile.setObjectName("CycProfile")
+        self.CellProfile = _pv_btns[1]
+        self.CellProfile.setObjectName("CellProfile")
+        self.AllProfile = _pv_btns[2]
+        self.AllProfile.setObjectName("AllProfile")
+        self.horizontalLayout_15.addWidget(self._profile_view_seg)
         # chk_dqdv는 아래 _graph_opt_groupbox_pf 그리드로 이동
         self.chk_coincell_cyc = QtWidgets.QCheckBox(parent=self.tab_6)
         self.chk_coincell_cyc.setMinimumSize(QtCore.QSize(80, 30))
@@ -11041,9 +11057,7 @@ class Ui_sitool(object):
         # 행 1: 통합 모드 라디오 버튼 (사이클통합 / 셀별통합 / 전체통합) + 코인셀 체크
         _pa_mode_row = QtWidgets.QHBoxLayout()
         _pa_mode_row.setSpacing(8)
-        _pa_mode_row.addWidget(self.CycProfile)
-        _pa_mode_row.addWidget(self.CellProfile)
-        _pa_mode_row.addWidget(self.AllProfile)
+        _pa_mode_row.addWidget(self._profile_view_seg)
         _pa_mode_row.addStretch()
         _pa_mode_row.addWidget(self.chk_coincell_cyc)
         _pa_vlayout.addLayout(_pa_mode_row)
@@ -18839,28 +18853,48 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(ax.get_lines()) > 0]
                 _n_lines = min(_line_counts) if _line_counts else 0
                 # ── 새 색상 체계 적용: _cond_tag 기반 충방전 구분 ──
+                # 같은 사이클의 충전/방전은 동일 gradient 수준, 다른 hue
                 if color_mode != 'distinct' and _n_lines > 0:
                     for ax in fig.get_axes():
                         lines = ax.get_lines()
                         if not lines:
                             continue
-                        # 사이클 인덱스 산정: 비휴지 라인만 카운트
+                        # 사이클 수 산정: Condition 전환 패턴으로 사이클 경계 감지
+                        # chg(1)→dchg(2) 또는 단독 cond가 1사이클 단위
                         _non_rest = [L for L in lines
-                                     if getattr(L, '_cond_tag', 0) != 3]
+                                     if getattr(L, '_cond_tag', 0) not in (3, None)]
+                        if not _non_rest:
+                            _non_rest = [L for L in lines
+                                         if getattr(L, '_cond_tag', None) is None]
                         _n_effective = len(_non_rest)
-                        _cyc_counter = 0
+                        # 사이클 인덱스 부여: 같은 Condition이 연속이면 같은 사이클
+                        # Condition 변화 패턴: 1→2 (같은 사이클), 2→1 (새 사이클)
+                        _cyc_idx = 0
+                        _prev_cond = None
+                        _line_cyc_map = {}  # line_id → cycle_idx
+                        for line in _non_rest:
+                            _cond = getattr(line, '_cond_tag', None)
+                            if _prev_cond is not None:
+                                # 새 사이클 감지: 같은 cond 반복 또는 dchg→chg 전환
+                                if _cond == _prev_cond or (_prev_cond == 2 and _cond == 1):
+                                    _cyc_idx += 1
+                            _line_cyc_map[id(line)] = _cyc_idx
+                            _prev_cond = _cond
+                        _n_cycles_detected = _cyc_idx + 1
+
                         for line in lines:
                             _cond = getattr(line, '_cond_tag', None)
-                            # 휴지 라인: 회색 유지, 색상 적용 안 함
+                            # 휴지 라인: 회색 유지
                             if _cond == 3:
                                 line.set_color('#AAAAAA')
                                 line.set_linewidth(0.5)
                                 line.set_alpha(0.3)
                                 continue
-                            _is_first = (_cyc_counter == 0)
-                            _is_last = (_cyc_counter == _n_effective - 1)
+                            ci = _line_cyc_map.get(id(line), 0)
+                            _is_first = (ci == 0)
+                            _is_last = (ci == _n_cycles_detected - 1)
                             _c, _lw, _a = _get_profile_color(
-                                color_mode, _cyc_counter, _n_effective,
+                                color_mode, ci, _n_cycles_detected,
                                 condition=_cond,
                                 is_first=_is_first,
                                 is_last=_is_last,
@@ -18868,7 +18902,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             line.set_color(_c)
                             line.set_linewidth(_lw)
                             line.set_alpha(_a)
-                            _cyc_counter += 1
                 # 통합 범례 전략 적용
                 _apply_legend_strategy(
                     fig, _n_lines, color_mode,
@@ -25806,11 +25839,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"):
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
                         bg_level = 2
-                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "작업멈춤":
+                    elif self.df.loc[i + (j - 1) * num_i,"use"] not in self._NORMAL_STATES:
+                        # 작업멈춤 계열 (.log Code 사유 포함)
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,155,154))
-                        bg_level = 3
-                    elif self.df.loc[i + (j - 1) * num_i,"use"] == "중단점 도달":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,185,100))
                         bg_level = 3
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
@@ -25875,19 +25906,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return False
 
     # 상태 키워드 매핑 (키워드 추가 시 여기만 수정)
+    # None = _NORMAL_STATES에 속하지 않는 모든 상태 (작업멈춤 계열)
     FILTER_STATUS_KEYWORDS = {
         "유휴": ["완료", "준비", "작업정지"],
-        "작업멈춤": ["작업멈춤", "중단점 도달"],
-        "중단점": ["중단점 도달"],
+        "작업멈춤": None,
     }
 
     def match_filter_text(self, search_text, testname, status):
         """필터링용 매칭: 상태 키워드 또는 테스트명 텍스트 검색
         스페이스=OR, 쉼표=AND, 대소문자 무시
-        키워드(유휴, 작업멈춤 등)는 상태 컬럼에서 매칭"""
+        키워드(유휴, 작업멈춤 등)는 상태 컬럼에서 매칭
+        작업멈춤: _NORMAL_STATES에 속하지 않는 모든 상태 매칭"""
         if search_text.strip() == "":
             return True
-        import re
         normalized = re.sub(r'\s*,\s*', ',', search_text)
         testname_lower = testname.lower()
         for group in normalized.split(" "):
@@ -25901,10 +25932,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             all_match = True
             for kw in keywords:
                 if kw in self.FILTER_STATUS_KEYWORDS:
-                    # 상태 키워드 → status 컬럼에서 매칭
-                    if status not in self.FILTER_STATUS_KEYWORDS[kw]:
-                        all_match = False
-                        break
+                    allowed = self.FILTER_STATUS_KEYWORDS[kw]
+                    if allowed is None:
+                        # 작업멈춤 계열: 정상 상태가 아닌 모든 것
+                        if status in self._NORMAL_STATES:
+                            all_match = False
+                            break
+                    else:
+                        if status not in allowed:
+                            all_match = False
+                            break
                 else:
                     # 일반 텍스트 → testname에서 매칭
                     if kw.lower() not in testname_lower:
@@ -25913,6 +25950,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if all_match:
                 return True
         return False
+
+    # 정상 운전 상태 (이 외 = 작업멈춤 계열)
+    _NORMAL_STATES = frozenset({
+        "작업중", "충전", "방전", "진행", "휴지",
+        "완료", "대기", "준비", "작업정지",
+    })
 
     @staticmethod
     def _classify_paused_reason(channel_path: str) -> str:
@@ -25926,7 +25969,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         Returns
         -------
         str
-            "중단점 도달" (Code:153) 또는 "작업멈춤" (기타/판별 불가)
+            Code:숫자 뒤의 사유 문자열, 또는 "작업멈춤" (판별 불가 시)
         """
         try:
             if not os.path.isdir(channel_path):
@@ -25944,9 +25987,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f.seek(file_size - 4096)
                     f.readline()  # 잘린 첫 줄 버림
                 tail = f.read()
-            # Code:153 = 사용자 작업멈춤 지령 → "중단점 도달"
-            if "Code:153" in tail:
-                return "중단점 도달"
+            # Code:숫자 뒤의 사유 문자열 추출 (마지막 매칭 사용)
+            matches = re.findall(r'Code:\d+\s+(.+)', tail)
+            if matches:
+                return matches[-1].strip()
             return "작업멈춤"
         except Exception:
             return "작업멈춤"
@@ -26258,13 +26302,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_channel.setUpdatesEnabled(False)
         row = 0
         # 상태별 행 전체 배경색 정의
+        _PAUSED_BG = QtGui.QColor(214, 155, 154)
         STATUS_BG = {
             "작업정지": QtGui.QColor(176, 203, 176),
             "대기": QtGui.QColor(176, 203, 176),
             "준비": QtGui.QColor(176, 203, 176),
             "완료": QtGui.QColor(234, 239, 230),
-            "작업멈춤": QtGui.QColor(214, 155, 154),
-            "중단점 도달": QtGui.QColor(214, 185, 100),
         }
         # floor_cyclers 순서를 유지하여 출력
         for floor_name, floor_cycler_list in floor_cyclers:
@@ -26311,6 +26354,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # ── 데이터 행 ──
                 for ch_no, testname, status, cyc, vol, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
+                    if bg_color is None and status not in self._NORMAL_STATES:
+                        bg_color = _PAUSED_BG
                     _font9 = QtGui.QFont("Malgun gothic", 9)
                     item_cycler = QtWidgets.QTableWidgetItem(f"    {cycler_text}")
                     item_cycler.setFont(_font9)
