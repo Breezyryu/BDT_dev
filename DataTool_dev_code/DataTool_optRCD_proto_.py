@@ -10540,8 +10540,8 @@ class Ui_sitool(object):
         self.horizontalLayout_119.setSpacing(4)
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
         # ── 경로 테이블 (엑셀 시트형) ──
-        self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "사이클", "Loop", "모드"])
+        self.cycle_path_table = QtWidgets.QTableWidget(5, 6, parent=self._path_groupbox)
+        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "TC", "모드"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -10550,13 +10550,11 @@ class Ui_sitool(object):
         _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        _hdr.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.cycle_path_table.setColumnWidth(0, 55)
         self.cycle_path_table.setColumnWidth(2, 70)
         self.cycle_path_table.setColumnWidth(3, 55)
         self.cycle_path_table.setColumnWidth(4, 55)
-        self.cycle_path_table.setColumnWidth(5, 65)
-        self.cycle_path_table.setColumnWidth(6, 50)
+        self.cycle_path_table.setColumnWidth(5, 50)
         self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
         self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
         _table_font = QtGui.QFont()
@@ -21100,7 +21098,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _get_table_rows(self):
         """테이블의 모든 행을 dict 리스트로 반환 (빈 행 제외)
-        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str, 'cycle': str, 'cycleraw': str, 'mode': str}, ...]
+        Returns: [{'name': str, 'path': str, 'channel': str, 'capacity': str, 'cycle': str, 'mode': str}, ...]
         """
         rows = []
         for r in range(self.cycle_path_table.rowCount()):
@@ -21113,8 +21111,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'channel': self._get_table_cell(r, 2),
                 'capacity': self._get_table_cell(r, 3),
                 'cycle': self._get_table_cell(r, 4),
-                'cycleraw': self._get_table_cell(r, 5),
-                'mode': self._get_table_cell(r, 6),
+                'mode': self._get_table_cell(r, 5),
             })
         return rows
 
@@ -21145,8 +21142,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'channel': self._get_table_cell(r, 2),
                 'capacity': self._get_table_cell(r, 3),
                 'cycle': self._get_table_cell(r, 4),
-                'cycleraw': self._get_table_cell(r, 5),
-                'mode': self._get_table_cell(r, 6),
+                'mode': self._get_table_cell(r, 5),
             })
         if current_group:
             groups.append(current_group)
@@ -21167,8 +21163,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             channel = self._get_table_cell(r, 2)
             capacity = self._get_table_cell(r, 3)
             cycle = self._get_table_cell(r, 4)
-            cycleraw = self._get_table_cell(r, 5)
-            mode = self._get_table_cell(r, 6)
+            mode = self._get_table_cell(r, 5)
             # forward-fill: 빈 경로/경로명은 직전 유효값 사용
             if path:
                 last_path = path
@@ -21183,8 +21178,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rows.append({
                 'name': name, 'path': path,
                 'channel': channel, 'capacity': capacity,
-                'cycle': cycle, 'cycleraw': cycleraw,
-                'mode': mode,
+                'cycle': cycle, 'mode': mode,
             })
         return rows
 
@@ -21204,8 +21198,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             channel = self._get_table_cell(r, 2)
             capacity = self._get_table_cell(r, 3)
             cycle = self._get_table_cell(r, 4)
-            cycleraw = self._get_table_cell(r, 5)
-            mode = self._get_table_cell(r, 6)
+            mode = self._get_table_cell(r, 5)
             # forward-fill: 빈 경로/경로명은 직전 유효값 사용
             if path:
                 last_path = path
@@ -21215,7 +21208,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if not name:
                     name = last_name
             # 경로도 데이터도 없으면 그룹 구분자
-            if not path and not channel and not cycle and not cycleraw:
+            if not path and not channel and not cycle:
                 if current_group:
                     groups.append(current_group)
                     current_group = []
@@ -21225,8 +21218,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             current_group.append({
                 'name': name, 'path': path,
                 'channel': channel, 'capacity': capacity,
-                'cycle': cycle, 'cycleraw': cycleraw,
-                'mode': mode,
+                'cycle': cycle, 'mode': mode,
             })
         if current_group:
             groups.append(current_group)
@@ -21268,7 +21260,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             result = {
                 'name': auto_name, 'ch': '',
                 'cap': str(int(_name_cap)) if _name_cap else '',
-                'cycle': '', 'cycleraw': '',
+                'cycle': '',
                 '_cap_num': _name_cap or None, '_meta_hit': None}
             self._path_meta_cache[path] = result
             return result
@@ -21311,37 +21303,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     auto_cap = None
         auto_cap_str = str(int(auto_cap)) if auto_cap and auto_cap > 0 else ""
 
-        # ── 최대 사이클 + 최대 TC: cycle_map 1회 빌드 ──
+        # ── 최대 TC: cycle_map 또는 SaveEndData에서 산출 ──
         cap_for_cycle = auto_cap if auto_cap else 0
         auto_cyc_str = ""
-        auto_raw_str = ""
-        if meta_hit is not None and meta_hit.max_logical_cycle is not None:
-            max_cyc = meta_hit.max_logical_cycle
+        # max_tc 산출: cycle_map에서 최대 TC 값 직접 사용
+        cm = None
+        if meta_hit is not None and meta_hit.cycle_map:
+            cm = meta_hit.cycle_map
         else:
-            max_cyc = _quick_max_cycle(path, cap_for_cycle)
-        if max_cyc:
-            auto_cyc_str = str(max_cyc)
-        # cycle_map에서 max_tc 산출
-        if auto_cyc_str:
             try:
-                cm = None
-                if meta_hit is not None and meta_hit.cycle_map:
-                    cm = meta_hit.cycle_map
-                else:
-                    cm = _build_cycle_map_for_path(path, cap_for_cycle)
-                if cm:
-                    all_tc = [v['all'][1] for v in cm.values()
-                              if isinstance(v, dict)
-                              and isinstance(v.get('all'), (list, tuple))
-                              and len(v['all']) >= 2]
-                    if all_tc:
-                        auto_raw_str = str(max(all_tc))
+                cm = _build_cycle_map_for_path(path, cap_for_cycle)
             except Exception:
-                pass
+                cm = None
+        if cm:
+            all_tc = [v['all'][1] for v in cm.values()
+                      if isinstance(v, dict)
+                      and isinstance(v.get('all'), (list, tuple))
+                      and len(v['all']) >= 2]
+            if all_tc:
+                auto_cyc_str = str(max(all_tc))
+        if not auto_cyc_str:
+            # cycle_map 없으면 _quick_max_cycle 폴백 (TC ≈ 논리사이클 in General)
+            max_cyc = _quick_max_cycle(path, cap_for_cycle)
+            if max_cyc:
+                auto_cyc_str = str(max_cyc)
 
         result = {
             'name': auto_name, 'ch': auto_ch, 'cap': auto_cap_str,
-            'cycle': auto_cyc_str, 'cycleraw': auto_raw_str,
+            'cycle': auto_cyc_str,
             '_cap_num': auto_cap, '_meta_hit': meta_hit}
         self._path_meta_cache[path] = result
         return result
@@ -21454,30 +21443,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 elif cyc_auto and cyc_existing:
                     item4 = tbl.item(row, 4)
                     if item4:
-                        item4.setToolTip(f"입력: {cyc_existing}  (최대: {cyc_auto})")
-
-            # ── col5(Loop) 힌트 ──
-            raw_existing = self._get_table_cell(row, 5)
-            raw_auto = meta.get('cycleraw', '')
-            if link_mode and not is_grp_first:
-                item5 = tbl.item(row, 5)
-                if item5:
-                    item5.setText('')
-                    item5.setToolTip('')
-            else:
-                if raw_auto and not raw_existing:
-                    item5 = tbl.item(row, 5)
-                    if item5 is None:
-                        item5 = QtWidgets.QTableWidgetItem(f"1-{raw_auto}")
-                        tbl.setItem(row, 5, item5)
-                    else:
-                        item5.setText(f"1-{raw_auto}")
-                    item5.setForeground(QtGui.QColor(160, 160, 160))
-                    item5.setToolTip(f"최대 Loop(TC): {raw_auto}")
-                elif raw_auto and raw_existing:
-                    item5 = tbl.item(row, 5)
-                    if item5:
-                        item5.setToolTip(f"입력: {raw_existing}  (최대 Loop: {raw_auto})")
+                        item4.setToolTip(f"입력: {cyc_existing}  (최대 TC: {cyc_auto})")
         finally:
             tbl.blockSignals(False)
 
@@ -21515,15 +21481,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._highlight_all_paths()
         self._highlight_channel_mismatch()
         self._highlight_capacity_mismatch()
-        self._autofill_cycleraw_column()
 
     def _autofill_link_cumulative_hints(self):
-        """연결 모드: 그룹 내 사이클/Loop 최대값을 누적 합산하여 첫 행 힌트 보정."""
+        """연결 모드: 그룹 내 TC 최대값을 누적 합산하여 첫 행 힌트 보정."""
         tbl = self.cycle_path_table
         _auto_fg = QtGui.QColor(160, 160, 160)
         tbl.blockSignals(True)
         try:
-            grp_start = None  # 그룹 첫 행 인덱스
+            grp_start = None
             for r in range(tbl.rowCount()):
                 path = self._get_table_cell(r, 1)
                 if not path:
@@ -21531,50 +21496,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     continue
                 if grp_start is None:
                     grp_start = r
-                    # 그룹 첫 행: 후속 행들의 사이클/Loop 합산
-                    cumul_cyc, cyc_parts = 0, []
-                    cumul_raw, raw_parts = 0, []
+                    cumul_tc, tc_parts = 0, []
                     for rr in range(r, tbl.rowCount()):
                         pp = self._get_table_cell(rr, 1)
                         if not pp and rr > r:
-                            break  # 다음 그룹
+                            break
                         m = self._resolve_path_meta(pp) if pp else None
                         if m:
                             c = m.get('cycle', '')
-                            rc = m.get('cycleraw', '')
                             if c:
                                 try:
-                                    v = int(c); cumul_cyc += v; cyc_parts.append(v)
+                                    v = int(c); cumul_tc += v; tc_parts.append(v)
                                 except ValueError:
                                     pass
-                            if rc:
-                                try:
-                                    v = int(rc); cumul_raw += v; raw_parts.append(v)
-                                except ValueError:
-                                    pass
-                    # 합산 결과를 첫 행 힌트에 반영
-                    if len(cyc_parts) > 1 and cumul_cyc > 0:
+                    if len(tc_parts) > 1 and cumul_tc > 0:
                         cyc_existing = self._get_table_cell(r, 4)
                         item4 = tbl.item(r, 4)
                         if item4 and not cyc_existing:
-                            detail = ' + '.join(str(p) for p in cyc_parts)
-                            item4.setText(f"1-{cumul_cyc}")
+                            detail = ' + '.join(str(p) for p in tc_parts)
+                            item4.setText(f"1-{cumul_tc}")
                             item4.setForeground(_auto_fg)
-                            item4.setToolTip(f"최대 사이클: {cumul_cyc}  ({detail})")
+                            item4.setToolTip(f"최대 TC: {cumul_tc}  ({detail})")
                         elif item4 and cyc_existing:
-                            detail = ' + '.join(str(p) for p in cyc_parts)
-                            item4.setToolTip(f"입력: {cyc_existing}  (최대: {cumul_cyc} = {detail})")
-                    if len(raw_parts) > 1 and cumul_raw > 0:
-                        raw_existing = self._get_table_cell(r, 5)
-                        item5 = tbl.item(r, 5)
-                        if item5 and not raw_existing:
-                            detail = ' + '.join(str(p) for p in raw_parts)
-                            item5.setText(f"1-{cumul_raw}")
-                            item5.setForeground(_auto_fg)
-                            item5.setToolTip(f"최대 Loop(TC): {cumul_raw}  ({detail})")
-                        elif item5 and raw_existing:
-                            detail = ' + '.join(str(p) for p in raw_parts)
-                            item5.setToolTip(f"입력: {raw_existing}  (최대 Loop: {cumul_raw} = {detail})")
+                            detail = ' + '.join(str(p) for p in tc_parts)
+                            item4.setToolTip(f"입력: {cyc_existing}  (최대 TC: {cumul_tc} = {detail})")
         finally:
             tbl.blockSignals(False)
 
@@ -21592,10 +21537,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for r, row in enumerate(rows):
             if row is None:
                 # 그룹 구분자: 빈 행
-                for col in range(7):
+                for col in range(6):
                     self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
                 continue
-            for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'cycleraw', 'mode']):
+            for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'mode']):
                 val = row.get(key, '')
                 item = QtWidgets.QTableWidgetItem(val)
                 item.setToolTip(val)
@@ -21608,7 +21553,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _clear_table(self):
         """테이블 내용 초기화"""
         self.cycle_path_table.setRowCount(5)
-        self.cycle_path_table.setColumnCount(7)
+        self.cycle_path_table.setColumnCount(6)
         self.cycle_path_table.clearContents()
         self._path_meta_cache.clear()
         self._update_ect_columns_state()
@@ -21710,7 +21655,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rows.append({
                 'name': fname, 'path': fp,
                 'channel': '', 'capacity': '',
-                'cycle': '', 'cycleraw': '', 'mode': '',
+                'cycle': '', 'mode': '',
             })
         if not rows:
             return
@@ -21721,14 +21666,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         try:
             for r, row in enumerate(rows):
                 for col, key in enumerate(['name', 'path', 'channel', 'capacity',
-                                           'cycle', 'cycleraw', 'mode']):
+                                           'cycle', 'mode']):
                     val = row.get(key, '')
                     item = QtWidgets.QTableWidgetItem(val)
                     item.setToolTip(val)
                     tbl.setItem(r, col, item)
             # 나머지 빈 행 초기화
             for r in range(len(rows), tbl.rowCount()):
-                for col in range(7):
+                for col in range(6):
                     tbl.setItem(r, col, QtWidgets.QTableWidgetItem(''))
         finally:
             tbl.blockSignals(False)
@@ -23030,10 +22975,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         disabled_bg = QtGui.QColor('#D5D8DC')   # 회색 — 비활성 시각적 표시
         clear_bg = QtGui.QBrush()               # 기본 배경
 
-        # ── 테이블 col4-6 토글 ──
+        # ── 테이블 col4-5 토글 ──
         tbl.blockSignals(True)
         for r in range(tbl.rowCount()):
-            for c in (4, 5, 6):
+            for c in (4, 5):
                 item = tbl.item(r, c)
                 if item is None:
                     item = QtWidgets.QTableWidgetItem('')
