@@ -268,7 +268,7 @@ class ChannelMeta:
 
     # 사이클 맵
     cycle_map: dict | None = None     # 논리 ↔ 물리 매핑
-    max_logical_cycle: int | None = None
+    max_tc: int | None = None
 
 
 def _normalize_ch(s):
@@ -5029,11 +5029,15 @@ def _build_channel_meta(
 
     # ── 5. 사이클 맵 생성 (캐시 래퍼 경유 — autofill과 공유) ──
     cycle_map = None
-    max_logical = None
+    _max_tc = None
     cycle_map, _ = get_cycle_map(channel_path, min_capacity, ini_crate, is_pne=is_pne)
 
     if cycle_map:
-        max_logical = max(cycle_map.keys()) if cycle_map else None
+        # cycle_map key는 논리사이클이지만 General 모드에서 TC=논리사이클
+        # max TC: cycle_map 내 최대 TC 값 (all 범위의 끝)
+        all_tc_ends = [v['all'][1] for v in cycle_map.values()
+                       if isinstance(v, dict) and 'all' in v]
+        _max_tc = max(all_tc_ends) if all_tc_ends else max(cycle_map.keys())
 
     # ── 6. ChannelMeta 생성 및 등록 ──
     meta = ChannelMeta(
@@ -5053,7 +5057,7 @@ def _build_channel_meta(
         schedule_pattern=schedule_pattern_str,
         save_end_data=_raw_df if is_pne else None,
         cycle_map=cycle_map,
-        max_logical_cycle=max_logical,
+        max_tc=_max_tc,
     )
     _channel_meta_store[channel_path] = meta
     return meta
@@ -6772,7 +6776,7 @@ def _resolve_logical_to_tc_range(
     return (tc_min, tc_max)
 
 
-def _get_max_logical_cycle(
+def _get_max_tc(
     all_data_folder: list, mincapacity: float, inirate: float,
 ) -> int | None:
     """전체 데이터 폴더에서 첫 번째 유효 채널의 최대 논리사이클 번호를 반환.
@@ -7576,86 +7580,7 @@ _CLASSIFIED_COLORS = {
 }
 
 
-def _build_timeline_blocks_classified(
-    classified: list[dict],
-    cycle_map: dict | None = None,
-) -> list[dict]:
-    """ChannelMeta.classified 기반 타임라인 블록 생성 (논리사이클 단위).
-
-    classified의 cycle 필드는 TC(물리사이클) 기준이므로
-    cycle_map을 사용하여 논리사이클로 매핑한 후 블록을 생성한다.
-    동일 카테고리 연속 구간을 1블록으로 합침.
-
-    Parameters
-    ----------
-    classified : list[dict]
-        [{'cycle': TC번호, 'category': 'RPT'|'가속수명'|...}, ...]
-    cycle_map : dict | None
-        {논리사이클: {'all': (TC시작, TC끝), ...}} 매핑.
-        None이면 classified.cycle을 논리사이클로 간주 (1:1).
-
-    Returns
-    -------
-    list[dict]
-        [{'start': 1, 'end': 100, 'pattern': '가속수명', 'count': 100}, ...]
-    """
-    if not classified:
-        return []
-
-    # TC → 논리사이클 역매핑 구축
-    tc_to_ln: dict[int, int] = {}
-    if cycle_map:
-        for ln, val in cycle_map.items():
-            if not isinstance(val, dict) or 'all' not in val:
-                continue
-            s, e = val['all']
-            for tc in range(s, e + 1):
-                tc_to_ln[tc] = ln
-
-    # classified(TC 기준) → 논리사이클 기준으로 변환 후 카테고리 집계
-    ln_cats: dict[int, str] = {}  # {논리사이클: 대표 카테고리}
-    for cl in classified:
-        tc = cl['cycle']
-        ln = tc_to_ln.get(tc, tc) if tc_to_ln else tc
-        # 논리사이클 내 여러 TC의 카테고리 → 첫 번째(또는 비initial) 우선
-        if ln not in ln_cats or ln_cats[ln] == 'initial':
-            ln_cats[ln] = cl['category']
-
-    if not ln_cats:
-        return []
-
-    # initial 구분: 첫 번째 = '초기 반사이클' 유지, 이후 = '반사이클'로 변경
-    sorted_lns = sorted(ln_cats.keys())
-    first_ln = sorted_lns[0] if sorted_lns else None
-    for ln in sorted_lns:
-        if ln_cats[ln] == 'initial' and ln != first_ln:
-            ln_cats[ln] = '반사이클'
-
-    # 논리사이클 번호순 정렬 후 블록 생성
-    blocks = []
-    block_start = sorted_lns[0]
-    block_cat = ln_cats[block_start]
-
-    for i in range(1, len(sorted_lns)):
-        ln = sorted_lns[i]
-        cat = ln_cats[ln]
-        if cat != block_cat or ln != sorted_lns[i - 1] + 1:
-            blocks.append({
-                'start': block_start,
-                'end': sorted_lns[i - 1],
-                'pattern': block_cat,
-                'count': sorted_lns[i - 1] - block_start + 1,
-            })
-            block_start = ln
-            block_cat = cat
-
-    blocks.append({
-        'start': block_start,
-        'end': sorted_lns[-1],
-        'pattern': block_cat,
-        'count': sorted_lns[-1] - block_start + 1,
-    })
-    return blocks
+    # (구 _build_timeline_blocks_classified 삭제 — TC 1원화로 _build_timeline_blocks_tc_by_loop만 사용)
 
 
 def _build_timeline_blocks_tc_by_loop(
@@ -19401,7 +19326,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f'    [{meta.cycler}] {os.path.basename(meta.parent_path)}  '
                     f'{meta.test_type} {src_tag}  '
                     f'총 {len(meta.classified or [])}cyc  {", ".join(cat_parts)}  '
-                    f'cap={meta.min_capacity:.0f}mAh  논리cyc={meta.max_logical_cycle}')
+                    f'cap={meta.min_capacity:.0f}mAh  maxTC={meta.max_tc}')
                 if meta.accel_pattern:
                     for line in format_accel_pattern(meta.accel_pattern):
                         _perf_logger.info(line)
@@ -23310,7 +23235,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             for ch in channels:
                 m = get_channel_meta(ch)
                 if m and (best_meta is None
-                          or (m.max_logical_cycle or 0) > (best_meta.max_logical_cycle or 0)):
+                          or (m.max_tc or 0) > (best_meta.max_tc or 0)):
                     best_meta = m
             return best_meta
         except Exception:
@@ -23362,9 +23287,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             result = []
             for ch in channels:
                 meta = get_channel_meta(ch)
-                if meta and meta.max_logical_cycle:
+                if meta and meta.max_tc:
                     ch_name = extract_text_in_brackets(os.path.basename(ch))
-                    result.append({'name': f'CH{ch_name}', 'lc': meta.max_logical_cycle})
+                    result.append({'name': f'CH{ch_name}', 'lc': meta.max_tc})
             result.sort(key=lambda x: -x['lc'])
             return result
         except Exception:
@@ -23397,8 +23322,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             best_lc = 0
             for ch in channels:
                 m = get_channel_meta(ch)
-                if m and (m.max_logical_cycle or 0) > best_lc:
-                    best_lc = m.max_logical_cycle or 0
+                if m and (m.max_tc or 0) > best_lc:
+                    best_lc = m.max_tc or 0
                     best_ch = ch
             meta = get_channel_meta(best_ch)
             cap = meta.min_capacity if meta else mincapacity
@@ -23546,8 +23471,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 best_lc = 0
                 for ch in channels:
                     m = get_channel_meta(ch)
-                    if m and m.max_logical_cycle and m.max_logical_cycle > best_lc:
-                        best_lc = m.max_logical_cycle
+                    if m and m.max_tc and m.max_tc > best_lc:
+                        best_lc = m.max_tc
                         best_ch = ch
                 blocks = []
                 # TC 블록: classified 기반 (카테고리별 TC 묶음)
@@ -23615,15 +23540,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """경로의 최대 논리사이클 수 반환 (Phase 0 메타데이터 기반).
 
         _build_all_channel_meta_parallel 호출 이후에 사용해야 한다.
-        메타에 max_logical_cycle이 없으면 0 반환.
+        메타에 max_tc이 없으면 0 반환.
         """
         if not os.path.isdir(path):
             return 0
         for f in os.scandir(path):
             if f.is_dir() and _is_channel_folder(f.name):
                 meta = get_channel_meta(f.path)
-                if meta and meta.max_logical_cycle is not None:
-                    return meta.max_logical_cycle
+                if meta and meta.max_tc is not None:
+                    return meta.max_tc
         return 0
 
     def _load_profile_link_mode(
@@ -23638,7 +23563,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     ) -> tuple[dict, list, list]:
         """연결처리 모드 프로파일 로딩 — 그룹별 사이클 라우팅 + 병합.
 
-        각 그룹의 경로별 max_logical_cycle로 오프셋을 계산하고,
+        각 그룹의 경로별 max_tc로 오프셋을 계산하고,
         요청된 논리사이클을 올바른 경로의 로컬 사이클로 변환하여 로딩한다.
         결과는 primary 경로(그룹 첫 번째 경로) 기준으로 re-key하여 반환.
 
@@ -23686,7 +23611,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     merged_data[(gi, si, cyc)] = val
             else:
                 # ── 다중 경로: 연결 로딩 ──
-                # 1. 경로별 max_logical_cycle로 오프셋 테이블 구축
+                # 1. 경로별 max_tc로 오프셋 테이블 구축
                 offsets = [0]
                 for p in grp_paths[:-1]:
                     mc = self._get_path_max_cycle(p)
@@ -23998,7 +23923,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ── 1-b. TC 최대값 초과 검증 ──
         if _link_mode:
-            # 연결 모드: 첫 번째 그룹의 전체 경로 max_logical_cycle 합산
+            # 연결 모드: 첫 번째 그룹의 전체 경로 max_tc 합산
             max_lc = 0
             for r in _link_groups[0]:
                 mc = self._get_path_max_cycle(r['path'])
@@ -24007,11 +23932,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             max_lc = None
             if _channel_meta_store:
                 for meta in _channel_meta_store.values():
-                    if meta.max_logical_cycle is not None:
-                        max_lc = meta.max_logical_cycle
+                    if meta.max_tc is not None:
+                        max_lc = meta.max_tc
                         break
             if max_lc is None:
-                max_lc = _get_max_logical_cycle(all_data_folder, mincapacity, firstCrate)
+                max_lc = _get_max_tc(all_data_folder, mincapacity, firstCrate)
 
         if max_lc is not None and max_lc > 0:
             invalid_cycles = [c for c in CycleNo if c > max_lc]
@@ -24648,7 +24573,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 step_ranges.append((s, e))
 
             # 논리사이클 최대값 초과 검증
-            max_lc = _get_max_logical_cycle(all_data_folder, mincapacity, firstCrate)
+            max_lc = _get_max_tc(all_data_folder, mincapacity, firstCrate)
             if max_lc is not None:
                 invalid_ranges = [(s, e) for s, e in step_ranges if s > max_lc]
                 step_ranges = [(s, min(e, max_lc)) for s, e in step_ranges if s <= max_lc]
