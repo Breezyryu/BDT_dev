@@ -23076,6 +23076,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return
         if btn_id == 0:  # 이어서 → 시간 축 강제
             self.profile_axis_time.setChecked(True)
+        elif btn_id == 3:  # 연결(히스테리시스) → SOC 축 강제
+            self.profile_axis_soc.setChecked(True)
 
     def _on_timeline_selection_changed(self, row_idx: int, text: str) -> None:
         """타임라인 바 → 경로 테이블 해당 행 + stepnum 동기화.
