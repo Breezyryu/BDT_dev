@@ -16751,6 +16751,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _tb_selall = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.SelectAll, self.tb_channel)
         _tb_selall.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         _tb_selall.activated.connect(self.tb_channel.selectAll)
+        # 필터링 테이블 우클릭 메뉴 (전체 펼침/닫힘)
+        self.tb_channel.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tb_channel.customContextMenuRequested.connect(self._filter_context_menu)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -25784,10 +25787,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f.readline()  # 잘린 첫 줄 버림
                 tail = f.read()
             # ── 판별: Reserve Cycle 유무로 중단점 도달 vs 사용자멈춤 ──
-            reserve_m = re.search(
+            reserves = re.findall(
                 r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', tail)
-            if reserve_m:
-                rc, rs = reserve_m.group(1), reserve_m.group(2)
+            if reserves:
+                rc, rs = reserves[-1]  # 가장 최근 (마지막) 매칭
                 reason = f"중단점 도달 (C{rc}/S{rs})"
                 logger.info('[작업멈춤] .log 판별: %s → %s', channel_path, reason)
                 return reason
@@ -25823,10 +25826,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f.seek(file_size - 4096)
                     f.readline()
                 tail = f.read()
-            reserve_m = re.search(
+            reserves = re.findall(
                 r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', tail)
-            if reserve_m:
-                return f"→C{reserve_m.group(1)}/S{reserve_m.group(2)}"
+            if reserves:
+                rc, rs = reserves[-1]  # 가장 최근 (마지막) 매칭
+                return f"→C{rc}/S{rs}"
         except Exception:
             pass
         return ""
@@ -25902,6 +25906,45 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def cycle_error(self):
         err_msg('파일 or 경로없음!!','C드라이브에 cycler_path.txt 파일이 없거나 toyo/PNE 경로 설정 오류')
+
+    def _filter_context_menu(self, pos) -> None:
+        """필터링 테이블 우클릭 메뉴"""
+        if not self._filter_sections:
+            return
+        menu = QtWidgets.QMenu(self.tb_channel)
+        menu.addAction("전체 펼침", self._filter_expand_all)
+        menu.addAction("전체 닫힘", self._filter_collapse_all)
+        menu.exec(self.tb_channel.viewport().mapToGlobal(pos))
+
+    def _filter_expand_all(self) -> None:
+        """필터링 테이블 모든 섹션 펼침"""
+        for row, sec in self._filter_sections.items():
+            sec['collapsed'] = False
+            for r in sec['rows']:
+                self.tb_channel.setRowHidden(r, False)
+            item = self.tb_channel.item(row, 0)
+            if item:
+                item.setText(item.text().replace("▸", "▾", 1))
+
+    def _filter_collapse_all(self) -> None:
+        """필터링 테이블 모든 섹션 닫힘"""
+        # 충방전기 섹션 먼저 접고, 층 섹션 접기
+        for row, sec in self._filter_sections.items():
+            if sec['type'] == 'cycler':
+                sec['collapsed'] = True
+                for r in sec['rows']:
+                    self.tb_channel.setRowHidden(r, True)
+                item = self.tb_channel.item(row, 0)
+                if item:
+                    item.setText(item.text().replace("▾", "▸", 1))
+        for row, sec in self._filter_sections.items():
+            if sec['type'] == 'floor':
+                sec['collapsed'] = True
+                for r in sec['rows']:
+                    self.tb_channel.setRowHidden(r, True)
+                item = self.tb_channel.item(row, 0)
+                if item:
+                    item.setText(item.text().replace("▾", "▸", 1))
 
     def _filter_toggle_section(self, row: int, _col: int) -> None:
         """필터링 테이블 헤더 행 클릭 → 하위 행 접기/펼치기"""
@@ -26150,6 +26193,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             type_str = str(df.loc[ch_idx, "Type"]).strip()
                             if type_str in ("", "nan"):
                                 type_str = ""
+                            elif type_str == "휴지":
+                                type_str = "Rest"
                     # 온도 추출
                     temp_str = "-"
                     if "temp" in df.columns:
@@ -26200,14 +26245,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             (ch_idx, testname, status, cyc, vol, type_str,
                              temp_str, cell_path))
                         total_matched += 1
-                        if status in ("작업중", "충전", "방전", "진행", "휴지"):
+                        # 카운트: Reserve 접미사 제거한 base 상태 기준
+                        _sb = status.split(" (")[0] if " (" in status else status
+                        if _sb in ("작업중", "충전", "방전", "진행", "휴지"):
                             working_count += 1
                         # 작업멈춤 계열 카운트
-                        if status not in self._NORMAL_STATES:
+                        if _sb not in self._NORMAL_STATES:
                             paused_count += 1
                             paused_details[status] = paused_details.get(status, 0) + 1
                         # 유휴 채널 셀 유무 카운트
-                        if status in ("완료", "준비", "작업정지"):
+                        if _sb in ("완료", "준비", "작업정지"):
                             if vol == "-":
                                 idle_no_cell += 1
                             else:
@@ -26319,8 +26366,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # ── 데이터 행 ──
                 for ch_no, testname, status, cyc, vol, type_str, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
-                    if bg_color is None and status not in self._NORMAL_STATES:
-                        # 중단점 도달 (C../S..) → 노란색, 그 외 → 빨간색
+                    # "작업중 (→C1/S20)" 등 Reserve 정보가 붙은 상태 처리
+                    status_base = status.split(" (")[0] if " (" in status else status
+                    if bg_color is None and status_base not in self._NORMAL_STATES:
                         if status.startswith("중단점 도달"):
                             bg_color = _STOPPED_BG
                         else:
