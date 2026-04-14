@@ -25755,7 +25755,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     @staticmethod
     def _read_log_tail(channel_path: str) -> str | None:
-        """채널 폴더의 최신 .log 파일 마지막 4KB 읽기"""
+        """채널 폴더의 최신 .log 파일 끝부분 읽기 (점진적 확장)
+
+        4KB부터 시작하여 act/Paused/Test work completed 키워드가 없으면
+        16KB → 64KB로 점진적으로 확장. Recovery 로그 등으로 끝부분이
+        채워진 예외 케이스 대응. 키워드 발견 즉시 반환하여 불필요한
+        네트워크 I/O 방지.
+        """
         try:
             if not os.path.isdir(channel_path):
                 return None
@@ -25765,11 +25771,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return None
             log_path = max(log_files, key=os.path.getmtime)
             file_size = os.path.getsize(log_path)
-            with open(log_path, 'r', encoding='cp949', errors='ignore') as f:
-                if file_size > 4096:
-                    f.seek(file_size - 4096)
-                    f.readline()
-                return f.read()
+            for read_size in (4096, 16384, 65536):
+                if file_size <= read_size:
+                    # 파일 전체 읽기 (더 확장해도 의미 없음)
+                    with open(log_path, 'r', encoding='cp949', errors='ignore') as f:
+                        return f.read()
+                with open(log_path, 'r', encoding='cp949', errors='ignore') as f:
+                    f.seek(file_size - read_size)
+                    f.readline()  # 잘린 첫 줄 버림
+                    content = f.read()
+                # 핵심 키워드 발견 시 즉시 반환
+                if ("act" in content or "Paused" in content
+                        or "Test work completed" in content):
+                    return content
+            # 64KB까지 읽었는데도 키워드 없음 → 그대로 반환 (fallback)
+            return content
         except Exception:
             return None
 
@@ -25807,10 +25823,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _classify_paused_reason(channel_path: str) -> tuple[str, str]:
         """Code:153 작업멈춤 채널의 .log에서 중단 사유 판별
 
-        마지막 "Paused" 줄 → 그 윗줄 "act" 내용으로 판별:
-        1) Paused due to chamber alarm → 챔버이슈
-        2) act 즉시 멈춤 시행 (...Reserve Cycle:A, Step:B...) → 중단점 도달
-        3) 즉시 멈춤 시행 act (Reserve 없음) → 사용자멈춤
+        마지막 act 줄과 마지막 Paused 줄 중 더 뒤에 있는 것이 현재 상태:
+        - act가 뒤: act 내용으로 직접 판별
+        - Paused가 뒤: Paused 윗줄 act로 판별
 
         Returns
         -------
@@ -25821,38 +25836,66 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if tail is None:
             return "작업멈춤", ""
         lines = tail.splitlines()
-        # ── 마지막 "Paused" 줄 찾기 (역순) ──
-        paused_idx = -1
+        # ── 마지막 "act" / "Paused" / "Test work completed" 위치 (역순) ──
+        last_act_idx, last_paused_idx, last_completed_idx = -1, -1, -1
         for i in range(len(lines) - 1, -1, -1):
-            if "Paused" in lines[i]:
-                paused_idx = i
+            if last_act_idx < 0 and "act" in lines[i]:
+                last_act_idx = i
+            if last_paused_idx < 0 and "Paused" in lines[i]:
+                last_paused_idx = i
+            if last_completed_idx < 0 and "Test work completed" in lines[i]:
+                last_completed_idx = i
+            if last_act_idx >= 0 and last_paused_idx >= 0 and last_completed_idx >= 0:
                 break
-        if paused_idx < 0:
-            return "작업멈춤", ""
-        # ① 챔버 이슈
-        if "chamber alarm" in lines[paused_idx]:
-            log_time = WindowClass._extract_log_time(lines[paused_idx])
-            return "챔버이슈", WindowClass._elapsed_str(log_time)
-        # ── Paused 윗줄에서 가장 가까운 "act" 줄 찾기 ──
-        act_line = ""
-        for i in range(paused_idx - 1, -1, -1):
-            if "act" in lines[i]:
-                act_line = lines[i]
-                break
-        # 타임스탬프: act 줄 또는 Paused 줄에서 추출
-        log_time = WindowClass._extract_log_time(act_line) or \
-                   WindowClass._extract_log_time(lines[paused_idx])
-        elapsed = WindowClass._elapsed_str(log_time)
-        # ② 예약 멈춤: Reserve Cycle 포함
-        reserve_m = re.search(
-            r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', act_line)
-        if reserve_m:
-            rc, rs = reserve_m.group(1), reserve_m.group(2)
-            return f"중단점 도달 (S{rs}/C{rc})", elapsed
-        # ③ 사용자 멈춤
-        if "즉시 멈춤 시행" in act_line:
-            return "사용자멈춤", elapsed
-        return "작업멈춤", elapsed
+        # ── "Test work completed"가 가장 뒤: 시험 정상 종료 ──
+        if last_completed_idx > last_act_idx and last_completed_idx > last_paused_idx:
+            log_time = WindowClass._extract_log_time(lines[last_completed_idx])
+            return "시험완료", WindowClass._elapsed_str(log_time)
+        # ── act가 Paused보다 뒤 (또는 Paused 없음): act 줄로 직접 판별 ──
+        if last_act_idx > last_paused_idx:
+            act_line = lines[last_act_idx]
+            log_time = WindowClass._extract_log_time(act_line)
+            elapsed = WindowClass._elapsed_str(log_time)
+            # Reserve Cycle 포함: 예약 "설정"만 되어있고 도달하지 않음 → 작업중
+            # (Paused가 없으므로 채널은 아직 진행 중)
+            reserve_m = re.search(
+                r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', act_line)
+            if reserve_m:
+                rc, rs = reserve_m.group(1), reserve_m.group(2)
+                return f"작업중 (→S{rs}/C{rc})", ""
+            # 사용자 멈춤 (즉시 멈춤/완료, Reserve 없음)
+            if "즉시 멈춤 시행" in act_line or "즉시 완료 시행" in act_line:
+                return "사용자멈춤", elapsed
+            # 작업 시작/계속/다음 Step → 진행중 (Paused 없음)
+            if ("작업 시작 act" in act_line or "작업 계속 act" in act_line
+                    or "다음 Step act" in act_line):
+                return "작업중", ""
+            return "작업멈춤", elapsed
+        # ── Paused가 뒤: Paused 내용 + 윗줄 act로 판별 ──
+        if last_paused_idx >= 0:
+            paused_line = lines[last_paused_idx]
+            # 챔버 이슈
+            if "chamber alarm" in paused_line:
+                log_time = WindowClass._extract_log_time(paused_line)
+                return "챔버이슈", WindowClass._elapsed_str(log_time)
+            # Paused 윗줄에서 가장 가까운 act 줄
+            act_line = ""
+            for i in range(last_paused_idx - 1, -1, -1):
+                if "act" in lines[i]:
+                    act_line = lines[i]
+                    break
+            log_time = WindowClass._extract_log_time(act_line) or \
+                       WindowClass._extract_log_time(paused_line)
+            elapsed = WindowClass._elapsed_str(log_time)
+            reserve_m = re.search(
+                r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', act_line)
+            if reserve_m:
+                rc, rs = reserve_m.group(1), reserve_m.group(2)
+                return f"중단점 도달 (S{rs}/C{rc})", elapsed
+            if "즉시 멈춤 시행" in act_line or "즉시 완료 시행" in act_line:
+                return "사용자멈춤", elapsed
+            return "작업멈춤", elapsed
+        return "작업멈춤", ""
 
     @staticmethod
     def _parse_reserve_info(channel_path: str) -> str:
