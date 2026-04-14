@@ -25771,6 +25771,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         "작업멈춤" 상태인 행만 대상으로 .log 파일을 확인하여
         "중단점 도달" 등으로 세분화. 소수 채널만 I/O 발생.
+
+        Note: df["path"]는 change_drive()에서 Result_Path의 파일명을 제거한 값이므로
+        채널폴더([027] 등)가 잘려나간 상태. .log 파일은 채널폴더 내부에 있으므로
+        Result_Path에 드라이브 치환을 직접 적용하여 채널폴더 경로를 보존한다.
         """
         mask = df["use"] == "작업멈춤"
         paused_count = mask.sum()
@@ -25778,8 +25782,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             logger.debug('[작업멈춤] 작업멈춤 채널 없음 — 세분류 생략')
             return df
         logger.info('[작업멈춤] 세분류 시작: %d개 채널 대상', paused_count)
+        has_rpath = "Result_Path" in df.columns
+        has_path = "path" in df.columns
         for idx in df.index[mask]:
-            ch_path = df.at[idx, "path"] if "path" in df.columns else ""
+            # df["path"]는 채널폴더가 잘린 상위 경로 (change_drive 결과)
+            # Result_Path에서 채널폴더명을 추출하여 붙여야 .log 접근 가능
+            ch_path = ""
+            if has_rpath and has_path:
+                rpath = str(df.at[idx, "Result_Path"]).rstrip("\\")
+                base = str(df.at[idx, "path"])
+                channel_folder = rpath[rpath.rfind("\\") + 1:]
+                ch_path = os.path.join(base, channel_folder)
+            elif has_path:
+                ch_path = str(df.at[idx, "path"])
             if ch_path:
                 df.at[idx, "use"] = self._classify_paused_reason(ch_path)
         # 세분류 결과 요약
