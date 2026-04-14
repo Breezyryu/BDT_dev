@@ -5896,13 +5896,22 @@ def _fmt_crate(val: float) -> str:
 # .sch 타입 코드 → 문자열 매핑
 _SCH_TYPE_MAP: dict[int, str] = {
     0x0101: 'CHG_CC',
+    0x0102: 'DCHG_CCCV',
     0x0201: 'CHG_CCCV',
     0x0202: 'DCHG_CC',
+    0x0209: 'CHG_CP',
     0xFF03: 'REST',
     0xFF06: 'GOTO',
     0xFF07: 'REST_SAFE',
     0xFF08: 'LOOP',
+    0x0003: 'GITT_PAUSE',
+    0x0007: 'GITT_END',
+    0x0008: 'GITT_START',
 }
+
+_SCH_CHG_TYPES = frozenset({'CHG_CC', 'CHG_CCCV', 'CHG_CP'})
+_SCH_DCHG_TYPES = frozenset({'DCHG_CC', 'DCHG_CCCV'})
+_SCH_GITT_TYPES = frozenset({'GITT_PAUSE', 'GITT_END', 'GITT_START'})
 
 _SCH_BLOCK_SIZE = 652       # 스텝 블록 크기 (bytes)
 _SCH_HEADER_SIZE = 1920     # 파일 헤더 크기 (bytes)
@@ -5986,7 +5995,7 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
             'type_code': type_code,
         }
 
-        if type_name in ('CHG_CC', 'CHG_CCCV'):
+        if type_name in ('CHG_CC', 'CHG_CCCV', 'CHG_CP'):
             # 충전 스텝 공통 필드 (값은 IEEE 754 float로 저장됨)
             voltage_mV = struct.unpack_from('<f', blk, 12)[0]
             current_mA = struct.unpack_from('<f', blk, 20)[0]
@@ -6005,7 +6014,7 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
                 step_info['cv_cutoff_mA'] = cv_cutoff
             charge_steps.append(step_info)
 
-        elif type_name == 'DCHG_CC':
+        elif type_name in ('DCHG_CC', 'DCHG_CCCV'):
             # 방전 스텝: 전압 오프셋이 +16 (CHG와 다름, float)
             voltage_mV = struct.unpack_from('<f', blk, 16)[0]
             current_mA = struct.unpack_from('<f', blk, 20)[0]
@@ -6017,6 +6026,11 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
                 'time_limit_s': time_limit,
                 'capacity_limit_mAh': cap_limit,
             })
+            if type_name == 'DCHG_CCCV':
+                cv_voltage = struct.unpack_from('<f', blk, 28)[0]
+                cv_cutoff = struct.unpack_from('<f', blk, 32)[0]
+                step_info['cv_voltage_mV'] = cv_voltage
+                step_info['cv_cutoff_mA'] = cv_cutoff
             discharge_steps.append(step_info)
 
         elif type_name == 'LOOP':
@@ -6029,9 +6043,10 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
             step_info['time_limit_s'] = time_limit
 
         elif type_name == 'GOTO':
-            # GOTO 대상 스텝: +56 offset (LOOP와 같은 위치, 정수)
             goto_target = struct.unpack_from('<I', blk, 56)[0]
             step_info['goto_target'] = goto_target
+
+        # GITT 블록 코드 (GITT_START, GITT_END, GITT_PAUSE)는 파라미터 없음
 
         # End Condition (SOC/DOD 종료 조건) — Rss 판별용
         ec_type = struct.unpack_from('<I', blk, 500)[0]
@@ -6197,23 +6212,263 @@ def _ordinal(n: int) -> str:
     return f'{n}th'
 
 
+# ── Loop 그룹 분해 + TC 그룹 분류 ──
+
+
+def _decompose_loop_groups(steps: list[dict]) -> list[dict]:
+    """파싱된 스텝 리스트를 LOOP 기준으로 그룹 분할.
+
+    각 그룹 = body(이전 LOOP/REST_SAFE 이후 ~ 현재 LOOP 직전) + loop_count.
+    REST_SAFE, LOOP, GOTO는 body에서 제외.
+    """
+    _CTRL = {'LOOP', 'GOTO', 'REST_SAFE'}
+    groups: list[dict] = []
+    body_start = 0
+
+    for i, s in enumerate(steps):
+        if s['type'] == 'LOOP':
+            body = [steps[j] for j in range(body_start, i)
+                    if steps[j]['type'] not in _CTRL]
+            groups.append({
+                'loop_count': s.get('loop_count', 1),
+                'body': body,
+            })
+            nxt = i + 1
+            if nxt < len(steps) and steps[nxt]['type'] == 'REST_SAFE':
+                nxt += 1
+            body_start = nxt
+
+    return groups
+
+
+def _classify_loop_group(
+    body: list[dict],
+    loop_count: int,
+    position: int,
+    total_loops: int,
+    capacity_mAh: float,
+) -> str:
+    """Loop 그룹의 TC 의미를 .sch 구조만으로 판별.
+
+    우선순위 순서대로 체크하여 첫 매칭 반환.
+
+    Parameters
+    ----------
+    body : list[dict]
+        Loop 내부 스텝 (LOOP/REST_SAFE/GOTO 제외).
+    loop_count : int
+        해당 Loop의 반복 횟수 (= TC 수).
+    position : int
+        스케줄 내 Loop 그룹 순서 (0-based).
+    total_loops : int
+        전체 Loop 그룹 수.
+    capacity_mAh : float
+        공칭 용량 (mAh). 0이면 C-rate 판별 불가.
+
+    Returns
+    -------
+    str
+        TC 그룹 카테고리명.
+    """
+    if not body:
+        return 'EMPTY'
+
+    N = loop_count
+    types = [s['type'] for s in body]
+    type_set = set(types)
+
+    chg_steps = [s for s in body if s['type'] in _SCH_CHG_TYPES]
+    dchg_steps = [s for s in body if s['type'] in _SCH_DCHG_TYPES]
+    rest_steps = [s for s in body if s['type'] == 'REST']
+    ec_steps = [s for s in body
+                if s.get('end_condition', {}).get('type', 0) != 0]
+    has_ec = bool(ec_steps)
+    ec_on_dchg = [s for s in ec_steps if s['type'] in _SCH_DCHG_TYPES]
+    ec_on_chg = [s for s in ec_steps if s['type'] in _SCH_CHG_TYPES]
+    has_chg_cp = 'CHG_CP' in type_set
+    has_dchg_cccv = 'DCHG_CCCV' in type_set
+    has_gitt_block = bool(type_set & _SCH_GITT_TYPES)
+    has_short_dchg = any(
+        0 < s.get('time_limit_s', 0) <= 30 for s in dchg_steps)
+    rate_02c = capacity_mAh * 0.2 if capacity_mAh > 0 else 0
+
+    # 1. INIT: 첫 Loop, 방전만(+REST), N=1
+    if position == 0 and N == 1:
+        if all(s['type'] in (_SCH_DCHG_TYPES | {'REST'}) for s in body):
+            if any(s['type'] in _SCH_DCHG_TYPES for s in body):
+                return 'INIT'
+
+    # 2. GITT_PULSE: GITT 블록 코드 또는 REST(≥600s)+충/방 1~2스텝, N≥10
+    if has_gitt_block and N >= 10:
+        return 'GITT_PULSE'
+    if N >= 10 and len(body) <= 3:
+        if rest_steps and rest_steps[0].get('time_limit_s', 0) >= 600:
+            non_rest = [s for s in body if s['type'] != 'REST']
+            if non_rest and any(
+                s['type'] in (_SCH_CHG_TYPES | _SCH_DCHG_TYPES)
+                for s in non_rest):
+                return 'GITT_PULSE'
+
+    # 3. ACCEL: 다단충전(CHG≥2) + 방전, N≥20
+    if N >= 20 and len(chg_steps) >= 2 and dchg_steps:
+        return 'ACCEL'
+
+    # 4. HYSTERESIS_DCHG: DCHG에 EC type=2048 (DOD%), N=1
+    if N == 1 and any(
+        s.get('end_condition', {}).get('type') == 2048 for s in ec_on_dchg):
+        return 'HYSTERESIS_DCHG'
+
+    # 5. HYSTERESIS_CHG: CHG에 EC type=18432 (SOC%), N=1
+    if N == 1 and any(
+        s.get('end_condition', {}).get('type') == 18432 for s in ec_on_chg):
+        return 'HYSTERESIS_CHG'
+
+    # 6. SOC_DCIR: EC≥4건, body≥8스텝, N≥5
+    if N >= 5 and len(ec_steps) >= 4 and len(body) >= 8:
+        return 'SOC_DCIR'
+
+    # 7. PULSE_DCIR: EC + 짧은 DCHG(≤30s) + DCHG≥2, body≥5
+    if has_ec and has_short_dchg and len(dchg_steps) >= 2 and len(body) >= 5:
+        return 'PULSE_DCIR'
+
+    # 8. RSS_DCIR: N=1, EC, DCHG≥4, body≥10
+    if N == 1 and has_ec and len(dchg_steps) >= 4 and len(body) >= 10:
+        return 'RSS_DCIR'
+
+    # 9. DISCHARGE_SET: DCHG_CCCV 단독, N=1
+    if N == 1 and has_dchg_cccv and len(body) <= 2:
+        return 'DISCHARGE_SET'
+
+    # 10. POWER_CHG: CHG_CP 포함
+    if has_chg_cp:
+        return 'POWER_CHG'
+
+    # 11. REST_LONG: REST만, t≥3600s
+    if len(body) == 1 and types[0] == 'REST':
+        if body[0].get('time_limit_s', 0) >= 3600:
+            return 'REST_LONG'
+
+    # 12. FORMATION: CHG+DCHG, N=2~10
+    if 2 <= N <= 10 and chg_steps and dchg_steps:
+        return 'FORMATION'
+
+    # 13. CHARGE_SET: CHG만(DCHG 없음), N=1
+    if N == 1 and chg_steps and not dchg_steps:
+        if type_set <= (_SCH_CHG_TYPES | {'REST', 'REST_SAFE'}):
+            return 'CHARGE_SET'
+
+    # 14. TERMINATION: 마지막 Loop, 방전만, N=1
+    if position == total_loops - 1 and N == 1 and dchg_steps and not chg_steps:
+        return 'TERMINATION'
+
+    # 14b. DCHG_SET: N=1, 방전만(+REST), CHG 없음
+    if N == 1 and dchg_steps and not chg_steps:
+        return 'DCHG_SET'
+
+    # 15. RPT: N=1, CHG+DCHG, 모든 전류 ≈ 0.2C (±30%)
+    if N == 1 and chg_steps and dchg_steps and rate_02c > 0:
+        currents = [s.get('current_mA', 0) for s in chg_steps + dchg_steps
+                    if s.get('current_mA', 0) > 0]
+        if currents and all(
+            abs(I - rate_02c) / rate_02c < 0.3 for I in currents):
+            return 'RPT'
+
+    # 16. CHG_DCHG: N=1, CHG+DCHG (일반 충방전)
+    if N == 1 and chg_steps and dchg_steps:
+        return 'CHG_DCHG'
+
+    # 17. SWEEP_PULSE: N≥10, body≤3 (GITT 규칙에 안 걸린 반복)
+    if N >= 10 and len(body) <= 3:
+        return 'SWEEP_PULSE'
+
+    # 18. REST_SHORT: REST만, t<3600s
+    if len(body) == 1 and types[0] == 'REST':
+        return 'REST_SHORT'
+
+    return 'UNKNOWN'
+
+
+def _build_loop_group_info(
+    parsed: dict,
+    capacity_mAh: float = 0,
+) -> list[dict]:
+    """파싱된 .sch 데이터에서 Loop 그룹 분류 + TC 범위를 계산.
+
+    Parameters
+    ----------
+    parsed : dict
+        _parse_pne_sch() 반환값.
+    capacity_mAh : float
+        공칭 용량 (mAh). 0이면 C-rate 기반 RPT 판별 불가.
+
+    Returns
+    -------
+    list[dict]
+        각 항목:
+        {
+            'category': str,          # TC 그룹 카테고리
+            'tc_start': int,          # 시작 TC 번호
+            'tc_end': int,            # 종료 TC 번호
+            'loop_count': int,        # 반복 횟수
+            'chg_crate': float|None,  # 대표 충전 C-rate (capacity>0일 때)
+            'dchg_crate': float|None, # 대표 방전 C-rate
+        }
+    """
+    groups = _decompose_loop_groups(parsed['steps'])
+    total = len(groups)
+    result: list[dict] = []
+    tc = 1
+
+    for i, g in enumerate(groups):
+        n = max(g['loop_count'], 1)
+        cat = _classify_loop_group(
+            g['body'], g['loop_count'], i, total, capacity_mAh)
+
+        # 대표 C-rate 추출
+        chg_cr = None
+        dchg_cr = None
+        if capacity_mAh > 0:
+            chg_currents = [
+                s.get('current_mA', 0) for s in g['body']
+                if s['type'] in _SCH_CHG_TYPES and s.get('current_mA', 0) > 0]
+            dchg_currents = [
+                s.get('current_mA', 0) for s in g['body']
+                if s['type'] in _SCH_DCHG_TYPES and s.get('current_mA', 0) > 0]
+            if chg_currents:
+                chg_cr = round(max(chg_currents) / capacity_mAh, 2)
+            if dchg_currents:
+                dchg_cr = round(max(dchg_currents) / capacity_mAh, 2)
+
+        result.append({
+            'category': cat,
+            'tc_start': tc,
+            'tc_end': tc + n - 1,
+            'loop_count': n,
+            'chg_crate': chg_cr,
+            'dchg_crate': dchg_cr,
+        })
+        tc += n
+
+    return result
+
+
 def extract_schedule_structure_from_sch(
     sch_path: str,
     capacity: float = 0,
     *,
     parsed_data: dict | None = None,
 ) -> dict | None:
-    """PNE .sch 파일에서 스케줄 구조 정보(시험유형, 패턴) 추출.
+    """PNE .sch 파일에서 스케줄 구조 정보 추출.
 
-    .sch 파일의 스텝/루프 구조를 분석하여 시험유형을 판별한다.
-    pne_build_cycle_map()에 sweep_mode 힌트를 제공하는 것이 주 용도.
+    .sch 파일의 스텝/루프 구조를 분석하여 시험유형을 판별하고,
+    각 Loop 그룹의 TC 의미(ACCEL, RPT, GITT 등)를 분류한다.
 
     Parameters
     ----------
     sch_path : str
         .sch 파일 경로
     capacity : float
-        공칭 용량(mAh). 0이면 .sch 내부에서 추정.
+        공칭 용량(mAh). 0이면 C-rate 기반 판별 불가.
     parsed_data : dict | None
         이미 파싱된 _parse_pne_sch() 결과. 제공 시 재파싱 생략.
 
@@ -6221,11 +6476,12 @@ def extract_schedule_structure_from_sch(
     -------
     dict | None
         {
-            'schedule_type': str,     # '가속수명'|'GITT'|'Rss'|'SOC별DCIR'|'율별'|'기타'
-            'pattern_string': str,    # 스텝 시퀀스 요약
-            'has_rss': bool,          # Rss(DCIR) 섹션 포함 여부
-            'has_gitt_hppc': bool,    # GITT/HPPC 펄스 루프 포함 여부
-            'sweep_mode': bool|None,  # True=스윕강제, False=일반강제, None=미결정
+            'schedule_type': str,       # 스케줄 주유형
+            'pattern_string': str,      # 스텝 시퀀스 요약
+            'has_rss': bool,            # Rss(DCIR) 섹션 포함 여부
+            'has_gitt_hppc': bool,      # GITT/HPPC 펄스 루프 포함 여부
+            'sweep_mode': bool|None,    # True=스윕강제, False=일반강제, None=미결정
+            'loop_groups': list[dict],  # TC 그룹 분류 결과
         }
     """
     if not HAS_SCH_PARSER:
@@ -6240,76 +6496,58 @@ def extract_schedule_structure_from_sch(
     if not parsed:
         return None
 
-    steps = parsed['steps']
-    loop_steps = parsed.get('loop_steps', [])
-    charge_steps = parsed.get('charge_steps', [])
-    discharge_steps = parsed.get('discharge_steps', [])
-    n_steps = len(steps)
+    # ── Loop 그룹 분류 ──
+    loop_groups = _build_loop_group_info(parsed, capacity)
+    categories = {g['category'] for g in loop_groups}
 
-    # 루프 분석: count > 1인 실질 반복 루프만 추출
-    real_loops = [s for s in loop_steps if s.get('loop_count', 0) > 1]
-    max_loop = max((s.get('loop_count', 0) for s in real_loops), default=0)
-    n_real_loops = len(real_loops)
-    unique_loop_counts = set(s.get('loop_count', 0) for s in real_loops)
+    # ── 스케줄 주유형 판별 (loop_groups 기반) ──
+    has_gitt = bool(categories & {'GITT_PULSE', 'SWEEP_PULSE'})
+    has_accel = 'ACCEL' in categories
+    has_soc_dcir = 'SOC_DCIR' in categories
+    has_pulse_dcir = 'PULSE_DCIR' in categories
+    has_rss_dcir = 'RSS_DCIR' in categories
+    has_hysteresis = bool(
+        categories & {'HYSTERESIS_DCHG', 'HYSTERESIS_CHG'})
 
-    # 스텝 타입 시퀀스에서 CHG/DCHG 비율
-    n_chg = len(charge_steps)
-    n_dchg = len(discharge_steps)
-
-    # 패턴 문자열 생성 (스텝 타입 RLE)
-    type_seq = [s['type'] for s in steps]
-    rle_parts = []
-    if type_seq:
-        cur, cnt = type_seq[0], 1
-        for t in type_seq[1:]:
-            if t == cur:
-                cnt += 1
-            else:
-                rle_parts.append(f'{cur}×{cnt}' if cnt > 1 else cur)
-                cur, cnt = t, 1
-        rle_parts.append(f'{cur}×{cnt}' if cnt > 1 else cur)
-    pattern_string = ' → '.join(rle_parts[:20])
-    if len(rle_parts) > 20:
-        pattern_string += ' → ...'
-
-    # ── 시험유형 판별 규칙 ──
-    # (1) GITT: 소수 스텝에 대형 루프 (단방향 펄스 반복)
-    #     예: 17 steps, LOOP 105회 — 펄스+REST 반복
-    if max_loop >= 20 and n_steps <= 30:
+    if has_gitt and not has_accel:
         schedule_type = 'GITT'
-        has_gitt_hppc = True
-        has_rss = False
         sweep_mode = True
-
-    # (2) SOC별DCIR: 다수 독립 루프 그룹 (SOC 포인트별 펄스)
-    #     예: 105 steps, 6+ 루프, 각기 다른 count (5~25)
-    elif n_real_loops >= 4 and len(unique_loop_counts) >= 3:
+    elif has_soc_dcir and not has_accel:
         schedule_type = 'SOC별DCIR'
-        has_gitt_hppc = True
-        has_rss = False
         sweep_mode = True
-
-    # (3) 가속수명 / Rss: 대형 루프 (30+) + 다수 스텝 (50+)
-    #     예: 204/215 steps, main loop 47~97회
-    elif max_loop >= 20 and n_steps >= 50:
-        schedule_type = '가속수명'
-        has_rss = n_steps >= 100  # Rss 포함 스케줄은 보통 100+ 스텝
-        has_gitt_hppc = False
+    elif has_hysteresis and not has_accel:
+        schedule_type = '히스테리시스'
         sweep_mode = False
-
-    # (4) 율별: 대형 루프 없음, 다수 단독 CHG/DCHG 스텝 (각기 다른 전류)
-    elif max_loop <= 5 and n_chg + n_dchg >= 6:
-        schedule_type = '율별'
-        has_rss = False
-        has_gitt_hppc = False
-        sweep_mode = False  # 율별은 각 rate가 풀 사이클
-
-    # (5) 미결정: .sch 구조가 위 패턴에 해당하지 않음 → 데이터 휴리스틱에 위임
+    elif has_accel:
+        schedule_type = '가속수명'
+        sweep_mode = False
+    elif has_pulse_dcir:
+        schedule_type = 'PULSE_DCIR'
+        sweep_mode = False
     else:
         schedule_type = '기타'
-        has_rss = False
-        has_gitt_hppc = False
-        sweep_mode = None  # 데이터 휴리스틱 폴백
+        sweep_mode = None
+
+    has_rss = has_rss_dcir or has_pulse_dcir
+    has_gitt_hppc = has_gitt
+
+    # 패턴 문자열 (간결 요약)
+    parts = []
+    for g in loop_groups:
+        cat = g['category']
+        n = g['loop_count']
+        cr_info = ''
+        if g['chg_crate'] is not None or g['dchg_crate'] is not None:
+            cc = f"{g['chg_crate']:.1f}C" if g['chg_crate'] else '-'
+            dc = f"{g['dchg_crate']:.1f}C" if g['dchg_crate'] else '-'
+            cr_info = f'({cc}/{dc})'
+        if n > 1:
+            parts.append(f'{cat}{cr_info}×{n}')
+        else:
+            parts.append(f'{cat}{cr_info}')
+    pattern_string = ' → '.join(parts[:15])
+    if len(parts) > 15:
+        pattern_string += ' → ...'
 
     return {
         'schedule_type': schedule_type,
@@ -6317,6 +6555,7 @@ def extract_schedule_structure_from_sch(
         'has_rss': has_rss,
         'has_gitt_hppc': has_gitt_hppc,
         'sweep_mode': sweep_mode,
+        'loop_groups': loop_groups,
     }
 
 
@@ -25484,15 +25723,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         try:
             if not os.path.isdir(channel_path):
+                logger.debug('[작업멈춤] 경로 없음: %s', channel_path)
                 return "작업멈춤"
             # .log 파일 찾기 (채널 폴더 내)
             log_files = [f.path for f in os.scandir(channel_path)
                          if f.name.endswith('.log') and f.is_file()]
             if not log_files:
+                logger.debug('[작업멈춤] .log 파일 없음: %s', channel_path)
                 return "작업멈춤"
             # 가장 최근 .log 파일의 마지막 4KB만 읽기 (전체 파싱 불필요)
             log_path = max(log_files, key=os.path.getmtime)
             file_size = os.path.getsize(log_path)
+            logger.info('[작업멈춤] .log 파싱: %s (%d bytes)', log_path, file_size)
             with open(log_path, 'r', encoding='cp949', errors='ignore') as f:
                 if file_size > 4096:
                     f.seek(file_size - 4096)
@@ -25504,17 +25746,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', tail)
             if reserve_m:
                 rc, rs = reserve_m.group(1), reserve_m.group(2)
-                return f"중단점 도달 (C{rc}/S{rs})"
+                reason = f"중단점 도달 (C{rc}/S{rs})"
+                logger.info('[작업멈춤] 판별 결과: %s → %s', channel_path, reason)
+                return reason
             # 2) 사용자 수동 멈춤: "즉시 멈춤 시행" 있지만 Reserve 없음
             if "즉시 멈춤 시행" in tail:
+                logger.info('[작업멈춤] 판별 결과: %s → 즉시 멈춤 시행', channel_path)
                 return "작업멈춤"
             # 3) Code:숫자 뒤의 사유 문자열 추출 (마지막 매칭 사용)
             #    "Code:209 / 전류 이상" → "전류 이상", "Code:153 중단점 도달" → "중단점 도달"
             matches = re.findall(r'Code:\d+\s*/?\s*(.+)', tail)
             if matches:
-                return matches[-1].strip()
+                reason = matches[-1].strip()
+                logger.info('[작업멈춤] 판별 결과: %s → Code 사유: %s', channel_path, reason)
+                return reason
+            logger.info('[작업멈춤] 판별 결과: %s → 패턴 미매칭 (작업멈춤)', channel_path)
             return "작업멈춤"
-        except Exception:
+        except Exception as e:
+            logger.warning('[작업멈춤] .log 파싱 실패: %s — %s', channel_path, e)
             return "작업멈춤"
 
     def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -25524,12 +25773,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         "중단점 도달" 등으로 세분화. 소수 채널만 I/O 발생.
         """
         mask = df["use"] == "작업멈춤"
+        paused_count = mask.sum()
         if not mask.any():
+            logger.debug('[작업멈춤] 작업멈춤 채널 없음 — 세분류 생략')
             return df
+        logger.info('[작업멈춤] 세분류 시작: %d개 채널 대상', paused_count)
         for idx in df.index[mask]:
             ch_path = df.at[idx, "path"] if "path" in df.columns else ""
             if ch_path:
                 df.at[idx, "use"] = self._classify_paused_reason(ch_path)
+        # 세분류 결과 요약
+        refined = df.loc[mask, "use"].value_counts()
+        logger.info('[작업멈춤] 세분류 완료: %s',
+                     ', '.join(f'{k}={v}' for k, v in refined.items()))
         return df
 
     def change_drive(self, df, changed):
@@ -25702,6 +25958,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         total_matched = 0
         total_channels = 0
         working_count = 0
+        paused_count = 0   # 작업멈춤 계열 채널 수
+        paused_details: dict[str, int] = {}  # 작업멈춤 세부 사유별 카운트
         idle_no_cell = 0   # 대기-셀없음 (유휴 + vol=="-")
         idle_has_cell = 0  # 대기-셀있음 (유휴 + vol!="-")
         self.progressBar.setValue(0)
@@ -25776,16 +26034,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         total_matched += 1
                         if status in ("작업중", "충전", "방전", "진행", "휴지"):
                             working_count += 1
+                        # 작업멈춤 계열 카운트
+                        if status not in self._NORMAL_STATES:
+                            paused_count += 1
+                            paused_details[status] = paused_details.get(status, 0) + 1
                         # 유휴 채널 셀 유무 카운트
                         if status in ("완료", "준비", "작업정지"):
                             if vol == "-":
                                 idle_no_cell += 1
                             else:
                                 idle_has_cell += 1
-            except Exception:
+            except Exception as e:
+                logger.warning('[필터링] %s 데이터 로드 실패: %s', cycler_text, e)
                 continue
             self.progressBar.setValue(int(((idx + 1) / total) * 100))
             QtWidgets.QApplication.processEvents()
+        # 작업멈춤 요약 로그
+        if paused_count > 0:
+            detail_str = ', '.join(f'{k}={v}' for k, v in
+                                   sorted(paused_details.items(), key=lambda x: -x[1]))
+            logger.info('[필터링] 작업멈춤 계열 %d건: %s', paused_count, detail_str)
         # 테이블 초기화 및 리스트 출력
         self.table_reset()
         if total_matched == 0:
