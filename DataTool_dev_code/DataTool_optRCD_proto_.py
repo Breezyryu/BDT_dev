@@ -10350,8 +10350,8 @@ class Ui_sitool(object):
         self.horizontalLayout_10.addWidget(self.FindText)
         # 강조 버튼
         self.btn_highlight = QtWidgets.QPushButton(parent=self.tab)
-        self.btn_highlight.setMinimumSize(QtCore.QSize(60, 40))
-        self.btn_highlight.setMaximumSize(QtCore.QSize(60, 40))
+        self.btn_highlight.setMinimumSize(QtCore.QSize(100, 40))
+        self.btn_highlight.setMaximumSize(QtCore.QSize(100, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -10360,8 +10360,8 @@ class Ui_sitool(object):
         self.horizontalLayout_10.addWidget(self.btn_highlight)
         # 필터링 버튼
         self.btn_filter = QtWidgets.QPushButton(parent=self.tab)
-        self.btn_filter.setMinimumSize(QtCore.QSize(70, 40))
-        self.btn_filter.setMaximumSize(QtCore.QSize(70, 40))
+        self.btn_filter.setMinimumSize(QtCore.QSize(140, 40))
+        self.btn_filter.setMaximumSize(QtCore.QSize(140, 40))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -16265,8 +16265,8 @@ class Ui_sitool(object):
         self.tb_info.setItemText(8, _translate("sitool", "현재 전압"))
         self.tb_info.setItemText(9, _translate("sitool", "셀 경로"))
         self.label_9.setText(_translate("sitool", "강조할 문자"))
-        self.btn_highlight.setText(_translate("sitool", "강조"))
-        self.btn_filter.setText(_translate("sitool", "필터링"))
+        self.btn_highlight.setText(_translate("sitool", "강조(Enter)"))
+        self.btn_filter.setText(_translate("sitool", "필터링(Shift+Enter)"))
         item = self.tb_summary.verticalHeaderItem(0)
         item.setText(_translate("sitool", "사용 가능"))
         item = self.tb_summary.verticalHeaderItem(1)
@@ -16735,10 +16735,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_info.currentIndexChanged.connect(self.tb_info_combobox)
         self.tb_cycler.currentIndexChanged.connect(self.tb_cycler_combobox)
         self.tb_room.currentIndexChanged.connect(self.tb_room_combobox)
-        self.FindText.returnPressed.connect(self.tb_cycler_combobox)
+        # Enter → 강조, Shift+Enter → 필터링
+        self.FindText.installEventFilter(self)
         self.btn_highlight.clicked.connect(self.tb_cycler_combobox)
         self.btn_filter.clicked.connect(self.filter_all_channels)
-        # tb_channel Ctrl+C 복사 / Ctrl+A 전체 선택
+        # 필터링 테이블 접기/펼치기
+        self.tb_channel.cellClicked.connect(self._filter_toggle_section)
+        self._filter_sections = {}  # {row: {'rows': [r1,r2,...], 'collapsed': bool}}
+        # tb_channel: 더블클릭 편집 비활성, Ctrl+C 복사 / Ctrl+A 전체 선택
+        self.tb_channel.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tb_channel.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         _tb_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.tb_channel)
         _tb_copy.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
@@ -25581,8 +25586,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.df["chno"] = self.df.index
             # 데이터 경로 변경
             self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
-            # 작업멈춤 세부 분류 (.log 기반)
-            self.df = self._refine_paused_status(self.df)
+            # 작업멈춤 세분류는 필터링 버튼에서만 수행
             usedchnlno = len(self.df[(self.df.use =="완료") | (self.df.use == "대기") | (self.df.use == "준비")])
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(usedchnlno)))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - usedchnlno)))
@@ -25598,24 +25602,29 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.df.loc[i + (j - 1) * num_i, str(column_name)])))
                         self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
                     # 상태별 배경색 결정
-                    bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음, 3=작업멈춤
+                    # 0=기본, 1=셀없음, 2=셀있음, 3=작업멈춤(이상), 4=사용자멈춤/중단점
+                    bg_level = 0
+                    use_val = self.df.loc[i + (j - 1) * num_i, "use"]
                     self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
-                    if (self.df.loc[i + (j - 1) * num_i,"use"] == "대기") or (self.df.loc[i + (j - 1) * num_i,"use"] == "준비"):
+                    if use_val in ("대기", "준비"):
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                         bg_level = 1
-                    elif (self.df.loc[i + (j - 1) * num_i,"use"] == "완료"):
+                    elif use_val == "완료":
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
                         bg_level = 2
-                    elif self.df.loc[i + (j - 1) * num_i,"use"] not in self._NORMAL_STATES:
-                        # 작업멈춤 계열 (.log Code 사유 포함)
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,155,154))
-                        bg_level = 3
+                    elif use_val not in self._NORMAL_STATES:
+                        if use_val == "사용자멈춤" or use_val.startswith("중단점 도달"):
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(240,220,160))
+                            bg_level = 4
+                        else:
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(214,155,154))
+                            bg_level = 3
                     # 강조 문자 필터 (배경 레벨에 따라 폰트색 그라데이션)
                     if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                            fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
-                            fg_35 = [(140,0,200), (100,0,160), (100,0,160), (100,0,160)][bg_level]
-                            fg_15 = [(0,73,245), (0,55,190), (0,55,190), (0,55,190)][bg_level]
-                            fg_normal = [(18,21,23), (10,12,14), (10,12,14), (10,12,14)][bg_level]
+                            fg_45 = [(208,0,0), (165,0,0), (165,0,0), (165,0,0), (165,0,0)][bg_level]
+                            fg_35 = [(140,0,200), (100,0,160), (100,0,160), (100,0,160), (100,0,160)][bg_level]
+                            fg_15 = [(0,73,245), (0,55,190), (0,55,190), (0,55,190), (0,55,190)][bg_level]
+                            fg_normal = [(18,21,23), (10,12,14), (10,12,14), (10,12,14), (10,12,14)][bg_level]
                             # 온도별 구분
                             if self.df.loc[i + (j - 1) * num_i, "temp"] > 10 and self.df.loc[i + (j - 1) * num_i, "temp"] <= 20:
                                 self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15)) # 15도
@@ -25791,6 +25800,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             logger.warning('[작업멈춤] .log 파싱 실패: %s — %s', channel_path, e)
             return "작업멈춤"
 
+    @staticmethod
+    def _parse_reserve_info(channel_path: str) -> str:
+        """작업중 채널의 .log에서 Reserve Cycle/Step 예약 정보 추출
+
+        Returns
+        -------
+        str
+            "→C{rc}/S{rs}" (예약 있음) | "" (예약 없음 또는 파싱 불가)
+        """
+        try:
+            if not os.path.isdir(channel_path):
+                return ""
+            log_files = [f.path for f in os.scandir(channel_path)
+                         if f.name.endswith('.log') and f.is_file()]
+            if not log_files:
+                return ""
+            log_path = max(log_files, key=os.path.getmtime)
+            file_size = os.path.getsize(log_path)
+            with open(log_path, 'r', encoding='cp949', errors='ignore') as f:
+                if file_size > 4096:
+                    f.seek(file_size - 4096)
+                    f.readline()
+                tail = f.read()
+            reserve_m = re.search(
+                r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', tail)
+            if reserve_m:
+                return f"→C{reserve_m.group(1)}/S{reserve_m.group(2)}"
+        except Exception:
+            pass
+        return ""
+
     def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
         """작업멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
 
@@ -25862,6 +25902,46 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def cycle_error(self):
         err_msg('파일 or 경로없음!!','C드라이브에 cycler_path.txt 파일이 없거나 toyo/PNE 경로 설정 오류')
+
+    def _filter_toggle_section(self, row: int, _col: int) -> None:
+        """필터링 테이블 헤더 행 클릭 → 하위 행 접기/펼치기"""
+        sec = self._filter_sections.get(row)
+        if sec is None:
+            return
+        collapsed = not sec['collapsed']
+        sec['collapsed'] = collapsed
+        # 하위 행 숨기기/보이기
+        for r in sec['rows']:
+            self.tb_channel.setRowHidden(r, collapsed)
+            # 층 접기 시 하위 충방전기 섹션도 동기화
+            if sec['type'] == 'floor' and r in self._filter_sections:
+                child = self._filter_sections[r]
+                if collapsed:
+                    for cr in child['rows']:
+                        self.tb_channel.setRowHidden(cr, True)
+                elif not child['collapsed']:
+                    for cr in child['rows']:
+                        self.tb_channel.setRowHidden(cr, False)
+        # 헤더 아이콘 변경 (▾↔▸)
+        item = self.tb_channel.item(row, 0)
+        if item:
+            text = item.text()
+            if collapsed:
+                item.setText(text.replace("▾", "▸", 1))
+            else:
+                item.setText(text.replace("▸", "▾", 1))
+
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        """FindText Enter → 강조, Shift+Enter → 필터링"""
+        if obj is self.FindText and event.type() == QtCore.QEvent.Type.KeyPress:
+            key = event.key()
+            if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+                if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+                    self.filter_all_channels()
+                else:
+                    self.tb_cycler_combobox()
+                return True
+        return super().eventFilter(obj, event)
 
     def tb_cycler_combobox(self):
         toyo_table_makers = {
@@ -26084,19 +26164,29 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         except (ValueError, TypeError):
                             temp_str = str(raw_temp) if raw_temp else "-"
                     if self.match_filter_text(search_text, testname, status):
-                        # 매칭된 작업멈춤 건만 세분류 (Code/Code_Desc + .log)
-                        if status == "작업멈춤":
-                            code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
-                            code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
-                            if code == "153" and code_desc == "작업멈춤종료":
+                        # PNE 채널만 .log 기반 세분류
+                        if cycler_text in pne_info:
+                            has_rpath = "Result_Path" in df.columns
+                            has_path = "path" in df.columns
+                            # 작업멈춤: Code/Code_Desc + .log 파싱
+                            if status == "작업멈춤":
+                                code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
+                                code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
+                                if code == "153" and code_desc == "작업멈춤종료":
+                                    ch_path = self._build_channel_path(
+                                        df, ch_idx, has_rpath, has_path)
+                                    if ch_path:
+                                        status = self._classify_paused_reason(ch_path)
+                                elif code_desc:
+                                    status = f"작업멈춤 - {code_desc}"
+                            # 작업중: .log에서 Reserve 예약 정보 추출
+                            elif status in ("작업중", "충전", "방전", "진행", "휴지"):
                                 ch_path = self._build_channel_path(
-                                    df, ch_idx,
-                                    "Result_Path" in df.columns,
-                                    "path" in df.columns)
+                                    df, ch_idx, has_rpath, has_path)
                                 if ch_path:
-                                    status = self._classify_paused_reason(ch_path)
-                            elif code_desc:
-                                status = f"작업멈춤 - {code_desc}"
+                                    reserve = self._parse_reserve_info(ch_path)
+                                    if reserve:
+                                        status = f"{status} ({reserve})"
                         floor_name = ""
                         for fn, fc in floor_cyclers:
                             if cycler_text in fc:
@@ -26169,21 +26259,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 행 높이 줄이기
         self.tb_channel.verticalHeader().setDefaultSectionSize(22)
         self.tb_channel.setUpdatesEnabled(False)
+        self._filter_sections = {}
         row = 0
         # 상태별 행 전체 배경색 정의
-        _PAUSED_BG = QtGui.QColor(214, 155, 154)
+        _PAUSED_BG = QtGui.QColor(214, 155, 154)       # 빨간색: 작업멈춤 (이상)
+        _STOPPED_BG = QtGui.QColor(240, 220, 160)       # 노란색: 사용자멈춤, 중단점 도달
         STATUS_BG = {
             "작업정지": QtGui.QColor(176, 203, 176),
             "대기": QtGui.QColor(176, 203, 176),
             "준비": QtGui.QColor(176, 203, 176),
             "완료": QtGui.QColor(234, 239, 230),
+            "사용자멈춤": _STOPPED_BG,
         }
         # floor_cyclers 순서를 유지하여 출력
         for floor_name, floor_cycler_list in floor_cyclers:
             if floor_name not in matched_by_floor:
                 continue
             # ── 층 헤더 행 ──
-            floor_item = QtWidgets.QTableWidgetItem(f"■ {floor_name}")
+            floor_row = row
+            floor_item = QtWidgets.QTableWidgetItem(f"▾ {floor_name}")
             floor_item.setFont(QtGui.QFont("Malgun gothic", 10, QtGui.QFont.Weight.Bold))
             floor_item.setForeground(QtGui.QColor(255, 255, 255))
             floor_item.setBackground(QtGui.QColor(60, 84, 136))
@@ -26203,8 +26297,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     continue
                 channels = matched_by_floor[floor_name][cycler_text]
                 # ── 충방전기 헤더 행 (최종 업데이트 시간 포함) ──
+                cycler_row = row
                 mtime_label = cycler_mtime.get(cycler_text, "")
-                cycler_item = QtWidgets.QTableWidgetItem(f"  ▸ {cycler_text}")
+                cycler_item = QtWidgets.QTableWidgetItem(f"  ▾ {cycler_text}")
                 cycler_item.setFont(QtGui.QFont("Malgun gothic", 9, QtGui.QFont.Weight.Bold))
                 cycler_item.setForeground(QtGui.QColor(60, 84, 136))
                 cycler_item.setBackground(QtGui.QColor(232, 236, 244))
@@ -26220,11 +26315,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     filler.setFont(QtGui.QFont("Malgun gothic", 9))
                     self.tb_channel.setItem(row, col, filler)
                 row += 1
+                data_start = row
                 # ── 데이터 행 ──
                 for ch_no, testname, status, cyc, vol, type_str, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
                     if bg_color is None and status not in self._NORMAL_STATES:
-                        bg_color = _PAUSED_BG
+                        # 중단점 도달 (C../S..) → 노란색, 그 외 → 빨간색
+                        if status.startswith("중단점 도달"):
+                            bg_color = _STOPPED_BG
+                        else:
+                            bg_color = _PAUSED_BG
                     _font9 = QtGui.QFont("Malgun gothic", 9)
                     # col 0: 충방전기
                     item_cycler = QtWidgets.QTableWidgetItem(f"    {cycler_text}")
@@ -26282,6 +26382,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         item_path.setBackground(bg_color)
                     self.tb_channel.setItem(row, 8, item_path)
                     row += 1
+                # 충방전기 섹션 등록 (데이터 행 범위)
+                data_rows = list(range(data_start, row))
+                if data_rows:
+                    self._filter_sections[cycler_row] = {
+                        'rows': data_rows, 'collapsed': False, 'type': 'cycler'}
+            # 층 섹션 등록 (충방전기 헤더 + 데이터 행 전체)
+            floor_child_rows = list(range(floor_row + 1, row))
+            if floor_child_rows:
+                self._filter_sections[floor_row] = {
+                    'rows': floor_child_rows, 'collapsed': False, 'type': 'floor'}
         self.tb_channel.setUpdatesEnabled(True)
         # 요약 정보
         if is_idle_mode:
