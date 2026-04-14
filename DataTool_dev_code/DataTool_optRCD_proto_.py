@@ -25487,14 +25487,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             with open(pneworkpath) as f1:
                 js1 = json.loads(f1.read())
             self.df = pd.DataFrame(js1['Channel'])
+        self._pne_last_sync_time = self._pne_sync_time(js1)
         # 데이터 처리
         if os.path.isfile(pneworkpath):
             temp_data = self.df[["Temperature"]]
             temp_data = temp_data.astype('float') * 1000
             temp_data = temp_data.astype('int')
-            self.df = self.df[["Ch_No", "State", "Test_Name", "Schedule_Name", "Current_Cycle_Num", "Step_No", "Total_Cycle_Num", "Voltage",
-                               "Result_Path"]]
-            self.df.columns = self.toyo_column_list[0:4] + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num", "Voltage", "Result_Path"]
+            _pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
+                        "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+                        "Voltage", "Result_Path"]
+            # Code, Code_Desc, Type: 없으면 빈 문자열로 보충
+            for _extra in ("Code", "Code_Desc", "Type"):
+                if _extra not in self.df.columns:
+                    self.df[_extra] = ""
+            _pne_cols += ["Code", "Code_Desc", "Type"]
+            self.df = self.df[_pne_cols]
+            self.df.columns = (self.toyo_column_list[0:4]
+                               + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+                                  "Voltage", "Result_Path", "Code", "Code_Desc", "Type"])
             self.df = self.df.dropna()
             self.df.index = self.df["chno"].astype('int')
             temp_data.index = self.df["chno"].astype('int')
@@ -25511,21 +25521,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.df["chno"] = self.df.index
             # 데이터 경로 변경
             self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
-            # 작업멈춤 세부 분류 (.log 기반)
-            self.df = self._refine_paused_status(self.df)
+            # 작업멈춤 세분류는 호출자가 필요 시 수행
+            # - pne_table_make: 전체 채널 대상 (전수)
+            # - filter_all_channels: 검색 매칭된 채널만 대상 (선별)
             return self.df
-    
+
     def pne_table_make(self, num_i, num_j, pne_num, blkname):
         # 경로 확인
         if os.path.isdir(self.pne_work_path_list[pne_num]):
             pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
             pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
-            # 데이터 파일 최종 수정 시간 표시
-            mtime_path = pneworkpath2 if os.path.isfile(pneworkpath2) else pneworkpath
-            if os.path.isfile(mtime_path):
-                mtime = os.path.getmtime(mtime_path)
-                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                self.tb_modified_time.setText(f"최종 수정: {mtime_str}")
             if os.path.isfile(pneworkpath2):
                 with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
                     js1 = json.loads(f1.read())
@@ -25541,13 +25546,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     except json.JSONDecodeError as e:
                         print(f"JSON 오류: {e} 라인 {e.line} 수정 필요")
                 self.df = pd.DataFrame(js1['Channel'])
+            # 최종 동기화 시간 표시 (JSON Sync_Time 기반)
+            sync_str = self._pne_sync_time(js1)
+            if sync_str:
+                self.tb_modified_time.setText(f"최종 수정: {sync_str}")
         # 데이터 처리
             temp_data = self.df[["Temperature"]]
             temp_data = temp_data.astype('float') * 1000
             temp_data = temp_data.astype('int')
-            self.df = self.df[["Ch_No", "State", "Test_Name", "Schedule_Name", "Current_Cycle_Num", "Step_No", "Total_Cycle_Num", "Voltage",
-                               "Result_Path"]]
-            self.df.columns = self.toyo_column_list[0:4] + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num", "Voltage", "Result_Path"]
+            _pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
+                        "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+                        "Voltage", "Result_Path"]
+            for _extra in ("Code", "Code_Desc", "Type"):
+                if _extra not in self.df.columns:
+                    self.df[_extra] = ""
+            _pne_cols += ["Code", "Code_Desc", "Type"]
+            self.df = self.df[_pne_cols]
+            self.df.columns = (self.toyo_column_list[0:4]
+                               + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+                                  "Voltage", "Result_Path", "Code", "Code_Desc", "Type"])
             self.df = self.df.dropna()
             self.df.index = self.df["chno"].astype('int')
             temp_data.index = self.df["chno"].astype('int')
@@ -25708,18 +25725,35 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     })
 
     @staticmethod
+    def _pne_sync_time(js: dict) -> str:
+        """PNE JSON 첫 번째 채널의 Sync_Time_Day + Sync_Time → "YY-MM-DD HH:MM"
+
+        Sync_Time_Day: "20260414" (yyyymmdd)
+        Sync_Time:     "162017055" (HHMMSSnn)
+        """
+        try:
+            ch0 = js["Channel"][0]
+            day = str(ch0.get("Sync_Time_Day", ""))
+            time = str(ch0.get("Sync_Time", ""))
+            if len(day) >= 8 and len(time) >= 4:
+                return f"{day[2:4]}-{day[4:6]}-{day[6:8]} {time[:2]}:{time[2:4]}"
+        except (IndexError, KeyError, TypeError):
+            pass
+        return ""
+
+    @staticmethod
     def _classify_paused_reason(channel_path: str) -> str:
-        """작업멈춤 채널의 .log 파일에서 중단 사유를 분류
+        """Code:153 (작업멈춤종료) 채널의 .log 파일에서 중단 사유 판별
 
         Parameters
         ----------
         channel_path : str
-            채널 데이터 폴더 경로 (예: Y:\\DAT_30\\[027]\\)
+            채널 데이터 폴더 경로 (예: Y:\\PNE-1 New\\DAT_30\\[027])
 
         Returns
         -------
         str
-            Code:숫자 뒤의 사유 문자열, 또는 "작업멈춤" (판별 불가 시)
+            "중단점 도달 (C{rc}/S{rs})" | "사용자멈춤" | "작업멈춤"
         """
         try:
             if not os.path.isdir(channel_path):
@@ -25731,7 +25765,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if not log_files:
                 logger.debug('[작업멈춤] .log 파일 없음: %s', channel_path)
                 return "작업멈춤"
-            # 가장 최근 .log 파일의 마지막 4KB만 읽기 (전체 파싱 불필요)
+            # 가장 최근 .log 파일의 마지막 4KB만 읽기
             log_path = max(log_files, key=os.path.getmtime)
             file_size = os.path.getsize(log_path)
             logger.info('[작업멈춤] .log 파싱: %s (%d bytes)', log_path, file_size)
@@ -25740,41 +25774,36 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f.seek(file_size - 4096)
                     f.readline()  # 잘린 첫 줄 버림
                 tail = f.read()
-            # ── 판별 우선순위 ──
-            # 1) 중단점 예약 도달: "Reserve Cycle:xx, Step:yy" 포함
+            # ── 판별: Reserve Cycle 유무로 중단점 도달 vs 사용자멈춤 ──
             reserve_m = re.search(
                 r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', tail)
             if reserve_m:
                 rc, rs = reserve_m.group(1), reserve_m.group(2)
                 reason = f"중단점 도달 (C{rc}/S{rs})"
-                logger.info('[작업멈춤] 판별 결과: %s → %s', channel_path, reason)
+                logger.info('[작업멈춤] .log 판별: %s → %s', channel_path, reason)
                 return reason
-            # 2) 사용자 수동 멈춤: "즉시 멈춤 시행" 있지만 Reserve 없음
             if "즉시 멈춤 시행" in tail:
-                logger.info('[작업멈춤] 판별 결과: %s → 즉시 멈춤 시행', channel_path)
-                return "작업멈춤"
-            # 3) Code:숫자 뒤의 사유 문자열 추출 (마지막 매칭 사용)
-            #    "Code:209 / 전류 이상" → "전류 이상", "Code:153 중단점 도달" → "중단점 도달"
-            matches = re.findall(r'Code:\d+\s*/?\s*(.+)', tail)
-            if matches:
-                reason = matches[-1].strip()
-                logger.info('[작업멈춤] 판별 결과: %s → Code 사유: %s', channel_path, reason)
-                return reason
-            logger.info('[작업멈춤] 판별 결과: %s → 패턴 미매칭 (작업멈춤)', channel_path)
+                logger.info('[작업멈춤] .log 판별: %s → 사용자멈춤', channel_path)
+                return "사용자멈춤"
+            logger.info('[작업멈춤] .log 판별: %s → 패턴 미매칭', channel_path)
             return "작업멈춤"
         except Exception as e:
             logger.warning('[작업멈춤] .log 파싱 실패: %s — %s', channel_path, e)
             return "작업멈춤"
 
     def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
-        """작업멈춤 채널에 대해 .log 기반 세부 분류 적용
+        """작업멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
 
-        "작업멈춤" 상태인 행만 대상으로 .log 파일을 확인하여
-        "중단점 도달" 등으로 세분화. 소수 채널만 I/O 발생.
+        분류 로직:
+        1) Code==153, Code_Desc=="작업멈춤종료" → .log 파싱
+           - Reserve Cycle 패턴 → "중단점 도달 (C{rc}/S{rs})"
+           - 즉시 멈춤 시행만 → "사용자멈춤"
+           - 패턴 없음 → "작업멈춤"
+        2) Code!=153 → "작업멈춤 - {Code_Desc}"
 
-        Note: df["path"]는 change_drive()에서 Result_Path의 파일명을 제거한 값이므로
-        채널폴더([027] 등)가 잘려나간 상태. .log 파일은 채널폴더 내부에 있으므로
-        Result_Path에 드라이브 치환을 직접 적용하여 채널폴더 경로를 보존한다.
+        Note: df["path"]는 change_drive()에서 채널폴더가 잘린 상위 경로.
+        .log 파일은 채널폴더 내부에 있으므로 Result_Path에서 채널폴더명을
+        추출하여 붙인다.
         """
         mask = df["use"] == "작업멈춤"
         paused_count = mask.sum()
@@ -25782,26 +25811,46 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             logger.debug('[작업멈춤] 작업멈춤 채널 없음 — 세분류 생략')
             return df
         logger.info('[작업멈춤] 세분류 시작: %d개 채널 대상', paused_count)
+        has_code = "Code" in df.columns
+        has_code_desc = "Code_Desc" in df.columns
         has_rpath = "Result_Path" in df.columns
         has_path = "path" in df.columns
         for idx in df.index[mask]:
-            # df["path"]는 채널폴더가 잘린 상위 경로 (change_drive 결과)
-            # Result_Path에서 채널폴더명을 추출하여 붙여야 .log 접근 가능
-            ch_path = ""
-            if has_rpath and has_path:
-                rpath = str(df.at[idx, "Result_Path"]).rstrip("\\")
-                base = str(df.at[idx, "path"])
-                channel_folder = rpath[rpath.rfind("\\") + 1:]
-                ch_path = os.path.join(base, channel_folder)
-            elif has_path:
-                ch_path = str(df.at[idx, "path"])
-            if ch_path:
-                df.at[idx, "use"] = self._classify_paused_reason(ch_path)
+            code = str(df.at[idx, "Code"]).strip() if has_code else ""
+            code_desc = str(df.at[idx, "Code_Desc"]).strip() if has_code_desc else ""
+            if code == "153" and code_desc == "작업멈춤종료":
+                # .log 파싱으로 사용자멈춤 / 중단점 도달 판별
+                ch_path = self._build_channel_path(df, idx, has_rpath, has_path)
+                if ch_path:
+                    df.at[idx, "use"] = self._classify_paused_reason(ch_path)
+                    logger.info('[작업멈춤] Code:153 → .log 파싱 → %s',
+                                df.at[idx, "use"])
+                else:
+                    logger.debug('[작업멈춤] Code:153 채널경로 구성 실패: idx=%s', idx)
+            elif code_desc:
+                # Code!=153: Code_Desc 텍스트 직접 사용
+                df.at[idx, "use"] = f"작업멈춤 - {code_desc}"
+                logger.info('[작업멈춤] Code:%s → %s', code, df.at[idx, "use"])
+            else:
+                logger.debug('[작업멈춤] Code/Code_Desc 없음: idx=%s', idx)
         # 세분류 결과 요약
         refined = df.loc[mask, "use"].value_counts()
         logger.info('[작업멈춤] 세분류 완료: %s',
                      ', '.join(f'{k}={v}' for k, v in refined.items()))
         return df
+
+    @staticmethod
+    def _build_channel_path(df: pd.DataFrame, idx: int,
+                            has_rpath: bool, has_path: bool) -> str:
+        """Result_Path에서 채널폴더명을 추출하여 드라이브 치환된 경로 구성"""
+        if has_rpath and has_path:
+            rpath = str(df.at[idx, "Result_Path"]).rstrip("\\")
+            base = str(df.at[idx, "path"])
+            channel_folder = rpath[rpath.rfind("\\") + 1:]
+            return os.path.join(base, channel_folder)
+        if has_path:
+            return str(df.at[idx, "path"])
+        return ""
 
     def change_drive(self, df, changed):
         # 상세 데이터부터 범용 데이터 순으로 바꾸기 진행
@@ -25993,15 +26042,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     df = self.toyo_data_make(num, name)
                 elif cycler_text in pne_info:
                     num, name = pne_info[cycler_text]
-                    # 최종 업데이트 시간
-                    wp = self.pne_work_path_list[num]
-                    json2 = wp + "\\Module_2_channel_info.json"
-                    json1 = wp + "\\Module_1_channel_info.json"
-                    mtime_path = json2 if os.path.isfile(json2) else json1
-                    if os.path.isfile(mtime_path):
-                        mtime_str = datetime.fromtimestamp(
-                            os.path.getmtime(mtime_path)).strftime("%m-%d %H:%M")
                     df = self.pne_data_make(num, name)
+                    # 최종 동기화 시간 (JSON Sync_Time 기반)
+                    mtime_str = getattr(self, '_pne_last_sync_time', '')
                 else:
                     continue
                 cycler_mtime[cycler_text] = mtime_str
@@ -26020,6 +26063,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cell_path = str(df.loc[ch_idx, "folder"])
                     else:
                         cell_path = ""
+                    # 동작 타입 추출 (작업중일 때만 Type 표시)
+                    type_str = ""
+                    if status in ("작업중", "충전", "방전", "진행", "휴지"):
+                        if "Type" in df.columns:
+                            type_str = str(df.loc[ch_idx, "Type"]).strip()
+                            if type_str in ("", "nan"):
+                                type_str = ""
                     # 온도 추출
                     temp_str = "-"
                     if "temp" in df.columns:
@@ -26034,7 +26084,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         except (ValueError, TypeError):
                             temp_str = str(raw_temp) if raw_temp else "-"
                     if self.match_filter_text(search_text, testname, status):
-                        # 이 충방전��가 속한 층 찾���
+                        # 매칭된 작업멈춤 건만 세분류 (Code/Code_Desc + .log)
+                        if status == "작업멈춤":
+                            code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
+                            code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
+                            if code == "153" and code_desc == "작업멈춤종료":
+                                ch_path = self._build_channel_path(
+                                    df, ch_idx,
+                                    "Result_Path" in df.columns,
+                                    "path" in df.columns)
+                                if ch_path:
+                                    status = self._classify_paused_reason(ch_path)
+                            elif code_desc:
+                                status = f"작업멈춤 - {code_desc}"
                         floor_name = ""
                         for fn, fc in floor_cyclers:
                             if cycler_text in fc:
@@ -26045,7 +26107,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if cycler_text not in matched_by_floor[floor_name]:
                             matched_by_floor[floor_name][cycler_text] = []
                         matched_by_floor[floor_name][cycler_text].append(
-                            (ch_idx, testname, status, cyc, vol, temp_str, cell_path))
+                            (ch_idx, testname, status, cyc, vol, type_str,
+                             temp_str, cell_path))
                         total_matched += 1
                         if status in ("작업중", "충전", "방전", "진행", "휴지"):
                             working_count += 1
@@ -26088,20 +26151,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             for cycler_text in matched_by_floor[floor_name]:
                 row_count += 1  # 충방전기 헤더
                 row_count += len(matched_by_floor[floor_name][cycler_text])
-        # 8열 리스트: 충방전기 | 채널 | 상태 | Step/Cycle | 전압 | 온도 | 테스트명 | 셀 경로
-        num_cols = 8
+        # 9열 리스트: 충방전기 | 채널 | 상태 | Step/Cycle | 전압 | 동작 | 온도 | 테스트명 | 셀 경로
+        num_cols = 9
         self.tb_channel.setColumnCount(num_cols)
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
         self.tb_channel.setHorizontalHeaderLabels(
-            ["충방전기", "채널", "상태", "Step/Cycle/총Cycle", "전압", "온도", "테스트명", "셀 경로"])
-        for ci in range(6):
+            ["충방전기", "채널", "상태", "Step/Cycle/총Cycle", "전압",
+             "동작", "온도", "테스트명", "셀 경로"])
+        for ci in range(7):
             self.tb_channel.horizontalHeader().setSectionResizeMode(
                 ci, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.tb_channel.horizontalHeader().setSectionResizeMode(
-            6, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.tb_channel.horizontalHeader().setSectionResizeMode(
             7, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tb_channel.horizontalHeader().setSectionResizeMode(
+            8, QtWidgets.QHeaderView.ResizeMode.Stretch)
         # 행 높이 줄이기
         self.tb_channel.verticalHeader().setDefaultSectionSize(22)
         self.tb_channel.setUpdatesEnabled(False)
@@ -26157,52 +26221,66 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self.tb_channel.setItem(row, col, filler)
                 row += 1
                 # ── 데이터 행 ──
-                for ch_no, testname, status, cyc, vol, temp_str, cell_path in channels:
+                for ch_no, testname, status, cyc, vol, type_str, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
                     if bg_color is None and status not in self._NORMAL_STATES:
                         bg_color = _PAUSED_BG
                     _font9 = QtGui.QFont("Malgun gothic", 9)
+                    # col 0: 충방전기
                     item_cycler = QtWidgets.QTableWidgetItem(f"    {cycler_text}")
                     item_cycler.setFont(_font9)
                     if bg_color:
                         item_cycler.setBackground(bg_color)
                     self.tb_channel.setItem(row, 0, item_cycler)
+                    # col 1: 채널
                     item_ch = QtWidgets.QTableWidgetItem(str(ch_no).zfill(3))
                     item_ch.setFont(_font9)
                     if bg_color:
                         item_ch.setBackground(bg_color)
                     self.tb_channel.setItem(row, 1, item_ch)
+                    # col 2: 상태
                     item_status = QtWidgets.QTableWidgetItem(status)
                     item_status.setFont(_font9)
                     if bg_color:
                         item_status.setBackground(bg_color)
                     self.tb_channel.setItem(row, 2, item_status)
+                    # col 3: Step/Cycle
                     item_cyc = QtWidgets.QTableWidgetItem(cyc)
                     item_cyc.setFont(_font9)
                     if bg_color:
                         item_cyc.setBackground(bg_color)
                     self.tb_channel.setItem(row, 3, item_cyc)
+                    # col 4: 전압
                     item_vol = QtWidgets.QTableWidgetItem(vol)
                     item_vol.setFont(_font9)
                     if bg_color:
                         item_vol.setBackground(bg_color)
                     self.tb_channel.setItem(row, 4, item_vol)
+                    # col 5: 동작 (작업중일 때 Type 표시)
+                    item_type = QtWidgets.QTableWidgetItem(type_str)
+                    item_type.setFont(_font9)
+                    if bg_color:
+                        item_type.setBackground(bg_color)
+                    self.tb_channel.setItem(row, 5, item_type)
+                    # col 6: 온도
                     item_temp = QtWidgets.QTableWidgetItem(temp_str)
                     item_temp.setFont(_font9)
                     if bg_color:
                         item_temp.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 5, item_temp)
+                    self.tb_channel.setItem(row, 6, item_temp)
+                    # col 7: 테스트명
                     item_test = QtWidgets.QTableWidgetItem(testname)
                     item_test.setFont(_font9)
                     if bg_color:
                         item_test.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 6, item_test)
+                    self.tb_channel.setItem(row, 7, item_test)
+                    # col 8: 셀 경로
                     item_path = QtWidgets.QTableWidgetItem(cell_path)
                     item_path.setFont(QtGui.QFont("Malgun gothic", 8))
                     item_path.setForeground(QtGui.QColor(120, 120, 120))
                     if bg_color:
                         item_path.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 7, item_path)
+                    self.tb_channel.setItem(row, 8, item_path)
                     row += 1
         self.tb_channel.setUpdatesEnabled(True)
         # 요약 정보
