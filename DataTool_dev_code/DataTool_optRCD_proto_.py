@@ -26372,15 +26372,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_channel.setHorizontalHeaderLabels(
             ["충방전기", "채널", "상태", "경과", "Step/Cycle/총Cycle",
              "전압", "동작", "온도", "테스트명", "셀 경로"])
-        # 열 너비 고정 (텍스트 크기 기준)
+        # 열 너비 최소화 (데이터 텍스트 기준, 헤더 잘림 허용)
+        # 테스트명/셀 경로(col 8, 9)가 stretch로 확장 공간 확보
         _fixed_widths = {
-            0: 55,   # 충방전기: "PNE24" 5글자
-            1: 36,   # 채널: 3자리
-            3: 50,   # 경과: "3d 5h"
-            4: 115,  # Step/Cycle: "000/000/0000"
-            5: 45,   # 전압
-            6: 65,   # 동작
-            7: 48,   # 온도: "-10.0"
+            0: 32,   # 충방전기: "PNE24"
+            1: 20,   # 채널: "001"
+            2: 110,  # 상태: "중단점 도달 (S201/C89)"
+            3: 30,   # 경과: "3d 5h"
+            4: 70,   # Step/Cycle: "000/000/0000"
+            5: 28,   # 전압: "3.821"
+            6: 44,   # 동작: "DisCharge"
+            7: 28,   # 온도: "-10.0"
         }
         for ci in range(num_cols):
             if ci in _fixed_widths:
@@ -26394,8 +26396,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.horizontalHeader().setSectionResizeMode(
                     ci, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         # 행 높이 줄이기
-        self.tb_channel.verticalHeader().setDefaultSectionSize(18)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(18)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(11)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(9)
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
