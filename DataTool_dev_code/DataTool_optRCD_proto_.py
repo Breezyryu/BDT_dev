@@ -26384,17 +26384,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             6: 44,   # 동작: "DisCharge"
             7: 28,   # 온도: "-10.0"
         }
+        header = self.tb_channel.horizontalHeader()
+        # 1) 모드 먼저 설정 (Fixed/Stretch)
         for ci in range(num_cols):
             if ci in _fixed_widths:
-                self.tb_channel.setColumnWidth(ci, _fixed_widths[ci])
-                self.tb_channel.horizontalHeader().setSectionResizeMode(
-                    ci, QtWidgets.QHeaderView.ResizeMode.Fixed)
+                header.setSectionResizeMode(
+                    ci, QtWidgets.QHeaderView.ResizeMode.Interactive)
             elif ci in (8, 9):
-                self.tb_channel.horizontalHeader().setSectionResizeMode(
+                header.setSectionResizeMode(
                     ci, QtWidgets.QHeaderView.ResizeMode.Stretch)
             else:
-                self.tb_channel.horizontalHeader().setSectionResizeMode(
+                header.setSectionResizeMode(
                     ci, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        # 2) 고정폭 열 너비 설정 (모드 설정 후에 적용)
+        header.setMinimumSectionSize(18)
+        for ci, w in _fixed_widths.items():
+            self.tb_channel.setColumnWidth(ci, w)
         # 행 높이 줄이기
         self.tb_channel.verticalHeader().setDefaultSectionSize(11)
         self.tb_channel.verticalHeader().setMinimumSectionSize(9)
