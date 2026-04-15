@@ -81,31 +81,53 @@ if cycler_text in pne_info:
                 status = f"{status} ({reserve})"
 ```
 
-## 4. Code_Desc → 카테고리 매핑 (UI 색상용)
+## 4. Code_Desc → 카테고리 매핑 (UI 색상용, 2색 확정)
 
-.log 파싱은 하지 않지만, Code 번호로 **의미 카테고리** 를 판정해 배경색 결정:
+.log 파싱은 하지 않지만, Code 번호로 **의미 카테고리** 를 판정해 배경색 결정.
+최종 색상 정책은 **노랑/빨강 2색**:
+
+| 표시 라벨 | 근거 | 색상 |
+|----------|------|:---:|
+| `사용자멈춤` | .log 파싱 결과 (Code:153) | 🟡 노랑 |
+| `중단점 도달 (…)` | .log 파싱 결과 (Code:153 + Reserve) | 🟡 노랑 |
+| `챔버이슈` | .log 파싱 결과 (Code:153 + chamber alarm) | 🟡 노랑 |
+| `시험완료` | .log 파싱 결과 (Code:153 + Test work completed) | 🟡 노랑 |
+| `작업멈춤종료` (Code:153 기본) | JSON Code_Desc | 🟡 노랑 |
+| `전압 상한` (Code:128) | JSON Code_Desc | 🟥 빨강 (안전조건) |
+| `전압 하한` (Code:129) | JSON Code_Desc | 🟥 빨강 (안전조건) |
+| `OCV상한` (Code:134) | JSON Code_Desc | 🟥 빨강 (안전조건) |
+| `용량상한` (Code:142) | JSON Code_Desc | 🟥 빨강 (안전조건) |
+| `전압 이상(경고)` (Code:208) | JSON Code_Desc | 🟥 빨강 (안전조건) |
+| `전류 이상(경고)` (Code:209) | JSON Code_Desc | 🟥 빨강 (안전조건) |
 
 ```python
 PAUSED_CODE_CATEGORY = {
-    # 정상 조건 만족 → 연파랑
-    "128": "CONDITION_REACHED",   # 전압 상한
-    "129": "CONDITION_REACHED",   # 전압 하한
-    "134": "CONDITION_REACHED",   # OCV상한
-    "142": "CONDITION_REACHED",   # 용량상한
-    # 사용자/오류 (.log 로 세분화됨) → 노랑
-    "153": "USER_OR_ERROR",
-    # 하드웨어 경고 → 빨강
-    "208": "HW_WARNING",          # 전압 이상
-    "209": "HW_WARNING",          # 전류 이상
+    # 사용자/오류 (.log 세분화 가능) → 노랑
+    "153": ("작업멈춤종료",    "USER_OR_ERROR"),
+    # 안전 조건 (이상 판정 필요) → 빨강
+    "128": ("전압 상한",       "SAFETY_STOP"),
+    "129": ("전압 하한",       "SAFETY_STOP"),
+    "134": ("OCV상한",         "SAFETY_STOP"),
+    "142": ("용량상한",        "SAFETY_STOP"),
+    "208": ("전압 이상(경고)", "SAFETY_STOP"),
+    "209": ("전류 이상(경고)", "SAFETY_STOP"),
 }
 
+# .log 세분화 결과 라벨 → 노랑 (Code:153 계열 전부)
+USER_OR_ERROR_LABELS = frozenset({
+    "사용자멈춤", "챔버이슈", "시험완료", "작업멈춤종료",
+    # "중단점 도달 (S*/C*)" 는 prefix 로 판정
+})
+
 CATEGORY_BG = {
-    "CONDITION_REACHED": QtGui.QColor(185, 218, 234),   # 🆕 연파랑
-    "USER_OR_ERROR":     QtGui.QColor(240, 220, 160),   # 노랑 (기존 _STOPPED_BG)
-    "HW_WARNING":        QtGui.QColor(214, 155, 154),   # 빨강 (기존 _PAUSED_BG)
-    "UNKNOWN_CODE":      QtGui.QColor(214, 155, 154),   # 빨강 (fallback)
+    "USER_OR_ERROR":  QtGui.QColor(240, 220, 160),   # 노랑 (기존 _STOPPED_BG)
+    "SAFETY_STOP":    QtGui.QColor(214, 155, 154),   # 빨강 (기존 _PAUSED_BG)
+    "UNKNOWN_CODE":   QtGui.QColor(214, 155, 154),   # 빨강 (fallback)
 }
 ```
+
+> 연파랑 "조건도달" 분류는 사용하지 않는다. 정상 조건 종료도 결국 사용자가
+> 원인을 확인해야 하는 "이상 가능성" 으로 간주하여 빨강으로 통일.
 
 ## 5. 렌더링부 수정 ([L26466~26472](../../DataTool_dev_code/DataTool_optRCD_proto_.py:26466))
 
@@ -121,19 +143,23 @@ if bg_color is None and status_base not in self._NORMAL_STATES:
         bg_color = _PAUSED_BG
 ```
 
-### 변경 후
+### 변경 후 (2색 단순화)
 
 ```python
 bg_color = STATUS_BG.get(status)
 status_base = status.split(" (")[0] if " (" in status else status
 if bg_color is None and status_base not in self._NORMAL_STATES:
-    if status.startswith("중단점 도달"):
-        bg_color = _STOPPED_BG
+    # Code:153 계열 (.log 파싱 결과 + 중단점 도달 + 기본) → 노랑
+    if (status.startswith("중단점 도달")
+            or status_base in USER_OR_ERROR_LABELS):
+        bg_color = CATEGORY_BG["USER_OR_ERROR"]      # 노랑
     else:
-        # Code 카테고리 조회 → 연파랑/노랑/빨강 결정
-        category = PAUSED_CODE_CATEGORY.get(code_for_row, "UNKNOWN_CODE")
-        bg_color = CATEGORY_BG[category]
+        # Code 128/129/134/142/208/209 → 빨강 (안전조건)
+        bg_color = CATEGORY_BG["SAFETY_STOP"]        # 빨강
 ```
+
+> `code_for_row` 변수를 튜플에 추가해도 되지만, status 문자열 자체가
+> Code_Desc 라벨이므로 문자열 기반 판정만으로 충분.
 
 → 행 렌더링 루프에서 해당 채널의 `Code` 값을 추적해야 하므로,
   `matched_by_floor` 튜플에 `code` 를 추가:
@@ -149,15 +175,18 @@ matched_by_floor[floor_name][cycler_text].append(
 
 ```python
 FILTER_STATUS_KEYWORDS = {
-    "유휴":      ["완료", "준비", "작업정지"],
-    "작업멈춤":   None,                           # _NORMAL_STATES 역조건 (기존)
-    # 🆕 Code_Desc 직접 매칭 키워드
-    "조건도달":   {"OCV상한", "용량상한", "전압 상한", "전압 하한"},
-    "하드웨어경고": {"전압 이상(경고)", "전류 이상(경고)"},
+    "유휴":        ["완료", "준비", "작업정지"],
+    "작업멈춤":     None,                         # _NORMAL_STATES 역조건 (기존)
+    # 🆕 2색 분류 키워드
+    "안전조건":     {"전압 상한", "전압 하한", "OCV상한", "용량상한",
+                   "전압 이상(경고)", "전류 이상(경고)"},
+    "사용자멈춤계": {"사용자멈춤", "중단점 도달", "챔버이슈",
+                   "시험완료", "작업멈춤종료"},
 }
 ```
 
 `match_filter_text` 에서 set 타입도 처리하도록 약간 확장.
+("중단점 도달" 은 prefix 매칭으로 처리)
 
 ## 7. 구현 범위 (한 번에 수행)
 
@@ -184,12 +213,14 @@ FILTER_STATUS_KEYWORDS = {
 ## 9. 테스트 시나리오
 
 1. State="작업중" + Reserve 설정된 채널 → `"작업중 (→S14/C1)"` 표시
-2. State="작업멈춤" + Code=153 + Reserve → `"중단점 도달 (S14/C1)"` + 노랑
-3. State="작업멈춤" + Code=134 → `"OCV상한"` + **연파랑** (현행: `"작업멈춤 - OCV상한"` + 빨강)
-4. State="작업멈춤" + Code=142 → `"용량상한"` + **연파랑**
-5. State="작업멈춤" + Code=208 → `"전압 이상(경고)"` + **빨강**
-6. 검색창 "조건도달" 입력 → Code 128/129/134/142 채널만 매칭
-7. 검색창 "OCV상한" 입력 → Code 134 채널 매칭
+2. State="작업멈춤" + Code=153 + Reserve → `"중단점 도달 (S14/C1)"` + 🟡 노랑
+3. State="작업멈춤" + Code=153 .log parsed "사용자멈춤" → 🟡 노랑
+4. State="작업멈춤" + Code=153 .log parsed "챔버이슈" / "시험완료" → 🟡 노랑
+5. State="작업멈춤" + Code=134 → `"OCV상한"` + 🟥 빨강
+6. State="작업멈춤" + Code=142 → `"용량상한"` + 🟥 빨강
+7. State="작업멈춤" + Code=208 → `"전압 이상(경고)"` + 🟥 빨강
+8. 검색창 "안전조건" 입력 → Code 128/129/134/142/208/209 채널 매칭
+9. 검색창 "OCV상한" 입력 → Code 134 채널 매칭 (Code_Desc 직접 매칭)
 
 ## 10. 리소스 변화 (281 샘플 기준)
 
