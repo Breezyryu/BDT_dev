@@ -242,13 +242,13 @@ FILTER_STATUS_KEYWORDS = {
 6. State="작업멈춤" + Code=134 → `"OCV상한"` + 🟥 빨강
 7. State="작업멈춤" + Code=142 → `"용량상한"` + 🟥 빨강
 8. State="작업멈춤" + Code=208 → `"전압 이상(경고)"` + 🟥 빨강
-9. **State="완료" → 🟢 연녹 + 경과시간 "N일 N시간"** (JSON Sync_Time 기반)
+9. **State="완료" → 🟢 연녹 + 경과시간 "N일 N시간"** (.log mtime 기반)
 10. 검색창 "안전조건" 입력 → Code 128/129/134/142/208/209 채널 매칭
 11. 검색창 "OCV상한" 입력 → Code 134 채널 매칭 (Code_Desc 직접 매칭)
 
 ---
 
-## 10. 완료/시험완료 채널 경과 시간 표시 (신규)
+## 10. 완료/시험완료 채널 경과 시간 표시 (.log 기반)
 
 ### 10.1 배경
 
@@ -256,73 +256,107 @@ FILTER_STATUS_KEYWORDS = {
 현황 탭 `경과` 열에 표시한다. 셀이 채널에 방치된 시간이 길수록 자가방전 등
 영향이 누적되므로 운용상 중요.
 
-### 10.2 데이터 소스
+### 10.2 데이터 소스 — JSON Sync_Time 은 **사용 불가**
 
-JSON 의 **채널별** `Sync_Time_Day` + `Sync_Time` 필드를 사용.
+⚠️ **JSON 의 `Sync_Time_Day` / `Sync_Time` 은 완료 시각이 아님**
 
-| 필드 | 포맷 | 예시 | 의미 |
-|------|------|------|------|
-| `Sync_Time_Day` | `YYYYMMDD` (8자) | `"20260415"` | 마지막 JSON 갱신 날짜 |
-| `Sync_Time` | `HHMMSSnn` (9자) | `"162017055"` | 마지막 JSON 갱신 시각 (nn=센티초) |
+| 필드 | 실제 의미 |
+|------|----------|
+| `Sync_Time_Day` | JSON 파일이 마지막으로 **갱신**된 날짜 |
+| `Sync_Time` | JSON 파일이 마지막으로 **갱신**된 시각 |
 
-→ 완료 채널은 사이클러가 완료 이벤트 직후 JSON 갱신하고 이후 갱신하지 않음.
-  따라서 `현재시간 - Sync_Time = 완료 후 경과 시간` 근사치.
+PNE 사이클러는 `Module_{N}_channel_info.json` 을 **주기적으로 덮어쓰기** 하므로
+완료 채널도 Sync_Time 은 계속 최신값으로 갱신된다. → **완료 이후 경과 시간 추정 불가.**
 
-### 10.3 구현
+대신 **.log 파일의 마지막 타임스탬프** 를 사용.
+.log 는 시험 완료 이벤트 기록 후 사이클러가 더 이상 기록하지 않으므로
+마지막 줄의 `YYYY/MM/DD HH:MM:SS` 가 실질적 완료 시각.
 
-```python
-# _pne_cols 에 Sync_Time_Day/Sync_Time 추가 (L25509)
-_pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
-            "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
-            "Voltage", "Result_Path",
-            "Sync_Time_Day", "Sync_Time"]     # 🆕 추가
-```
+### 10.3 소스 옵션 비교
 
-신규 헬퍼 함수:
+| 소스 | 정확도 | I/O 비용 | 권장 |
+|------|:---:|:---:|:---:|
+| JSON Sync_Time | ❌ (항상 현재) | O(1) | — |
+| `.log` 마지막 줄 타임스탬프 | ✅ 완료 이벤트 시각 | tail 4KB 읽기 | **✅ 권장** |
+| `.log` 파일 `mtime` | ✅ 쓰기 종료 시각 ≈ 완료 | O(1) (stat) | **✅ 대안** |
+
+**권장: `.log` mtime 을 1차 소스 로 쓰고, 오차가 크거나 mtime 이 없으면 tail 파싱 fallback.**
+
+이유:
+- 완료 채널의 .log 는 완료 이벤트 이후 쓰기 없음 → mtime 이 완료 직후 고정
+- `os.path.getmtime()` 은 O(1) (디렉터리 엔트리 읽기만) → tail 파싱보다 수십~수백 배 빠름
+- 네트워크 드라이브(y:\) 에서도 stat 호출은 가벼움
+
+### 10.4 구현
+
+#### (A) 신규 헬퍼
 
 ```python
 @staticmethod
-def _elapsed_from_sync(sync_day: str, sync_time: str) -> str:
-    """JSON Sync_Time_Day/Sync_Time → 현재까지 경과 문자열.
+def _elapsed_from_log(channel_path: str) -> str:
+    """채널 폴더의 최신 .log 마지막 타임스탬프 → 현재까지 경과 문자열.
 
-    sync_day:  "20260415"
-    sync_time: "162017055"  (HHMMSSnn)
-    return:    "3d 5h" / "2h" / "45m" / ""
+    1차: 최신 .log 파일의 mtime (빠름, 정확)
+    2차: mtime 실패 시 .log tail 파싱으로 fallback
+
+    return: "3d 5h" / "2h" / "45m" / "" (실패)
     """
-    if not sync_day or not sync_time or len(sync_day) < 8 or len(sync_time) < 6:
-        return ""
     try:
-        dt = datetime.strptime(
-            f"{sync_day} {sync_time[:6]}", "%Y%m%d %H%M%S")
+        if not os.path.isdir(channel_path):
+            return ""
+        log_files = [f.path for f in os.scandir(channel_path)
+                     if f.name.endswith('.log') and f.is_file()]
+        if not log_files:
+            return ""
+        log_path = max(log_files, key=os.path.getmtime)
+
+        # 1차: mtime 사용 (O(1))
+        mtime_ts = os.path.getmtime(log_path)
+        dt = datetime.fromtimestamp(mtime_ts)
         delta = datetime.now() - dt
         total_min = int(delta.total_seconds() / 60)
         if total_min < 0:
+            # 시스템 시간 불일치 → tail 파싱 fallback
+            tail = WindowClass._read_log_tail(log_path) or ""
+            for ln in reversed(tail.splitlines()):
+                log_time = WindowClass._extract_log_time(ln)
+                if log_time:
+                    return WindowClass._elapsed_str(log_time)
             return ""
-        if total_min < 60:
-            return f"{total_min}m"
-        hours = total_min // 60
-        if hours < 24:
-            return f"{hours}h"
-        days, rem_h = divmod(hours, 24)
-        return f"{days}d {rem_h}h" if rem_h else f"{days}d"
-    except (ValueError, TypeError):
+        # 기존 _elapsed_str 과 동일한 포맷팅 재사용
+        return WindowClass._elapsed_str(dt.strftime("%Y/%m/%d %H:%M:%S"))
+    except Exception:
         return ""
 ```
 
-### 10.4 사용 위치
+> 기존 `_elapsed_str(log_time: str)` ([L25804](../../DataTool_dev_code/DataTool_optRCD_proto_.py:25804)) 의
+> 포맷팅 로직(`N m / N h / N d N h`)을 그대로 재사용.
 
-매칭 루프 ([L26296~](../../DataTool_dev_code/DataTool_optRCD_proto_.py:26296)) 내에서:
+#### (B) 매칭 루프 적용 ([L26296~](../../DataTool_dev_code/DataTool_optRCD_proto_.py:26296))
 
 ```python
 # 현행: elapsed_str 는 Code:153 .log 파싱 시에만 채워짐
 elapsed_str = ""
 
-# 🆕 추가: 완료/시험완료 상태는 JSON Sync_Time 기반
-if status in ("완료",) or status_base == "시험완료":
-    sync_day = str(df.loc[ch_idx, "Sync_Time_Day"]) if "Sync_Time_Day" in df.columns else ""
-    sync_time = str(df.loc[ch_idx, "Sync_Time"]) if "Sync_Time" in df.columns else ""
-    elapsed_str = self._elapsed_from_sync(sync_day, sync_time)
+# 🆕 추가: 완료/시험완료 상태 — .log mtime 기반
+status_base = status.split(" (")[0] if " (" in status else status
+if status == "완료" or status_base == "시험완료":
+    ch_path = self._build_channel_path(df, ch_idx, has_rpath, has_path)
+    if ch_path:
+        elapsed_str = self._elapsed_from_log(ch_path)
 ```
+
+### 10.5 성능 고려
+
+- 완료/시험완료 채널이 많을 경우 `os.scandir + getmtime` 이 N 회 호출됨
+- PNE 1 모듈당 평균 완료 채널 수 ≒ 10~30 → 네트워크 stat 수십 회
+- 필요 시 `ThreadPoolExecutor(max_workers=8)` 배치 가능 (Phase B 최적화)
+
+### 10.6 JSON `Sync_Time` 의 용도 재정의
+
+Sync_Time 은 "완료 시각" 이 아니라 **"JSON 갱신 신선도 지표"** 로만 사용:
+- 현재 시간과 Sync_Time 차이가 큼 (예: 1 시간 초과) → **"PNE 동기화 지연/오프라인"** 경고
+- 이는 시험 상태와 무관하게 **시스템 상태** 로 별도 표시 가능 (옵션)
 
 ### 10.5 경과 열 색상 톤 (시각적 구분)
 
