@@ -896,25 +896,33 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                     cyc_df = _cyc_to_cycle_df(cyc_path)
                     if len(cyc_df) > 0:
                         if save_end_data is not None:
-                            # CSV 최신 사이클 이후 데이터 추가
-                            csv_max_tc = save_end_data[27].max()
+                            # CSV에 없는 TC를 .cyc에서 gap-fill
+                            # (앞쪽 누락 + 뒤쪽 신규 모두 처리)
                             # .cyc → SaveEndData 컬럼 매핑 (13개 → 48+개 컬럼)
                             _cyc_mapped = _cyc_df_to_save_end_format(
                                 cyc_df, save_end_data.shape[1])
+                            csv_tcs = set(
+                                int(x) for x in save_end_data[27].unique())
                             supplement = _cyc_mapped[
-                                _cyc_mapped[27] > csv_max_tc]
+                                ~_cyc_mapped[27].astype(int).isin(csv_tcs)]
                             if len(supplement) > 0:
                                 _ch_name = os.path.basename(raw_file_path)
-                                _cyc_tcs = supplement[27].tolist()
+                                _cyc_tcs = sorted(
+                                    set(int(x) for x in supplement[27]))
                                 _perf_logger.info(
                                     f'  [.cyc 보충] {_ch_name}: '
-                                    f'CSV TC≤{int(csv_max_tc)}, '
-                                    f'.cyc TC {int(min(_cyc_tcs))}~'
-                                    f'{int(max(_cyc_tcs))} 추가 '
-                                    f'({len(supplement)}행)')
+                                    f'CSV TC={sorted(csv_tcs)[:3]}...'
+                                    f'{sorted(csv_tcs)[-1] if csv_tcs else "-"}, '
+                                    f'.cyc TC {_cyc_tcs[0]}~{_cyc_tcs[-1]} '
+                                    f'({len(_cyc_tcs)}개 TC, '
+                                    f'{len(supplement)}행) 보충')
                                 save_end_data = pd.concat(
                                     [save_end_data, supplement],
                                     ignore_index=True)
+                                # TC 순서 정렬 (앞쪽 보충이 섞이므로 필수)
+                                save_end_data = save_end_data.sort_values(
+                                    by=[27, 7], kind='stable'
+                                ).reset_index(drop=True)
                         else:
                             # CSV 없음 → .cyc 단독 재구성
                             _cyc_mapped = _cyc_df_to_save_end_format(
