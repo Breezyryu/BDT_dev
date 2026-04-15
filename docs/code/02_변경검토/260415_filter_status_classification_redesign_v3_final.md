@@ -81,18 +81,18 @@ if cycler_text in pne_info:
                 status = f"{status} ({reserve})"
 ```
 
-## 4. Code_Desc → 카테고리 매핑 (UI 색상용, 2색 확정)
+## 4. Code_Desc → 카테고리 매핑 (UI 색상용, 3색 확정)
 
-.log 파싱은 하지 않지만, Code 번호로 **의미 카테고리** 를 판정해 배경색 결정.
-최종 색상 정책은 **노랑/빨강 2색**:
+최종 색상 정책은 **연녹(셀있음) / 노랑 / 빨강 3색**:
 
 | 표시 라벨 | 근거 | 색상 |
 |----------|------|:---:|
+| `완료` | JSON State | 🟢 연녹 (셀있음) |
+| `시험완료` | .log 파싱 결과 (Code:153 + Test work completed) | 🟢 **연녹 (셀있음)** |
 | `사용자멈춤` | .log 파싱 결과 (Code:153) | 🟡 노랑 |
 | `중단점 도달 (…)` | .log 파싱 결과 (Code:153 + Reserve) | 🟡 노랑 |
-| `챔버이슈` | .log 파싱 결과 (Code:153 + chamber alarm) | 🟡 노랑 |
-| `시험완료` | .log 파싱 결과 (Code:153 + Test work completed) | 🟡 노랑 |
-| `작업멈춤종료` (Code:153 기본) | JSON Code_Desc | 🟡 노랑 |
+| `작업멈춤` | .log fallback (Code:153 키워드 없음) | 🟡 노랑 |
+| `챔버이슈` | .log 파싱 결과 (Code:153 + chamber alarm) | 🟥 **빨강** |
 | `전압 상한` (Code:128) | JSON Code_Desc | 🟥 빨강 (안전조건) |
 | `전압 하한` (Code:129) | JSON Code_Desc | 🟥 빨강 (안전조건) |
 | `OCV상한` (Code:134) | JSON Code_Desc | 🟥 빨강 (안전조건) |
@@ -102,7 +102,7 @@ if cycler_text in pne_info:
 
 ```python
 PAUSED_CODE_CATEGORY = {
-    # 사용자/오류 (.log 세분화 가능) → 노랑
+    # 사용자/오류 (.log 세분화) → 노랑 or 빨강 or 연녹 (세분화 결과에 따라)
     "153": ("작업멈춤종료",    "USER_OR_ERROR"),
     # 안전 조건 (이상 판정 필요) → 빨강
     "128": ("전압 상한",       "SAFETY_STOP"),
@@ -113,21 +113,35 @@ PAUSED_CODE_CATEGORY = {
     "209": ("전류 이상(경고)", "SAFETY_STOP"),
 }
 
-# .log 세분화 결과 라벨 → 노랑 (Code:153 계열 전부)
+# .log 세분화 결과 → 노랑 (사용자 계열)
 USER_OR_ERROR_LABELS = frozenset({
-    "사용자멈춤", "챔버이슈", "시험완료", "작업멈춤종료",
-    # "중단점 도달 (S*/C*)" 는 prefix 로 판정
+    "사용자멈춤",
+    "작업멈춤",       # _classify_paused_reason fallback
+    # "중단점 도달 (S*/C*)" 는 startswith 로 판정
+})
+
+# .log 세분화 결과 → 빨강 (하드웨어/안전)
+HW_WARNING_LABELS = frozenset({
+    "챔버이슈",
+})
+
+# .log 세분화 결과 → 연녹 (완료 계열, 셀있음)
+COMPLETED_LABELS = frozenset({
+    "완료",           # JSON State == "완료"
+    "시험완료",       # .log: Test work completed
 })
 
 CATEGORY_BG = {
+    "COMPLETED":      QtGui.QColor(234, 239, 230),   # 연녹 (기존 완료 색상)
     "USER_OR_ERROR":  QtGui.QColor(240, 220, 160),   # 노랑 (기존 _STOPPED_BG)
     "SAFETY_STOP":    QtGui.QColor(214, 155, 154),   # 빨강 (기존 _PAUSED_BG)
     "UNKNOWN_CODE":   QtGui.QColor(214, 155, 154),   # 빨강 (fallback)
 }
 ```
 
-> 연파랑 "조건도달" 분류는 사용하지 않는다. 정상 조건 종료도 결국 사용자가
-> 원인을 확인해야 하는 "이상 가능성" 으로 간주하여 빨강으로 통일.
+> `시험완료` 는 Test work completed 가 .log 끝에 있는 경우로, 시험이 정상
+> 종료되어 **셀이 채널에 그대로 남아있는 상태** 이므로 JSON State "완료" 와
+> 동일한 연녹 (셀있음) 으로 표시.
 
 ## 5. 렌더링부 수정 ([L26466~26472](../../DataTool_dev_code/DataTool_optRCD_proto_.py:26466))
 
@@ -143,23 +157,31 @@ if bg_color is None and status_base not in self._NORMAL_STATES:
         bg_color = _PAUSED_BG
 ```
 
-### 변경 후 (2색 단순화)
+### 변경 후 (3색: 연녹/노랑/빨강)
 
 ```python
-bg_color = STATUS_BG.get(status)
+bg_color = STATUS_BG.get(status)    # "완료" 등은 여기서 바로 연녹 매칭
 status_base = status.split(" (")[0] if " (" in status else status
+
 if bg_color is None and status_base not in self._NORMAL_STATES:
-    # Code:153 계열 (.log 파싱 결과 + 중단점 도달 + 기본) → 노랑
-    if (status.startswith("중단점 도달")
+    # (1) 시험완료 → 연녹 (셀있음, 완료 계열)
+    if status_base in COMPLETED_LABELS:
+        bg_color = CATEGORY_BG["COMPLETED"]
+    # (2) 챔버이슈 → 빨강 (하드웨어/챔버 이슈)
+    elif status_base in HW_WARNING_LABELS:
+        bg_color = CATEGORY_BG["SAFETY_STOP"]
+    # (3) 사용자멈춤 / 중단점 도달 / 작업멈춤(fallback) → 노랑
+    elif (status.startswith("중단점 도달")
             or status_base in USER_OR_ERROR_LABELS):
-        bg_color = CATEGORY_BG["USER_OR_ERROR"]      # 노랑
+        bg_color = CATEGORY_BG["USER_OR_ERROR"]
+    # (4) Code 128/129/134/142/208/209 Code_Desc 라벨 → 빨강 (안전조건)
     else:
-        # Code 128/129/134/142/208/209 → 빨강 (안전조건)
-        bg_color = CATEGORY_BG["SAFETY_STOP"]        # 빨강
+        bg_color = CATEGORY_BG["SAFETY_STOP"]
 ```
 
 > `code_for_row` 변수를 튜플에 추가해도 되지만, status 문자열 자체가
 > Code_Desc 라벨이므로 문자열 기반 판정만으로 충분.
+> STATUS_BG 에 "시험완료" 를 추가 등록하면 위의 (1) 분기 없이도 첫 라인에서 매칭 가능.
 
 → 행 렌더링 루프에서 해당 채널의 `Code` 값을 추적해야 하므로,
   `matched_by_floor` 튜플에 `code` 를 추가:
