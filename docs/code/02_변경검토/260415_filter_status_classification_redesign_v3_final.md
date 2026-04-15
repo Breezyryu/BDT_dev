@@ -236,13 +236,117 @@ FILTER_STATUS_KEYWORDS = {
 
 1. State="작업중" + Reserve 설정된 채널 → `"작업중 (→S14/C1)"` 표시
 2. State="작업멈춤" + Code=153 + Reserve → `"중단점 도달 (S14/C1)"` + 🟡 노랑
-3. State="작업멈춤" + Code=153 .log parsed "사용자멈춤" → 🟡 노랑
-4. State="작업멈춤" + Code=153 .log parsed "챔버이슈" / "시험완료" → 🟡 노랑
-5. State="작업멈춤" + Code=134 → `"OCV상한"` + 🟥 빨강
-6. State="작업멈춤" + Code=142 → `"용량상한"` + 🟥 빨강
-7. State="작업멈춤" + Code=208 → `"전압 이상(경고)"` + 🟥 빨강
-8. 검색창 "안전조건" 입력 → Code 128/129/134/142/208/209 채널 매칭
-9. 검색창 "OCV상한" 입력 → Code 134 채널 매칭 (Code_Desc 직접 매칭)
+3. State="작업멈춤" + Code=153 .log "사용자멈춤" → 🟡 노랑
+4. State="작업멈춤" + Code=153 .log "시험완료" → 🟢 **연녹 + 경과시간 "N일 N시간"**
+5. State="작업멈춤" + Code=153 .log "챔버이슈" → 🟥 빨강
+6. State="작업멈춤" + Code=134 → `"OCV상한"` + 🟥 빨강
+7. State="작업멈춤" + Code=142 → `"용량상한"` + 🟥 빨강
+8. State="작업멈춤" + Code=208 → `"전압 이상(경고)"` + 🟥 빨강
+9. **State="완료" → 🟢 연녹 + 경과시간 "N일 N시간"** (JSON Sync_Time 기반)
+10. 검색창 "안전조건" 입력 → Code 128/129/134/142/208/209 채널 매칭
+11. 검색창 "OCV상한" 입력 → Code 134 채널 매칭 (Code_Desc 직접 매칭)
+
+---
+
+## 10. 완료/시험완료 채널 경과 시간 표시 (신규)
+
+### 10.1 배경
+
+`완료` / `시험완료` 상태 채널에 대해 **"시험 종료 후 얼마나 지났는지"** 를
+현황 탭 `경과` 열에 표시한다. 셀이 채널에 방치된 시간이 길수록 자가방전 등
+영향이 누적되므로 운용상 중요.
+
+### 10.2 데이터 소스
+
+JSON 의 **채널별** `Sync_Time_Day` + `Sync_Time` 필드를 사용.
+
+| 필드 | 포맷 | 예시 | 의미 |
+|------|------|------|------|
+| `Sync_Time_Day` | `YYYYMMDD` (8자) | `"20260415"` | 마지막 JSON 갱신 날짜 |
+| `Sync_Time` | `HHMMSSnn` (9자) | `"162017055"` | 마지막 JSON 갱신 시각 (nn=센티초) |
+
+→ 완료 채널은 사이클러가 완료 이벤트 직후 JSON 갱신하고 이후 갱신하지 않음.
+  따라서 `현재시간 - Sync_Time = 완료 후 경과 시간` 근사치.
+
+### 10.3 구현
+
+```python
+# _pne_cols 에 Sync_Time_Day/Sync_Time 추가 (L25509)
+_pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
+            "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+            "Voltage", "Result_Path",
+            "Sync_Time_Day", "Sync_Time"]     # 🆕 추가
+```
+
+신규 헬퍼 함수:
+
+```python
+@staticmethod
+def _elapsed_from_sync(sync_day: str, sync_time: str) -> str:
+    """JSON Sync_Time_Day/Sync_Time → 현재까지 경과 문자열.
+
+    sync_day:  "20260415"
+    sync_time: "162017055"  (HHMMSSnn)
+    return:    "3d 5h" / "2h" / "45m" / ""
+    """
+    if not sync_day or not sync_time or len(sync_day) < 8 or len(sync_time) < 6:
+        return ""
+    try:
+        dt = datetime.strptime(
+            f"{sync_day} {sync_time[:6]}", "%Y%m%d %H%M%S")
+        delta = datetime.now() - dt
+        total_min = int(delta.total_seconds() / 60)
+        if total_min < 0:
+            return ""
+        if total_min < 60:
+            return f"{total_min}m"
+        hours = total_min // 60
+        if hours < 24:
+            return f"{hours}h"
+        days, rem_h = divmod(hours, 24)
+        return f"{days}d {rem_h}h" if rem_h else f"{days}d"
+    except (ValueError, TypeError):
+        return ""
+```
+
+### 10.4 사용 위치
+
+매칭 루프 ([L26296~](../../DataTool_dev_code/DataTool_optRCD_proto_.py:26296)) 내에서:
+
+```python
+# 현행: elapsed_str 는 Code:153 .log 파싱 시에만 채워짐
+elapsed_str = ""
+
+# 🆕 추가: 완료/시험완료 상태는 JSON Sync_Time 기반
+if status in ("완료",) or status_base == "시험완료":
+    sync_day = str(df.loc[ch_idx, "Sync_Time_Day"]) if "Sync_Time_Day" in df.columns else ""
+    sync_time = str(df.loc[ch_idx, "Sync_Time"]) if "Sync_Time" in df.columns else ""
+    elapsed_str = self._elapsed_from_sync(sync_day, sync_time)
+```
+
+### 10.5 경과 열 색상 톤 (시각적 구분)
+
+현행 렌더링 ([L26495~26499](../../DataTool_dev_code/DataTool_optRCD_proto_.py:26495)) 은
+`elapsed_str` 이 있으면 빨강 계열(150,80,80) 글자색을 적용한다. 완료 채널의
+경과 시간은 **이상이 아니라 정상적 방치** 이므로 **회색 계열** 로 구분:
+
+```python
+# col 3 렌더링 (현행)
+item_elapsed = QtWidgets.QTableWidgetItem(elapsed_str)
+item_elapsed.setFont(_font9)
+if elapsed_str:
+    # 🆕 완료 계열은 회색, 그 외(Code:153 멈춤)는 빨강 유지
+    if status_base in COMPLETED_LABELS:
+        item_elapsed.setForeground(QtGui.QColor(100, 100, 100))   # 회색
+    else:
+        item_elapsed.setForeground(QtGui.QColor(150, 80, 80))     # 기존 빨강
+```
+
+### 10.6 테스트 시나리오 추가
+
+- 완료된 지 3일 된 채널 → `경과 = "3d"` (회색), 배경 연녹
+- 완료된 지 5시간 된 채널 → `경과 = "5h"` (회색), 배경 연녹
+- 시험완료로 분류된 지 1일된 채널 → `경과 = "1d"` (회색), 배경 연녹
 
 ## 10. 리소스 변화 (281 샘플 기준)
 
