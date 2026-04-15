@@ -236,6 +236,42 @@ class CycleGroup:
 
 
 @dataclass
+class TcInfo:
+    """TotlCycle(TC) 단위 전기화학 정보.
+
+    사전정보(.sch/.ptn)로 빠르게 채워진 뒤, 실측(SaveEndData/capacity.log)이
+    로딩되면 관측값으로 덮어써진다. `source` 필드로 현재 값의 출처 추적.
+    """
+    tc: int                                # TotlCycle 번호
+    chg_crate: float | None = None         # 대표 충전 C-rate
+    dchg_crate: float | None = None        # 대표 방전 C-rate
+    v_max: float | None = None             # 실측 충전 최대 전압 (V)
+    v_min: float | None = None             # 실측 방전 최소 전압 (V)
+    v_cutoff_chg: float | None = None      # .sch/.ptn 정의 상한 (V)
+    v_cutoff_dchg: float | None = None     # .sch/.ptn 정의 하한 (V)
+    mode_chg: str | None = None            # 'CC' | 'CCCV'
+    source: str = 'prior'                  # 'prior' | 'measured' | 'hybrid'
+
+
+@dataclass
+class LogicalCycleGroup:
+    """논리사이클 의미 그룹 (화성/RPT/가속수명/보관 등 연속 LC 구간).
+
+    UI 경로 그룹인 `CycleGroup`과 별개 개념. `CycleGroup`은 경로를
+    범례 단위로 묶는 반면, `LogicalCycleGroup`은 한 채널 내부의 LC를
+    시험 의미 단위로 묶는다.
+    """
+    name: str                              # "화성", "RPT#1", "가속수명#1" ...
+    category: str                          # 'formation'|'RPT'|'accel'|'storage'|'gitt'|'initial'|'unknown'
+    lc_range: tuple                        # (시작 LC, 끝 LC) 포함
+    tc_range: tuple                        # (시작 TC, 끝 TC) — cycle_map으로 펼침
+    n_cycles: int = 0                      # 포함 LC 수
+    v_window: tuple | None = None          # (대표 v_min, 대표 v_max)
+    crate_profile: tuple | None = None     # (대표 chg_crate, dchg_crate)
+    source: str = 'classified'             # 'schedule' | 'classified' | 'hybrid'
+
+
+@dataclass
 class ChannelMeta:
     """채널 단위 메타데이터 — Phase 0에서 1회 계산, 전 파이프라인에서 공유.
 
@@ -269,6 +305,10 @@ class ChannelMeta:
     # 사이클 맵
     cycle_map: dict | None = None     # 논리 ↔ 물리 매핑
     max_tc: int | None = None
+
+    # TC 단위 전기화학 정보 (사전 → 실측 덮어쓰기)
+    tc_info: dict | None = None       # {TC: TcInfo}
+    cycle_groups: list | None = None  # [LogicalCycleGroup, ...]
 
 
 def _normalize_ch(s):
@@ -896,25 +936,33 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                     cyc_df = _cyc_to_cycle_df(cyc_path)
                     if len(cyc_df) > 0:
                         if save_end_data is not None:
-                            # CSV 최신 사이클 이후 데이터 추가
-                            csv_max_tc = save_end_data[27].max()
+                            # CSV에 없는 TC를 .cyc에서 gap-fill
+                            # (앞쪽 누락 + 뒤쪽 신규 모두 처리)
                             # .cyc → SaveEndData 컬럼 매핑 (13개 → 48+개 컬럼)
                             _cyc_mapped = _cyc_df_to_save_end_format(
                                 cyc_df, save_end_data.shape[1])
+                            csv_tcs = set(
+                                int(x) for x in save_end_data[27].unique())
                             supplement = _cyc_mapped[
-                                _cyc_mapped[27] > csv_max_tc]
+                                ~_cyc_mapped[27].astype(int).isin(csv_tcs)]
                             if len(supplement) > 0:
                                 _ch_name = os.path.basename(raw_file_path)
-                                _cyc_tcs = supplement[27].tolist()
+                                _cyc_tcs = sorted(
+                                    set(int(x) for x in supplement[27]))
                                 _perf_logger.info(
                                     f'  [.cyc 보충] {_ch_name}: '
-                                    f'CSV TC≤{int(csv_max_tc)}, '
-                                    f'.cyc TC {int(min(_cyc_tcs))}~'
-                                    f'{int(max(_cyc_tcs))} 추가 '
-                                    f'({len(supplement)}행)')
+                                    f'CSV TC={sorted(csv_tcs)[:3]}...'
+                                    f'{sorted(csv_tcs)[-1] if csv_tcs else "-"}, '
+                                    f'.cyc TC {_cyc_tcs[0]}~{_cyc_tcs[-1]} '
+                                    f'({len(_cyc_tcs)}개 TC, '
+                                    f'{len(supplement)}행) 보충')
                                 save_end_data = pd.concat(
                                     [save_end_data, supplement],
                                     ignore_index=True)
+                                # TC 순서 정렬 (앞쪽 보충이 섞이므로 필수)
+                                save_end_data = save_end_data.sort_values(
+                                    by=[27, 7], kind='stable'
+                                ).reset_index(drop=True)
                         else:
                             # CSV 없음 → .cyc 단독 재구성
                             _cyc_mapped = _cyc_df_to_save_end_format(
@@ -3908,6 +3956,59 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
     return [mincapacity, df]
 
 
+def _extract_tc_info_toyo(
+    raw_df: pd.DataFrame | None, capacity: float,
+) -> dict:
+    """Toyo capacity.log → TC별 실측 전압 정보.
+
+    capacity.log의 PeakVolt[V], Ocv 컬럼 기반 집계.
+    제한:
+      - C-rate 실측: capacity.log에 전류/시간 컬럼 없음 → None 유지
+        (사전정보 _parse_toyo_ptn 의 accel_pattern으로 대체)
+      - v_min 근사: 방전 후 OCV를 v_min으로 사용. 진정한 방전 최저점은
+        상세 프로파일 CSV(000001 등) 재파싱 필요 (미구현).
+
+    Returns
+    -------
+    dict[int, TcInfo]
+        TC → TcInfo. source='measured'.
+    """
+    if raw_df is None or raw_df.empty:
+        return {}
+    if 'TotlCycle' not in raw_df.columns or 'Condition' not in raw_df.columns:
+        return {}
+
+    has_peak = 'PeakVolt[V]' in raw_df.columns
+    has_ocv = 'Ocv' in raw_df.columns
+
+    out: dict[int, TcInfo] = {}
+    for tc, grp in raw_df.groupby('TotlCycle'):
+        tc_int = int(tc)
+        chg = grp[grp['Condition'] == 1]
+        dchg = grp[grp['Condition'] == 2]
+
+        v_max = None
+        v_min = None
+        if has_peak and not chg.empty:
+            try:
+                v_max = float(chg['PeakVolt[V]'].max())
+            except (TypeError, ValueError):
+                v_max = None
+        if has_ocv and not dchg.empty:
+            try:
+                v_min = float(dchg['Ocv'].min())
+            except (TypeError, ValueError):
+                v_min = None
+
+        out[tc_int] = TcInfo(
+            tc=tc_int,
+            v_max=round(v_max, 3) if v_max is not None else None,
+            v_min=round(v_min, 3) if v_min is not None else None,
+            source='measured',
+        )
+    return out
+
+
 def toyo_build_cycle_map(raw_file_path, mincapacity, inirate, ptn_struct=None):
     """Toyo capacity.log로부터 논리사이클 → OriCycle 범위 매핑 생성.
 
@@ -4775,6 +4876,128 @@ def detect_test_type(counts: dict) -> str:
     return '기타'
 
 
+_LCG_CATEGORY_MAP = {
+    'initial': ('initial', '초기'),
+    'formation': ('formation', '화성'),
+    'RPT': ('RPT', 'RPT'),
+    '가속수명': ('accel', '가속수명'),
+    'Rss': ('accel', '가속수명'),
+    'GITT': ('gitt', 'GITT'),
+    '_pulse': ('gitt', 'GITT'),
+    'unknown': ('unknown', '기타'),
+}
+
+
+def _build_cycle_groups(
+    classified: list | None,
+    cycle_map: dict | None,
+    tc_info: dict | None = None,
+    schedule_struct: dict | None = None,
+) -> list:
+    """classified 를 RLE 병합해 LogicalCycleGroup 리스트로 변환.
+
+    - 연속된 동일 category를 하나의 그룹으로 묶는다.
+    - 동일 category 재등장 시 "#1, #2, ..." 인덱스 부여.
+    - lc_range는 classified 인덱스(1-based 논리사이클). cycle_map으로 tc_range 파생.
+    - tc_info 있으면 각 그룹의 v_window / crate_profile을 median으로 요약.
+
+    Returns
+    -------
+    list[LogicalCycleGroup]
+    """
+    if not classified:
+        return []
+
+    # RLE 병합
+    segments: list[tuple[str, int, int]] = []  # (category, lc_start, lc_end)
+    cur_cat = None
+    cur_start = None
+    prev_lc = None
+    for idx, entry in enumerate(classified, start=1):
+        cat = entry.get('category', 'unknown')
+        if cat != cur_cat:
+            if cur_cat is not None:
+                segments.append((cur_cat, cur_start, prev_lc))
+            cur_cat = cat
+            cur_start = idx
+        prev_lc = idx
+    if cur_cat is not None:
+        segments.append((cur_cat, cur_start, prev_lc))
+
+    # 동일 category 재등장 인덱싱
+    cat_counts: dict[str, int] = {}
+    cat_seen: dict[str, int] = {}
+    for cat, _, _ in segments:
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+    groups: list[LogicalCycleGroup] = []
+    for cat, lc_s, lc_e in segments:
+        mapped = _LCG_CATEGORY_MAP.get(cat, ('unknown', cat or '기타'))
+        lcg_cat, base_name = mapped
+
+        # 동일 category 여러 번 등장 → 번호 부여
+        if cat_counts.get(cat, 0) > 1:
+            cat_seen[cat] = cat_seen.get(cat, 0) + 1
+            name = f"{base_name}#{cat_seen[cat]}"
+        else:
+            name = base_name
+
+        # lc_range → tc_range (cycle_map의 'all' 범위 사용)
+        tc_start = None
+        tc_end = None
+        if cycle_map:
+            start_entry = cycle_map.get(lc_s)
+            end_entry = cycle_map.get(lc_e)
+            if isinstance(start_entry, dict) and 'all' in start_entry:
+                tc_start = int(start_entry['all'][0])
+            if isinstance(end_entry, dict) and 'all' in end_entry:
+                tc_end = int(end_entry['all'][1])
+        tc_range = (tc_start, tc_end) if tc_start is not None and tc_end is not None else (lc_s, lc_e)
+
+        # tc_info → v_window / crate_profile (median)
+        v_window = None
+        crate_profile = None
+        if tc_info and tc_range[0] is not None:
+            v_mins, v_maxs, chg_crs, dchg_crs = [], [], [], []
+            for tc in range(tc_range[0], tc_range[1] + 1):
+                info = tc_info.get(tc)
+                if info is None:
+                    continue
+                if info.v_min is not None:
+                    v_mins.append(info.v_min)
+                if info.v_max is not None:
+                    v_maxs.append(info.v_max)
+                if info.chg_crate is not None:
+                    chg_crs.append(info.chg_crate)
+                if info.dchg_crate is not None:
+                    dchg_crs.append(info.dchg_crate)
+            import statistics as _stats
+            if v_mins and v_maxs:
+                v_window = (
+                    round(_stats.median(v_mins), 3),
+                    round(_stats.median(v_maxs), 3),
+                )
+            if chg_crs or dchg_crs:
+                crate_profile = (
+                    round(_stats.median(chg_crs), 2) if chg_crs else None,
+                    round(_stats.median(dchg_crs), 2) if dchg_crs else None,
+                )
+
+        src = 'hybrid' if schedule_struct else 'classified'
+        groups.append(LogicalCycleGroup(
+            name=name,
+            category=lcg_cat,
+            lc_range=(lc_s, lc_e),
+            tc_range=tc_range,
+            n_cycles=lc_e - lc_s + 1,
+            v_window=v_window,
+            crate_profile=crate_profile,
+            source=src,
+        ))
+
+    return groups
+
+
 def _parse_capacity_value(text: str) -> float:
     """용량 문자열 파싱 — 하이픈 소수점 표기 지원.
 
@@ -5064,7 +5287,26 @@ def _build_channel_meta(
                        if isinstance(v, dict) and 'all' in v]
         _max_tc = max(all_tc_ends) if all_tc_ends else max(cycle_map.keys())
 
-    # ── 6. ChannelMeta 생성 및 등록 ──
+    # ── 6. TC 정보 구축 (사전 → 실측 덮어쓰기) ──
+    tc_info_prior: dict = {}
+    if schedule_struct and schedule_struct.get('loop_groups'):
+        tc_info_prior = _prior_tc_info_from_loop_groups(
+            schedule_struct['loop_groups'], accel_pattern)
+
+    if is_pne and _raw_df is not None:
+        tc_info_measured = _extract_tc_info_pne(_raw_df, min_capacity)
+    elif not is_pne:
+        tc_info_measured = _extract_tc_info_toyo(_raw_df, min_capacity)
+    else:
+        tc_info_measured = {}
+
+    tc_info = _merge_tc_info(tc_info_prior, tc_info_measured)
+
+    # ── 7. 논리사이클 그룹 구축 ──
+    cycle_groups = _build_cycle_groups(
+        classified, cycle_map, tc_info, schedule_struct)
+
+    # ── 8. ChannelMeta 생성 및 등록 ──
     meta = ChannelMeta(
         channel_path=channel_path,
         parent_path=parent_path,
@@ -5083,6 +5325,8 @@ def _build_channel_meta(
         save_end_data=_raw_df if is_pne else None,
         cycle_map=cycle_map,
         max_tc=_max_tc,
+        tc_info=tc_info if tc_info else None,
+        cycle_groups=cycle_groups if cycle_groups else None,
     )
     _channel_meta_store[channel_path] = meta
     return meta
@@ -5715,6 +5959,86 @@ def _analyze_accel_pattern_toyo(
         'n_charge_steps': len(charge_steps),
         'n_discharge_steps': len(discharge_steps),
     }
+
+
+def _extract_tc_info_pne(
+    raw_df: pd.DataFrame, capacity: float,
+) -> dict:
+    """PNE SaveEndData 1-pass → TC별 실측 전기화학 정보.
+
+    컬럼 인덱스 (SaveEndData):
+      [2]=StepType(1=Chg,2=Dchg,3=Rest,8=Loop), [6]=EndState,
+      [8]=EndVoltage(μV), [9]=EndCurrent(μA), [27]=TotlCycle,
+      [38]=CC time(cs), [39]=CC cap(μAh)
+
+    TC별 집계:
+      - v_max = 충전 스텝(StepType==1) EndVoltage 최대
+      - v_min = 방전 스텝(StepType==2) EndVoltage 최소
+      - chg_crate  = 충전 CC 전류 max |I|/capacity (CC 우선, CCCV는 CC time으로 역산)
+      - dchg_crate = 방전 CC 전류 max |I|/capacity
+      - mode_chg = CCCV 존재 시 'CCCV', 아니면 'CC'
+
+    Returns
+    -------
+    dict[int, TcInfo]
+        TC → TcInfo. source='measured'.
+    """
+    if raw_df is None or raw_df.shape[1] < 40:
+        return {}
+    # StepType==8 (Loop 마커) 제외 (v_max 왜곡 방지)
+    real = raw_df[raw_df[2] != 8]
+    if real.empty:
+        return {}
+
+    out: dict[int, TcInfo] = {}
+    for tc, grp in real.groupby(27):
+        tc_int = int(tc)
+        chg_rows = grp[grp[2] == 1]
+        dchg_rows = grp[grp[2] == 2]
+
+        v_max = None
+        v_min = None
+        chg_crate = None
+        dchg_crate = None
+        mode_chg = None
+
+        if not chg_rows.empty:
+            v_max = float(chg_rows[8].max()) / 1e6  # μV → V
+            # CCCV(EndState==66)가 하나라도 있으면 CCCV, 아니면 CC
+            mode_chg = 'CCCV' if (chg_rows[6] == 66).any() else 'CC'
+            # C-rate: CC 구간의 |I| (CC current = cc_cap/cc_time for CCCV)
+            if capacity > 0:
+                currents_mA = []
+                for _, row in chg_rows.iterrows():
+                    end_state = int(row[6])
+                    cc_time = float(row[38]) / 100  # centisec → sec
+                    cc_cap = float(row[39]) / 1000  # μAh → mAh
+                    if end_state == 66 and cc_time > 0:
+                        # CCCV: CC 전류는 용량/시간으로 역산
+                        currents_mA.append(cc_cap / (cc_time / 3600))
+                    else:
+                        # CC: EndCurrent 절대값
+                        currents_mA.append(abs(float(row[9])) / 1000)
+                if currents_mA:
+                    chg_crate = round(max(currents_mA) / capacity, 2)
+
+        if not dchg_rows.empty:
+            v_min = float(dchg_rows[8].min()) / 1e6
+            if capacity > 0:
+                dchg_i = dchg_rows[9].abs().max() / 1000  # μA → mA
+                if dchg_i > 0:
+                    dchg_crate = round(float(dchg_i) / capacity, 2)
+
+        out[tc_int] = TcInfo(
+            tc=tc_int,
+            chg_crate=chg_crate,
+            dchg_crate=dchg_crate,
+            v_max=round(v_max, 3) if v_max is not None else None,
+            v_min=round(v_min, 3) if v_min is not None else None,
+            mode_chg=mode_chg,
+            source='measured',
+        )
+    return out
 
 
 def _analyze_accel_pattern_pne(
@@ -6559,6 +6883,99 @@ def extract_schedule_structure_from_sch(
         'sweep_mode': sweep_mode,
         'loop_groups': loop_groups,
     }
+
+
+def _prior_tc_info_from_loop_groups(
+    loop_groups: list, accel_pattern: dict | None = None,
+) -> dict:
+    """loop_groups + accel_pattern → TC별 사전 TcInfo.
+
+    `.sch` 파싱 결과 (`loop_groups`)의 각 그룹은 {tc_start, tc_end, chg_crate,
+    dchg_crate} 를 갖는다. accel_pattern이 있으면 ACCEL 카테고리의 충/방전
+    cutoff 전압과 충전 모드를 함께 주입한다.
+
+    Parameters
+    ----------
+    loop_groups : list[dict]
+        _build_loop_group_info() 반환값. 각 entry에 tc_start/tc_end 필수.
+    accel_pattern : dict | None
+        extract_accel_pattern_from_sch() 또는 _parse_toyo_ptn() 반환값.
+        charge_steps[-1].voltage_cutoff / discharge_steps[-1].voltage_cutoff.
+
+    Returns
+    -------
+    dict[int, TcInfo]
+        TC → TcInfo. source='prior'.
+    """
+    if not loop_groups:
+        return {}
+
+    # ACCEL 카테고리에 쓸 cutoff / mode (accel_pattern 의 마지막 step 기준)
+    v_cut_chg = None
+    v_cut_dchg = None
+    mode_chg = None
+    if accel_pattern:
+        chg_steps = accel_pattern.get('charge_steps') or []
+        dchg_steps = accel_pattern.get('discharge_steps') or []
+        if chg_steps:
+            last_chg = chg_steps[-1]
+            v_cut_chg = last_chg.get('voltage_cutoff')
+            mode_chg = last_chg.get('mode')
+        if dchg_steps:
+            v_cut_dchg = dchg_steps[-1].get('voltage_cutoff')
+
+    out: dict[int, TcInfo] = {}
+    for g in loop_groups:
+        tc_s = int(g.get('tc_start', 0))
+        tc_e = int(g.get('tc_end', tc_s))
+        if tc_s <= 0 or tc_e < tc_s:
+            continue
+        chg_cr = g.get('chg_crate')
+        dchg_cr = g.get('dchg_crate')
+        is_accel = g.get('category') == 'ACCEL'
+        for tc in range(tc_s, tc_e + 1):
+            out[tc] = TcInfo(
+                tc=tc,
+                chg_crate=chg_cr,
+                dchg_crate=dchg_cr,
+                v_cutoff_chg=v_cut_chg if is_accel else None,
+                v_cutoff_dchg=v_cut_dchg if is_accel else None,
+                mode_chg=mode_chg if is_accel else None,
+                source='prior',
+            )
+    return out
+
+
+def _merge_tc_info(prior: dict, measured: dict) -> dict:
+    """사전 TcInfo 를 base로 하고 실측 TcInfo가 있으면 그 값을 덮어씀.
+
+    병합 규칙:
+      - chg_crate/dchg_crate/v_max/v_min/mode_chg: 실측이 not-None 이면 우선
+      - v_cutoff_chg/v_cutoff_dchg: 사전 값만 존재 (실측으로는 정의 한계 알 수 없음)
+      - source: 사전+실측 모두 있으면 'hybrid', 한쪽만 있으면 각각의 source
+    """
+    all_tcs = set(prior.keys()) | set(measured.keys())
+    out: dict[int, TcInfo] = {}
+    for tc in sorted(all_tcs):
+        p = prior.get(tc)
+        m = measured.get(tc)
+        if p is not None and m is not None:
+            out[tc] = TcInfo(
+                tc=tc,
+                chg_crate=m.chg_crate if m.chg_crate is not None else p.chg_crate,
+                dchg_crate=m.dchg_crate if m.dchg_crate is not None else p.dchg_crate,
+                v_max=m.v_max if m.v_max is not None else p.v_max,
+                v_min=m.v_min if m.v_min is not None else p.v_min,
+                v_cutoff_chg=p.v_cutoff_chg,
+                v_cutoff_dchg=p.v_cutoff_dchg,
+                mode_chg=m.mode_chg if m.mode_chg is not None else p.mode_chg,
+                source='hybrid',
+            )
+        elif p is not None:
+            out[tc] = p
+        else:
+            out[tc] = m
+    return out
 
 
 @functools.lru_cache(maxsize=128)
@@ -26463,6 +26880,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 10열: 충방전기|채널|상태|경과|Step/Cycle|전압|동작|온도|테스트명|셀경로
         num_cols = 10
         self.tb_channel.setColumnCount(num_cols)
+        # 이전 호출의 setRowHidden 누적 / 신규 행에 새 default 미적용 방지
+        # 1) 내용·구조·숨김 상태 전부 비움
+        # 2) 행 default 높이를 먼저 설정 → 이후 추가되는 행에 새 default 적용
+        self.tb_channel.clearContents()
+        self.tb_channel.setRowCount(0)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(25)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(20)
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
         self.tb_channel.setHorizontalHeaderLabels(
@@ -26471,11 +26895,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 열 너비: 데이터 텍스트가 안 잘리는 최소 너비 (헤더는 잘림 허용)
         # Malgun gothic 9pt 기준 + QSS padding 4px + 여유 2px
         _fixed_widths = {
-            0: 48,   # 충방전기: "PNE24"
+            0: 70,   # 충방전기: "PNE24" (3자리 번호 + 헤더 여유)
             1: 32,   # 채널: "001"
             2: 170,  # 상태: "중단점 도달 (S201/C89)"
             3: 44,   # 경과: "3d 5h"
-            4: 92,   # Step/Cycle: "000/000/0000"
+            4: 134,  # Step/Cycle/총Cycle: "000/000/0000" + 헤더 가독성
             5: 44,   # 전압: "3.821"
             6: 68,   # 동작: "DisCharge"
             7: 44,   # 온도: "-10.0"
@@ -26496,9 +26920,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         header.setMinimumSectionSize(18)
         for ci, w in _fixed_widths.items():
             self.tb_channel.setColumnWidth(ci, w)
-        # 행 높이 줄이기
-        self.tb_channel.verticalHeader().setDefaultSectionSize(20)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(9)
+        # 행 높이는 setRowCount 이전에 default 로 일괄 설정됨 (위쪽 블록 참조)
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
