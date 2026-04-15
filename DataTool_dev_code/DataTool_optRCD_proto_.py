@@ -11040,6 +11040,13 @@ class Ui_sitool(object):
         self.btn_clear_path.setStyleSheet(_path_btn_qss)
         self.btn_clear_path.setObjectName("btn_clear_path")
         self.horizontalLayout_108.addWidget(self.btn_clear_path)
+        self.btn_autofill_path = QtWidgets.QPushButton(parent=self._path_groupbox)
+        self.btn_autofill_path.setFixedHeight(26)
+        self.btn_autofill_path.setText("🔍 채우기")
+        self.btn_autofill_path.setToolTip("경로 기반 메타 자동 채우기 (시험명/채널/용량/TC)")
+        self.btn_autofill_path.setStyleSheet(_path_btn_qss)
+        self.btn_autofill_path.setObjectName("btn_autofill_path")
+        self.horizontalLayout_108.addWidget(self.btn_autofill_path)
         self._path_groupbox_vlayout.addLayout(self.horizontalLayout_108)
         # 경로 테이블 + 버튼 행
         self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
@@ -17196,6 +17203,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.btn_load_path.clicked.connect(self._load_path_file_to_table)
         self.btn_save_path.clicked.connect(self._save_table_to_path_file)
         self.btn_clear_path.clicked.connect(self._clear_table)
+        self.btn_autofill_path.clicked.connect(self._autofill_all_rows)
         # 셀 편집 시 툴팁 자동 갱신
         self.cycle_path_table.cellChanged.connect(self._update_cell_tooltip)
         # 사이클(col4) / 사이클Raw(col5) 편집 시 양방향 연동
@@ -21554,27 +21562,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         item = self.cycle_path_table.item(row, col)
         if item:
             item.setToolTip(item.text())
-        # 경로 컬럼(1) 변경 시 존재 여부 시각 표시 및 구분선 갱신 + 자동 채우기
+        # 경로 컬럼(1) 변경 시 존재 여부 시각 표시 및 구분선 갱신
         if col == 1:
             self._highlight_path_cell(row)
             self._update_group_separators()
-            # 경로 입력 시 해당 행만 자동 채우기 (디바운스: 300ms)
-            self._autofill_pending_row = row
-            if hasattr(self, '_autofill_timer'):
-                self._autofill_timer.stop()
-            else:
-                self._autofill_timer = QtCore.QTimer(self)
-                self._autofill_timer.setSingleShot(True)
-                self._autofill_timer.timeout.connect(
-                    self._autofill_pending_row_handler)
-            self._autofill_timer.start(300)
+            # 자동 메타 수집 제거 — btn_autofill_path 버튼으로 대체
 
-    def _autofill_pending_row_handler(self):
-        """디바운스 타이머 만료 → 단일 행 자동 채우기 실행."""
-        row = getattr(self, '_autofill_pending_row', None)
-        if row is not None:
-            self._autofill_row(row)
-            self._highlight_path_cell(row)
+    def _autofill_all_rows(self):
+        """버튼 트리거: 유효 경로가 있는 모든 행에 메타 자동 채우기."""
+        for row in range(self.cycle_path_table.rowCount()):
+            path = self._get_table_cell(row, 1)
+            if path:
+                self._autofill_row(row)
+                self._highlight_path_cell(row)
 
     # ── 테이블 ↔ 데이터 유틸리티 ──
 
