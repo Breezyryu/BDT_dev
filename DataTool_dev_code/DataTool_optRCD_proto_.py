@@ -26401,7 +26401,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for ci, w in _fixed_widths.items():
             self.tb_channel.setColumnWidth(ci, w)
         # 행 높이 줄이기
-        self.tb_channel.verticalHeader().setDefaultSectionSize(11)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(20)
         self.tb_channel.verticalHeader().setMinimumSectionSize(9)
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
