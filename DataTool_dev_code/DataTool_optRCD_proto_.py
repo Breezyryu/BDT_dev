@@ -26784,6 +26784,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 10열: 충방전기|채널|상태|경과|Step/Cycle|전압|동작|온도|테스트명|셀경로
         num_cols = 10
         self.tb_channel.setColumnCount(num_cols)
+        # 이전 호출의 setRowHidden 누적 / 신규 행에 새 default 미적용 방지
+        # 1) 내용·구조·숨김 상태 전부 비움
+        # 2) 행 default 높이를 먼저 설정 → 이후 추가되는 행에 새 default 적용
+        self.tb_channel.clearContents()
+        self.tb_channel.setRowCount(0)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(25)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(20)
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
         self.tb_channel.setHorizontalHeaderLabels(
@@ -26817,9 +26824,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         header.setMinimumSectionSize(18)
         for ci, w in _fixed_widths.items():
             self.tb_channel.setColumnWidth(ci, w)
-        # 행 높이 (필터링 모드) — 초기(43) 과 이전 축소(11) 사이 중간값으로 가독성 확보
-        self.tb_channel.verticalHeader().setDefaultSectionSize(25)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(20)
+        # 행 높이는 setRowCount 이전에 default 로 일괄 설정됨 (위쪽 블록 참조)
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
