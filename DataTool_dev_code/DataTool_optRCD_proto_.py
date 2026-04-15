@@ -26817,9 +26817,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         header.setMinimumSectionSize(18)
         for ci, w in _fixed_widths.items():
             self.tb_channel.setColumnWidth(ci, w)
-        # 행 높이 줄이기
-        self.tb_channel.verticalHeader().setDefaultSectionSize(11)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(9)
+        # 행 높이 (필터링 모드) — 초기(43) 과 이전 축소(11) 사이 중간값으로 가독성 확보
+        self.tb_channel.verticalHeader().setDefaultSectionSize(25)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(20)
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
