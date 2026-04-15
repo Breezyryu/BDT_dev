@@ -26885,8 +26885,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 2) 행 default 높이를 먼저 설정 → 이후 추가되는 행에 새 default 적용
         self.tb_channel.clearContents()
         self.tb_channel.setRowCount(0)
-        self.tb_channel.verticalHeader().setDefaultSectionSize(25)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(20)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(20)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(9)
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
         self.tb_channel.setHorizontalHeaderLabels(
