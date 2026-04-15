@@ -1394,9 +1394,11 @@ def _unified_normalize_toyo(
     # 전압: 이미 V 단위
     result["Voltage"] = df["Voltage_raw"].values
 
-    # 전류: 이미 mA 단위
-    result["Current_mA"] = df["Current_raw"].values
-    result["Crate"] = df["Current_raw"].values / mincapacity
+    # 전류: 이미 mA 단위 — Toyo는 크기값만 기록하므로 Condition 기반 부호 부여 (충전=+, 방전=-)
+    toyo_sign = np.where(df["Condition"].values == 2, -1.0, 1.0)
+    signed_curr_mA = df["Current_raw"].values * toyo_sign
+    result["Current_mA"] = signed_curr_mA
+    result["Crate"] = signed_curr_mA / mincapacity
 
     # 온도: 이미 °C 단위
     result["Temp"] = df["Temp_raw"].values
@@ -7294,9 +7296,9 @@ def toyo_dchg_Profile_data(raw_file_path, inicycle, mincapacity, cutoff, inirate
             df.Profile["delcap"] = df.Profile["Cap[mAh]"].diff(periods=smoothdegree)
             df.Profile["dQdV"] = df.Profile["delcap"]/df.Profile["delvol"]
             df.Profile["dVdQ"] = df.Profile["delvol"]/df.Profile["delcap"]
-            # 방전 단위 변환
+            # 방전 단위 변환 — 방전 Crate는 음수 표시 (충전=+, 방전=-)
             df.Profile["PassTime[Sec]"] = df.Profile["PassTime[Sec]"]/60
-            df.Profile["Current[mA]"] = df.Profile["Current[mA]"]/mincapacity
+            df.Profile["Current[mA]"] = -df.Profile["Current[mA]"]/mincapacity
             df.Profile = df.Profile[["PassTime[Sec]", "Cap[mAh]", "Dchgwh", "Voltage[V]", "Current[mA]",
                                      "dQdV", "dVdQ", "Temp1[Deg]"]]
             df.Profile.columns = ["TimeMin", "SOC", "Energy", "Vol", "Crate", "dQdV", "dVdQ", "Temp"]
