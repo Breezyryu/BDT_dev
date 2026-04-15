@@ -25689,20 +25689,61 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return True
         return False
 
+    # ───────────────────────────────────────────────────────────────
+    # 상태 분류 상수 (v3 재설계 — 260415 redesign 문서 참조)
+    # ───────────────────────────────────────────────────────────────
+    # 안전조건 Code (→ 빨강 배경)
+    #   128/129: 전압 상하한, 134: OCV상한, 142: 용량상한,
+    #   208/209: 전압/전류 이상(경고)
+    SAFETY_CODES = frozenset({"128", "129", "134", "142", "208", "209"})
+
+    # .log 세분화 결과 → 노랑 (사용자 조작 또는 원인 불명)
+    USER_OR_ERROR_LABELS = frozenset({
+        "사용자멈춤",
+        "작업멈춤",   # _classify_paused_reason 의 fallback 반환값
+        # "중단점 도달 (S*/C*)" 는 startswith 로 판정
+    })
+
+    # .log 세분화 결과 → 빨강 (하드웨어/챔버 이슈)
+    HW_WARNING_LABELS = frozenset({
+        "챔버이슈",
+    })
+
+    # 완료 계열 (셀있음) → 연녹
+    COMPLETED_LABELS = frozenset({
+        "완료",       # JSON State == "완료"
+        "시험완료",   # .log: Test work completed
+    })
+
+    # 안전조건 Code_Desc 텍스트 (JSON 원본값)
+    SAFETY_CODE_DESCS = frozenset({
+        "전압 상한", "전압 하한", "OCV상한", "용량상한",
+        "전압 이상(경고)", "전류 이상(경고)",
+    })
+
     # 상태 키워드 매핑 (키워드 추가 시 여기만 수정)
-    # None = _NORMAL_STATES에 속하지 않는 모든 상태 (작업멈춤 계열)
+    # None    = _NORMAL_STATES에 속하지 않는 모든 상태 (작업멈춤 계열)
+    # frozenset = 상태값이 해당 집합에 포함되는지 검사 (prefix 매칭 포함)
     FILTER_STATUS_KEYWORDS = {
         "유휴": ["완료", "준비", "작업정지"],
         "작업멈춤": None,
+        "안전조건": SAFETY_CODE_DESCS,
+        "사용자멈춤계": frozenset({
+            "사용자멈춤", "챔버이슈", "시험완료", "작업멈춤",
+            # "중단점 도달" 은 startswith 로 처리
+        }),
     }
 
     def match_filter_text(self, search_text, testname, status):
         """필터링용 매칭: 상태 키워드 또는 테스트명 텍스트 검색
         스페이스=OR, 쉼표=AND, 대소문자 무시
         키워드(유휴, 작업멈춤 등)는 상태 컬럼에서 매칭
-        작업멈춤: _NORMAL_STATES에 속하지 않는 모든 상태 매칭"""
+        작업멈춤: _NORMAL_STATES에 속하지 않는 모든 상태 매칭
+        사용자멈춤계: "중단점 도달 (...)" 접두사도 포함"""
         if search_text.strip() == "":
             return True
+        # 상태 base (괄호 접미사 제거)
+        status_base = status.split(" (")[0] if " (" in status else status
         normalized = re.sub(r'\s*,\s*', ',', search_text)
         testname_lower = testname.lower()
         for group in normalized.split(" "):
@@ -25722,13 +25763,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if status in self._NORMAL_STATES:
                             all_match = False
                             break
+                    elif isinstance(allowed, frozenset):
+                        # 집합 포함 여부 + "중단점 도달" prefix 특수 처리
+                        hit = status_base in allowed
+                        if not hit and kw == "사용자멈춤계":
+                            hit = status.startswith("중단점 도달")
+                        if not hit:
+                            all_match = False
+                            break
                     else:
+                        # list 타입 (기존 "유휴")
                         if status not in allowed:
                             all_match = False
                             break
                 else:
-                    # 일반 텍스트 → testname에서 매칭
-                    if kw.lower() not in testname_lower:
+                    # 일반 텍스트 → testname 또는 status_base 에서 매칭
+                    kw_low = kw.lower()
+                    if (kw_low not in testname_lower
+                            and kw not in status_base):
                         all_match = False
                         break
             if all_match:
@@ -25936,6 +25988,42 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rc, rs = reserve_m.group(1), reserve_m.group(2)
             return f"→S{rs}/C{rc}"
         return ""
+
+    @staticmethod
+    def _elapsed_from_log(channel_path: str) -> str:
+        """채널 폴더의 최신 .log 마지막 갱신 시각 → 현재까지 경과 문자열.
+
+        완료/시험완료 채널은 완료 이벤트 이후 .log 쓰기가 없으므로
+        파일 mtime 을 "완료 시각" 의 근사치로 사용.
+
+        1차: mtime 사용 (O(1) stat)
+        2차: mtime 실패(시스템 시간 불일치 등) → .log tail 마지막 타임스탬프
+
+        return
+        ------
+        str : "3d 5h" / "2h" / "45m" 형식, 실패 시 ""
+        """
+        try:
+            if not os.path.isdir(channel_path):
+                return ""
+            log_files = [f.path for f in os.scandir(channel_path)
+                         if f.name.endswith('.log') and f.is_file()]
+            if not log_files:
+                return ""
+            log_path = max(log_files, key=os.path.getmtime)
+            # 1차: mtime 사용 (네트워크 드라이브에서도 경량)
+            dt = datetime.fromtimestamp(os.path.getmtime(log_path))
+            if (datetime.now() - dt).total_seconds() >= 0:
+                return WindowClass._elapsed_str(dt.strftime("%Y/%m/%d %H:%M:%S"))
+            # 2차: mtime 이 미래 (시스템 시간 불일치) → tail 마지막 타임스탬프
+            tail = WindowClass._read_log_tail(log_path) or ""
+            for ln in reversed(tail.splitlines()):
+                log_time = WindowClass._extract_log_time(ln)
+                if log_time:
+                    return WindowClass._elapsed_str(log_time)
+            return ""
+        except Exception:
+            return ""
 
     def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
         """작업멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
@@ -26295,11 +26383,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             temp_str = str(raw_temp) if raw_temp else "-"
                     if self.match_filter_text(search_text, testname, status):
                         elapsed_str = ""
-                        # PNE 채널만 .log 기반 세분류
+                        # PNE 채널만 .log 기반 세분류 (v3: JSON 우선 + .log 보조)
                         if cycler_text in pne_info:
                             has_rpath = "Result_Path" in df.columns
                             has_path = "path" in df.columns
-                            # 작업멈춤: Code/Code_Desc + .log 파싱
+                            # (2) 작업멈춤 + Code:153 → .log 파싱 (세분화)
                             if status == "작업멈춤":
                                 code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
                                 code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
@@ -26308,9 +26396,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         df, ch_idx, has_rpath, has_path)
                                     if ch_path:
                                         status, elapsed_str = self._classify_paused_reason(ch_path)
+                                # (3) 작업멈춤 + Code != 153 → Code_Desc 그대로 (.log 생략)
                                 elif code_desc:
-                                    status = f"작업멈춤 - {code_desc}"
-                            # 작업중: .log에서 Reserve 예약 정보 추출
+                                    status = code_desc
+                            # (1) 작업중/충전/방전/진행/휴지 → .log Reserve 예약 정보
                             elif status in ("작업중", "충전", "방전", "진행", "휴지"):
                                 ch_path = self._build_channel_path(
                                     df, ch_idx, has_rpath, has_path)
@@ -26318,6 +26407,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     reserve = self._parse_reserve_info(ch_path)
                                     if reserve:
                                         status = f"{status} ({reserve})"
+                            # (4) 완료/시험완료 → .log mtime 기반 경과 시간
+                            _sb_tmp = status.split(" (")[0] if " (" in status else status
+                            if status == "완료" or _sb_tmp == "시험완료":
+                                ch_path = self._build_channel_path(
+                                    df, ch_idx, has_rpath, has_path)
+                                if ch_path:
+                                    elapsed_str = self._elapsed_from_log(ch_path)
                         floor_name = ""
                         for fn, fc in floor_cyclers:
                             if cycler_text in fc:
@@ -26406,15 +26502,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
-        # 상태별 행 전체 배경색 정의
-        _PAUSED_BG = QtGui.QColor(214, 155, 154)       # 빨간색: 작업멈춤 (이상)
-        _STOPPED_BG = QtGui.QColor(240, 220, 160)       # 노란색: 사용자멈춤, 중단점 도달
+        # 상태별 행 전체 배경색 정의 (v3: 연녹/녹/노랑/빨강 4색)
+        _PAUSED_BG = QtGui.QColor(214, 155, 154)       # 빨강: 안전조건 Code + 챔버이슈
+        _STOPPED_BG = QtGui.QColor(240, 220, 160)      # 노랑: 사용자멈춤, 중단점 도달, 작업멈춤(fallback)
+        _COMPLETED_BG = QtGui.QColor(234, 239, 230)    # 연녹: 완료/시험완료 (셀있음)
+        _IDLE_BG = QtGui.QColor(176, 203, 176)         # 녹: 대기/준비/작업정지 (셀없음)
         STATUS_BG = {
-            "작업정지": QtGui.QColor(176, 203, 176),
-            "대기": QtGui.QColor(176, 203, 176),
-            "준비": QtGui.QColor(176, 203, 176),
-            "완료": QtGui.QColor(234, 239, 230),
+            "작업정지": _IDLE_BG,
+            "대기": _IDLE_BG,
+            "준비": _IDLE_BG,
+            "완료": _COMPLETED_BG,
+            "시험완료": _COMPLETED_BG,   # 🆕 .log 세분화 결과: 연녹 (셀있음)
             "사용자멈춤": _STOPPED_BG,
+            "작업멈춤": _STOPPED_BG,     # 🆕 .log fallback (원인 불명) → 노랑
+            "챔버이슈": _PAUSED_BG,       # 🆕 하드웨어 이슈 → 빨강
         }
         # floor_cyclers 순서를 유지하여 출력
         for floor_name, floor_cycler_list in floor_cyclers:
@@ -26465,11 +26566,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for ch_no, testname, status, elapsed_str, cyc, vol, type_str, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
                     status_base = status.split(" (")[0] if " (" in status else status
+                    # STATUS_BG 미매칭 + 비정상 상태 → 3색 분기
                     if bg_color is None and status_base not in self._NORMAL_STATES:
                         if status.startswith("중단점 도달"):
-                            bg_color = _STOPPED_BG
+                            bg_color = _STOPPED_BG   # 노랑
+                        elif status_base in self.COMPLETED_LABELS:
+                            bg_color = _COMPLETED_BG  # 연녹
+                        elif status_base in self.HW_WARNING_LABELS:
+                            bg_color = _PAUSED_BG    # 빨강 (챔버이슈 등)
+                        elif status_base in self.USER_OR_ERROR_LABELS:
+                            bg_color = _STOPPED_BG   # 노랑 (사용자/작업멈춤)
                         else:
-                            bg_color = _PAUSED_BG
+                            # Code 128/129/134/142/208/209 Code_Desc 라벨 + 미정의 코드
+                            bg_color = _PAUSED_BG    # 빨강 (안전조건 + fallback)
                     _font9 = QtGui.QFont("Malgun gothic", 9)
                     # col 0: 충방전기
                     item_cycler = QtWidgets.QTableWidgetItem(cycler_text)
@@ -26490,10 +26599,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         item_status.setBackground(bg_color)
                     self.tb_channel.setItem(row, 2, item_status)
                     # col 3: 경과
+                    # 완료/시험완료 → 회색 (정상 방치), 그 외(멈춤류) → 빨강 (이상 경고)
                     item_elapsed = QtWidgets.QTableWidgetItem(elapsed_str)
                     item_elapsed.setFont(_font9)
                     if elapsed_str:
-                        item_elapsed.setForeground(QtGui.QColor(150, 80, 80))
+                        if status_base in self.COMPLETED_LABELS:
+                            item_elapsed.setForeground(QtGui.QColor(100, 100, 100))
+                        else:
+                            item_elapsed.setForeground(QtGui.QColor(150, 80, 80))
                     if bg_color:
                         item_elapsed.setBackground(bg_color)
                     self.tb_channel.setItem(row, 3, item_elapsed)
