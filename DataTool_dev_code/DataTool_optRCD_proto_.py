@@ -26799,11 +26799,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 열 너비: 데이터 텍스트가 안 잘리는 최소 너비 (헤더는 잘림 허용)
         # Malgun gothic 9pt 기준 + QSS padding 4px + 여유 2px
         _fixed_widths = {
-            0: 58,   # 충방전기: "PNE24" (3자리 번호 여유 포함)
+            0: 70,   # 충방전기: "PNE24" (3자리 번호 + 헤더 여유)
             1: 32,   # 채널: "001"
             2: 170,  # 상태: "중단점 도달 (S201/C89)"
             3: 44,   # 경과: "3d 5h"
-            4: 112,  # Step/Cycle/총Cycle: "000/000/0000" + 헤더 잘림 완화
+            4: 134,  # Step/Cycle/총Cycle: "000/000/0000" + 헤더 가독성
             5: 44,   # 전압: "3.821"
             6: 68,   # 동작: "DisCharge"
             7: 44,   # 온도: "-10.0"
