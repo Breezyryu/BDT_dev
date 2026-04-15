@@ -26880,13 +26880,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 10열: 충방전기|채널|상태|경과|Step/Cycle|전압|동작|온도|테스트명|셀경로
         num_cols = 10
         self.tb_channel.setColumnCount(num_cols)
-        # 이전 호출의 setRowHidden 누적 / 신규 행에 새 default 미적용 방지
+        # 첫 호출 시 행 높이 미반영 버그 대응 (UI 초기 min=43 clamp 회피)
         # 1) 내용·구조·숨김 상태 전부 비움
-        # 2) 행 default 높이를 먼저 설정 → 이후 추가되는 행에 새 default 적용
+        # 2) minimum 을 먼저 낮춰야 default 가 clamp 없이 적용됨
+        # 3) setRowCount 로 새 행 생성 시 새 default(20) 적용
         self.tb_channel.clearContents()
         self.tb_channel.setRowCount(0)
-        self.tb_channel.verticalHeader().setDefaultSectionSize(20)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(9)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(9)   # 1차: min 낮춤
+        self.tb_channel.verticalHeader().setDefaultSectionSize(20)  # 2차: default 설정
         self.tb_channel.setRowCount(row_count)
         self.tb_channel.horizontalHeader().setVisible(True)
         self.tb_channel.setHorizontalHeaderLabels(
