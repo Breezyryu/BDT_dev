@@ -10525,6 +10525,9 @@ class Ui_sitool(object):
         self.tb_channel.verticalHeader().setDefaultSectionSize(43)
         self.tb_channel.verticalHeader().setMinimumSectionSize(43)
         self.tb_channel.setItemDelegate(BorderDelegate(self.tb_channel))
+        # 셀 좌우 패딩 축소 (기본 ~8px → 2px)
+        self.tb_channel.setStyleSheet(
+            "QTableWidget::item { padding: 0px 2px; }")
         self.verticalLayout_5.addWidget(self.tb_channel)
         self.horizontalLayout_123.addLayout(self.verticalLayout_5)
         self.tabWidget.addTab(self.tab, "")
@@ -26391,7 +26394,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.tb_channel.horizontalHeader().setSectionResizeMode(
                     ci, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         # 행 높이 줄이기
-        self.tb_channel.verticalHeader().setDefaultSectionSize(22)
+        self.tb_channel.verticalHeader().setDefaultSectionSize(18)
+        self.tb_channel.verticalHeader().setMinimumSectionSize(18)
         self.tb_channel.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
