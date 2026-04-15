@@ -26372,17 +26372,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_channel.setHorizontalHeaderLabels(
             ["충방전기", "채널", "상태", "경과", "Step/Cycle/총Cycle",
              "전압", "동작", "온도", "테스트명", "셀 경로"])
-        # 열 너비 최소화 (데이터 텍스트 기준, 헤더 잘림 허용)
-        # 테스트명/셀 경로(col 8, 9)가 stretch로 확장 공간 확보
+        # 열 너비: 데이터 텍스트가 안 잘리는 최소 너비 (헤더는 잘림 허용)
+        # Malgun gothic 9pt 기준 + QSS padding 4px + 여유 2px
         _fixed_widths = {
-            0: 32,   # 충방전기: "PNE24"
-            1: 20,   # 채널: "001"
-            2: 110,  # 상태: "중단점 도달 (S201/C89)"
-            3: 30,   # 경과: "3d 5h"
-            4: 70,   # Step/Cycle: "000/000/0000"
-            5: 28,   # 전압: "3.821"
-            6: 44,   # 동작: "DisCharge"
-            7: 28,   # 온도: "-10.0"
+            0: 48,   # 충방전기: "PNE24"
+            1: 32,   # 채널: "001"
+            2: 170,  # 상태: "중단점 도달 (S201/C89)"
+            3: 44,   # 경과: "3d 5h"
+            4: 92,   # Step/Cycle: "000/000/0000"
+            5: 44,   # 전압: "3.821"
+            6: 68,   # 동작: "DisCharge"
+            7: 44,   # 온도: "-10.0"
         }
         header = self.tb_channel.horizontalHeader()
         # 1) 모드 먼저 설정 (Fixed/Stretch)
