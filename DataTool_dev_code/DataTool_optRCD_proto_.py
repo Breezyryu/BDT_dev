@@ -26118,6 +26118,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     USER_OR_ERROR_LABELS = frozenset({
         "사용자멈춤",
         "작업멈춤",   # _classify_paused_reason 의 fallback 반환값
+        "잠시멈춤",   # 작업멈춤과 동일 계열 (PNE State 변형)
         # "중단점 도달 (S*/C*)" 는 startswith 로 판정
     })
 
@@ -26146,7 +26147,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         "작업멈춤": None,
         "안전조건": SAFETY_CODE_DESCS,
         "사용자멈춤계": frozenset({
-            "사용자멈춤", "챔버이슈", "시험완료", "작업멈춤",
+            "사용자멈춤", "챔버이슈", "시험완료", "작업멈춤", "잠시멈춤",
             # "중단점 도달" 은 startswith 로 처리
         }),
     }
@@ -26443,10 +26444,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return ""
 
     def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
-        """작업멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
+        """작업멈춤/잠시멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
 
         분류 로직:
-        1) Code==153, Code_Desc=="작업멈춤종료" → .log 파싱
+        1) Code==153, Code_Desc in ("작업멈춤종료","잠시멈춤") → .log 파싱
            - Reserve Cycle 패턴 → "중단점 도달 (C{rc}/S{rs})"
            - 즉시 멈춤 시행만 → "사용자멈춤"
            - 패턴 없음 → "작업멈춤"
@@ -26456,7 +26457,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         .log 파일은 채널폴더 내부에 있으므로 Result_Path에서 채널폴더명을
         추출하여 붙인다.
         """
-        mask = df["use"] == "작업멈춤"
+        mask = df["use"].isin(("작업멈춤", "잠시멈춤"))
         if not mask.any():
             return df
         has_code = "Code" in df.columns
@@ -26466,7 +26467,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         for idx in df.index[mask]:
             code = str(df.at[idx, "Code"]).strip() if has_code else ""
             code_desc = str(df.at[idx, "Code_Desc"]).strip() if has_code_desc else ""
-            if code == "153" and code_desc == "작업멈춤종료":
+            if code == "153" and code_desc in ("작업멈춤종료", "잠시멈춤"):
                 ch_path = self._build_channel_path(df, idx, has_rpath, has_path)
                 if ch_path:
                     reason, _ = self._classify_paused_reason(ch_path)
@@ -26804,16 +26805,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if cycler_text in pne_info:
                             has_rpath = "Result_Path" in df.columns
                             has_path = "path" in df.columns
-                            # (2) 작업멈춤 + Code:153 → .log 파싱 (세분화)
-                            if status == "작업멈춤":
+                            # (2) 작업멈춤/잠시멈춤 + Code:153 → .log 파싱 (세분화)
+                            if status in ("작업멈춤", "잠시멈춤"):
                                 code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
                                 code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
-                                if code == "153" and code_desc == "작업멈춤종료":
+                                if code == "153" and code_desc in ("작업멈춤종료", "잠시멈춤"):
                                     ch_path = self._build_channel_path(
                                         df, ch_idx, has_rpath, has_path)
                                     if ch_path:
                                         status, elapsed_str = self._classify_paused_reason(ch_path)
-                                # (3) 작업멈춤 + Code != 153 → Code_Desc 그대로 (.log 생략)
+                                # (3) 작업멈춤/잠시멈춤 + Code != 153 → Code_Desc 그대로 (.log 생략)
                                 elif code_desc:
                                     status = code_desc
                             # (1) 작업중/충전/방전/진행/휴지 → .log Reserve 예약 정보
@@ -26938,6 +26939,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "시험완료": _COMPLETED_BG,   # 🆕 .log 세분화 결과: 연녹 (셀있음)
             "사용자멈춤": _STOPPED_BG,
             "작업멈춤": _STOPPED_BG,     # 🆕 .log fallback (원인 불명) → 노랑
+            "잠시멈춤": _STOPPED_BG,     # 작업멈춤 동일 계열 → 노랑
             "챔버이슈": _PAUSED_BG,       # 🆕 하드웨어 이슈 → 빨강
         }
         # floor_cyclers 순서를 유지하여 출력
