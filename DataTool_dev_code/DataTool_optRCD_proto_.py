@@ -26463,6 +26463,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         except Exception:
             return ""
 
+    @staticmethod
+    def _get_cyc_mtime(channel_path: str):
+        """채널 폴더의 최신 .cyc 파일 mtime → datetime | None."""
+        try:
+            if not os.path.isdir(channel_path):
+                return None
+            cyc_files = [f.path for f in os.scandir(channel_path)
+                         if f.name.endswith('.cyc') and f.is_file()]
+            if not cyc_files:
+                return None
+            newest = max(cyc_files, key=os.path.getmtime)
+            return datetime.fromtimestamp(os.path.getmtime(newest))
+        except Exception:
+            return None
+
     def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
         """작업멈춤/잠시멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
 
@@ -26834,9 +26849,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         df, ch_idx, has_rpath, has_path)
                                     if ch_path:
                                         status, elapsed_str = self._classify_paused_reason(ch_path)
-                                # (3) 작업멈춤/잠시멈춤 + Code != 153 → Code_Desc 그대로 (.log 생략)
+                                        # 작업중(→S/C) 판정이지만 실제 중단점 도달 재검증
+                                        # 조건: Reserve S/C == JSON Step/Cycle AND .cyc mtime > 1일
+                                        if status.startswith("작업중 (→S"):
+                                            _m = re.match(r"작업중 \(→S(\d+)/C(\d+)\)", status)
+                                            if _m:
+                                                _rs, _rc = _m.group(1), _m.group(2)
+                                                _j_step = str(df.loc[ch_idx, "Step_No"]).strip() if "Step_No" in df.columns else ""
+                                                _j_cycle = str(df.loc[ch_idx, "Current_Cycle_Num"]).strip() if "Current_Cycle_Num" in df.columns else ""
+                                                if _rs == _j_step and _rc == _j_cycle:
+                                                    _cyc_dt = self._get_cyc_mtime(ch_path)
+                                                    if _cyc_dt and (datetime.now() - _cyc_dt).total_seconds() > 86400:
+                                                        status = f"중단점 도달 (S{_rs}/C{_rc})"
+                                                        elapsed_str = self._elapsed_str(
+                                                            _cyc_dt.strftime("%Y/%m/%d %H:%M:%S"))
+                                # (3) 작업멈춤/잠시멈춤 + Code != 153 → Code_Desc + 경과시간
                                 elif code_desc:
                                     status = code_desc
+                                    ch_path = self._build_channel_path(
+                                        df, ch_idx, has_rpath, has_path)
+                                    if ch_path:
+                                        elapsed_str = self._elapsed_from_log(ch_path)
                             # (1) 작업중/충전/방전/진행/휴지 → .log Reserve 예약 정보
                             elif status in ("작업중", "충전", "방전", "진행", "휴지"):
                                 ch_path = self._build_channel_path(
@@ -26920,7 +26953,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             0: 70,   # 충방전기: "PNE24" (3자리 번호 + 헤더 여유)
             1: 32,   # 채널: "001"
             2: 170,  # 상태: "중단점 도달 (S201/C89)"
-            3: 44,   # 경과: "3d 5h"
+            3: 53,   # 경과: "3d 5h" (+20%)
             4: 134,  # Step/Cycle/총Cycle: "000/000/0000" + 헤더 가독성
             5: 44,   # 전압: "3.821"
             6: 68,   # 동작: "DisCharge"
@@ -27104,6 +27137,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self._filter_sections[floor_row] = {
                     'rows': floor_child_rows, 'collapsed': False, 'type': 'floor'}
         self.tb_channel.setUpdatesEnabled(True)
+        # 헤더 클릭 정렬 시그널 연결
+        _hdr = self.tb_channel.horizontalHeader()
+        try:
+            _hdr.sectionClicked.disconnect(self._sort_filter_column)
+        except (TypeError, RuntimeError):
+            pass
+        _hdr.sectionClicked.connect(self._sort_filter_column)
+        self._filter_sort_col = -1
+        self._filter_sort_asc = True
         # 요약 정보
         if is_idle_mode:
             idle_label = f"{idle_no_cell} (대기-셀없음) / {idle_has_cell} (대기-셀있음) / {total_channels} (전체)"
@@ -27113,6 +27155,49 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(total_matched)))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(working_count)))
         self.progressBar.setValue(100)
+
+    def _sort_filter_column(self, col_idx: int):
+        """현황 탭 테이블 헤더 클릭 → 충방전기 그룹 내 데이터 행 정렬"""
+        if not self._filter_sections:
+            return
+        # 방향 토글: 같은 열 재클릭 → 반전, 다른 열 → 오름차순
+        if col_idx == self._filter_sort_col:
+            self._filter_sort_asc = not self._filter_sort_asc
+        else:
+            self._filter_sort_col = col_idx
+            self._filter_sort_asc = True
+        ascending = self._filter_sort_asc
+        tb = self.tb_channel
+        num_cols = tb.columnCount()
+        tb.setUpdatesEnabled(False)
+        for sec in self._filter_sections.values():
+            if sec.get('type') != 'cycler' or sec.get('collapsed'):
+                continue
+            rows = sec['rows']
+            if len(rows) < 2:
+                continue
+            # 각 행의 전체 셀 데이터 수집
+            row_data = []
+            for r in rows:
+                cells = []
+                for c in range(num_cols):
+                    item = tb.item(r, c)
+                    cells.append(item.clone() if item else None)
+                sort_key = tb.item(r, col_idx)
+                row_data.append((sort_key.text() if sort_key else "", cells))
+            # 숫자 우선 정렬 시도
+            try:
+                row_data.sort(key=lambda x: float(x[0].replace(" ", "")),
+                              reverse=not ascending)
+            except (ValueError, AttributeError):
+                row_data.sort(key=lambda x: x[0], reverse=not ascending)
+            # 정렬된 순서로 재배치
+            for i, (_, cells) in enumerate(row_data):
+                r = rows[i]
+                for c in range(num_cols):
+                    if cells[c]:
+                        tb.setItem(r, c, cells[c])
+        tb.setUpdatesEnabled(True)
 
     def bm_set_profile_button(self):
         self.BMset_battery_status_log_Profile.setDisabled(True)
