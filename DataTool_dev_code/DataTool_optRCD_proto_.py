@@ -926,56 +926,57 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                     except pd.errors.EmptyDataError:
                         # 파일이 존재하지만 내용이 없는 경우 (빈 파일) — None 유지
                         file_index_list = None
-            # ── .cyc 보충: meta에서 가져온 경우 Phase 0에서 이미 처리됨 → 스킵 ──
-            cyc_files = ([] if _from_meta
-                         else [f for f in os.listdir(raw_file_path)
-                               if f.endswith('.cyc')])
-            if cyc_files:
-                cyc_path = os.path.join(raw_file_path, cyc_files[0])
-                try:
-                    cyc_df = _cyc_to_cycle_df(cyc_path)
-                    if len(cyc_df) > 0:
-                        if save_end_data is not None:
-                            # CSV에 없는 TC를 .cyc에서 gap-fill
-                            # (앞쪽 누락 + 뒤쪽 신규 모두 처리)
-                            # .cyc → SaveEndData 컬럼 매핑 (13개 → 48+개 컬럼)
-                            _cyc_mapped = _cyc_df_to_save_end_format(
-                                cyc_df, save_end_data.shape[1])
-                            csv_tcs = set(
-                                int(x) for x in save_end_data[27].unique())
-                            supplement = _cyc_mapped[
-                                ~_cyc_mapped[27].astype(int).isin(csv_tcs)]
-                            if len(supplement) > 0:
-                                _ch_name = os.path.basename(raw_file_path)
-                                _cyc_tcs = sorted(
-                                    set(int(x) for x in supplement[27]))
-                                _perf_logger.info(
-                                    f'  [.cyc 보충] {_ch_name}: '
-                                    f'CSV TC={sorted(csv_tcs)[:3]}...'
-                                    f'{sorted(csv_tcs)[-1] if csv_tcs else "-"}, '
-                                    f'.cyc TC {_cyc_tcs[0]}~{_cyc_tcs[-1]} '
-                                    f'({len(_cyc_tcs)}개 TC, '
-                                    f'{len(supplement)}행) 보충')
-                                save_end_data = pd.concat(
-                                    [save_end_data, supplement],
-                                    ignore_index=True)
-                                # TC 순서 정렬 (앞쪽 보충이 섞이므로 필수)
-                                save_end_data = save_end_data.sort_values(
-                                    by=[27, 7], kind='stable'
-                                ).reset_index(drop=True)
-                        else:
-                            # CSV 없음 → .cyc 단독 재구성
-                            _cyc_mapped = _cyc_df_to_save_end_format(
-                                cyc_df, 48)
-                            if len(_cyc_mapped) > 0:
-                                _ch_name = os.path.basename(raw_file_path)
-                                _perf_logger.info(
-                                    f'  [.cyc 단독] {_ch_name}: '
-                                    f'{len(_cyc_mapped)}행 재구성')
-                                save_end_data = _cyc_mapped
-                except Exception as e:
-                    _perf_logger.warning(
-                        f'  [.cyc 보충 실패] {raw_file_path}: {e}')
+        # ── .cyc 보충/단독 재구성 (Restore 유무 무관) ──
+        # meta에서 가져온 경우 Phase 0에서 이미 처리됨 → 스킵
+        cyc_files = ([] if _from_meta
+                     else [f for f in os.listdir(raw_file_path)
+                           if f.endswith('.cyc')])
+        if cyc_files:
+            cyc_path = os.path.join(raw_file_path, cyc_files[0])
+            try:
+                cyc_df = _cyc_to_cycle_df(cyc_path)
+                if len(cyc_df) > 0:
+                    if save_end_data is not None:
+                        # CSV에 없는 TC를 .cyc에서 gap-fill
+                        # (앞쪽 누락 + 뒤쪽 신규 모두 처리)
+                        # .cyc → SaveEndData 컬럼 매핑 (13개 → 48+개 컬럼)
+                        _cyc_mapped = _cyc_df_to_save_end_format(
+                            cyc_df, save_end_data.shape[1])
+                        csv_tcs = set(
+                            int(x) for x in save_end_data[27].unique())
+                        supplement = _cyc_mapped[
+                            ~_cyc_mapped[27].astype(int).isin(csv_tcs)]
+                        if len(supplement) > 0:
+                            _ch_name = os.path.basename(raw_file_path)
+                            _cyc_tcs = sorted(
+                                set(int(x) for x in supplement[27]))
+                            _perf_logger.info(
+                                f'  [.cyc 보충] {_ch_name}: '
+                                f'CSV TC={sorted(csv_tcs)[:3]}...'
+                                f'{sorted(csv_tcs)[-1] if csv_tcs else "-"}, '
+                                f'.cyc TC {_cyc_tcs[0]}~{_cyc_tcs[-1]} '
+                                f'({len(_cyc_tcs)}개 TC, '
+                                f'{len(supplement)}행) 보충')
+                            save_end_data = pd.concat(
+                                [save_end_data, supplement],
+                                ignore_index=True)
+                            # TC 순서 정렬 (앞쪽 보충이 섞이므로 필수)
+                            save_end_data = save_end_data.sort_values(
+                                by=[27, 7], kind='stable'
+                            ).reset_index(drop=True)
+                    else:
+                        # CSV 없음 → .cyc 단독 재구성
+                        _cyc_mapped = _cyc_df_to_save_end_format(
+                            cyc_df, 48)
+                        if len(_cyc_mapped) > 0:
+                            _ch_name = os.path.basename(raw_file_path)
+                            _perf_logger.info(
+                                f'  [.cyc 단독] {_ch_name}: '
+                                f'{len(_cyc_mapped)}행 재구성')
+                            save_end_data = _cyc_mapped
+            except Exception as e:
+                _perf_logger.warning(
+                    f'  [.cyc 보충 실패] {raw_file_path}: {e}')
         cache['pne_restore'] = (save_end_data, file_index_list, subfile)
     return cache['pne_restore']
 
@@ -1116,9 +1117,7 @@ def _unified_pne_load_raw(
     data_scope별로 cycle_map dict의 chg/dchg TC 목록에서 필요한 TC만 로딩한다.
     """
     restore_dir = os.path.join(raw_file_path, "Restore")
-    if not os.path.isdir(restore_dir):
-        _perf_logger.warning(f"[Profile] PNE Restore 폴더 없음: {restore_dir}")
-        return None
+    has_restore = os.path.isdir(restore_dir)
 
     # cycle_map이 있으면 논리사이클 → TotlCycle로 변환
     if cycle_map:
@@ -1157,8 +1156,8 @@ def _unified_pne_load_raw(
         _cyc_raw = _try_cyc_profile(raw_file_path, tc_min, tc_max)
         if _cyc_raw is not None:
             raw = _cyc_raw
-        else:
-            # ── CSV fallback (기존 경로) ──
+        elif has_restore:
+            # ── CSV fallback (Restore 폴더 존재 시) ──
             subfile = [f for f in os.listdir(restore_dir) if f.endswith(".csv")]
             filepos = pne_search_cycle(restore_dir, tc_min, tc_max)
 
@@ -1186,6 +1185,12 @@ def _unified_pne_load_raw(
                 return None
 
             raw = pd.concat(dfs, ignore_index=True)
+        else:
+            # Restore 폴더 없고 .cyc도 실패
+            _perf_logger.warning(
+                f"[Profile] PNE Restore 폴더 없음 & .cyc 로드 실패: "
+                f"{raw_file_path} (TC {tc_min}~{tc_max})")
+            return None
 
         # 캐시 저장
         _ch_cache['unified_raw'] = ((tc_min, tc_max), raw.copy())
@@ -7256,14 +7261,19 @@ def _pne_load_profile_raw(raw_file_path, min_cycle, max_cycle, mincapacity, inir
     mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
 
     rawdir = raw_file_path + "\\Restore\\"
-    if not os.path.isdir(rawdir):
-        return (mincapacity, None, False)
+    has_restore = os.path.isdir(rawdir)
 
     # 캐시에서 SaveEndData, file_index, subfile 조회
     save_end_data, file_index_list, subfile = _cached_pne_restore_files(raw_file_path)
 
-    if save_end_data is None or file_index_list is None:
+    if save_end_data is None:
         return (mincapacity, None, False)
+
+    # Restore 없거나 file_index 없으면 .cyc 프로파일 직접 로드
+    if not has_restore or file_index_list is None:
+        all_raw = _try_cyc_profile(raw_file_path, min_cycle, max_cycle)
+        is_pne21_22 = is_micro_unit(raw_file_path)
+        return (mincapacity, all_raw, is_pne21_22)
 
     # 파일 범위 결정
     if min_cycle != 1:
@@ -7839,6 +7849,11 @@ def pne_data(raw_file_path, inicycle):
                                            encoding="cp949", on_bad_lines='skip'))
             if dfs:
                 df.Profileraw = pd.concat(dfs, ignore_index=True)
+    else:
+        # Restore 폴더 없음 → .cyc 프로파일 직접 로드
+        _cyc_raw = _try_cyc_profile(raw_file_path, inicycle, inicycle + 1)
+        if _cyc_raw is not None:
+            df.Profileraw = _cyc_raw
     return df
 
 # PNE에서 원하는 사이클이 들어있는 파일명을 찾는 코드
@@ -7898,6 +7913,11 @@ def pne_continue_data(raw_file_path, inicycle, endcycle):
                                            header=None, encoding="cp949", on_bad_lines='skip'))
             if dfs:
                 df.Profileraw = pd.concat(dfs, ignore_index=True)
+    else:
+        # Restore 폴더 없음 → .cyc 프로파일 직접 로드
+        _cyc_raw = _try_cyc_profile(raw_file_path, inicycle, endcycle)
+        if _cyc_raw is not None:
+            df.Profileraw = _cyc_raw
     return df
 
 def pne_cyc_continue_data(raw_file_path):
