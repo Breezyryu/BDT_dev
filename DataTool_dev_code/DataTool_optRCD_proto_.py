@@ -26429,13 +26429,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     @staticmethod
     def _elapsed_from_log(channel_path: str) -> str:
-        """채널 폴더의 최신 .log 마지막 갱신 시각 → 현재까지 경과 문자열.
+        """채널 폴더의 .log/.cyc mtime 중 더 최근 값 → 경과 문자열.
 
-        완료/시험완료 채널은 완료 이벤트 이후 .log 쓰기가 없으므로
-        파일 mtime 을 "완료 시각" 의 근사치로 사용.
+        .log를 기록하지 않는 버그 케이스 대비 .cyc mtime도 함께 비교.
+        두 파일 중 더 최근(=마지막 활동 시각)을 경과 기준으로 사용.
 
-        1차: mtime 사용 (O(1) stat)
-        2차: mtime 실패(시스템 시간 불일치 등) → .log tail 마지막 타임스탬프
+        1차: .log mtime vs .cyc mtime 비교 → 최신 값 사용
+        2차: mtime 이 미래 (시스템 시간 불일치) → .log tail 타임스탬프
 
         return
         ------
@@ -26444,21 +26444,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         try:
             if not os.path.isdir(channel_path):
                 return ""
+            # .log / .cyc mtime 수집
+            best_dt = None
+            for f in os.scandir(channel_path):
+                if f.is_file() and (f.name.endswith('.log') or f.name.endswith('.cyc')):
+                    mt = datetime.fromtimestamp(os.path.getmtime(f.path))
+                    if best_dt is None or mt > best_dt:
+                        best_dt = mt
+            if best_dt is not None and (datetime.now() - best_dt).total_seconds() >= 0:
+                return WindowClass._elapsed_str(best_dt.strftime("%Y/%m/%d %H:%M:%S"))
+            # fallback: .log tail 마지막 타임스탬프
             log_files = [f.path for f in os.scandir(channel_path)
                          if f.name.endswith('.log') and f.is_file()]
-            if not log_files:
-                return ""
-            log_path = max(log_files, key=os.path.getmtime)
-            # 1차: mtime 사용 (네트워크 드라이브에서도 경량)
-            dt = datetime.fromtimestamp(os.path.getmtime(log_path))
-            if (datetime.now() - dt).total_seconds() >= 0:
-                return WindowClass._elapsed_str(dt.strftime("%Y/%m/%d %H:%M:%S"))
-            # 2차: mtime 이 미래 (시스템 시간 불일치) → tail 마지막 타임스탬프
-            tail = WindowClass._read_log_tail(log_path) or ""
-            for ln in reversed(tail.splitlines()):
-                log_time = WindowClass._extract_log_time(ln)
-                if log_time:
-                    return WindowClass._elapsed_str(log_time)
+            if log_files:
+                log_path = max(log_files, key=os.path.getmtime)
+                tail = WindowClass._read_log_tail(log_path) or ""
+                for ln in reversed(tail.splitlines()):
+                    log_time = WindowClass._extract_log_time(ln)
+                    if log_time:
+                        return WindowClass._elapsed_str(log_time)
             return ""
         except Exception:
             return ""
