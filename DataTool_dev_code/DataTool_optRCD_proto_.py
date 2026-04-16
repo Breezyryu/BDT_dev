@@ -937,30 +937,27 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                 cyc_df = _cyc_to_cycle_df(cyc_path)
                 if len(cyc_df) > 0:
                     if save_end_data is not None:
-                        # CSV에 없는 TC를 .cyc에서 gap-fill
-                        # (앞쪽 누락 + 뒤쪽 신규 모두 처리)
-                        # .cyc → SaveEndData 컬럼 매핑 (13개 → 48+개 컬럼)
+                        # CSV에 없는 스텝을 .cyc에서 gap-fill
+                        # RecIndex 기준 비교: 같은 TC 내 신규 스텝도 보충
                         _cyc_mapped = _cyc_df_to_save_end_format(
                             cyc_df, save_end_data.shape[1])
-                        csv_tcs = set(
-                            int(x) for x in save_end_data[27].unique())
+                        csv_rec_indices = set(
+                            int(x) for x in save_end_data[0].unique())
                         supplement = _cyc_mapped[
-                            ~_cyc_mapped[27].astype(int).isin(csv_tcs)]
+                            ~_cyc_mapped[0].astype(int).isin(csv_rec_indices)]
                         if len(supplement) > 0:
                             _ch_name = os.path.basename(raw_file_path)
                             _cyc_tcs = sorted(
                                 set(int(x) for x in supplement[27]))
                             _perf_logger.info(
                                 f'  [.cyc 보충] {_ch_name}: '
-                                f'CSV TC={sorted(csv_tcs)[:3]}...'
-                                f'{sorted(csv_tcs)[-1] if csv_tcs else "-"}, '
+                                f'CSV RecIdx={len(csv_rec_indices)}개, '
                                 f'.cyc TC {_cyc_tcs[0]}~{_cyc_tcs[-1]} '
-                                f'({len(_cyc_tcs)}개 TC, '
-                                f'{len(supplement)}행) 보충')
+                                f'({len(supplement)}행) 보충')
                             save_end_data = pd.concat(
                                 [save_end_data, supplement],
                                 ignore_index=True)
-                            # TC 순서 정렬 (앞쪽 보충이 섞이므로 필수)
+                            # TC+StepNo 순서 정렬
                             save_end_data = save_end_data.sort_values(
                                 by=[27, 7], kind='stable'
                             ).reset_index(drop=True)
@@ -9032,12 +9029,48 @@ def _build_cyc_step_meta(save_end: pd.DataFrame) -> np.ndarray:
     return meta
 
 
+def _build_step_meta_from_cyc_df(cyc_df: pd.DataFrame) -> np.ndarray:
+    """_cyc_to_cycle_df() 결과에서 스텝별 메타 테이블 생성.
+
+    _build_cyc_step_meta(save_end)과 동일한 (N, 5) 형식을 반환하되,
+    SaveEndData 대신 .cyc 파싱 결과를 사용하여 항상 최신 데이터를 반영.
+
+    Parameters
+    ----------
+    cyc_df : pd.DataFrame
+        _cyc_to_cycle_df() 반환값 (14컬럼: RecIndex, TotlCycle, Condition, ...)
+
+    Returns
+    -------
+    np.ndarray
+        shape (N, 5), dtype int64
+        컬럼: [start_idx, end_idx, total_cycle, step_type, step_no]
+    """
+    end_indices = cyc_df['RecIndex'].values.astype(np.int64)
+    total_cycles = cyc_df['TotlCycle'].values.astype(np.int64)
+    step_types = cyc_df['Condition'].values.astype(np.int64)
+
+    n = len(end_indices)
+    meta = np.zeros((n, 5), dtype=np.int64)
+    meta[:, 1] = end_indices                      # end_idx
+    meta[:, 2] = total_cycles                     # total_cycle
+    meta[:, 3] = step_types                       # step_type
+    meta[:, 4] = np.arange(1, n + 1, dtype=np.int64)  # step_no (1-based)
+
+    # start_idx: 이전 스텝 end_idx + 1 (첫 스텝은 1)
+    meta[0, 0] = 1
+    if n > 1:
+        meta[1:, 0] = end_indices[:-1] + 1
+
+    return meta
+
+
 def _cyc_seek_profile(cyc_path: str, start_index: int, end_index: int,
-                      save_end: pd.DataFrame, n_csv_cols: int = 48) -> pd.DataFrame:
+                      step_meta: np.ndarray, n_csv_cols: int = 48) -> pd.DataFrame:
     """.cyc 바이너리에서 Index 범위의 레코드를 seek+read하여 CSV 형식으로 반환.
 
-    SaveEndData.csv와 동일한 숫자 인덱스 컬럼(0~47)의 DataFrame을 생성.
-    StepType(col[2]), StepNo(col[7]), TotalCycle(col[27])은 SaveEndData에서 역조회.
+    SaveDataCSV와 동일한 숫자 인덱스 컬럼(0~47)의 DataFrame을 생성.
+    StepType(col[2]), StepNo(col[7]), TotalCycle(col[27])은 step_meta에서 역조회.
 
     Parameters
     ----------
@@ -9047,8 +9080,9 @@ def _cyc_seek_profile(cyc_path: str, start_index: int, end_index: int,
         시작 Index (1-based, 포함)
     end_index : int
         종료 Index (1-based, 포함)
-    save_end : pd.DataFrame
-        SaveEndData DataFrame (숫자 컬럼 인덱스)
+    step_meta : np.ndarray
+        스텝별 메타 (N, 5): [start_idx, end_idx, total_cycle, step_type, step_no]
+        _build_step_meta_from_cyc_df() 또는 _build_cyc_step_meta() 반환값
     n_csv_cols : int
         CSV 컬럼 수 (기본 48)
 
@@ -9086,7 +9120,6 @@ def _cyc_seek_profile(cyc_path: str, start_index: int, end_index: int,
             result[:, csv_col] = np.round(data[:, pos].astype(np.float64) * scale)
 
     # 메타 컬럼 보완: col[2](StepType), col[7](StepNo), col[27](TotalCycle)
-    step_meta = _build_cyc_step_meta(save_end)
     meta_end_indices = step_meta[:, 1]  # 각 스텝의 end_index
 
     record_indices = result[:, 0].astype(np.int64)  # .cyc Index 값
@@ -9113,7 +9146,8 @@ def _try_cyc_profile(raw_file_path: str, inicycle: int,
     """.cyc 바이너리 프로파일 접근 시도. 실패 시 None 반환 (CSV fallback용).
 
     채널 캐시를 활용하여 무결성 검증은 최초 1회만 수행.
-    SaveEndData에서 대상 사이클의 Index 범위를 조회한 뒤 .cyc seek.
+    _cyc_to_cycle_df() 결과(항상 최신)를 step_meta 단일 진실 원천으로 사용하여
+    SaveEndData 유무/신선도에 무관하게 .cyc 전체 범위 접근 가능.
     """
     import time as _time
 
@@ -9139,34 +9173,34 @@ def _try_cyc_profile(raw_file_path: str, inicycle: int,
     if not cache['cyc_profile_ok']:
         return None
 
-    # 3) SaveEndData 로드 (이미 캐시되어 있음)
-    save_end, file_index, _ = _cached_pne_restore_files(raw_file_path)
-    if save_end is None:
+    # 3) .cyc 파싱 결과 로드 (캐시 — 항상 최신, SaveEndData 무관)
+    if 'cyc_cycle_df' not in cache:
+        cache['cyc_cycle_df'] = _cyc_to_cycle_df(cyc_path)
+    cyc_df = cache['cyc_cycle_df']
+    if cyc_df.empty:
         return None
 
     try:
         t0 = _time.perf_counter()
 
-        # 4) SaveEndData에서 대상 사이클의 Index 범위 조회
-        #    보충행(col[0]=0)은 유효 Index가 없으므로 제외
-        cycle_mask = (save_end[27] >= inicycle) & (save_end[27] <= endcycle) & (save_end[0] > 0)
-        cycle_rows = save_end.loc[cycle_mask]
-        if cycle_rows.empty:
+        # 4) cyc_df에서 대상 사이클의 Index 범위 조회
+        step_meta = _build_step_meta_from_cyc_df(cyc_df)
+        cycle_mask = (cyc_df['TotlCycle'] >= inicycle) & (cyc_df['TotlCycle'] <= endcycle)
+        matched_indices = np.where(cycle_mask.values)[0]
+        if len(matched_indices) == 0:
             return None
 
-        # 시작 Index: 대상 사이클 범위의 첫 스텝 이전 스텝 end_index + 1
-        first_step_pos = cycle_rows.index[0]
-        if first_step_pos > 0:
-            start_index = int(save_end.iloc[first_step_pos - 1][0]) + 1
-        else:
-            start_index = 1
+        first_pos = matched_indices[0]
+        last_pos = matched_indices[-1]
 
-        # 종료 Index: 대상 사이클 범위의 마지막 스텝 end_index
-        end_index = int(cycle_rows[0].max())
+        # 시작 Index: 대상 사이클 범위의 첫 스텝 start_idx
+        start_index = int(step_meta[first_pos, 0])
+        # 종료 Index: 대상 사이클 범위의 마지막 스텝 end_idx
+        end_index = int(step_meta[last_pos, 1])
 
         # 5) .cyc seek+read → CSV 형식 DataFrame
-        result = _cyc_seek_profile(cyc_path, start_index, end_index, save_end,
-                                   save_end.shape[1])
+        result = _cyc_seek_profile(cyc_path, start_index, end_index,
+                                   step_meta)
 
         elapsed = (_time.perf_counter() - t0) * 1000
         _perf_logger.info(f'  [.cyc 프로파일] {os.path.basename(raw_file_path)}: '
