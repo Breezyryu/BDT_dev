@@ -1236,6 +1236,41 @@ def _unified_pne_load_raw(
         if col not in result.columns:
             result[col] = 0
 
+    # ── OCV/CCV 컬럼 복원 (origin L1546-1572) ──
+    # SaveEndData 기반 스텝 단위 분류 (origin 규칙, 휴리스틱 없음):
+    #   OCV = col[2]=3 (REST) 스텝의 전압
+    #   CCV = col[2]=1|2 (CHG/DCHG) 스텝의 전압
+    # 스텝 종료 레코드(RecIdx)에만 값 존재, 나머지는 NaN (outer merge 결과)
+    #
+    # ── Stepmode 컬럼 추가 (SaveEndData col[1]) ──
+    # CC/CV 필터링(include_cv=False)의 기준. 무휴리스틱.
+    try:
+        _se_data, _, _ = _cached_pne_restore_files(raw_file_path)
+    except Exception:
+        _se_data = None
+
+    if _se_data is not None and not _se_data.empty and "Index" in result.columns:
+        # OCV: 휴지(REST) 스텝의 종료 전압 (uV)
+        _ocv_src = _se_data[_se_data[2] == 3][[0, 8]].rename(
+            columns={0: "Index", 8: "OCV_raw"})
+        # CCV: 충전/방전 스텝의 종료 전압 (uV)
+        _ccv_src = _se_data[_se_data[2].isin([1, 2])][[0, 8]].rename(
+            columns={0: "Index", 8: "CCV_raw"})
+        if not _ocv_src.empty:
+            result = result.merge(_ocv_src, on="Index", how="left")
+        if not _ccv_src.empty:
+            result = result.merge(_ccv_src, on="Index", how="left")
+
+        # Stepmode 브로드캐스트: StepNo → Stepmode
+        if 1 in _se_data.columns and 7 in _se_data.columns and "Step" in result.columns:
+            _sm_map = (_se_data[[7, 1]]
+                       .drop_duplicates(subset=[7])
+                       .set_index(7)[1]
+                       .astype(int))
+            result["Stepmode"] = result["Step"].map(_sm_map)
+            # 매핑 안 된 행은 기본값 2 (CC) 로 (휴리스틱 아닌 "모름→기본" 처리)
+            result["Stepmode"] = result["Stepmode"].fillna(2).astype(int)
+
     result["CyclerType"] = "PNE"
     return result
 
@@ -1416,6 +1451,18 @@ def _unified_normalize_pne(
 
     # 온도: mK → °C (또는 m°C → °C)
     result["Temp"] = df["Temp_raw"].values / 1_000
+
+    # OCV/CCV 컬럼 (origin 규칙, μV → V)
+    # _unified_pne_load_raw에서 추가된 OCV_raw/CCV_raw (uV) 을 V로 변환.
+    # 스텝 종료 레코드에만 값 있음 (outer merge 결과). 나머지는 NaN.
+    if "OCV_raw" in df.columns:
+        result["OCV"] = df["OCV_raw"].values / 1_000_000
+    if "CCV_raw" in df.columns:
+        result["CCV"] = df["CCV_raw"].values / 1_000_000
+
+    # Stepmode 컬럼 보존 (CV 필터링 기준, col[1] 공식 정의)
+    if "Stepmode" in df.columns:
+        result["Stepmode"] = df["Stepmode"].values
 
     return result
 
@@ -1682,48 +1729,21 @@ def _unified_filter_condition(
     #       OCV 기준점으로 활용 필요. 임의 임계값 기반 필터링은 휴리스틱.
 
     # --- CV 구간 제거 (include_cv=False) ---
-    # 충전(Condition=1) 구간에서 전압이 일정(변화량 < 2mV)하고
-    # 전류가 감소하는 부분을 CV 구간으로 판별하여 제거
-    # 정규화 전(Voltage_raw) / 후(Vol, Voltage) 모두 지원
-    if not include_cv and len(filtered) > 0:
-        _curr = None
-        if "Crate" in filtered.columns:
-            _curr = filtered["Crate"]
-        elif "Current_mA" in filtered.columns:
-            _curr = filtered["Current_mA"]
-        elif "Current_raw" in filtered.columns:
-            _curr = filtered["Current_raw"]
-
-        # 전압 컬럼 탐색: 정규화 후(Vol, Voltage) → 정규화 전(Voltage_raw)
-        _vol = None
-        _dv_threshold = 0.002  # 2mV (V 단위 기준)
-        for _vcol in ("Vol", "Voltage", "Voltage_raw"):
-            if _vcol in filtered.columns:
-                _vol = filtered[_vcol]
-                # Voltage_raw 단위 자동 감지: 중앙값으로 판별
-                if _vcol == "Voltage_raw":
-                    _med = _vol.abs().median()
-                    if _med > 10_000:
-                        # μV 단위 (PNE SaveData CSV): 2mV = 2000 μV
-                        _dv_threshold = 2000.0
-                    elif _med > 100:
-                        # mV 단위 (PNE .cyc): 2mV = 2 mV
-                        _dv_threshold = 2.0
-                    # V 단위 (Toyo): 기본 0.002 유지
-                break
-
-        if _curr is not None and _vol is not None:
-            chg_mask = filtered["Condition"] == 1
-            if chg_mask.any():
-                # 충전 구간 내 전압 변화율 (rolling 5pt)
-                _dv = _vol.diff().abs().rolling(5, min_periods=1).mean()
-                # CV 판별: 전압 변화 < 2mV AND 전류가 최대 전류의 50% 이하
-                _max_curr = _curr[chg_mask].abs().max()
-                if _max_curr > 0:
-                    _cv_mask = (chg_mask
-                                & (_dv < _dv_threshold)
-                                & (_curr.abs() < _max_curr * 0.5))
-                    filtered = filtered[~_cv_mask]
+    # 무휴리스틱 접근 (2026-04-18):
+    #   SaveEndData col[1] Stepmode 기반 (origin L1583 공식 정의):
+    #     1=CC-CV, 2=CC, 3=CV, 4=OCV
+    #   → Stepmode=1(CC-CV) 또는 3(CV) 스텝의 레코드를 제외
+    #
+    # Phase 1 (현재): 스텝 단위 제외 (CC-CV 스텝 전체 제거)
+    # Phase 2 (후속): .sch의 cv_cutoff 전달 → 레코드 단위 경계 (CC만 유지)
+    #
+    # 이전 구현(2026-04-17)의 `dv<2mV + 전류<50%` 휴리스틱은 폐기.
+    # 임계값이 임의 선정이었고 데이터 노이즈에 취약했음.
+    if not include_cv and len(filtered) > 0 and "Stepmode" in filtered.columns:
+        # Stepmode 1=CC-CV, 3=CV → CV 구간 포함 스텝
+        cv_bearing_mask = filtered["Stepmode"].isin([1, 3])
+        if cv_bearing_mask.any():
+            filtered = filtered[~cv_bearing_mask].copy()
 
     return filtered
 
