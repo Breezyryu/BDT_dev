@@ -19285,7 +19285,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             return _data, _meta
 
         def _draw_no_data_text(_axes, reason: str) -> None:
-            """빈 결과 탭에 원인 메시지를 표시한다."""
+            """빈 결과 탭에 원인 메시지를 표시한다 (레거시 — 현재 미사용)."""
             _msg = "데이터 없음" if not reason else f"데이터 없음\n{reason}"
             for _ax in _axes:
                 _ax.text(
@@ -19296,6 +19296,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 )
                 _ax.set_xticks([])
                 _ax.set_yticks([])
+
+        # 데이터 없음 케이스에서 누적되는 경고들 (루프 종료 후 사용자에게 요약 표시)
+        _no_data_warnings: list[str] = []
+
+        def _skip_no_data_tab(_fig, reason: str, context: str = "") -> None:
+            """데이터 없음: fig 메모리 해제 + 경고 수집. 탭을 UI에 추가하지 않음."""
+            try:
+                plt.close(_fig)
+            except Exception:
+                pass
+            msg = f"{context} — {reason}" if context else reason
+            _no_data_warnings.append(msg)
+            try:
+                _perf_logger.warning(f'  [plot skip] 데이터 없음: {msg}')
+            except Exception:
+                pass
 
         # ── AllProfile: 루프 전에 fig 1개만 생성 ──
         has_any_data = False  # 전체 데이터 플롯 여부 추적 (AllProfile/공통)
@@ -19400,16 +19416,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             error_reasons.append(str(_meta.get('error', '데이터 없음')))
                     # 채널 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
                     if not has_data:
-                        _draw_no_data_text(
-                            axes,
+                        _skip_no_data_tab(
+                            fig,
                             error_reasons[0] if error_reasons else '로딩 결과 없음',
+                            context=os.path.basename(FolderBase),
                         )
-                        self._finalize_plot_tab(
-                            tab, tab_layout, canvas, toolbar, tab_no,
-                            channel_map={}, fig=fig,
-                            axes_list=[axes[k] for k in axes_order],
-                        )
-                        tab_no += 1
                         continue
                     if namelist:
                         title = f"{namelist[-2]}={namelist[-1]}"
@@ -19571,16 +19582,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             error_reasons.append(str(_meta.get('error', '데이터 없음')))
                     # 사이클 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
                     if not has_data:
-                        _draw_no_data_text(
-                            axes,
+                        _skip_no_data_tab(
+                            fig,
                             error_reasons[0] if error_reasons else '로딩 결과 없음',
+                            context=f"{os.path.basename(FolderBase)} cy{CycNo}",
                         )
-                        self._finalize_plot_tab(
-                            tab, tab_layout, canvas, toolbar, tab_no,
-                            channel_map={}, fig=fig,
-                            axes_list=[axes[k] for k in axes_order],
-                        )
-                        tab_no += 1
                         continue
                     if namelist:
                         title = f"{namelist[-2]}=%04d" % CycNo
@@ -19608,13 +19614,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab_no += 1
             output_fig(self.figsaveok, title)
         elif all_profile and not has_any_data:
-            _draw_no_data_text(axes, '로딩된 프로필 데이터가 없습니다')
-            self._finalize_plot_tab(
-                tab, tab_layout, canvas, toolbar, tab_no,
-                channel_map={}, fig=fig,
-                axes_list=[axes[k] for k in axes_order],
-            )
-            tab_no += 1
+            _skip_no_data_tab(fig, '로딩된 프로필 데이터가 없습니다',
+                              context='AllProfile')
+
+        # ── 데이터 없음 요약: 렌더 중 추가된 탭이 없으면 팝업으로 안내 ──
+        _post_tab_count = self.cycle_tab.count()
+        _pre_tab_count = getattr(self, '_pre_render_tab_count', _post_tab_count)
+        if _no_data_warnings and _post_tab_count == _pre_tab_count:
+            try:
+                from PyQt6.QtWidgets import QMessageBox
+                _preview = "\n".join(f"• {w}" for w in _no_data_warnings[:10])
+                if len(_no_data_warnings) > 10:
+                    _preview += f"\n... 외 {len(_no_data_warnings) - 10}건"
+                QMessageBox.warning(
+                    self, "프로파일 데이터 없음",
+                    f"로드된 유효 프로파일 데이터가 없어 그래프를 생성하지 않았습니다.\n\n"
+                    f"{_preview}"
+                )
+            except Exception:
+                pass
 
         # ── 공통 마무리 ──
         if self.saveok.isChecked() and save_file_name:
