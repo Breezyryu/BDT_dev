@@ -1675,41 +1675,11 @@ def _unified_filter_condition(
 
         filtered = df.loc[final_mask].copy()
 
-    # --- 보충전/보방전 제외 (스윕 시험 + 단방향 scope) ---
-    if is_sweep and data_scope in ("charge", "discharge") and "Step" in filtered.columns:
-        _target_cond = 1 if data_scope == "charge" else 2
-        _cap_col = "ChgCap_raw" if data_scope == "charge" else "DchgCap_raw"
-
-        if _cap_col in filtered.columns and "Cycle" in filtered.columns:
-            # 사이클별 스텝별 최대 용량으로 보충전/보방전 판별
-            # threshold: 공칭 용량의 2% (μAh 단위) 또는 사이클 내 최대 스텝 용량의 5%
-            _abs_threshold = mincapacity * 1000 * 0.02 if mincapacity > 0 else 0
-            _target = filtered[filtered["Condition"] == _target_cond].copy()
-            if not _target.empty:
-                # 스텝별 최대 용량: 같은 (Cycle, Step) 그룹의 max 용량
-                _step_cap = _target.groupby(["Cycle", "Step"])[_cap_col].max()
-                if not _step_cap.empty:
-                    # 사이클별 최대 스텝 용량의 5%를 상대적 threshold로 사용
-                    _cyc_max = _step_cap.groupby(level="Cycle").max()
-                    _rel_threshold = _cyc_max * 0.05
-
-                    # 보충전 스텝 식별: 절대 threshold 와 상대 threshold 모두 미달
-                    _supplement_steps = set()
-                    for (cyc, step), cap_val in _step_cap.items():
-                        abs_ok = cap_val >= _abs_threshold if _abs_threshold > 0 else True
-                        rel_ok = cap_val >= _rel_threshold.get(cyc, 0)
-                        if not abs_ok and not rel_ok:
-                            _supplement_steps.add((cyc, step))
-
-                    if _supplement_steps:
-                        # 보충전 스텝에 해당하는 행 제거 (벡터화)
-                        _keys = pd.MultiIndex.from_tuples(
-                            list(_supplement_steps), names=["Cycle", "Step"]
-                        )
-                        _idx = pd.MultiIndex.from_arrays(
-                            [filtered["Cycle"], filtered["Step"]], names=["Cycle", "Step"]
-                        )
-                        filtered = filtered[~_idx.isin(_keys)]
+    # --- 보충전/보방전 제외 (제거됨, 2026-04-18) ---
+    # 이전: 공칭 용량의 2% 미만 스텝 자동 제외 (스윕 시험)
+    # 변경: 사용자 요구에 따라 보충전/보방전은 **상시 포함**.
+    # 이유: 배터리 전기화학 분석에서 RSS/DCIR 계산 시 보충전 스텝도
+    #       OCV 기준점으로 활용 필요. 임의 임계값 기반 필터링은 휴리스틱.
 
     # --- CV 구간 제거 (include_cv=False) ---
     # 충전(Condition=1) 구간에서 전압이 일정(변화량 < 2mV)하고

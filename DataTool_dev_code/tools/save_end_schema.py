@@ -1,20 +1,35 @@
 """save_end_schema.py — PNE SaveEndData.csv 47컬럼 스키마.
 
-사용자 정리 테이블 + 실측 검증 (50 채널, schema_verify.py 결과, 2026-04-18).
+**공식 정의**: origin 코드 `BAK/BatteryDataTool_origin.py` L1583-1590의 주석.
+(pne_dcir_chk_cycle 함수. 배터리 팀이 장비사에서 받은 정식 문서 기반.)
 
-검증 상태 태그:
-    [VERIFIED]  : 실측으로 확정
-    [PARTIAL]   : 추정값 중 일부만 관찰됨 (드문 값 미관찰)
-    [SUSPECT]   : 추정 외 값이 실측에 발견됨 — 추가 조사 필요
-    [INFERRED]  : 실측 분포로부터 해석한 추론값
+주석 원문:
+    0:Index  1:Stepmode(1:CC-CV, 2:CC, 3:CV, 4:OCV)
+    2:StepType(1:충전, 2:방전, 3:휴지, 4:OCV, 5:Impedance, 6:End, 8:loop)
+    3:ChgDchg  4:State  5:Loop(Loop:1)
+    6:Code(66:충전, 65:방전, 64:휴지, 64:loop)
+    7:StepNo  8:Voltage(uV)  9:Current(uA)
+    10:ChgCap(uAh)  11:DchgCap(uAh)  12:ChgPower(uW)  13:DchgPower(uW)
+    14:ChgWattHour(Wh)  15:DchgWattHour(Wh)
+    17:StepTime(/100s)  18:TotTime(day)  19:TotTime(/100s)  20:imp
+    21:Temp1  22:Temp2  23:Temp3  24:Temperature(°C)
+    27:TotalCycle  28:CurrCycle  29:AvgVoltage(mV)  30:AvgCurrent(A)
+    33:date  34:time
+    44:누적step(Loop, 완료 제외)  45:voltage max
 
 핵심 활용:
-    col[27] TotalCycle      [VERIFIED] GOTO 재순환 포함 누적 TC (100% 단조증가)
-    col[28] CurrentCycle    [VERIFIED] Loop 내 반복 번호 (98.7% 리셋)
-    col[7]  Step            .sch 원본 step_num (+ 장비 오프셋)
-    col[6]  EndState        [SUSPECT] 67, 152 추정 외 값 발견
-    col[2]  StepType        [SUSPECT] 6 희소 값 발견 (1회)
-    col[33]/[34]            Date/Time 레코드 타임스탬프
+    col[1] Stepmode: CC-CV 구분 (1=CC-CV 통합 스텝, 2=CC, 3=CV, 4=OCV)
+                     → CV 제외 필터링 기준
+    col[2] StepType: origin OCV/CCV 구분: 3=OCV, 1|2=CCV
+    col[6] Code: 스텝 종료 원인 (66=CV종료, 65=CC종료, 64=REST종료)
+    col[27] TotalCycle: GOTO 재순환 포함 누적 TC (단조증가 100%)
+    col[28] CurrentCycle: Loop 내 반복 번호 (그룹 전환 시 1로 리셋)
+
+이전 스키마의 잘못된 부분 (교정됨):
+    col[1] "Default2" → Stepmode (origin 정의)
+    col[5] "CCCV 0=CC/1=CV" → Loop 플래그 (origin 정의, 사용자 추정도 오류)
+    col[12]/[13] mW → uW
+    col[24] "Temp4" → Temperature(°C) 단일 기본 온도
 """
 from __future__ import annotations
 
@@ -32,81 +47,98 @@ class ColumnSpec:
 
 
 SAVE_END_COLUMNS: list[ColumnSpec] = [
-    ColumnSpec(0,  "Index",          "",       "[VERIFIED] 레코드 번호 (RecIdx)"),
-    ColumnSpec(1,  "Default2",       "",       "[SUSPECT] 대부분 2, 드물게 1 (채널 모드 추정)"),
-    ColumnSpec(2,  "StepType",       "",       "[SUSPECT] 1=CHG 2=DCHG 3=REST 4=OCV 5=IMP 8=LOOP  "
-                                               "+ 6(희소 1회 관찰, 미지)"),
-    ColumnSpec(3,  "ChgDchg",        "",       "[VERIFIED] 1=CV구간/2=CC구간/255=rest  "
-                                               "ST=1+CCCV=1 → 1, ST=1+CCCV=0 or ST=2 → 2, ST=3/8 → 255"),
-    ColumnSpec(4,  "CurrentApp",     "",       "[PARTIAL] 추정 1=비인가직전 2=인가, 실측은 1만 관찰"),
-    ColumnSpec(5,  "CCCV",           "",       "[VERIFIED] 0=CC 1=CV"),
-    ColumnSpec(6,  "EndState",       "",       "[SUSPECT] 64=REST 65=CC 66=CV 69=PAT종료 78=용량컷  "
-                                               "+ 67, 152 추정 외 값 관찰"),
-    ColumnSpec(7,  "Step",           "",       "count step. Repeat:카운트유지, Goto:특정 step으로 점프"),
-    ColumnSpec(8,  "Voltage",        "uV",     "[VERIFIED] 2.75M~4.57M uV 범위 = 2750~4570 mV"),
-    ColumnSpec(9,  "Current",        "uA",     "[VERIFIED] -4.98M~9.89M uA = -4980~9890 mA"),
-    ColumnSpec(10, "ChgCapacity",    "uAh",    "[VERIFIED] 0~8.88M uAh; step별 충전 합산 필요"),
-    ColumnSpec(11, "DchgCapacity",   "uAh",    "[VERIFIED] 0~5.40M uAh"),
-    ColumnSpec(12, "ChgPower",       "mW",     "[INFERRED]"),
-    ColumnSpec(13, "DchgPower",      "mW",     "[INFERRED]"),
-    ColumnSpec(14, "ChgWattHour",    "Wh",     "[INFERRED]"),
-    ColumnSpec(15, "DchgWattHour",   "Wh",     "[INFERRED]"),
-    ColumnSpec(16, "RepeatPattern",  "",       "[PARTIAL] 주로 0, 큰 값(36, 100) 드물게 — "
-                                               "StepType=8/9 만날 때 카운터 추정"),
-    ColumnSpec(17, "StepTime",       "/100s",  "[VERIFIED] 0~8.34M/100s = 0~83420s (~23h)"),
-    ColumnSpec(18, "TotTimeDay",     "day",    "[INFERRED] 누적 시간(day 단위)"),
-    ColumnSpec(19, "TotTime",        "/100s",  "[VERIFIED] 누적 시간(/100s)"),
-    ColumnSpec(20, "Impedance",      "",       "[INFERRED]"),
-    ColumnSpec(21, "Temperature1",   "",       "[INFERRED] 일반적으로 1/1000°C (m°C)"),
-    ColumnSpec(22, "Temperature2",   "",       "[INFERRED]"),
-    ColumnSpec(23, "Temperature3",   "",       "[INFERRED]"),
-    ColumnSpec(24, "Temperature4",   "",       "[INFERRED]"),
-    ColumnSpec(25, "Unknown25",      "",       "[VERIFIED] 0 or 2, 의미 미확인"),
-    ColumnSpec(26, "RepeatCount",    "",       "[PARTIAL] 0~5 범위; Loop 내 카운터 추정"),
-    ColumnSpec(27, "TotalCycle",     "",       "[VERIFIED] GOTO 재순환 포함 누적 TC, 단조증가 100%"),
-    ColumnSpec(28, "CurrentCycle",   "",       "[VERIFIED] Loop 그룹 내 반복 번호, 그룹 전환 시 1로 리셋 98.7%"),
-    ColumnSpec(29, "AvgVoltage",     "uV",     "[VERIFIED]"),
-    ColumnSpec(30, "AvgCurrent",     "uA",     "[SUSPECT] max=2.14e9 오버플로우 값 존재"),
-    ColumnSpec(31, "Reserved31",     "",       "[INFERRED]"),
-    ColumnSpec(32, "CVSection",      "",       "[INFERRED] CV 구간"),
-    ColumnSpec(33, "Date",           "YYMMDD", "[INFERRED] 레코드 타임스탬프 (.cyc FID43과 동일)"),
-    ColumnSpec(34, "Time",           "HHMMssss/100s", "[INFERRED] (.cyc FID44과 동일)"),
-    ColumnSpec(35, "Reserved35",     "",       ""),
-    ColumnSpec(36, "Reserved36",     "",       ""),
-    ColumnSpec(37, "Reserved37",     "",       ""),
-    ColumnSpec(38, "PerStep",        "",       "[INFERRED] Step별 ?"),
-    ColumnSpec(39, "CCCharge",       "",       "[INFERRED] CC 충전 구간"),
-    ColumnSpec(40, "CVSection40",    "",       "[INFERRED] CV 구간"),
-    ColumnSpec(41, "Discharge",      "",       "[INFERRED] 방전"),
-    ColumnSpec(42, "Reserved42",     "",       ""),
-    ColumnSpec(43, "SectionAvgV",    "",       "[INFERRED] 구간별 평균 전압"),
-    ColumnSpec(44, "AccumStep",      "",       "[INFERRED] 누적 step"),
-    ColumnSpec(45, "VoltageMax",     "uV",     "[VERIFIED]"),
-    ColumnSpec(46, "VoltageMin",     "uV",     "[VERIFIED]"),
+    # 출처: origin `BAK/BatteryDataTool_origin.py` L1583-1590 공식 주석
+    ColumnSpec(0,  "Index",          "",       "[ORIGIN] 레코드 번호 (RecIdx)"),
+    ColumnSpec(1,  "Stepmode",       "",       "[ORIGIN] 1=CC-CV, 2=CC, 3=CV, 4=OCV "
+                                               "(스텝 전체 모드. CV 제외 필터링 기준)"),
+    ColumnSpec(2,  "StepType",       "",       "[ORIGIN] 1=충전, 2=방전, 3=휴지, 4=OCV, "
+                                               "5=Impedance, 6=End, 8=Loop"),
+    ColumnSpec(3,  "ChgDchg",        "",       "[ORIGIN] ChgDchg 플래그"),
+    ColumnSpec(4,  "State",          "",       "[ORIGIN] 장비 내부 상태"),
+    ColumnSpec(5,  "Loop",           "",       "[ORIGIN] Loop 플래그 (Loop:1)"),
+    ColumnSpec(6,  "Code",           "",       "[ORIGIN] 66=충전종료, 65=방전종료, 64=휴지/Loop종료 "
+                                               "(+ 69=PAT_END, 78=용량컷, 67/152 실측관찰)"),
+    ColumnSpec(7,  "StepNo",         "",       "[ORIGIN] 스텝 번호 (GOTO 시 리셋)"),
+    ColumnSpec(8,  "Voltage",        "uV",     "[ORIGIN] Voltage (uV)"),
+    ColumnSpec(9,  "Current",        "uA",     "[ORIGIN] Current (uA)"),
+    ColumnSpec(10, "ChgCapacity",    "uAh",    "[ORIGIN] Chg Capacity (uAh)"),
+    ColumnSpec(11, "DchgCapacity",   "uAh",    "[ORIGIN] Dchg Capacity (uAh)"),
+    ColumnSpec(12, "ChgPower",       "uW",     "[ORIGIN] Chg Power (uW)  ※ mW 아님"),
+    ColumnSpec(13, "DchgPower",      "uW",     "[ORIGIN] Dchg Power (uW)  ※ mW 아님"),
+    ColumnSpec(14, "ChgWattHour",    "Wh",     "[ORIGIN] Chg WattHour (Wh)"),
+    ColumnSpec(15, "DchgWattHour",   "Wh",     "[ORIGIN] Dchg WattHour (Wh)"),
+    ColumnSpec(16, "Reserved16",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(17, "StepTime",       "/100s",  "[ORIGIN] StepTime (/100s)"),
+    ColumnSpec(18, "TotTimeDay",     "day",    "[ORIGIN] TotTime (day)"),
+    ColumnSpec(19, "TotTime",        "/100s",  "[ORIGIN] TotTime (/100s)"),
+    ColumnSpec(20, "Impedance",      "",       "[ORIGIN] imp"),
+    ColumnSpec(21, "Temperature1",   "",       "[ORIGIN] Temp1"),
+    ColumnSpec(22, "Temperature2",   "",       "[ORIGIN] Temp2"),
+    ColumnSpec(23, "Temperature3",   "",       "[ORIGIN] Temp3"),
+    ColumnSpec(24, "Temperature",    "°C",     "[ORIGIN] Temperature (°C)  ※ 기본 온도"),
+    ColumnSpec(25, "Reserved25",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(26, "Reserved26",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(27, "TotalCycle",     "",       "[ORIGIN] Total Cycle (GOTO 재순환 포함)"),
+    ColumnSpec(28, "CurrentCycle",   "",       "[ORIGIN] Current Cycle (Loop 내 반복)"),
+    ColumnSpec(29, "AvgVoltage",     "mV",     "[ORIGIN] Average voltage (mV)  ※ uV 아님"),
+    ColumnSpec(30, "AvgCurrent",     "A",      "[ORIGIN] Average current (A)  ※ uA 아님"),
+    ColumnSpec(31, "Reserved31",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(32, "Reserved32",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(33, "Date",           "YYMMDD", "[ORIGIN] date"),
+    ColumnSpec(34, "Time",           "HHMMssss/100s", "[ORIGIN] time"),
+    ColumnSpec(35, "Reserved35",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(36, "Reserved36",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(37, "Reserved37",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(38, "Reserved38",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(39, "Reserved39",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(40, "Reserved40",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(41, "Reserved41",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(42, "Reserved42",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(43, "Reserved43",     "",       "[ORIGIN] 미정의"),
+    ColumnSpec(44, "AccumStep",      "",       "[ORIGIN] 누적 step (Loop, 완료 제외)"),
+    ColumnSpec(45, "VoltageMax",     "uV",     "[ORIGIN] voltage max"),
+    ColumnSpec(46, "Reserved46",     "",       "[ORIGIN] 미정의"),
 ]
 
-# 인덱스 상수 (코드에서 매직 넘버 대신 사용)
+# 인덱스 상수 (origin 주석 기반 공식 정의, 매직 넘버 금지)
 IDX_INDEX = 0
-IDX_STEP_TYPE = 2
+IDX_STEPMODE = 1                # ★ 1=CC-CV, 2=CC, 3=CV, 4=OCV
+IDX_STEP_TYPE = 2               # 1=CHG 2=DCHG 3=REST 4=OCV 5=IMP 6=END 8=LOOP
 IDX_CHG_DCHG = 3
-IDX_CCCV = 5
-IDX_END_STATE = 6
-IDX_STEP = 7
+IDX_STATE = 4
+IDX_LOOP_FLAG = 5               # ★ (구 IDX_CCCV, 실은 Loop flag)
+IDX_CODE = 6                    # ★ 스텝 종료 코드 (구 IDX_END_STATE)
+IDX_END_STATE = 6               # 하위 호환 별칭 (Code 컬럼)
+IDX_STEP_NO = 7
+IDX_STEP = 7                    # 하위 호환 별칭
 IDX_VOLTAGE = 8
 IDX_CURRENT = 9
 IDX_CHG_CAP = 10
 IDX_DCHG_CAP = 11
-IDX_REPEAT_PATTERN = 16
+IDX_CHG_POWER = 12              # uW
+IDX_DCHG_POWER = 13             # uW
+IDX_CHG_WH = 14
+IDX_DCHG_WH = 15
 IDX_STEP_TIME = 17
+IDX_TOT_TIME_DAY = 18
 IDX_TOT_TIME = 19
+IDX_IMPEDANCE = 20
 IDX_TEMP1 = 21
-IDX_REPEAT_COUNT = 26
+IDX_TEMP2 = 22
+IDX_TEMP3 = 23
+IDX_TEMPERATURE = 24            # °C, 기본 온도
 IDX_TOTAL_CYCLE = 27            # ★ TC single source of truth
 IDX_CURRENT_CYCLE = 28          # ★ Loop 내 반복 번호
-IDX_AVG_VOLTAGE = 29
+IDX_AVG_VOLTAGE = 29            # mV
+IDX_AVG_CURRENT = 30            # A
 IDX_DATE = 33
 IDX_TIME = 34
+IDX_ACCUM_STEP = 44
 IDX_VOLTAGE_MAX = 45
+
+# --- 하위 호환 (deprecated, 향후 제거) ---
+IDX_REPEAT_PATTERN = 16
+IDX_REPEAT_COUNT = 26
 IDX_VOLTAGE_MIN = 46
 
 # StepType 코드
@@ -126,27 +158,54 @@ STEP_TYPE_NAMES = {
     8: "LOOP",
 }
 
-# ChgDchg 코드
+# Stepmode 코드 (col[1]) — CV 필터링 기준
+STEPMODE_CC_CV = 1              # CC-CV 통합 스텝 (CC 구간 + CV 구간)
+STEPMODE_CC = 2                 # CC만
+STEPMODE_CV = 3                 # CV만 (드묾)
+STEPMODE_OCV = 4                # OCV 측정
+
+STEPMODE_NAMES = {
+    1: "CC-CV",
+    2: "CC",
+    3: "CV",
+    4: "OCV",
+}
+
+def stepmode_has_cv(stepmode: int) -> bool:
+    """해당 Stepmode가 CV 구간을 포함하는가 (CV 제외 필터 대상)."""
+    return stepmode in (STEPMODE_CC_CV, STEPMODE_CV)
+
+
+# ChgDchg 코드 (col[3], 미검증)
 CHG_DCHG_CV = 1
 CHG_DCHG_CC = 2
 CHG_DCHG_REST = 255
 
-# EndState 코드
-END_STATE_PAT_START = 0
-END_STATE_REST_DONE = 64
-END_STATE_CC_DONE = 65
-END_STATE_CV_DONE = 66
-END_STATE_PAT_END = 69
-END_STATE_CAPACITY_CUT = 78
+# Code (col[6]) — 스텝 종료 원인
+CODE_PAT_START = 0
+CODE_REST_DONE = 64
+CODE_DISCHARGE_DONE = 65
+CODE_CHARGE_DONE = 66
+CODE_PAT_END = 69
+CODE_CAPACITY_CUT = 78
 
-END_STATE_NAMES = {
+# 하위 호환 별칭
+END_STATE_PAT_START = CODE_PAT_START
+END_STATE_REST_DONE = CODE_REST_DONE
+END_STATE_CC_DONE = CODE_DISCHARGE_DONE    # 실은 방전종료 (origin 주석 기반)
+END_STATE_CV_DONE = CODE_CHARGE_DONE       # 실은 충전종료
+END_STATE_PAT_END = CODE_PAT_END
+END_STATE_CAPACITY_CUT = CODE_CAPACITY_CUT
+
+CODE_NAMES = {
     0: "PAT_START",
-    64: "REST_DONE",
-    65: "CC_DONE",
-    66: "CV_DONE",
+    64: "REST_DONE / LOOP_DONE",
+    65: "DISCHARGE_DONE",
+    66: "CHARGE_DONE",
     69: "PAT_END",
     78: "CAPACITY_CUT",
 }
+END_STATE_NAMES = CODE_NAMES    # 하위 호환 별칭
 
 
 # ---------- 편의 함수 ----------
