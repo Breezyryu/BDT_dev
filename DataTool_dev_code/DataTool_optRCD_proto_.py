@@ -9206,6 +9206,33 @@ def _try_cyc_profile(raw_file_path: str, inicycle: int,
         _perf_logger.info(f'  [.cyc 프로파일] {os.path.basename(raw_file_path)}: '
                           f'TC {inicycle}~{endcycle}, '
                           f'{len(result)}행, {elapsed:.1f}ms')
+
+        # 기록 시각: FID43(Date YYMMDD) + FID44(HHMMSSmmm) 직접 파싱
+        try:
+            from datetime import datetime as _dt
+            _hdr = _parse_cyc_header(cyc_path)
+            _fp = _build_fid_pos(_hdr['fids'])
+            if 43 in _fp and 44 in _fp:
+                _first = _read_cyc_records(cyc_path, start_index - 1, 1)
+                _last = _read_cyc_records(cyc_path, end_index - 1, 1)
+
+                def _parse_cyc_dt(rec):
+                    d = int(rec[0, _fp[43]])     # YYMMDD
+                    t = int(rec[0, _fp[44]])     # HHMMSSmmm
+                    return _dt(2000 + d // 10000, (d // 100) % 100, d % 100,
+                               t // 10000000, (t // 100000) % 100,
+                               (t // 1000) % 100, (t % 1000) * 1000)
+
+                _start_dt = _parse_cyc_dt(_first)
+                _end_dt = _parse_cyc_dt(_last)
+                _dur_h = (_end_dt - _start_dt).total_seconds() / 3600
+                _perf_logger.info(
+                    f'    기록시각: {_start_dt.strftime("%Y-%m-%d %H:%M:%S")} '
+                    f'~ {_end_dt.strftime("%Y-%m-%d %H:%M:%S")} '
+                    f'({_dur_h:.2f}h)')
+        except Exception as _te:
+            _perf_logger.debug(f'    기록시각 계산 실패: {_te}')
+
         return result
 
     except Exception as e:
