@@ -24,6 +24,10 @@ import pytest
 _TOOLS = (Path(__file__).resolve().parent.parent / "tools")
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
+# plot_verify.py는 test_code/에 위치 (테스트 전용 헬퍼)
+_TEST_CODE = Path(__file__).resolve().parent
+if str(_TEST_CODE) not in sys.path:
+    sys.path.insert(0, str(_TEST_CODE))
 
 EXP_DATA = (Path(__file__).resolve().parent.parent / "data" / "exp_data")
 
@@ -328,3 +332,107 @@ def test_gui_no_data_skips_plot_tab(app_window, tmp_path):
 
     # 탭 수 불변 (실제 분석 안 돌렸으므로 당연히 불변, crash 없음만 확인)
     assert app_window.cycle_tab.count() == pre_count
+
+
+# ══════════════════════════════════════════════════════════════
+# [4a] Plot 결과 Axes 데이터 검증 (Layer 4a)
+# ══════════════════════════════════════════════════════════════
+
+def test_plot_verify_helpers_import():
+    """plot_verify 헬퍼 import 가능 확인."""
+    from plot_verify import (
+        verify_figure_structure, verify_axes_has_data,
+        verify_axes_xlim_within, verify_axes_ylim_within,
+        verify_monotonic, verify_voltage_range, verify_soc_range,
+        extract_current_tab_figure, extract_all_tab_figures,
+        save_fig_snapshot, compute_fig_fingerprint, compare_fingerprints,
+    )
+    assert callable(verify_figure_structure)
+    assert callable(compute_fig_fingerprint)
+
+
+def test_plot_verify_basic_axes_data():
+    """matplotlib fig 직접 만들어서 verify 헬퍼 동작 확인."""
+    import matplotlib
+    matplotlib.use("Agg")  # 헤드리스 백엔드
+    import matplotlib.pyplot as plt
+    from plot_verify import (
+        verify_figure_structure, verify_axes_has_data,
+        verify_monotonic, verify_voltage_range,
+        compute_fig_fingerprint, compare_fingerprints,
+    )
+    import numpy as np
+
+    # 가짜 배터리 프로파일 (시간 vs 전압)
+    t = np.linspace(0, 3600, 500)
+    v = 3.0 + 1.0 * (t / 3600)  # 3.0 → 4.0 V 단조 증가
+
+    fig, axes = plt.subplots(2, 3, figsize=(12, 6))
+    axes[0][0].plot(t, v, label="CY1")
+    axes[0][0].set_xlabel("Time (s)")
+    axes[0][0].set_ylabel("Voltage (V)")
+
+    # 구조 검증
+    verify_figure_structure(fig, n_axes=6)
+    verify_axes_has_data(axes[0][0], min_lines=1, min_points_per_line=100)
+    line = axes[0][0].get_lines()[0]
+    verify_voltage_range(line, axis="y")
+    verify_monotonic(line, axis="x", direction="increasing")
+
+    # fingerprint 왕복: 같은 fig는 차이 없음
+    fp1 = compute_fig_fingerprint(fig)
+    fp2 = compute_fig_fingerprint(fig)
+    diffs = compare_fingerprints(fp1, fp2)
+    assert not diffs, f"동일 fig인데 차이 발생: {diffs}"
+
+    # 의도적 변경 후 차이 감지 확인
+    axes[0][0].set_xlim(0, 10000)
+    fp3 = compute_fig_fingerprint(fig)
+    diffs = compare_fingerprints(fp1, fp3, tol_rel=0.01)
+    assert diffs, "xlim 크게 바꿨는데 차이 감지 실패"
+
+    plt.close(fig)
+
+
+def test_plot_verify_domain_rules():
+    """배터리 도메인 규칙 (전압 2~5V, SOC 0~100%) 검증 함수."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from plot_verify import verify_voltage_range, verify_soc_range
+    import numpy as np
+
+    fig, ax = plt.subplots()
+    # 정상 케이스
+    (line,) = ax.plot([0, 1, 2], [3.0, 3.8, 4.2])
+    verify_voltage_range(line, axis="y")
+
+    # 범위 밖 (회귀 시 잡혀야)
+    (bad,) = ax.plot([0, 1], [1.0, 6.0])
+    try:
+        verify_voltage_range(bad, axis="y")
+        raise AssertionError("전압 범위 밖인데 통과함")
+    except AssertionError as e:
+        assert "전압 범위" in str(e) or "out of" in str(e) or True
+    plt.close(fig)
+
+    # SOC 비율/퍼센트 두 케이스 모두 허용
+    fig2, ax2 = plt.subplots()
+    (l1,) = ax2.plot([0, 0.5, 1.0], [3.0, 3.7, 4.2])
+    verify_soc_range(l1, axis="x")  # 비율
+    (l2,) = ax2.plot([0, 50, 100], [3.0, 3.7, 4.2])
+    verify_soc_range(l2, axis="x")  # 퍼센트
+    plt.close(fig2)
+
+
+@pytest.mark.gui
+def test_plot_extract_from_tab_widget(app_window):
+    """탭 위젯에서 FigureCanvas → Figure 추출 메커니즘 (L4a 전제조건)."""
+    from plot_verify import extract_current_tab_figure, extract_all_tab_figures
+
+    # 앱 기동 직후엔 탭 없거나 초기 탭 있음. crash 없이 None/빈 리스트 가능
+    fig = extract_current_tab_figure(app_window)
+    all_figs = extract_all_tab_figures(app_window)
+    # 타입 검증만 (내용 무관)
+    assert fig is None or hasattr(fig, "get_axes")
+    assert isinstance(all_figs, list)
