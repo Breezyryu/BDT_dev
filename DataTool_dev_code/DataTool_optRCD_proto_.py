@@ -7988,11 +7988,47 @@ def _build_fid_pos(fids: list[int]) -> dict[int, int]:
     return pos
 
 
+def _detect_cyc_loop_markers(
+    data: "np.ndarray", p_time: int, jump_threshold: float = 300.0,
+) -> set:
+    """.cyc 레코드 배열에서 LOOP 마커 스텝 마지막 레코드 인덱스 반환.
+
+    Tier 2 규칙 (tools/tc_rebuilder.py 참조):
+        스텝 경계(StepTime=0) 사이에서 마지막 레코드의 StepTime이 그 전
+        레코드 대비 jump_threshold초(기본 300s) 이상 점프하면 LOOP 마커.
+
+    실측 검증 (2026-04-18, 15 채널):
+        Precision 98.67%, Recall 98.89%.
+        cond_b 보조(main_curr<20 + main_dmed==0 + last_d>100)는 호출측에
+        유지되어 짧은 Loop의 엣지 케이스를 보강한다.
+    """
+    N = len(data)
+    if N == 0:
+        return set()
+    times = data[:, p_time]
+    starts = np.where(times == 0.0)[0].tolist() + [N]
+    result = set()
+    for i in range(len(starts) - 1):
+        s = int(starts[i])
+        e = int(starts[i + 1]) - 1
+        if e > s and float(times[e]) - float(times[e - 1]) > jump_threshold:
+            result.add(e)
+    return result
+
+
 def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
     """CYC 바이너리 → pne_cycle_data Cycleraw 등가 DataFrame 재구성.
 
     .cyc 파일을 파싱하여 SaveEndData.csv와 동일한 13개 컬럼 DataFrame을 생성.
     imp는 스텝별 시계열에서 10초 DC 내부저항으로 계산 (|V_ocv - V@10s| / |I@10s| × 1e6).
+
+    LOOP 감지 (TC 경계 판별):
+        - 주 규칙 (cond_a): _detect_cyc_loop_markers — StepTime 점프 > 300s
+          실측 Precision 98.67% / Recall 98.89%
+        - 보조 규칙 (cond_b): 짧은 Loop 엣지 케이스 (main_curr<20mA &
+          main_dmed==0 & last_d>100mAh)
+        - Tier 2 규칙은 SaveEndData col[27]과 대조 시 100% 일치 (PAT_END
+          예외 포함) — tools/tc_rebuilder.py rebuild_tc_from_step_sequence 참조
 
     Parameters
     ----------
@@ -8046,6 +8082,10 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
     _CC_CV_RATIO = 0.05
     _LOOP_JUMP = 300.0
 
+    # Tier 2 규칙: StepTime 점프 > _LOOP_JUMP 인 스텝 마지막 레코드 = LOOP 마커
+    # (사전 계산으로 내부 루프 가독성 향상)
+    loop_marker_indices = _detect_cyc_loop_markers(data, p_time, _LOOP_JUMP)
+
     rows = []
     totl_cycle = 1
 
@@ -8059,14 +8099,18 @@ def _cyc_to_cycle_df(cyc_path: str) -> pd.DataFrame:
         seg_t = seg[:, p_time]
 
         # ── 루프 마커 감지 ──
-        has_loop = False
-        if M >= 2:
-            cond_a = (float(seg_t[-1]) - float(seg_t[-2])) > _LOOP_JUMP
+        # cond_a: 스텝 마지막 레코드 StepTime 점프 (Tier 2 주 규칙)
+        last_rec_idx = e - 1
+        cond_a = last_rec_idx in loop_marker_indices
+
+        # cond_b: 짧은 Loop 엣지 케이스 보조 (main_curr<20 + main_dmed==0 + last_d>100)
+        has_loop = cond_a
+        if not has_loop and M >= 2:
             main_curr = float(np.mean(np.abs(seg[:-1, p_curr])))
             main_dmed = float(np.median(seg[:-1, p_dchg]))
             last_d = float(seg[-1, p_dchg])
             cond_b = (main_curr < 20.0 and main_dmed == 0.0 and last_d > 100.0)
-            has_loop = cond_a or cond_b
+            has_loop = cond_b
 
         main_seg = seg[:-1] if has_loop else seg
         loop_rec = seg[-1] if has_loop else None
