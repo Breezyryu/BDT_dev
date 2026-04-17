@@ -36,6 +36,9 @@ from save_end_schema import (  # noqa: E402
     IDX_END_STATE,
     STEP_TYPE_LOOP,
 )
+from cyc_reader import (  # noqa: E402
+    extract_step_sequence, parse_cyc_header, read_cyc_records,
+)
 from tc_plan import TCGroup, TCPlan, build_tc_plan  # noqa: E402
 
 
@@ -215,11 +218,58 @@ def find_save_end_csv(channel_dir: str) -> Optional[str]:
     return max(cands, key=lambda p: os.path.getsize(p))
 
 
+def find_cyc_file(channel_dir: str) -> Optional[str]:
+    """채널 폴더 내 .cyc 파일 검색."""
+    if not os.path.isdir(channel_dir):
+        return None
+    cands = [
+        os.path.join(channel_dir, n)
+        for n in os.listdir(channel_dir)
+        if n.lower().endswith(".cyc")
+    ]
+    if not cands:
+        return None
+    return max(cands, key=lambda p: os.path.getsize(p))
+
+
+def load_from_cyc(cyc_path: str, initial_tc: int = 1) -> Optional[MeasuredTC]:
+    """Tier 2: .cyc 단독 로드.
+
+    cyc_reader.extract_step_sequence로 (RecIdx, StepType) 추출 후
+    StepType=8 경계마다 TC++ 규칙으로 TC 부여.
+    """
+    hdr = parse_cyc_header(cyc_path)
+    if hdr is None:
+        return None
+    records = read_cyc_records(hdr)
+    if len(records) == 0:
+        return None
+
+    seq = extract_step_sequence(records, hdr)
+    if not seq:
+        return None
+
+    rec_indices, step_types = zip(*seq)
+    tcs = rebuild_tc_from_step_sequence(
+        list(rec_indices), list(step_types), initial_tc=initial_tc
+    )
+    # StepNo/CurrentCycle/EndState는 .cyc에서 직접 안나옴 → 0 채움
+    return MeasuredTC(
+        source="cyc_inferred",
+        rec_indices=list(rec_indices),
+        step_nos=[0] * len(rec_indices),
+        step_types=list(step_types),
+        tcs=tcs,
+        current_cycles=[0] * len(rec_indices),
+        end_states=[0] * len(rec_indices),
+    )
+
+
 def build_channel_tc(channel_dir: str) -> ChannelTC:
     """채널의 TC 정보를 3-Tier 전략으로 구성."""
     plan = build_tc_plan(channel_dir)
 
-    # Tier 1: SaveEndData
+    # Tier 1: SaveEndData (최선)
     se_path = find_save_end_csv(channel_dir)
     if se_path is not None:
         m = load_from_save_end(se_path)
@@ -233,11 +283,21 @@ def build_channel_tc(channel_dir: str) -> ChannelTC:
                 tier="save_end",
             )
 
-    # Tier 2: .cyc only (향후 cyc_reader 통합 시)
-    # 현재는 placeholder — P3에서 구현
-    # .cyc 파싱 후 (step_nos, step_types) 추출 필요.
+    # Tier 2: .cyc 단독 (자정 전 데이터)
+    cyc_path = find_cyc_file(channel_dir)
+    if cyc_path is not None:
+        m = load_from_cyc(cyc_path)
+        if m is not None:
+            tc_cat = label_tcs_with_category(plan, m) if plan is not None else {}
+            return ChannelTC(
+                channel_dir=channel_dir,
+                measured=m,
+                plan=plan,
+                tc_to_category=tc_cat,
+                tier="cyc_inferred",
+            )
 
-    # Tier 3: plan only
+    # Tier 3: plan only (.cyc도 없는 드문 케이스)
     return ChannelTC(
         channel_dir=channel_dir,
         measured=None,
