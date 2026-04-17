@@ -949,11 +949,16 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                             _ch_name = os.path.basename(raw_file_path)
                             _cyc_tcs = sorted(
                                 set(int(x) for x in supplement[27]))
+                            # 보충 구간 프로파일 행수 및 기록시각 계산
+                            _prof_extra = _cyc_supplement_profile_info(
+                                cyc_path, cyc_df, supplement)
                             _perf_logger.info(
                                 f'  [.cyc 보충] {_ch_name}: '
                                 f'CSV RecIdx={len(csv_rec_indices)}개, '
                                 f'.cyc TC {_cyc_tcs[0]}~{_cyc_tcs[-1]} '
-                                f'({len(supplement)}행) 보충')
+                                f'({len(supplement)}행{_prof_extra["steps"]}'
+                                f'{_prof_extra["profile"]}) 보충'
+                                f'{_prof_extra["time"]}')
                             save_end_data = pd.concat(
                                 [save_end_data, supplement],
                                 ignore_index=True)
@@ -967,9 +972,13 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                             cyc_df, 48)
                         if len(_cyc_mapped) > 0:
                             _ch_name = os.path.basename(raw_file_path)
+                            _prof_extra = _cyc_supplement_profile_info(
+                                cyc_path, cyc_df, _cyc_mapped)
                             _perf_logger.info(
                                 f'  [.cyc 단독] {_ch_name}: '
-                                f'{len(_cyc_mapped)}행 재구성')
+                                f'{len(_cyc_mapped)}행'
+                                f'{_prof_extra["profile"]} 재구성'
+                                f'{_prof_extra["time"]}')
                             save_end_data = _cyc_mapped
             except Exception as e:
                 _perf_logger.warning(
@@ -7986,6 +7995,88 @@ def _build_fid_pos(fids: list[int]) -> dict[int, int]:
         if fid not in pos:
             pos[fid] = i
     return pos
+
+
+def _cyc_supplement_profile_info(cyc_path: str, cyc_df: pd.DataFrame,
+                                 supplement: pd.DataFrame) -> dict:
+    """보충 구간의 프로파일 행수 및 기록시각(FID 43/44) 추정.
+
+    Parameters
+    ----------
+    cyc_path : str
+        .cyc 파일 경로.
+    cyc_df : pd.DataFrame
+        _cyc_to_cycle_df 결과 (RecIndex + TotlCycle 등).
+    supplement : pd.DataFrame
+        SaveEndData 포맷으로 변환된 보충 메타 행들 (col[0]=RecIdx,
+        col[27]=TotlCycle).
+
+    Returns
+    -------
+    dict
+        {"steps": ", 프로파일 NNN행" | "", "profile": ...(구버전 호환 빈값),
+         "time": " [YYYY-MM-DD HH:MM:SS ~ ... (N.NNh)]" | ""}
+        실패 시 각 필드 빈 문자열.
+    """
+    empty = {"steps": "", "profile": "", "time": ""}
+    try:
+        if supplement is None or supplement.empty:
+            return empty
+
+        # 보충된 스텝들의 RecIndex 범위 (= 프로파일 시계열 레코드 범위)
+        rec_indices = supplement[0].astype(int).tolist()
+        last_recidx = max(rec_indices)
+        # 첫 보충 스텝의 시작 RecIndex를 _build_step_meta_from_cyc_df로 역산
+        try:
+            step_meta = _build_step_meta_from_cyc_df(cyc_df)
+            cyc_rec_to_pos = {int(r): i for i, r in enumerate(
+                cyc_df['RecIndex'].tolist())}
+            # supplement의 가장 이른 RecIndex에 해당하는 cyc_df 위치
+            first_recidx_in_supp = min(rec_indices)
+            pos = cyc_rec_to_pos.get(first_recidx_in_supp)
+            if pos is not None:
+                first_recidx = int(step_meta[pos, 0])   # 해당 스텝의 start_idx
+            else:
+                first_recidx = first_recidx_in_supp
+        except Exception:
+            first_recidx = min(rec_indices)
+
+        profile_rows = max(0, last_recidx - first_recidx + 1)
+        steps_str = ""  # 별도 항목 필요 시 추가 가능
+        profile_str = (f', 프로파일 {profile_rows}행'
+                       if profile_rows > 0 else '')
+
+        # 기록시각: FID 43(YYMMDD) + FID 44(HHMMSSmmm)
+        time_str = ""
+        try:
+            hdr = _parse_cyc_header(cyc_path)
+            fp = _build_fid_pos(hdr['fids'])
+            if 43 in fp and 44 in fp:
+                first_rec = _read_cyc_records(cyc_path, first_recidx - 1, 1)
+                last_rec = _read_cyc_records(cyc_path, last_recidx - 1, 1)
+                if len(first_rec) and len(last_rec):
+                    from datetime import datetime as _dt
+
+                    def _parse_dt(rec):
+                        d = int(rec[0, fp[43]])
+                        t = int(rec[0, fp[44]])
+                        return _dt(
+                            2000 + d // 10000, (d // 100) % 100, d % 100,
+                            t // 10000000, (t // 100000) % 100,
+                            (t // 1000) % 100, (t % 1000) * 1000)
+
+                    start_dt = _parse_dt(first_rec)
+                    end_dt = _parse_dt(last_rec)
+                    dur_h = (end_dt - start_dt).total_seconds() / 3600
+                    time_str = (f"  [{start_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+                                f" ~ {end_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+                                f" ({dur_h:.2f}h)]")
+        except Exception:
+            time_str = ""
+
+        return {"steps": steps_str, "profile": profile_str, "time": time_str}
+    except Exception:
+        return empty
 
 
 def _detect_cyc_loop_markers(
@@ -21895,10 +21986,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         meta_hit = None
         _name_cap = name_capacity(path) if "mAh" in path else 0
         if _channel_meta_store and _dir_exists:
+            # 사이클바와 동일한 기준: max_tc가 가장 큰 채널을 대표로 선택
+            # (첫 채널만 보면 복수 채널 간 TC 차이 발생 시 col4 값과 사이클바가 불일치)
+            best_max = -1
             for sf in (os.path.join(path, d) for d in _ch_subfolders):
-                meta_hit = get_channel_meta(sf)
-                if meta_hit is not None:
-                    break
+                m = get_channel_meta(sf)
+                if m is None:
+                    continue
+                local_max = m.max_tc or 0
+                if local_max > best_max:
+                    best_max = local_max
+                    meta_hit = m
         if meta_hit is not None:
             auto_cap = meta_hit.min_capacity
         else:
