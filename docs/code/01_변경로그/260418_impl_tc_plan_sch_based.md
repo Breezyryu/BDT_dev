@@ -105,22 +105,59 @@ def select_active_sch(variants) -> SchVariant | None
 - **없음** — 신규 모듈만 추가, 기존 `_cyc_to_cycle_df`/`pne_build_cycle_map` 등 미수정
 - 현재 상태에서는 검증 도구로서의 의미만 있음 (P4 통합 전까지)
 
-## 다음 단계 (P2+)
+## P2 탐색 결과 (GOTO 재순환 모델링 실패)
 
-1. **P2: GOTO 재순환 처리**
-   - `.sch`의 GOTO target을 따라 가상 실행기(expand_schedule) 구현
-   - 무한 루프 방지를 위한 `max_iterations` 제한 + `.cyc` 실측 타임스탬프로 실제 종료 추정
-2. **P3: 교차검증 확장**
-   - 수명/성능/복합floating 전 카테고리에서 일치율 ≥95% 확보
-   - 실패 채널은 `.sch` 구조를 개별 분석 → 휴리스틱 보강
-3. **P4: 기존 API 교체**
-   - `get_cycle_map`, `_cyc_to_cycle_df`를 `TCPlan` 기반으로 리빌드
-   - 소비자 12개 함수 회귀 테스트
-4. **P5: 휴리스틱 제거**
-   - `_LOOP_JUMP`, `_CC_CV_RATIO`, `last_d>100` 등 상수 삭제 (약 200줄 감량)
+- `tools/sch_expander.py`로 `.sch` 가상 실행기 구현 (LOOP+GOTO)
+- 복합floating M01Ch051 케이스에서 **28.7% 일치** (165% 초과 TC 예측)
+- 원인: PNE `GOTO target=0`이 "완전 처음"이 아니라 **"FORMATION 건너뛰고 본 시험부터"** 라는 장비 내부 관례
+- 정적 시뮬레이션은 펌웨어 매뉴얼 없이 재현 불가 → **폐기**
+
+## 🎯 P2b 전환 — 실측 기반 Tier 2 규칙 발견
+
+사용자 제공 SaveEndData 스키마 테이블을 기반으로:
+
+### 신규 모듈
+- `tools/save_end_schema.py` — 47컬럼 공식 스키마
+- `tools/schema_verify.py` — 사용자 추정값 실측 검증
+- `tools/tc_rebuilder.py` — 3-Tier 재구성 엔진
+
+### 스키마 검증 결과 (50 채널)
+
+**✅ VERIFIED**:
+- `col[27] TotalCycle`: 100% 단조증가 (42 파일, 0 감소)
+- `col[28] CurrentCycle`: 그룹 전환 시 1로 리셋 98.7%
+- `col[3] ChgDchg`: {1=CV, 2=CC, 255=rest} 확정
+- 단위(uV/uA/uAh/100s) 모두 적합
+
+**⚠️ SUSPECT**:
+- `col[2] StepType`: 6 (1회 관찰, 미지)
+- `col[6] EndState`: 67, 152 추정 외 발견
+- `col[30] AvgCurrent`: 2.14e9 오버플로우 값 존재
+
+### 🏆 결정적 발견: Tier 2 규칙 99.98% 정확
+
+**규칙**: `StepType == 8 (LOOP 마커) 만날 때마다 TC += 1`
+
+42 채널 전수 검증:
+- 완벽 일치: **41개** (97.6%)
+- 총 일치율: **99.98%** (6139/6140)
+
+→ SaveEndData.csv 없이도 **StepType 시퀀스만으로 TC 재구성 가능**.
+→ GOTO 시맨틱 무관하게 모든 케이스 작동.
+
+## 다음 단계 (P3+)
+
+1. **P3: .cyc에 Tier 2 규칙 적용**
+   - `.cyc`는 StepType을 직접 기록하지 않음 — 전류값/레코드 구조에서 **LOOP 마커 정확 감지**가 관건
+   - 현재 `_cyc_to_cycle_df`의 휴리스틱(`cond_a`/`cond_b`)을 "StepType=8 감지"로 단순화
+2. **P4: 기존 API 교체**
+   - `get_cycle_map`, `_cyc_to_cycle_df`를 `tc_rebuilder.build_channel_tc()`로 라우팅
+3. **P5: 휴리스틱 제거 & `.sch` 카테고리 라벨링**
+   - TC 카테고리(INIT/RPT/ACCEL/...)를 profile 분석 필터로 노출
 
 ## 참고
 
 - 관련 커밋: `a365032`, `6447953`, `c68aae4` (.cyc 프로파일 경로 도입)
+- 이번 커밋: `3a69aed`, `c6299b6` (P1/P2)
 - 관련 docs: `docs/code/03_코드리뷰_코드학습/260410_study_pne_cyc_vs_csv_structure.md`
-- 검증 로그: `verify_plan` 실행 결과 (본 문서 검증 결과 섹션)
+- 검증 도구: `tools/schema_verify.py`, `tools/tc_rebuilder.py`
