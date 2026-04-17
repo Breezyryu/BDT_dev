@@ -89,10 +89,15 @@ def rebuild_tc_from_step_sequence(
     step_nos: list[int],
     step_types: list[int],
     initial_tc: int = 1,
+    end_states: Optional[list[int]] = None,
 ) -> list[int]:
     """StepType=8 (Loop 마커) 만나면 TC +=1 규칙.
 
     장비가 SaveEndData에 기록하는 규칙과 동일. GOTO 시맨틱 무관.
+
+    **예외**: EndState=69 (PAT_END, 시험 종료 마커) 레코드에서는 TC 증가 없음.
+    마지막 "종료 정리" 레코드(StepType=6 관찰됨)가 이에 해당하며, 이를 처리하지
+    않으면 마지막 TC가 +1 오차 발생 (M01Ch030 사례).
 
     Parameters
     ----------
@@ -100,17 +105,31 @@ def rebuild_tc_from_step_sequence(
     step_types : list[int]
     initial_tc : int
         첫 TC 번호 (기본 1).
+    end_states : list[int] | None
+        각 행의 EndState (col[6]). 제공 시 69=PAT_END 행 처리.
 
     Returns
     -------
     list[int]
         step_nos와 동일 길이의 TC 시퀀스.
     """
+    from save_end_schema import END_STATE_PAT_END
+
     out: list[int] = []
     tc = initial_tc
-    for stype in step_types:
+    n = len(step_types)
+    for i, stype in enumerate(step_types):
         out.append(tc)
+        # 현재 행이 PAT_END면 그 자체도 TC 증가 없음
+        if end_states is not None and i < len(end_states):
+            if end_states[i] == END_STATE_PAT_END:
+                continue
         if stype == STEP_TYPE_LOOP:
+            # "종결 LOOP": 바로 다음 행이 PAT_END이면 이 LOOP는 TC 증가 X
+            # (시험 종료 정리용 LOOP — M01Ch030 사례)
+            if (end_states is not None and i + 1 < len(end_states)
+                    and end_states[i + 1] == END_STATE_PAT_END):
+                continue
             tc += 1
     return out
 
@@ -311,14 +330,16 @@ def build_channel_tc(channel_dir: str) -> ChannelTC:
 def compare_rebuilt_with_measured(m: MeasuredTC) -> dict:
     """rebuild_tc_from_step_sequence 결과가 실측 col[27]과 일치하는지 검증.
 
-    SaveEndData의 첫 TC로 initial_tc를 맞추면, StepType=8 규칙만으로
-    나머지 TC가 모두 재현되는지 확인.
+    SaveEndData의 첫 TC로 initial_tc를 맞추면, StepType=8 규칙 + PAT_END
+    예외로 나머지 TC가 모두 재현되는지 확인.
     """
     if not m.tcs:
         return {"total": 0, "matches": 0, "rate": 0.0}
 
     rebuilt = rebuild_tc_from_step_sequence(
-        m.step_nos, m.step_types, initial_tc=m.tcs[0]
+        m.step_nos, m.step_types,
+        initial_tc=m.tcs[0],
+        end_states=m.end_states,
     )
     matches = sum(1 for a, b in zip(rebuilt, m.tcs) if a == b)
     total = len(m.tcs)
