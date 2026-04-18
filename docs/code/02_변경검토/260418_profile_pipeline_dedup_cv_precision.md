@@ -79,21 +79,26 @@ L25247-25258 continue _plot_one → ax1/ax4/ax2/ax3/ax6 (5축)
 
 이 4개는 서로와 제거된 confirm slot에서만 호출되었으므로 데드 코드. 통합 경로는 `_load_unified_batch_task` / `_load_all_unified_parallel`을 사용.
 
-## 남은 후속 작업 (다음 응답 예정)
+#### C-5. 레거시 파싱 함수 20개 제거 (후속 커밋에서 완료)
 
-제거된 batch loader가 호출하던 **단일/배치 파싱 함수들**(`pne_*/toyo_* × step/rate/chg/dchg × Profile_batch / Profile_data`)도 이제 전부 caller가 없어졌으나, 이번 변경 범위에서는 보류:
-- `toyo_step_Profile_batch`, `pne_step_Profile_batch`
-- `toyo_rate_Profile_batch`, `pne_rate_Profile_batch`
-- `toyo_chg_Profile_batch`, `pne_chg_Profile_batch`
-- `toyo_dchg_Profile_batch`, `pne_dchg_Profile_batch`
-- `toyo_continue_Profile_batch`, `pne_continue_Profile_batch`
-- `toyo_step_Profile_data`, `pne_step_Profile_data`
-- `toyo_rate_Profile_data`, `pne_rate_Profile_data`
-- `toyo_chg_Profile_data`, `pne_chg_Profile_data`
-- `toyo_dchg_Profile_data`, `pne_dchg_Profile_data`
-- `toyo_Profile_continue_data`
+제거된 batch loader가 호출하던 단일/배치 파싱 함수 전부가 이번 차수에 caller를 잃었으며, 파이썬 스크립트로 5개 블록을 원자적으로 삭제 (총 704줄):
 
-`pne_Profile_continue_data`는 ECT에서 사용 중이므로 보존.
+- **Batch 10개**:
+  - `toyo_step_Profile_batch`, `pne_step_Profile_batch`
+  - `toyo_rate_Profile_batch`, `pne_rate_Profile_batch`
+  - `toyo_chg_Profile_batch`, `pne_chg_Profile_batch`
+  - `toyo_dchg_Profile_batch`, `pne_dchg_Profile_batch`
+  - `toyo_continue_Profile_batch`, `pne_continue_Profile_batch`
+- **Toyo single 5개**: step / rate / chg / dchg / continue (`toyo_*_Profile_data`)
+- **PNE single 4개**: step / rate / chg / dchg (`pne_*_Profile_data`)
+- **Batch 전용 내부 로더**: `_pne_load_profile_raw` (제거된 batch 4개가 유일한 caller)
+
+보존:
+- `pne_Profile_continue_data` — `ect_confirm_button`이 직접 호출 중 (ECT 경로 유지)
+- `pne_continue_profile_scale_change` — `pne_Profile_continue_data`와 `pne_dcir_Profile_data`에서 호출
+- `_resolve_logical_to_tc_range`, `_get_max_tc` — unified 경로 등에서 사용
+
+구문 검증: Python `ast.parse` 통과, 잔존 참조는 문서 주석 1줄(`unified_profile_batch_continue` 함수 docstring)뿐으로 코드 경로 영향 없음.
 
 ## 보류 항목
 
@@ -120,3 +125,4 @@ L25247-25258 continue _plot_one → ax1/ax4/ax2/ax3/ax6 (5축)
   - Legacy confirm slot 6개 제거
   - ECT 슬롯 내 `ContinueConfirm` → `ProfileConfirm` 참조 치환
   - Batch loader 메서드 4개 제거
+  - Legacy 파싱 함수 20개(batch 10 + single 9 + `_pne_load_profile_raw`) 제거 (~704줄)
