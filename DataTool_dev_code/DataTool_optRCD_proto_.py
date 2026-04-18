@@ -1729,21 +1729,39 @@ def _unified_filter_condition(
     #       OCV 기준점으로 활용 필요. 임의 임계값 기반 필터링은 휴리스틱.
 
     # --- CV 구간 제거 (include_cv=False) ---
-    # 무휴리스틱 접근 (2026-04-18):
-    #   SaveEndData col[1] Stepmode 기반 (origin L1583 공식 정의):
-    #     1=CC-CV, 2=CC, 3=CV, 4=OCV
-    #   → Stepmode=1(CC-CV) 또는 3(CV) 스텝의 레코드를 제외
+    # SaveEndData col[1] Stepmode 기반 (origin L1583 공식 정의):
+    #   1=CC-CV, 2=CC, 3=CV, 4=OCV
     #
-    # Phase 1 (현재): 스텝 단위 제외 (CC-CV 스텝 전체 제거)
-    # Phase 2 (후속): .sch의 cv_cutoff 전달 → 레코드 단위 경계 (CC만 유지)
-    #
-    # 이전 구현(2026-04-17)의 `dv<2mV + 전류<50%` 휴리스틱은 폐기.
-    # 임계값이 임의 선정이었고 데이터 노이즈에 취약했음.
+    # Phase 2 (2026-04-18): 레코드 단위 경계 처리
+    #   - Stepmode=3 (순수 CV) 스텝: 스텝 전체 제외 (기존과 동일)
+    #   - Stepmode=1 (CC-CV 복합) 스텝: 스텝 내 실측 최대 전압 기준으로
+    #     CV 구간(= max_V 근처 유지 레코드)만 제외, CC 구간 레코드는 유지.
+    #     물리 근거: CV 단계는 설정 전압을 정전압 유지하므로, 스텝 내에서
+    #     측정된 최대 전압 = CV 설정 전압. 이 값에 측정 노이즈 허용치를
+    #     뺀 임계를 CC/CV 경계로 삼는다 (.sch 파싱 불필요).
     if not include_cv and len(filtered) > 0 and "Stepmode" in filtered.columns:
-        # Stepmode 1=CC-CV, 3=CV → CV 구간 포함 스텝
-        cv_bearing_mask = filtered["Stepmode"].isin([1, 3])
-        if cv_bearing_mask.any():
-            filtered = filtered[~cv_bearing_mask].copy()
+        # (a) 순수 CV 스텝(Stepmode=3): 전체 제외
+        pure_cv_mask = filtered["Stepmode"] == 3
+        if pure_cv_mask.any():
+            filtered = filtered[~pure_cv_mask].copy()
+
+        # (b) CC-CV 스텝(Stepmode=1): 레코드 단위로 CV 구간만 제외
+        ccv_mask = (filtered["Stepmode"] == 1)
+        if (ccv_mask.any() and "Step" in filtered.columns
+                and "Voltage_raw" in filtered.columns):
+            # Voltage_raw 단위 판별 (PNE μV vs Toyo V) → 노이즈 허용치 5mV
+            _v_scale = float(filtered.loc[ccv_mask, "Voltage_raw"].abs().max())
+            cv_epsilon = 5000.0 if _v_scale > 100 else 0.005
+            # 스텝 단위 그룹핑(Cycle+Step) 내 최대 전압 기준 경계
+            _grp_cols = [c for c in ("Cycle", "Step") if c in filtered.columns]
+            if _grp_cols:
+                _ccv = filtered.loc[ccv_mask]
+                step_max_v = _ccv.groupby(_grp_cols)["Voltage_raw"].transform("max")
+                cv_record_mask = pd.Series(False, index=filtered.index)
+                cv_record_mask.loc[_ccv.index] = (
+                    _ccv["Voltage_raw"] >= step_max_v - cv_epsilon)
+                if cv_record_mask.any():
+                    filtered = filtered[~cv_record_mask].copy()
 
     return filtered
 
@@ -11871,21 +11889,6 @@ class Ui_sitool(object):
         _pa_vlayout.addLayout(self.horizontalLayout_118)
 
         # ── 기존 5개 버튼 (숨김 — 하위 호환용) ──
-        self.StepConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.StepConfirm.setObjectName("StepConfirm")
-        self.StepConfirm.setVisible(False)
-        self.ChgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ChgConfirm.setObjectName("ChgConfirm")
-        self.ChgConfirm.setVisible(False)
-        self.RateConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.RateConfirm.setObjectName("RateConfirm")
-        self.RateConfirm.setVisible(False)
-        self.DchgConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.DchgConfirm.setObjectName("DchgConfirm")
-        self.DchgConfirm.setVisible(False)
-        self.ContinueConfirm = QtWidgets.QPushButton(parent=self.tab_6)
-        self.ContinueConfirm.setObjectName("ContinueConfirm")
-        self.ContinueConfirm.setVisible(False)
         # 기존 레이아웃 참조 호환
         self.horizontalLayout_116 = self.horizontalLayout_118
         self.horizontalLayout_117 = self.horizontalLayout_118
@@ -17005,11 +17008,6 @@ class Ui_sitool(object):
         self.DCIRConfirm.setText(_translate("sitool", "DCIR"))
         self.profile_tab_reset.setText(_translate("sitool", "초기화"))
         # 기존 버튼 텍스트 (숨김 — 하위 호환)
-        self.StepConfirm.setText(_translate("sitool", "충전 Step 확인"))
-        self.ChgConfirm.setText(_translate("sitool", "충전 분석"))
-        self.RateConfirm.setText(_translate("sitool", "율별 충전 확인"))
-        self.DchgConfirm.setText(_translate("sitool", "방전 분석"))
-        self.ContinueConfirm.setText(_translate("sitool", "HPPC/ GITT/ ECT"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_6), _translate("sitool", "Profile"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.CycTab), _translate("sitool", "사이클데이터"))
         self.label_10.setText(_translate("sitool", "패턴 리스트 Load를 누르고 패턴을 선택한 후에 오른쪽 패널에서 원하는 부분 수정"))
@@ -17458,11 +17456,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.stepnum.textChanged.connect(self._on_stepnum_text_changed)
         self._detail_toggle.toggled.connect(self._on_detail_toggle_changed)
         # 기존 버튼 시그널 (숨김 — 하위 호환)
-        self.StepConfirm.clicked.connect(self.step_confirm_button)
-        self.RateConfirm.clicked.connect(self.rate_confirm_button)
-        self.ChgConfirm.clicked.connect(self.chg_confirm_button)
-        self.DchgConfirm.clicked.connect(self.dchg_confirm_button)
-        self.ContinueConfirm.clicked.connect(self.continue_confirm_button)
         # SET 관련 버튼
         # self.BMSetProfile.clicked.connect(self.BMSetProfilebutton)
         # self.BMSetCycle.clicked.connect(self.BMSetCyclebutton)
@@ -19715,204 +19708,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     f'{_n}건의 데이터에서 오류가 발생하여 건너뛰었습니다.\n'
                     f'정상 데이터는 정상적으로 표시됩니다.\n\n'
                     f'오류 항목: {_summary}')
-
-    def _load_step_batch_task(self, task_info):
-        """
-        채널 단위 배치 스텝 프로파일 로딩 (ThreadPoolExecutor용)
-        1채널의 모든 사이클을 한 번에 로딩.
-        stepnum/테이블 입력 = 논리사이클 → cycle_map으로 TC 변환 후 로딩.
-
-        변환 규칙:
-          - 1:1 논리사이클 (TC == 논리): 레거시 함수에 TC 직접 전달
-          - 다중TC 논리사이클 (Toyo, Sweep): unified_profile_core 사용
-        결과 키는 논리사이클 번호 유지 (렌더 루프와 정합).
-        """
-        folder_path, cycle_list, mincapacity, mincrate, firstCrate, is_pne, folder_idx, subfolder_idx = task_info
-        try:
-            meta = get_channel_meta(folder_path)
-            cm = meta.cycle_map if meta else None
-
-            # 논리사이클별 TC 범위 확인 → 1:1 / 다중TC 분리
-            simple_tcs = []     # 1:1 매핑 (레거시 함수 사용 가능)
-            multi_cycs = []     # 다중TC (unified_profile_core 사용)
-            ln_to_tc = {}
-
-            for cyc in cycle_list:
-                if cm and isinstance(cyc, int) and cyc in cm:
-                    s, e = cm[cyc]['all']
-                    if s == e:
-                        # 1:1 매핑 — 레거시 함수 직접 사용
-                        simple_tcs.append(s)
-                        ln_to_tc[s] = cyc
-                    else:
-                        # 다중TC — unified_profile_core로 처리
-                        multi_cycs.append(cyc)
-                else:
-                    simple_tcs.append(cyc)
-                    ln_to_tc[cyc] = cyc
-
-            batch_results = {}
-
-            # 1:1 사이클: 레거시 배치 로딩
-            if simple_tcs:
-                if is_pne:
-                    raw = pne_step_Profile_batch(folder_path, simple_tcs, mincapacity, mincrate, firstCrate)
-                else:
-                    raw = toyo_step_Profile_batch(folder_path, simple_tcs, mincapacity, mincrate, firstCrate)
-                if raw:
-                    for k, v in raw.items():
-                        batch_results[ln_to_tc.get(k, k)] = v
-
-            # 다중TC 사이클: unified_profile_core 개별 호출
-            for cyc in multi_cycs:
-                try:
-                    result = unified_profile_core(
-                        folder_path, (cyc, cyc), mincapacity, firstCrate,
-                        data_scope="cycle", axis_mode="time",
-                        overlap="continuous", include_rest=True,
-                        cycle_map=cm, is_pne=is_pne,
-                    )
-                    if result and hasattr(result, 'df') and not result.df.empty:
-                        # 레거시 형식 호환: [mincapacity, df_with_stepchg]
-                        _compat = pd.DataFrame()
-                        _compat.stepchg = result.df
-                        _compat.Profile = result.df
-                        _compat.rateProfile = result.df
-                        batch_results[cyc] = [mincapacity, _compat]
-                except Exception:
-                    pass
-
-            return (folder_idx, subfolder_idx, batch_results if batch_results else None)
-        except Exception as e:
-            print(f"[배치 로딩 오류] {folder_path}: {e}")
-            return (folder_idx, subfolder_idx, None)
-    
-    @log_perf
-    def _load_all_step_data_parallel(self, all_data_folder, CycleNo, mincapacity, mincrate, firstCrate, max_workers=None):
-        """
-        모든 폴더의 스텝 프로파일 데이터를 병렬로 로딩 (채널 단위 배치)
-        """
-        clear_channel_cache()  # 새 로드 시작 시 캐시 초기화
-        tasks = []
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder)
-                             if f.is_dir() and _is_channel_folder(f.name)]
-                is_pne = is_pne_folder(cyclefolder)
-                for j, folder_path in enumerate(subfolder):
-                    if "Pattern" not in folder_path:
-                        task_info = (folder_path, CycleNo, mincapacity, mincrate, firstCrate, is_pne, i, j)
-                        tasks.append(task_info)
-        
-        if max_workers is None:
-            max_workers = calc_optimal_workers(len(tasks))
-        _perf_logger.info(f'  조건: folders={len(all_data_folder)}, tasks={len(tasks)}, '
-                          f'cycles={CycleNo}, workers={max_workers}')
-        results = {}
-        total_tasks = len(tasks)
-        completed = 0
-        
-        if total_tasks == 0:
-            return results
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_step_batch_task, task): task for task in tasks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    folder_idx, subfolder_idx, batch_results = result
-                    if batch_results:
-                        for cyc_no, temp in batch_results.items():
-                            results[(folder_idx, subfolder_idx, cyc_no)] = temp
-                completed += 1
-                if completed % 3 == 0 or completed == total_tasks:
-                    self.progressBar.setValue(int(completed / total_tasks * 50))
-                    QtWidgets.QApplication.processEvents(
-                        QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 10)
-        
-        return results
-    
-    # ─── 범용 프로파일 배치 병렬 로더 ───
-    def _load_profile_batch_task(self, task_info):
-        """
-        채널 단위 프로파일 배치 로딩 (ThreadPoolExecutor용).
-        profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
-        """
-        folder_path, profile_type, params, is_pne, folder_idx, subfolder_idx = task_info
-        try:
-            if profile_type == 'rate':
-                cycle_list, mincapacity, cutoff, inirate = params
-                if is_pne:
-                    batch_results = pne_rate_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate)
-                else:
-                    batch_results = toyo_rate_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate)
-            elif profile_type == 'chg':
-                cycle_list, mincapacity, cutoff, inirate, smoothdegree = params
-                if is_pne:
-                    batch_results = pne_chg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-                else:
-                    batch_results = toyo_chg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-            elif profile_type == 'dchg':
-                cycle_list, mincapacity, cutoff, inirate, smoothdegree = params
-                if is_pne:
-                    batch_results = pne_dchg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-                else:
-                    batch_results = toyo_dchg_Profile_batch(folder_path, cycle_list, mincapacity, cutoff, inirate, smoothdegree)
-            elif profile_type == 'continue':
-                step_ranges, mincapacity, inirate, CDstate = params
-                if is_pne:
-                    batch_results = pne_continue_Profile_batch(folder_path, step_ranges, mincapacity, inirate, CDstate)
-                else:
-                    batch_results = toyo_continue_Profile_batch(folder_path, step_ranges, mincapacity, inirate)
-            else:
-                return (folder_idx, subfolder_idx, None)
-            return (folder_idx, subfolder_idx, batch_results)
-        except Exception as e:
-            print(f"[배치 로딩 오류] {profile_type} {folder_path}: {e}")
-            return (folder_idx, subfolder_idx, None)
-
-    @log_perf
-    def _load_all_profile_data_parallel(self, all_data_folder, profile_type, params, max_workers=None):
-        """
-        모든 폴더의 프로파일 데이터를 병렬로 로딩 (범용).
-        profile_type: 'rate' | 'chg' | 'dchg' | 'continue'
-        """
-        clear_channel_cache()  # 새 로드 시작 시 캐시 초기화
-        tasks = []
-        for i, cyclefolder in enumerate(all_data_folder):
-            if os.path.isdir(cyclefolder):
-                subfolder = [f.path for f in os.scandir(cyclefolder)
-                             if f.is_dir() and _is_channel_folder(f.name)]
-                is_pne = is_pne_folder(cyclefolder)
-                for j, folder_path in enumerate(subfolder):
-                    if "Pattern" not in folder_path:
-                        task = (folder_path, profile_type, params, is_pne, i, j)
-                        tasks.append(task)
-
-        if max_workers is None:
-            max_workers = calc_optimal_workers(len(tasks))
-        _perf_logger.info(f'  조건: type={profile_type}, folders={len(all_data_folder)}, '
-                          f'tasks={len(tasks)}, workers={max_workers}')
-        results = {}
-        total_tasks = len(tasks)
-        completed = 0
-        if total_tasks == 0:
-            return results
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._load_profile_batch_task, task): task for task in tasks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    folder_idx, subfolder_idx, batch_results = result
-                    if batch_results:
-                        for key, data in batch_results.items():
-                            results[(folder_idx, subfolder_idx, key)] = data
-                completed += 1
-                if completed % 3 == 0 or completed == total_tasks:
-                    self._pump_ui(int(completed / total_tasks * 50))
-
-        return results
 
     # ─── 통합 프로파일 배치 병렬 로더 ───
     def _load_unified_batch_task(self, task_info):
@@ -23583,330 +23378,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if checked:
             self.chk_link_cycle.setChecked(False)
 
-    @log_perf
-    def step_confirm_button(self):
-        """스텝 충전 프로필 분석 — _profile_render_loop() 위임"""
-        # ── 1. 공통 초기화 ──
-        init_data = self._init_confirm_button(self.StepConfirm)
-        firstCrate = init_data['firstCrate']
-        mincapacity = init_data['mincapacity']
-        CycleNo = init_data['CycleNo']
-        mincrate = init_data['mincrate']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-
-        writer, save_file_name = self._setup_file_writer()
-
-        # ── 2. 병렬 데이터 로딩 ──
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_step_data_parallel(
-            all_data_folder, CycleNo, mincapacity, mincrate, firstCrate
-        )
-
-        # ── 3. 플롯 콜백 정의 ──
-        def _step_plot_one(temp, axes, headername, lgnd, temp_lgnd,
-                           writer, save_file_name, writecolno, CycNo):
-            """스텝 프로필 개별 플롯 — _plot_and_save_step_data() 래퍼"""
-            return self._plot_and_save_step_data(
-                axes, temp[1].stepchg, temp[0], headername, lgnd, temp_lgnd,
-                writer, writecolno, save_file_name, CycNo, save_csv=True)
-
-        def _step_fallback(FolderBase, CycNo, is_pne):
-            """캐시 미스 시 스텝 데이터 개별 로딩"""
-            if is_pne:
-                return pne_step_Profile_data(
-                    FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-            return toyo_step_Profile_data(
-                FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-
-        # ── 4. 통합 렌더링 루프 호출 ──
-        self._profile_render_loop(
-            loaded_data=loaded_data,
-            all_data_folder=all_data_folder,
-            all_data_name=all_data_name,
-            CycleNo=CycleNo,
-            writer=writer,
-            save_file_name=save_file_name,
-            plot_one_fn=_step_plot_one,
-            fallback_fn=_step_fallback,
-            data_attr="stepchg",
-            legend_positions=["lower right", "lower right", "lower right",
-                              "lower right", "upper right", "upper right"],
-        )
-
-    @log_perf
-    def rate_confirm_button(self):
-        """Rate 프로필 분석 — _profile_render_loop() 위임"""
-        # ── 1. 공통 초기화 ──
-        init_data = self._init_confirm_button(self.RateConfirm)
-        firstCrate = init_data['firstCrate']
-        mincapacity = init_data['mincapacity']
-        CycleNo = init_data['CycleNo']
-        mincrate = init_data['mincrate']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-
-        writer, save_file_name = self._setup_file_writer()
-
-        # ── 2. 병렬 데이터 로딩 ──
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'rate', (CycleNo, mincapacity, mincrate, firstCrate))
-
-        # ── 3. 플롯 콜백 정의 ──
-        def _rate_plot_one(temp, axes, headername, lgnd, temp_lgnd,
-                           writer, save_file_name, writecolno, CycNo):
-            """Rate 프로필 개별 플롯 — 6축 graph_step + Excel/CSV 저장"""
-            Ratetemp = temp
-            rate_ax1, rate_ax2, rate_ax3, rate_ax4, rate_ax5, rate_ax6 = axes
-            rp = Ratetemp[1].rateProfile
-            # [제거됨] capacitytext 표시 (숨김 위젯이었으므로 불필요)
-            _artists = []
-            _artists.append(graph_step(rp.TimeMin, rp.Vol, rate_ax1,
-                            self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "Time(min)", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_step(rp.TimeMin, rp.Vol, rate_ax4,
-                            self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "Time(min)", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_step(rp.TimeMin, rp.Crate, rate_ax2,
-                            0, 3.4, 0.2, "Time(min)", "C-rate", temp_lgnd))
-            _artists.append(graph_step(rp.TimeMin, rp.Crate, rate_ax5,
-                            0, 3.4, 0.2, "Time(min)", "C-rate", temp_lgnd))
-            _artists.append(graph_step(rp.TimeMin, rp.SOC, rate_ax3,
-                            0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
-            _artists.append(graph_step(rp.TimeMin, rp.Temp, rate_ax6,
-                            -15, 60, 5, "Time(min)", "Temp.", lgnd))
-            # Excel 저장
-            if self.saveok.isChecked() and save_file_name:
-                rp.to_excel(writer, startcol=writecolno, index=False,
-                            header=[headername + "time(min)", headername + "SOC",
-                                    headername + "Voltage", headername + "Crate",
-                                    headername + "Temp."])
-                writecolno += 5
-            # CSV 저장
-            if self.ect_saveok.isChecked() and save_file_name:
-                continue_df = rp[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                continue_df["Curr"] = (continue_df["Crate"] * Ratetemp[0] / 1000).round(4)
-                continue_df["Vol"] = continue_df["Vol"].round(4)
-                continue_df["Temp"] = continue_df["Temp"].round(1)
-                continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                continue_df.to_csv(
-                    save_file_name + "_" + "%04d" % CycNo + ".csv",
-                    index=False, sep=',',
-                    header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-            return writecolno, _artists
-
-        def _rate_fallback(FolderBase, CycNo, is_pne):
-            """캐시 미스 시 Rate 데이터 개별 로딩"""
-            if is_pne:
-                return pne_rate_Profile_data(
-                    FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-            return toyo_rate_Profile_data(
-                FolderBase, CycNo, mincapacity, mincrate, firstCrate)
-
-        # ── 4. 통합 렌더링 루프 호출 ──
-        self._profile_render_loop(
-            loaded_data=loaded_data,
-            all_data_folder=all_data_folder,
-            all_data_name=all_data_name,
-            CycleNo=CycleNo,
-            writer=writer,
-            save_file_name=save_file_name,
-            plot_one_fn=_rate_plot_one,
-            fallback_fn=_rate_fallback,
-            data_attr="rateProfile",
-            legend_positions=["lower right", "upper right", "lower right",
-                              "lower right", "upper right", "upper right"],
-            axes_order=[0, 1, 2, 3, 4, 5],
-        )
-
-    @log_perf
-    def chg_confirm_button(self):
-        """충전 프로필 분석 — _profile_render_loop() 위임"""
-        # ── 1. 공통 초기화 ──
-        init_data = self._init_confirm_button(self.ChgConfirm)
-        firstCrate = init_data['firstCrate']
-        mincapacity = init_data['mincapacity']
-        CycleNo = init_data['CycleNo']
-        smoothdegree = init_data['smoothdegree']
-        mincrate = init_data['mincrate']
-        dqscale, dvscale = init_data['dqscale'], init_data['dvscale']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-
-        writer, save_file_name = self._setup_file_writer()
-
-        # ── 2. 병렬 데이터 로딩 ──
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'chg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree))
-
-        # ── 3. 플롯 콜백 정의 ──
-        def _chg_plot_one(temp, axes, headername, lgnd, temp_lgnd,
-                          writer, save_file_name, writecolno, CycNo):
-            """충전 프로필 개별 플롯 — SOC 기반 graph_profile + dQ/dV 토글"""
-            ax1, ax2, ax3, ax4, ax5, ax6 = axes
-            p = temp[1].Profile
-            # [제거됨] capacitytext 표시
-            _artists = []
-            _artists.append(graph_profile(p.SOC, p.Vol, ax1,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.Vol, ax3,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "Voltage(V)", temp_lgnd))
-            if self.chk_dqdv.isChecked():
-                _artists.append(graph_profile(p.Vol, p.dQdV, ax2,
-                                self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                0, 5.5 * dqscale, 0.5 * dqscale,
-                                "Voltage(V)", "dQdV", temp_lgnd))
-            else:
-                _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
-                                0, 5.5 * dqscale, 0.5 * dqscale,
-                                self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                "dQdV", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.Crate, ax5,
-                            -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
-                            -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale,
-                            "SOC", "dVdQ", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.Temp, ax6,
-                            -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
-            # Excel 저장
-            if self.saveok.isChecked() and save_file_name:
-                p.to_excel(writer, startcol=writecolno, index=False,
-                           header=[headername + "Time(min)", headername + "SOC",
-                                   headername + "Energy", headername + "Voltage",
-                                   headername + "Crate", headername + "dQdV",
-                                   headername + "dVdQ", headername + "Temp."])
-                writecolno += 8
-            # CSV 저장
-            if self.ect_saveok.isChecked() and save_file_name:
-                continue_df = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                continue_df["Curr"] = (continue_df["Crate"] * temp[0] / 1000).round(4)
-                continue_df["Vol"] = continue_df["Vol"].round(4)
-                continue_df["Temp"] = continue_df["Temp"].round(1)
-                continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                continue_df.to_csv(
-                    save_file_name + "_" + "%04d" % CycNo + ".csv",
-                    index=False, sep=',',
-                    header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-            return writecolno, _artists
-
-        def _chg_fallback(FolderBase, CycNo, is_pne):
-            """캐시 미스 시 충전 데이터 개별 로딩"""
-            if is_pne:
-                return pne_chg_Profile_data(
-                    FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-            return toyo_chg_Profile_data(
-                FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-
-        # ── 4. 통합 렌더링 루프 호출 ──
-        self._profile_render_loop(
-            loaded_data=loaded_data,
-            all_data_folder=all_data_folder,
-            all_data_name=all_data_name,
-            CycleNo=CycleNo,
-            writer=writer,
-            save_file_name=save_file_name,
-            plot_one_fn=_chg_plot_one,
-            fallback_fn=_chg_fallback,
-            data_attr="Profile",
-            legend_positions=["lower right", "lower right", "lower right",
-                              "upper right", "upper right", "upper right"],
-            axes_order=[0, 1, 2, 3, 4, 5],
-        )
-
-    @log_perf
-    def dchg_confirm_button(self):
-        """방전 프로필 분석 — _profile_render_loop() 위임"""
-        # ── 1. 공통 초기화 ──
-        init_data = self._init_confirm_button(self.DchgConfirm)
-        firstCrate = init_data['firstCrate']
-        mincapacity = init_data['mincapacity']
-        CycleNo = init_data['CycleNo']
-        smoothdegree = init_data['smoothdegree']
-        mincrate = init_data['mincrate']
-        dqscale, dvscale = init_data['dqscale'], init_data['dvscale']
-        all_data_folder, all_data_name = init_data['folders'], init_data['names']
-
-        writer, save_file_name = self._setup_file_writer()
-
-        # ── 2. 병렬 데이터 로딩 ──
-        self.progressBar.setValue(0)
-        loaded_data = self._load_all_profile_data_parallel(
-            all_data_folder, 'dchg', (CycleNo, mincapacity, mincrate, firstCrate, smoothdegree))
-
-        # ── 3. 플롯 콜백 정의 ──
-        def _dchg_plot_one(temp, axes, headername, lgnd, temp_lgnd,
-                           writer, save_file_name, writecolno, CycNo):
-            """방전 프로필 개별 플롯 — DOD 기반 graph_profile"""
-            ax1, ax2, ax3, ax4, ax5, ax6 = axes
-            p = temp[1].Profile
-            # [제거됨] capacitytext 표시
-            _artists = []
-            _artists.append(graph_profile(p.SOC, p.Vol, ax1,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "DOD", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.Vol, ax3,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "DOD", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
-                            -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale,
-                            self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "dQdV", "Voltage(V)", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.Crate, ax5,
-                            -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
-                            -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                            "DOD", "dVdQ", temp_lgnd))
-            _artists.append(graph_profile(p.SOC, p.Temp, ax6,
-                            -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
-            # Excel 저장
-            if self.saveok.isChecked() and save_file_name:
-                p.to_excel(writer, startcol=writecolno, index=False,
-                           header=[headername + "Time(min)", headername + "DOD",
-                                   headername + "Energy", headername + "Voltage",
-                                   headername + "Crate", headername + "dQdV",
-                                   headername + "dVdQ", headername + "Temp."])
-                writecolno += 8
-            # CSV 저장
-            if self.ect_saveok.isChecked() and save_file_name:
-                continue_df = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                continue_df["Curr"] = (continue_df["Crate"] * temp[0] / 1000).round(4)
-                continue_df["Vol"] = continue_df["Vol"].round(4)
-                continue_df["Temp"] = continue_df["Temp"].round(1)
-                continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                continue_df.to_csv(
-                    save_file_name + "_" + "%04d" % CycNo + ".csv",
-                    index=False, sep=',',
-                    header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-            return writecolno, _artists
-
-        def _dchg_fallback(FolderBase, CycNo, is_pne):
-            """캐시 미스 시 방전 데이터 개별 로딩"""
-            if is_pne:
-                return pne_dchg_Profile_data(
-                    FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-            return toyo_dchg_Profile_data(
-                FolderBase, CycNo, mincapacity, mincrate, firstCrate, smoothdegree)
-
-        # ── 4. 통합 렌더링 루프 호출 ──
-        self._profile_render_loop(
-            loaded_data=loaded_data,
-            all_data_folder=all_data_folder,
-            all_data_name=all_data_name,
-            CycleNo=CycleNo,
-            writer=writer,
-            save_file_name=save_file_name,
-            plot_one_fn=_dchg_plot_one,
-            fallback_fn=_dchg_fallback,
-            data_attr="Profile",
-            legend_positions=["lower left", "upper left", "lower left",
-                              "lower left", "upper right", "upper right"],
-            axes_order=[0, 1, 2, 3, 4, 5],
-        )
-
     # ════════════════════════════════════════════════════════════════
     # 통합 프로필 분석 핸들러 (Phase 4)
     # ════════════════════════════════════════════════════════════════
@@ -25251,9 +24722,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "Time(min)", "Voltage(V)", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
-                    -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd))
+                    0, 3.4, 0.2, "Time(min)", "C-rate", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.SOC, ax3,
                     0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
+                _artists.append(graph_continue(p.TimeMin, p.Crate, ax5,
+                    -3.4, 0.2, 0.2, "Time(min)", "C-rate", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.Temp, ax6,
                     -15, 60, 5, "Time(min)", "Temp.", lgnd))
                 # Excel 저장
@@ -25341,15 +24814,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.ProfileConfirm.setEnabled(True)
         self._pump_ui()
 
-    def continue_confirm_button(self):
-        if self.chk_ectpath.isChecked():
-            self.ect_confirm_button()
-        else:
-            self.pro_continue_confirm_button()
-
     @log_perf
     def ect_confirm_button(self):
-        self.ContinueConfirm.setDisabled(True)
+        self.ProfileConfirm.setDisabled(True)
         firstCrate, mincapacity, CycleNo, smoothdegree, mincrate, dqscale, dvscale = self.Profile_ini_set()
         all_data_name = []
         # 용량 선정 관련
@@ -25369,7 +24836,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             datafilepath = filedialog.askopenfilename(
                 initialdir="d://", title="Choose Test files")
             if not datafilepath:
-                self.ContinueConfirm.setEnabled(True)
+                self.ProfileConfirm.setEnabled(True)
                 return
             cycle_path = pd.read_csv(
                 datafilepath, sep="\t", engine="c", encoding="UTF-8",
@@ -25383,7 +24850,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ect_save = np.array(cycle_path[_cols_lower['save']].tolist())
             if "mAh" in datafilepath:
                 self.mincapacity = name_capacity(datafilepath)
-        self.ContinueConfirm.setEnabled(True)
+        self.ProfileConfirm.setEnabled(True)
         tab_no = 0
         for i, cyclefolder in enumerate(ect_path):
             # 사이클 범위 파싱 (스페이스/콤마 모두 지원: "1, 15-21, 4-233" 또는 "1 15-21 4-233")
@@ -25469,272 +24936,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
         plt.tight_layout(pad=1, w_pad=1, h_pad=1)
         plt.close()
-
-    @log_perf
-    def pro_continue_confirm_button(self):
-        # 함수 사용으로 변경
-        self.ContinueConfirm.setDisabled(True)
-        config = self.Profile_ini_set()
-        firstCrate, mincapacity, CycleNo = config[0], config[1], config[2]
-        smoothdegree, mincrate, dqscale, dvscale = config[3], config[4], config[5], config[6]
-        all_data_name = []
-        #global writer 제거 → 로컬 변수로만 사용
-        # 테이블 사이클 입력 우선, 없으면 stepnum 폴백
-        _table_cyc = self._get_table_cycle_input()
-        if _table_cyc is not None:
-            _cycle_input_str = ' '.join(
-                str(c) for c in _table_cyc)
-        else:
-            _cycle_input_str = self.stepnum.toPlainText().strip()
-        if _cycle_input_str:
-            write_column_num, write_column_num2, folder_count, chnlcount, cyccount = 0, 0, 0, 0, 0
-            pne_path = self.pne_path_setting()
-            all_data_folder = pne_path[0]
-            all_data_name = pne_path[1]
-            
-            # 함수 사용으로 변경
-            writer, save_file_name = self._setup_file_writer()
-            self.ContinueConfirm.setEnabled(True)
-            chg_dchg_dcir_no = [s.strip() for s in re.split(r'[,\s]+', _cycle_input_str) if s.strip()]
-            
-            # step_ranges 사전 파싱 및 병렬 로딩
-            step_ranges = []
-            for dcir_step in chg_dchg_dcir_no:
-                if "-" in dcir_step:
-                    s, e = map(int, dcir_step.split("-"))
-                else:
-                    s = int(dcir_step)
-                    e = s
-                step_ranges.append((s, e))
-
-            # 논리사이클 최대값 초과 검증
-            max_lc = _get_max_tc(all_data_folder, mincapacity, firstCrate)
-            if max_lc is not None:
-                invalid_ranges = [(s, e) for s, e in step_ranges if s > max_lc]
-                step_ranges = [(s, min(e, max_lc)) for s, e in step_ranges if s <= max_lc]
-                chg_dchg_dcir_no = [
-                    f"{s}-{e}" if s != e else str(s) for s, e in step_ranges
-                ]
-                if invalid_ranges:
-                    err_msg(
-                        "사이클 범위 초과",
-                        f"입력한 사이클 중 {invalid_ranges}이(가) "
-                        f"최대 논리사이클({max_lc})을 초과합니다.\n"
-                        f"유효 범위: 1 ~ {max_lc}",
-                    )
-                if not step_ranges:
-                    self.progressBar.setValue(0)
-                    self.ContinueConfirm.setEnabled(True)
-                    return
-
-            self.progressBar.setValue(0)
-            loaded_data = self._load_all_profile_data_parallel(
-                all_data_folder, 'continue', (step_ranges, mincapacity, firstCrate, ""))
-            
-            tab_no = 0
-            all_profile = self.AllProfile.isChecked()
-            has_any_data = False  # 전체 데이터 플롯 여부 추적
-            # AllProfile: 사전에 fig/tab 1개 생성
-            if all_profile:
-                fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                    nrows=2, ncols=3, figsize=(14, 10))
-                tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                last_namelist = None
-                all_profile_channel_map = {}
-                all_profile_sub_map = {}
-                all_profile_sub2_map = {}
-            for i, cyclefolder in enumerate(all_data_folder):
-                if not os.path.isdir(cyclefolder):
-                    continue
-                subfolder = [f.path for f in os.scandir(cyclefolder) if f.is_dir()]
-                foldercountmax = len(all_data_folder)
-                folder_count += 1
-                #cyclefolder 당 1회만 호출
-                is_pne = is_pne_folder(cyclefolder)
-                for j, FolderBase in enumerate(subfolder):
-                    chnlcount += 1
-                    chnlcountmax = len(subfolder)
-                    for dcir_continue_step in chg_dchg_dcir_no:
-                        if "-" in dcir_continue_step:
-                            Step_CycNo, Step_CycEnd = map(int, dcir_continue_step.split("-"))
-                        else:
-                            Step_CycNo, Step_CycEnd = int(dcir_continue_step), int(dcir_continue_step)
-                        CycleNo = range(Step_CycNo, Step_CycEnd + 1)
-                        if "Pattern" in FolderBase:
-                            continue
-                        if not all_profile:
-                            fig, ((step_ax1, step_ax2, step_ax3), (step_ax4, step_ax5, step_ax6)) = plt.subplots(
-                                nrows=2, ncols=3, figsize=(14, 10))
-                            tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
-                            channel_map = {}
-                            has_data = False  # 비-AllProfile 탭별 데이터 추적
-                        cyccountmax = len(CycleNo)
-                        cyccount += 1
-                        progressdata = progress(folder_count, foldercountmax, cyccount, cyccountmax, chnlcount, chnlcountmax)
-                        self.progressBar.setValue(int(50 + progressdata * 0.5))
-                        step_namelist = FolderBase.split("\\")
-                        headername = step_namelist[-2] + ", " + step_namelist[-1] + ", " + str(Step_CycNo)
-                        if Step_CycNo == Step_CycEnd:
-                            headername = headername + "cy, "
-                        else:
-                            headername = headername + "-" + str(Step_CycEnd) + "cy, "
-                        if all_profile:
-                            lgnd = step_namelist[-1] + " %04d" % Step_CycNo
-                        elif self.CycProfile.isChecked():
-                            lgnd = "%04d" % Step_CycNo
-                        else:
-                            lgnd = step_namelist[-1]
-                        # 병렬 로딩 결과 사용
-                        temp = loaded_data.get((i, j, (Step_CycNo, Step_CycEnd)))
-                        if temp is None:
-                            if not is_pne:
-                                # fallback: 논리 사이클 → 파일 번호 변환 후 로딩
-                                cm, _ = get_cycle_map(FolderBase, mincapacity, firstCrate, is_pne=False)
-                                fb_start, fb_end = _resolve_logical_to_tc_range(
-                                    cm, Step_CycNo, Step_CycEnd)
-                                temp = toyo_Profile_continue_data(FolderBase, fb_start, fb_end, mincapacity, firstCrate)
-                            else:
-                                # fallback: 논리 사이클 → TotlCycle 변환 후 로딩
-                                cm, _ = get_cycle_map(FolderBase, mincapacity, firstCrate, is_pne=True)
-                                tc_start, tc_end = _resolve_logical_to_tc_range(
-                                    cm, Step_CycNo, Step_CycEnd)
-                                temp = pne_Profile_continue_data(FolderBase, tc_start, tc_end, mincapacity, firstCrate, "")
-                        if all_profile:
-                            temp_lgnd = lgnd if len(all_data_name) == 0 else all_data_name[i] + " " + lgnd
-                        else:
-                            temp_lgnd = "" if len(all_data_name) == 0 else all_data_name[i]
-                        if hasattr(temp[1], "stepchg"):
-                            if len(temp[1].stepchg) > 2:
-                                has_any_data = True
-                                if not all_profile:
-                                    has_data = True
-                                # [제거됨] capacitytext 표시
-                                has_ocv = "OCV" in temp[1].stepchg.columns
-                                _artists = []
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax1,
-                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Vol, step_ax4,
-                                               self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "Voltage(V)", temp_lgnd))
-                                if has_ocv:
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.OCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
-                                    _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.CCV, step_ax4,
-                                                   self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap, "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Crate, step_ax2,
-                                               -1.8, 1.7, 0.2, "Time(min)", "C-rate", temp_lgnd))
-                                if len(temp) > 2 and hasattr(temp[2], 'AccCap') and not temp[2].empty:
-                                    _artists.append(graph_continue(temp[2].AccCap, temp[2].OCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                   "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
-                                    _artists.append(graph_continue(temp[2].AccCap, temp[2].CCV, step_ax5, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                                   "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.SOC, step_ax3,
-                                               0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
-                                _artists.append(graph_continue(temp[1].stepchg.TimeMin, temp[1].stepchg.Temp, step_ax6,
-                                               -15, 60, 5, "Time(min)", "Temp.", lgnd))
-                                ch_label, sub_label = _make_channel_labels(step_namelist, all_data_name, i)
-                                _color = mcolors.to_hex(_artists[0].get_color())
-                                _target_map = all_profile_channel_map if all_profile else channel_map
-                                if ch_label in _target_map:
-                                    _target_map[ch_label]['artists'].extend(_artists)
-                                else:
-                                    _target_map[ch_label] = {'artists': list(_artists), 'color': _color}
-                                if all_profile:
-                                    sub_key = ch_label + " " + sub_label
-                                    cyc_label = "%04d" % Step_CycNo
-                                    if sub_key in all_profile_sub_map:
-                                        all_profile_sub_map[sub_key]['artists'].extend(_artists)
-                                    else:
-                                        all_profile_sub_map[sub_key] = {'artists': list(_artists), 'color': _color, 'parent': ch_label}
-                                    sub2_key = sub_key + " " + cyc_label
-                                    all_profile_sub2_map[sub2_key] = {'artists': list(_artists), 'color': _color, 'parent': sub_key}
-                                                                    
-                                if self.saveok.isChecked() and save_file_name:
-                                    if has_ocv:
-                                        excel_df = temp[1].stepchg[["TimeSec", "Vol", "Curr", "OCV", "CCV",
-                                                                     "Crate", "SOC", "Temp"]].copy()
-                                        excel_df.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
-                                                         index=False,
-                                                         header=[headername + "time(s)", headername + "Voltage(V)",
-                                                                 headername + "Current(A)", headername + "OCV",
-                                                                 headername + "CCV", headername + "Crate",
-                                                                 headername + "SOC", headername + "Temp."])
-                                        write_column_num += 8
-                                        temp[2].to_excel(writer, sheet_name="OCV_CCV", startcol=write_column_num2,
-                                                         index=False,
-                                                         header=[headername + "SOC", headername + "OCV",
-                                                                 headername + "CCV"])
-                                        write_column_num2 += 3
-                                    else:
-                                        excel_df = temp[1].stepchg[["TimeMin", "SOC", "Vol", "Crate", "Temp"]].copy()
-                                        excel_df.to_excel(writer, sheet_name="Profile", startcol=write_column_num,
-                                                         index=False,
-                                                         header=[headername + "Time(min)", headername + "SOC",
-                                                                 headername + "Voltage(V)", headername + "Crate",
-                                                                 headername + "Temp."])
-                                        write_column_num += 5
-                                if self.ect_saveok.isChecked() and save_file_name:
-                                    continue_df = temp[1].stepchg[["TimeMin", "Vol", "Crate", "Temp"]].copy()
-                                    continue_df["TimeSec"] = (continue_df["TimeMin"] * 60).round(1)
-                                    continue_df["Curr"] = (continue_df["Crate"] * temp[0] / 1000).round(4)
-                                    continue_df["Vol"] = continue_df["Vol"].round(4)
-                                    continue_df["Temp"] = continue_df["Temp"].round(1)
-                                    continue_df = continue_df[["TimeSec", "Vol", "Curr", "Temp"]]
-                                    continue_df.to_csv(save_file_name + "_" + "%04d" % tab_no + ".csv",
-                                                       index=False, sep=',',
-                                                       header=["time(s)", "Voltage(V)", "Current(A)", "Temp."])
-                        if all_profile:
-                            last_namelist = step_namelist
-                        elif not has_data:
-                            # 데이터 없으면 탭 생성 건너뜀
-                            plt.close(fig)
-                        else:
-                            title = step_namelist[-2] + "=" + step_namelist[-1] if self.CycProfile.isChecked() else step_namelist[-2] + "=" + "%04d" % Step_CycNo
-                            plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-
-                            axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                            positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                            _vm = 'cyc' if self.CycProfile.isChecked() else ('all' if self.AllProfile.isChecked() else 'cell')
-                            _nl = min(
-                                (len(ax.get_lines()) for ax in axes_list if ax.get_lines()),
-                                default=0)
-                            _apply_legend_strategy(
-                                fig, _nl, 'distinct',
-                                view_mode=_vm, legend_positions=positions)
-
-                            self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                                    channel_map=channel_map, fig=fig,
-                                                    axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6])
-                            if self.CycProfile.isChecked():
-                                tab_no += 1
-                            output_fig(self.figsaveok, title)
-            # AllProfile: 루프 종료 후 한번에 finalize
-            if all_profile and last_namelist and has_any_data:
-                title = last_namelist[-2] + " All"
-                plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
-                positions = ["lower left", "lower right", "upper right", "lower right", "lower left", "upper right"]
-                _nl_all = min(
-                    (len(ax.get_lines()) for ax in axes_list if ax.get_lines()),
-                    default=0)
-                _apply_legend_strategy(
-                    fig, _nl_all, 'distinct',
-                    view_mode='all', legend_positions=positions)
-                self._finalize_plot_tab(tab, tab_layout, canvas, toolbar, tab_no,
-                                        channel_map=all_profile_channel_map, fig=fig,
-                                        axes_list=[step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6],
-                                        sub_channel_map=all_profile_sub_map,
-                                        sub2_channel_map=all_profile_sub2_map)
-                tab_no += 1
-                output_fig(self.figsaveok, title)
-            elif all_profile and not has_any_data:
-                plt.close(fig)
-            if self.saveok.isChecked() and save_file_name:
-                writer.close()
-            self.progressBar.setValue(100)
-            plt.close()
-        else:
-            err_msg('Step 에러','Step에 사이클 번호를 넣어주세요! 예) 2 3-5 8')
-            self.ContinueConfirm.setEnabled(True)
 
     @log_perf
     def dcir_confirm_button(self):
