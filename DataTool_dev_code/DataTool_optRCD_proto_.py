@@ -17107,6 +17107,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.profile_preset_combo.currentIndexChanged.connect(self._apply_profile_preset)
         # 초기 상태 반영: 사이클(id=0)이므로 overlap 가용성 갱신
         self._update_overlap_availability()
+        # 시작점 = 사이클·이어서·시간 → Rest 기본 ON
+        self._apply_cyc_continue_rest_default()
         # ── 사이클 타임라인 바 ↔ 텍스트 양방향 동기화 ──
         self._timeline_syncing = False
         self.cycle_timeline.selectionChanged.connect(
