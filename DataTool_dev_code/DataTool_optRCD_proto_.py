@@ -2941,8 +2941,12 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
     artists = []  # 이 채널의 모든 scatter artist 수집
     color = graphcolor[colorno % len(THEME['PALETTE'])]
     try:
-        # X좌표: 0-based index 유지 (첫 사이클 = 초충상태 방전/충전 → 0번 시작이 물리적으로 타당)
-        _x = df.NewData.index
+        # X좌표: TC(Cycle 컬럼) 사용 → 일반 시험은 1,2,3,… 연속, Sweep은 대표 TC.
+        # Cycle 컬럼 없으면 index(0-based 순번) 폴백.
+        if 'Cycle' in df.NewData.columns:
+            _x = df.NewData['Cycle'].values
+        else:
+            _x = df.NewData.index.values
         artists.append(graph_cycle(_x, df.NewData.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
                     "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
@@ -2962,21 +2966,24 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                             "Cycle", "DC-IR @Discharge (mΩ)", "_nolegend_", xscale, color, _size=_dcir_es))
             artists.append(graph_cycle(_x, df.NewData.soc70_rss_dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                         "Cycle", "DC-IR @Discharge (mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
-            # DCIR scatter 점을 잇는 라인
+            # DCIR scatter 점을 잇는 라인 (positional index → _x 대응)
             _dcir_valid = df.NewData.soc70_dcir.dropna()
             if len(_dcir_valid) > 1:
-                _ln, = ax4.plot(_dcir_valid.index, _dcir_valid.values, linewidth=0.8, alpha=0.5, color=color, linestyle='--', zorder=2, label='_nolegend_')
+                _ln_x = _x[_dcir_valid.index]
+                _ln, = ax4.plot(_ln_x, _dcir_valid.values, linewidth=0.8, alpha=0.5, color=color, linestyle='--', zorder=2, label='_nolegend_')
                 artists.append(_ln)
             _rss_valid = df.NewData.soc70_rss_dcir.dropna()
             if len(_rss_valid) > 1:
-                _ln, = ax4.plot(_rss_valid.index, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
+                _ln_x = _x[_rss_valid.index]
+                _ln, = ax4.plot(_ln_x, _rss_valid.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
                 artists.append(_ln)
         else:
             artists.append(graph_cycle(_x, df.NewData.dcir, ax4, 0, 120.0 * irscale, 20 * irscale,
                         "Cycle", "DC-IR @Discharge(mΩ)", temp_lgnd, xscale, color, _size=_dcir_s))
             _dcir_only = df.NewData.dcir.dropna()
             if len(_dcir_only) > 1:
-                _ln, = ax4.plot(_dcir_only.index, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
+                _ln_x = _x[_dcir_only.index]
+                _ln, = ax4.plot(_ln_x, _dcir_only.values, linewidth=0.8, alpha=0.5, color=color, zorder=2, label='_nolegend_')
                 artists.append(_ln)
         colorno = colorno % len(THEME['PALETTE']) + 1
         return artists, color
@@ -7979,10 +7986,16 @@ def _build_timeline_blocks_tc_by_loop(
     연속 동일 카테고리 구간을 1블록으로 합친다.
     _CLASSIFIED_COLORS 색상 체계 사용 (논리 모드와 동일 색상).
 
+    GITT 등 펄스 그룹은 classified에 대표 TC만 들어오지만 raw_range 필드에
+    실제 TC 범위("5-30" 등)가 보존되어 있으므로, 이를 풀어서 그룹 내 모든 TC를
+    같은 카테고리로 채운다. 이렇게 하면 사이클 바 블록이 펄스 그룹의 실제
+    TC 범위(start=5, end=30, count=26)로 표시된다.
+
     Parameters
     ----------
     classified : list[dict]
-        [{'cycle': TC번호, 'category': 'RPT'|'가속수명'|...}, ...]
+        [{'cycle': TC번호, 'category': 'RPT'|'가속수명'|'GITT'|...,
+          (GITT 등) 'raw_range': '5-30'}, ...]
     cycle_map : dict | None
         미사용 (시그니처 호환용).
 
@@ -7994,11 +8007,22 @@ def _build_timeline_blocks_tc_by_loop(
     if not classified:
         return []
 
-    # TC별 카테고리 매핑 (TC 번호순)
+    # TC별 카테고리 매핑 (TC 번호순) — raw_range가 있으면 범위 전체 채움
     tc_cats: dict[int, str] = {}
     for cl in classified:
-        tc = cl['cycle']
-        tc_cats[int(tc)] = cl['category']
+        cat = cl['category']
+        _rr = cl.get('raw_range')
+        if _rr and isinstance(_rr, str) and '-' in _rr:
+            try:
+                _s_str, _e_str = _rr.split('-', 1)
+                _s, _e = int(_s_str), int(_e_str)
+                for _t in range(_s, _e + 1):
+                    tc_cats[_t] = cat
+                continue
+            except ValueError:
+                pass
+        # 일반 사이클 or raw_range 파싱 실패: cycle 필드만 사용
+        tc_cats[int(cl['cycle'])] = cat
 
     if not tc_cats:
         return []
