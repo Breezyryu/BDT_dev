@@ -2368,6 +2368,8 @@ def unified_profile_core(
 
     # OCV/CCV 요약 테이블 (스텝 종료 지점만 모은 SOC-OCV-CCV 매핑)
     # 이전 버전 pne_Profile_continue_data가 temp[2]로 반환하던 CycfileSOC 대체.
+    # SOC는 graph_soc_continue의 x축(0~100 고정 tick)과 맞추기 위해 퍼센트로 변환한다.
+    # (내부 ChgCap/DchgCap은 mincap 대비 0~1 분율이므로 *100)
     _cycfile_soc = None
     if ("OCV" in with_axis.columns and "CCV" in with_axis.columns
             and "SOC" in with_axis.columns):
@@ -2375,6 +2377,8 @@ def unified_profile_core(
         if not _pts.empty:
             _keep = [c for c in ("SOC", "OCV", "CCV") if c in _pts.columns]
             _cycfile_soc = _pts[_keep].reset_index(drop=True)
+            if "SOC" in _cycfile_soc.columns:
+                _cycfile_soc["SOC"] = _cycfile_soc["SOC"] * 100.0
 
     return UnifiedProfileResult(
         df=result_df,
@@ -2533,7 +2537,7 @@ def _unified_process_single_cycle_from_raw(
     final_cols = [c for c in output_cols if c in with_axis.columns]
     result_df = with_axis[final_cols].reset_index(drop=True)
 
-    # OCV/CCV 요약 테이블 (스텝 종료 지점)
+    # OCV/CCV 요약 테이블 (스텝 종료 지점). SOC는 퍼센트로 (graph_soc_continue 축 기준)
     _cycfile_soc = None
     if ("OCV" in with_axis.columns and "CCV" in with_axis.columns
             and "SOC" in with_axis.columns):
@@ -2541,6 +2545,8 @@ def _unified_process_single_cycle_from_raw(
         if not _pts.empty:
             _keep = [c for c in ("SOC", "OCV", "CCV") if c in _pts.columns]
             _cycfile_soc = _pts[_keep].reset_index(drop=True)
+            if "SOC" in _cycfile_soc.columns:
+                _cycfile_soc["SOC"] = _cycfile_soc["SOC"] * 100.0
 
     return UnifiedProfileResult(
         df=result_df,
