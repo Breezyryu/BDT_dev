@@ -23266,7 +23266,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         presets = {
             1: ("cycle", "continuous", "time", True, True, False),
             2: ("cycle", "split", "soc", False, True, True),
-            3: ("cycle", "connected", "soc", True, True, False),
+            3: ("cycle", "connected", "soc", False, False, False),
             4: ("charge", "split", "soc", False, True, False),
             5: ("discharge", "split", "soc", False, True, False),
         }
