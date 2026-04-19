@@ -2313,12 +2313,20 @@ def unified_profile_core(
     with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
 
     # === Cutoff 필터 ===
+    # 이전 버전 호환 (mode별 cutoff 의미):
+    #   - Step/Rate (charge + time): Crate 하한 (저율 제외, Current >= cutoff*cap과 동치)
+    #   - Chg Profile (charge + soc): Voltage 하한 (이전 chg_Profile_data 동작)
+    #   - Dchg Profile (discharge + *): Voltage 하한 (이전 dchg_Profile_data 동작)
+    #   - Cycle/Continue: 적용 안 함 (충방전 혼재, 의미 모호)
     if cutoff > 0:
-        if data_scope in ("charge",):
-            # 충전: 전류 cutoff (C-rate 기준)
+        if data_scope == "charge" and axis_mode == "soc":
+            # 충전 프로파일 (SOC 축): 전압 하한
+            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+        elif data_scope == "charge":
+            # Step/Rate (time 축): Crate 하한
             with_axis = with_axis[with_axis["Crate"] >= cutoff]
-        elif data_scope in ("discharge",):
-            # 방전: 전압 cutoff
+        elif data_scope == "discharge":
+            # 방전: 전압 하한
             with_axis = with_axis[with_axis["Voltage"] >= cutoff]
 
     # === Stage 6: 파생값 계산 ===
@@ -2469,11 +2477,13 @@ def _unified_process_single_cycle_from_raw(
     # Stage 5: X축 및 SOC 계산
     with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
 
-    # Cutoff 필터
+    # Cutoff 필터 (unified_profile_core와 동일 규칙)
     if cutoff > 0:
-        if data_scope in ("charge",):
+        if data_scope == "charge" and axis_mode == "soc":
+            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+        elif data_scope == "charge":
             with_axis = with_axis[with_axis["Crate"] >= cutoff]
-        elif data_scope in ("discharge",):
+        elif data_scope == "discharge":
             with_axis = with_axis[with_axis["Voltage"] >= cutoff]
 
     # Stage 6: 파생값 계산
@@ -23662,7 +23672,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         load_options = {
             **options,
             "smooth_degree": smoothdegree,
-            "cutoff": mincrate if legacy_mode in ("step",) else 0.0,
+            # cutoff는 모드에 따라 의미가 다름 (unified_profile_core 내부 분기):
+            #   step (time+charge): Crate 하한 (저율 제외)
+            #   chg  (soc+charge) : Voltage 하한
+            #   dchg (soc+discharge): Voltage 하한
+            #   cycle_soc/continue: 미적용 (unified_profile_core가 자동 스킵)
+            "cutoff": mincrate if legacy_mode in ("step", "chg", "dchg") else 0.0,
         }
 
         if _link_mode:
@@ -23726,6 +23741,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope=options["data_scope"], axis_mode="time",
                     overlap="split", include_rest=options["include_rest"],
+                    cutoff=mincrate,  # Step/Rate: Crate 하한 (저율 제외)
                 )
                 return [r.mincapacity, r]
 
@@ -23783,6 +23799,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope="charge", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree,
+                    cutoff=mincrate,  # Chg 프로파일: Voltage 하한 (이전 chg_Profile_data 동작)
                 )
                 return [r.mincapacity, r]
 
@@ -23836,6 +23853,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope="discharge", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree,
+                    cutoff=mincrate,  # Dchg 프로파일: Voltage 하한 (이전 dchg_Profile_data 동작)
                 )
                 return [r.mincapacity, r]
 
