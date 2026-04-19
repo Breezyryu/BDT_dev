@@ -10480,7 +10480,7 @@ class Ui_sitool(object):
     @staticmethod
     def _make_seg_group(labels, parent, button_group, font,
                         checked_idx=0):
-        """세그먼티드 컨트롤(묶음 토글 버튼) 생성.
+        """묶음 토글 버튼 그룹 생성 (PyQt6 기본 스타일).
 
         Returns
         -------
@@ -10489,47 +10489,21 @@ class Ui_sitool(object):
         buttons : list[QPushButton]
             생성된 버튼 목록 (인덱스 = button_group id)
         """
-        _base = (
-            "QPushButton {{ border: 1px solid #B0B0B0; background: #F5F5F5;"
-            " padding: 3px 8px; {pos} }}"
-            " QPushButton:checked {{ background: #3C5488; color: white;"
-            " border-color: #3C5488; }}"
-            " QPushButton:hover:!checked {{ background: #E0E0E0; }}")
-        _pos = {
-            "left": "border-top-left-radius: 3px; border-bottom-left-radius: 3px;",
-            "mid":  "border-left: none;",
-            "right": "border-left: none;"
-                     " border-top-right-radius: 3px;"
-                     " border-bottom-right-radius: 3px;",
-            "solo": "border-radius: 3px;",
-        }
-
         container = QtWidgets.QWidget(parent)
         h = QtWidgets.QHBoxLayout(container)
         h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(0)
+        h.setSpacing(2)
 
         _fb = QtGui.QFont(font)
         _fb.setBold(True)
         _fm = QtGui.QFontMetrics(_fb)
 
-        n = len(labels)
         buttons = []
         for i, text in enumerate(labels):
             btn = QtWidgets.QPushButton(text, parent=container)
             btn.setCheckable(True)
             btn.setFont(font)
-            btn.setFixedHeight(26)
             btn.setMinimumWidth(_fm.horizontalAdvance(text) + 20)
-            if n == 1:
-                pos = "solo"
-            elif i == 0:
-                pos = "left"
-            elif i == n - 1:
-                pos = "right"
-            else:
-                pos = "mid"
-            btn.setStyleSheet(_base.format(pos=_pos[pos]))
             if i == checked_idx:
                 btn.setChecked(True)
             button_group.addButton(btn, i)
@@ -11326,15 +11300,16 @@ class Ui_sitool(object):
 
         self.profile_overlap_group = QtWidgets.QButtonGroup(self.tab_6)
         _ovlp_seg, _ovlp_btns = self._make_seg_group(
-            ["이어서", "분리", "순차", "연결"], self._data_scope_groupbox,
-            self.profile_overlap_group, _pf_font, checked_idx=1)
+            ["이어서", "분리", "연결"], self._data_scope_groupbox,
+            self.profile_overlap_group, _pf_font, checked_idx=0)
         self.profile_ovlp_continuous = _ovlp_btns[0]   # id=0
         self.profile_ovlp_split = _ovlp_btns[1]        # id=1
-        self.profile_ovlp_sequential = _ovlp_btns[2]   # id=2
-        self.profile_ovlp_connected = _ovlp_btns[3]    # id=3
+        self.profile_ovlp_connected = _ovlp_btns[2]    # id=2
         self._profile_opt_row1.addWidget(_ovlp_seg)
 
         # 하위 호환: 기존 위젯 참조 유지 (숨김, 신호 연결 방지용)
+        # sequential은 UI에서 제거 — split으로 alias (외부 참조 보호)
+        self.profile_ovlp_sequential = self.profile_ovlp_split
         self.profile_cont_group = self.profile_overlap_group
         self.profile_cont_overlay = self.profile_ovlp_split
         self.profile_cont_continuous = self.profile_ovlp_continuous
@@ -11376,6 +11351,28 @@ class Ui_sitool(object):
         self._profile_opt_row2.addWidget(self.profile_cv_chk)
 
         self._profile_opt_row2.addStretch()
+
+        # 프리셋: 자주 쓰는 옵션 조합 일괄 적용
+        self.profile_preset_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
+        self.profile_preset_label.setFont(_pf_font)
+        self.profile_preset_label.setObjectName("profile_preset_label")
+        self._profile_opt_row2.addWidget(self.profile_preset_label)
+
+        self.profile_preset_combo = QtWidgets.QComboBox(parent=self._data_scope_groupbox)
+        self.profile_preset_combo.setFont(_pf_font)
+        self.profile_preset_combo.setObjectName("profile_preset_combo")
+        self.profile_preset_combo.addItems([
+            "(선택)",
+            "전체 진단",
+            "ICA / dV·dQ",
+            "히스테리시스",
+            "충전 분석",
+            "방전 분석",
+        ])
+        self.profile_preset_combo.setToolTip(
+            "프리셋: 자주 쓰는 옵션 조합 일괄 적용")
+        self._profile_opt_row2.addWidget(self.profile_preset_combo)
+
         _ds_layout.addLayout(self._profile_opt_row2)
 
         self.verticalLayout_4.addWidget(self._data_scope_groupbox)
@@ -16656,15 +16653,14 @@ class Ui_sitool(object):
         self.profile_axis_label.setText(_translate("sitool", "X축:"))
         self.profile_rest_chk.setText(_translate("sitool", "Rest"))
         self.profile_cv_chk.setText(_translate("sitool", "CV"))
-        # overlap 4단 버튼 툴팁
+        self.profile_preset_label.setText(_translate("sitool", "프리셋:"))
+        # overlap 3단 버튼 툴팁
         self.profile_ovlp_continuous.setToolTip(
-            "이어서: 사이클 간 시간 연속 타임라인")
+            "이어서: 실험 전체 타임라인 — 이상 이벤트·OCV relaxation·CV tail 진단")
         self.profile_ovlp_split.setToolTip(
-            "분리: 충전/방전 각각 t=0에서 시작, 겹쳐서 표시")
-        self.profile_ovlp_sequential.setToolTip(
-            "순차: 사이클별 t=0, 충전→방전 순차 연결")
+            "분리: 사이클별 t=0 겹침 — ICA/dV·dQ, LLI/LAM 분리")
         self.profile_ovlp_connected.setToolTip(
-            "연결: 충전 끝점 = 방전 시작점 (히스테리시스)")
+            "연결: 충전↔방전 히스테리시스 루프 — ΔV, η_total 정량")
         self.ProfileConfirm.setText(_translate("sitool", "프로필 분석"))
         self.DCIRConfirm.setText(_translate("sitool", "DCIR"))
         self.profile_tab_reset.setText(_translate("sitool", "초기화"))
@@ -17108,6 +17104,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.profile_scope_group.idToggled.connect(self._profile_opt_scope_changed)
         self.profile_axis_group.idToggled.connect(self._profile_opt_axis_changed)
         self.profile_overlap_group.idToggled.connect(self._profile_opt_cont_changed)
+        self.profile_preset_combo.currentIndexChanged.connect(self._apply_profile_preset)
         # 초기 상태 반영: 사이클(id=0)이므로 overlap 가용성 갱신
         self._update_overlap_availability()
         # ── 사이클 타임라인 바 ↔ 텍스트 양방향 동기화 ──
@@ -23162,27 +23159,39 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     # ════════════════════════════════════════════════════════════════
 
     def _update_overlap_availability(self) -> None:
-        """overlap 버튼 활성/비활성 상태 갱신.
+        """overlap/axis 버튼 활성/비활성 상태 갱신.
 
-        무효 조합 시 해당 버튼 비활성화 + 유효한 기본값으로 강제 전환.
+        유효 조합:
+          - 사이클 × {이어서(시간), 분리(SOC/시간), 연결(SOC)}
+          - 충전/방전 × {이어서(시간), 분리(SOC/시간)}
+        무효 조합 시 해당 버튼 비활성화 + 유효 기본값으로 강제.
         """
         is_cycle = (self.profile_scope_group.checkedId() == 0)
-        is_soc = (self.profile_axis_group.checkedId() == 0)
 
-        # 충전/방전: sequential, connected 비활성
-        self.profile_ovlp_sequential.setEnabled(is_cycle)
+        # 연결: 사이클 모드에서만 (충전/방전 단방향은 히스테리시스 불가)
         self.profile_ovlp_connected.setEnabled(is_cycle)
 
-        # SOC축: continuous, sequential 비활성
-        self.profile_ovlp_continuous.setEnabled(not is_soc)
-        if is_soc:
-            self.profile_ovlp_sequential.setEnabled(False)
-
-        # 현재 선택이 비활성 버튼이면 split으로 강제
+        # 현재 overlap 선택이 비활성이면 split으로 강제
         cur_id = self.profile_overlap_group.checkedId()
         cur_btn = self.profile_overlap_group.button(cur_id)
         if cur_btn and not cur_btn.isEnabled():
             self.profile_ovlp_split.setChecked(True)
+            cur_id = 1  # split
+
+        # overlap → axis 제약
+        if cur_id == 0:  # 이어서 → 시간만
+            self.profile_axis_soc.setEnabled(False)
+            self.profile_axis_time.setEnabled(True)
+            if self.profile_axis_group.checkedId() != 1:
+                self.profile_axis_time.setChecked(True)
+        elif cur_id == 2:  # 연결 → SOC만
+            self.profile_axis_soc.setEnabled(True)
+            self.profile_axis_time.setEnabled(False)
+            if self.profile_axis_group.checkedId() != 0:
+                self.profile_axis_soc.setChecked(True)
+        else:  # 분리: SOC/시간 둘 다
+            self.profile_axis_soc.setEnabled(True)
+            self.profile_axis_time.setEnabled(True)
 
     def _profile_opt_scope_changed(self, btn_id: int, checked: bool = True) -> None:
         """데이터 범위 변경 시 overlap 의존성 처리.
@@ -23226,17 +23235,52 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         Parameters
         ----------
         btn_id : int
-            QButtonGroup id — 0: 이어서, 1: 분리, 2: 순차, 3: 연결
+            QButtonGroup id — 0: 이어서, 1: 분리, 2: 연결
         checked : bool
             라디오 버튼 체크 상태
         """
         if not checked:
             return
-        if btn_id == 0:  # 이어서 → 시간 축 강제
-            self.profile_axis_time.setChecked(True)
-        elif btn_id == 3:  # 연결(히스테리시스) → SOC 축 강제
-            self.profile_axis_soc.setChecked(True)
+        self._update_overlap_availability()
         self._apply_cyc_continue_rest_default()
+
+    def _apply_profile_preset(self, idx: int) -> None:
+        """프리셋 콤보 → 프로파일 옵션 일괄 적용.
+
+        idx 매핑:
+          1: 전체 진단      — 사이클·이어서·시간·Rest·CV
+          2: ICA / dV·dQ    — 사이클·분리·SOC·CV·dQdV
+          3: 히스테리시스   — 사이클·연결·SOC·Rest·CV
+          4: 충전 분석      — 충전·분리·SOC·CV
+          5: 방전 분석      — 방전·분리·SOC
+        """
+        if idx <= 0:
+            return
+        # (scope, overlap, axis, rest, cv, dqdv)
+        presets = {
+            1: ("cycle", "continuous", "time", True, True, False),
+            2: ("cycle", "split", "soc", False, True, True),
+            3: ("cycle", "connected", "soc", True, True, False),
+            4: ("charge", "split", "soc", False, True, False),
+            5: ("discharge", "split", "soc", False, True, False),
+        }
+        if idx not in presets:
+            return
+        scope, overlap, axis, rest, cv, dqdv = presets[idx]
+        scope_id = {"cycle": 0, "charge": 1, "discharge": 2}[scope]
+        overlap_id = {"continuous": 0, "split": 1, "connected": 2}[overlap]
+        axis_id = {"soc": 0, "time": 1}[axis]
+        # 순서: scope → overlap → axis (의존성 갱신 순서)
+        self.profile_scope_group.button(scope_id).setChecked(True)
+        self.profile_overlap_group.button(overlap_id).setChecked(True)
+        self.profile_axis_group.button(axis_id).setChecked(True)
+        self.profile_rest_chk.setChecked(rest)
+        self.profile_cv_chk.setChecked(cv)
+        self.chk_dqdv.setChecked(dqdv)
+        # 콤보는 (선택)으로 복귀 — 재선택 허용
+        self.profile_preset_combo.blockSignals(True)
+        self.profile_preset_combo.setCurrentIndex(0)
+        self.profile_preset_combo.blockSignals(False)
 
     def _on_timeline_selection_changed(self, row_idx: int, text: str) -> None:
         """타임라인 바 → 경로 테이블 해당 행 + stepnum 동기화.
@@ -24018,17 +24062,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             data_scope, axis_mode, overlap, include_rest, calc_dqdv 키.
         """
         scope_map = {0: "cycle", 1: "charge", 2: "discharge"}
-        overlap_map = {0: "continuous", 1: "split", 2: "sequential", 3: "connected"}
+        overlap_map = {0: "continuous", 1: "split", 2: "connected"}
 
         data_scope = scope_map.get(self.profile_scope_group.checkedId(), "cycle")
         axis_mode = "time" if self.profile_axis_group.checkedId() == 1 else "soc"
-        overlap = overlap_map.get(self.profile_overlap_group.checkedId(), "split")
+        overlap = overlap_map.get(self.profile_overlap_group.checkedId(), "continuous")
         include_rest = self.profile_rest_chk.isChecked()
 
         # 강제 규칙 (UI에서 비활성이어도 방어적으로 재적용)
-        if axis_mode == "soc" and overlap in ("continuous", "sequential"):
+        if axis_mode == "soc" and overlap == "continuous":
             overlap = "split"
-        if data_scope != "cycle" and overlap in ("sequential", "connected"):
+        if data_scope != "cycle" and overlap == "connected":
             overlap = "split"
 
         calc_dqdv = (axis_mode == "soc")
