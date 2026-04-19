@@ -1810,6 +1810,19 @@ def _unified_merge_steps(
                         continue
                     df.loc[step_mask, cap_col] = df.loc[step_mask, cap_col] + offset
                     offset = df.loc[step_mask, cap_col].max()
+            # REST/반대 condition 행의 ChgCap/DchgCap을 마지막 누적값으로 ffill.
+            # PNE 원시 데이터는 cap 컬럼이 스텝 단위로 리셋되므로 REST·DCHG 행에서
+            # ChgCap=0, CHG 행에서 DchgCap=0 상태. 소속 condition 행만 anchor로 두고
+            # 시간순 ffill하여 모든 행에 "시점까지의 누적 Chg/Dchg" 값을 보유시킨다.
+            # 이것이 없으면 OCV(REST 종료) 점의 SOC가 전부 0에 뭉치고
+            # GITT 방전 스윕 구간에서 SOC가 음수로 계산되는 문제 발생.
+            for anchor_cond, cap_col in [(1, "ChgCap"), (2, "DchgCap")]:
+                if cap_col not in df.columns:
+                    continue
+                anchor_mask = df["Condition"] == anchor_cond
+                if not anchor_mask.any():
+                    continue
+                df[cap_col] = df[cap_col].where(anchor_mask).ffill().fillna(0)
         return df
 
     # --- multi-TC: TotTime 기반 절대 시간 보존 + 용량 누적 보정 ---
