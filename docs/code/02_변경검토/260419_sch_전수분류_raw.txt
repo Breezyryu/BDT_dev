@@ -1,0 +1,1241 @@
+총 실험 폴더 수: 156
+총 .sch 파일 수: 340
+
+======================================================================
+[1] 카테고리 분포 (loop group 단위)
+======================================================================
+  RPT                    770
+  KVALUE                 241
+  ACCEL                  196
+  UNKNOWN                164
+  CHARGE_SET              97
+  TERMINATION             68
+  INIT                    57
+  RSS_DCIR                37
+  HYSTERESIS_DCHG         37
+  HYSTERESIS_CHG          27
+  FORMATION               23
+  GITT_PULSE              14
+  SOC_DCIR                14
+
+======================================================================
+[2] UNKNOWN 발생 실험 (94건)
+======================================================================
+  [복합floating] 260126_260531_01_최웅철_4981mAh_GB6 PRO16 ATL GEN4 1.3C 고온복합
+      FORMATION          N=5
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=6 ★
+      RPT                N=1
+  [복합floating] 260126_260531_01_최웅철_4981mAh_GB6 PRO16 SDI GEN4 1.3C 고온복합
+      FORMATION          N=5
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=6 ★
+      RPT                N=1
+  [복합floating] 260130_260531_01_최웅철_2485mAh_Q8 SUB SDI GEN5+B 2C 고온복합
+      FORMATION          N=6
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=6 ★
+      RPT                N=1
+  [복합floating] 260203_260531_01_최웅철_4268mAh_SDI GB6 PRO14 GEN4 1.3C 고온복합
+      FORMATION          N=3
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=6 ★
+      RPT                N=1
+  [복합floating] 260223_260531_01_최웅철_2369mAh_Q8main ATL GEN5+B 2.0C 고온복합
+      FORMATION          N=6
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=6 ★
+      RPT                N=1
+  [복합floating] 260223_260531_01_최웅철_2369mAh_Q8main COSMX GEN5+B 2.0C 고온복합
+      FORMATION          N=6
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=6 ★
+      RPT                N=1
+  [복합floating] 260223_260531_01_최웅철_2485mAh_Q8 sub ATL GEN5+B 2.0C 고온복합
+      FORMATION          N=6
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=7 ★
+      RPT                N=1
+  [복합floating] 260309_260731_01_최웅철_2485mAh_Q8 sub SDI GEN5+B 2.0C 고온복합
+      FORMATION          N=6
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      UNKNOWN            N=7 ★
+      RPT                N=1
+  [복합floating] 260320_260923_03_안성진_251mAh_HaeanProtoDOE복합Floating
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      UNKNOWN            N=14 ★
+  [복합floating] 260320_260923_03_안성진_251mAh_HaeanProtoDOE일반Floating
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=999 ★
+  [복합floating] 260320_260923_03_안성진_251mAh_HaeanProtoDOE일반FloatingRe
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=999 ★
+  [복합floating] 260320_260923_03_안성진_251mAh_HaeanProtoMain복합Floating
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      UNKNOWN            N=14 ★
+  [복합floating] 260320_260923_03_안성진_251mAh_HaeanProtoMain일반Floating
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=999 ★
+  [복합floating] 260320_260923_03_안성진_251mAh_HaeanProtoMain일반FloatingRe
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=999 ★
+  [복합floating] 260413_260930_05_김영환_3365mAh_Gen6+VB ATL Proto1 고온복합Floating 280day PNE15 1112
+      INIT               N=1
+      RPT                N=1
+      HYSTERESIS_DCHG    N=1
+      UNKNOWN            N=14 ★
+      RPT                N=1
+      RSS_DCIR           N=1
+  [복합floating] 260413_260930_05_박기진_4948mAh_Gen6+VB SDI Proto1 고온복합Floating 280day
+      INIT               N=1
+      RPT                N=1
+      HYSTERESIS_DCHG    N=1
+      UNKNOWN            N=14 ★
+      RPT                N=1
+      RSS_DCIR           N=1
+  [복합floating] 260413_261230_05_문현규_3650mAh_Cosmx 25SiC 타사spl 복합floating ch23-24
+      INIT               N=1
+      RPT                N=1
+      CHARGE_SET         N=1
+      RSS_DCIR           N=1
+      RPT                N=1
+      UNKNOWN            N=6 ★
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter6
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      ACCEL              N=30
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter7
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      UNKNOWN            N=7 ★
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter8
+      ACCEL              N=30
+      ACCEL              N=120
+      UNKNOWN            N=1 ★
+  [성능] 250905_250915_00_류성택_4-187mAh_M2-SDI-open-ca-half-14pi-GITT-0.1C-T23
+      CHARGE_SET         N=1
+      UNKNOWN            N=120 ★
+      UNKNOWN            N=1 ★
+      UNKNOWN            N=120 ★
+  [성능] 250905_250915_00_류성택_4-376mAh_M2-SDI-open-an-half-14pi-GITT-0.1C-T23
+      INIT               N=1
+      UNKNOWN            N=120 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=120 ★
+  [성능] 251002_251010_00_박민희_4-19mAh_RatedCh half ca 4.19mAh SDI
+      UNKNOWN            N=1 ★
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+  [성능] 251218_251230_00_박민희_3-45mAh_M1 ATL Cathode Half T23
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      FORMATION          N=3
+  [성능] 251218_251230_00_박민희_4-04mAh_M1 ATL Anode Half T23
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      FORMATION          N=3
+  [성능] 251224_260110_00_박민희_3-45mAh_M1 ATL Cathode Half T23 GITT 0.1C
+      UNKNOWN            N=1 ★
+      UNKNOWN            N=1 ★
+      GITT_PULSE         N=10
+      GITT_PULSE         N=100
+      CHARGE_SET         N=1
+      GITT_PULSE         N=100
+      GITT_PULSE         N=10
+  [성능] 251224_260110_00_박민희_4-04mAh_M1 ATL Anode Half T23 GITT 0.05C 3.0V
+      UNKNOWN            N=1 ★
+      UNKNOWN            N=1 ★
+      GITT_PULSE         N=85
+      GITT_PULSE         N=40
+      CHARGE_SET         N=1
+      GITT_PULSE         N=40
+      GITT_PULSE         N=85
+  [성능] 251224_260110_00_박민희_4-04mAh_M1 ATL Anode Half T23 GITT 0.1C
+      UNKNOWN            N=1 ★
+      UNKNOWN            N=1 ★
+      GITT_PULSE         N=70
+      GITT_PULSE         N=35
+      CHARGE_SET         N=1
+      GITT_PULSE         N=20
+      GITT_PULSE         N=95
+  [성능] 260202_260226_05_문현규_5075mAh_Cosmx 25Si 율별용량+Hybrid ch54
+      INIT               N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=3 ★
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+  [성능] 260204_260226_05_문현규_4900mAh_Cosmx gen5 율별용량 ch61
+      INIT               N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=3 ★
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+  [성능] 260204_260226_05_문현규_5070mAh_Cosmx Gen5P 율별용량
+      INIT               N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=3 ★
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+  [성능] 260211_260310_05_문현규_3885mAh_POR 40C pulse PA1 ATL
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260211_260310_05_문현규_3885mAh_POR 40C pulse PA1 SDI
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260211_260310_05_문현규_4855mAh_POR 40C pulse PA3 ATL
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260211_260310_05_문현규_4855mAh_POR 40C pulse PA3 SDI
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260212_260215_05_한지영_5432mAh_SDI Phase2 MP2 Fresh DCIR SOC10
+      INIT               N=1
+      FORMATION          N=3
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260212_260215_05_한지영_5432mAh_SDI Phase2 MP2 고온수명후 DCIR SOC10
+      INIT               N=1
+      CHARGE_SET         N=1
+      FORMATION          N=9
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260226_260228_05_문현규_3876mAh_PS 연속저장 DCIR
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260226_260228_05_문현규_3885mAh_PA1 연속저장 DCIR
+      INIT               N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      CHARGE_SET         N=1
+      UNKNOWN            N=9 ★
+      UNKNOWN            N=10 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT GITT
+      ACCEL              N=120
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter1
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter10
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      FORMATION          N=7
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter2
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter3
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter6
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter7
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter8
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter9
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter1
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter10
+      ACCEL              N=30
+      FORMATION          N=7
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter11 GITT
+      ACCEL              N=120
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter2
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter3
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter4
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter5
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter6
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter7
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter8
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter9
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter1
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter11 GITT
+      ACCEL              N=120
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter2
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter3
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter4
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter5
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      TERMINATION        N=1
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter6
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter10
+      ACCEL              N=30
+      FORMATION          N=7
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter7
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter8
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter9
+      ACCEL              N=30
+      CHARGE_SET         N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter1 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter10 RT
+      CHARGE_SET         N=1
+      FORMATION          N=7
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter2 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter3 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter6 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter7 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter8 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter9 RT
+      CHARGE_SET         N=1
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter1 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter2 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter3 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter4 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter5 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter6 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter7 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter8 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter9 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      KVALUE             N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260406_260408_00_류성택_5882mAh_ATL M47 ECT parameter10 HT
+      UNKNOWN            N=1 ★
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter1 LT
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter2 LT
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능] 260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter3 LT
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능_시험직후] 260413_260415_00_류성택_4860mAh_A17 ATL ECT parameter09 상온 0도 -10도 재측정
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능_시험직후] 260413_260415_00_류성택_4860mAh_A17 SDI ECT parameter09 상온 0도 -10도 재측정
+      RPT                N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+  [성능_시험직후] 260413_260415_00_류성택_5882mAh_M47 ATL ECT parameter09 LT015 재측정
+      KVALUE             N=1
+      RPT                N=1
+      RPT                N=1
+      KVALUE             N=1
+      UNKNOWN            N=1 ★
+      TERMINATION        N=1
+
+======================================================================
+[3] 복합 프로파일 실험 (≥4 카테고리, 105건)
+======================================================================
+  [복합floating] 260126_260531_01_최웅철_4981mAh_GB6 PRO16 ATL GEN4 1.3C 고온복합
+      FORMATION(5) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(6) → RPT(1)
+  [복합floating] 260126_260531_01_최웅철_4981mAh_GB6 PRO16 SDI GEN4 1.3C 고온복합
+      FORMATION(5) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(6) → RPT(1)
+  [복합floating] 260130_260531_01_최웅철_2485mAh_Q8 SUB SDI GEN5+B 2C 고온복합
+      FORMATION(6) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(6) → RPT(1)
+  [복합floating] 260203_260531_01_최웅철_4268mAh_SDI GB6 PRO14 GEN4 1.3C 고온복합
+      FORMATION(3) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(6) → RPT(1)
+  [복합floating] 260223_260531_01_최웅철_2369mAh_Q8main ATL GEN5+B 2.0C 고온복합
+      FORMATION(6) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(6) → RPT(1)
+  [복합floating] 260223_260531_01_최웅철_2369mAh_Q8main COSMX GEN5+B 2.0C 고온복합
+      FORMATION(6) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(6) → RPT(1)
+  [복합floating] 260223_260531_01_최웅철_2485mAh_Q8 sub ATL GEN5+B 2.0C 고온복합
+      FORMATION(6) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(7) → RPT(1)
+  [복합floating] 260309_260731_01_최웅철_2485mAh_Q8 sub SDI GEN5+B 2.0C 고온복합
+      FORMATION(6) → UNKNOWN(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → UNKNOWN(7) → RPT(1)
+  [복합floating] 260413_260930_05_김영환_3365mAh_Gen6+VB ATL Proto1 고온복합Floating
+      INIT(1) → RPT(1) → HYSTERESIS_DCHG(1) → UNKNOWN(14) → RPT(1) → RSS_DCIR(1)
+  [복합floating] 260413_260930_05_박기진_4948mAh_Gen6+VB SDI Proto1 고온복합Floating
+      INIT(1) → RPT(1) → HYSTERESIS_DCHG(1) → UNKNOWN(14) → RPT(1) → RSS_DCIR(1)
+  [복합floating] 260413_261230_05_문현규_3650mAh_Cosmx 25SiC 타사spl 복합floating ch
+      INIT(1) → RPT(1) → CHARGE_SET(1) → RSS_DCIR(1) → RPT(1) → UNKNOWN(6)
+  [성능] 240919 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450V-SOC
+      INIT(1) → FORMATION(3) → RPT(1) → CHARGE_SET(1) → SOC_DCIR(5) → SOC_DCIR(15) → ACCEL(25) → ACCEL(20) → SOC_DCIR(15) → SOC_DCIR(10)
+  [성능] 250513_250526_05_나무늬_2610mAh_Gen5+B SDI MP1 DoE SBR 0.7 DCIR
+      INIT(1) → FORMATION(3) → RPT(1) → ACCEL(20) → SOC_DCIR(15) → SOC_DCIR(10) → SOC_DCIR(5) → SOC_DCIR(15) → ACCEL(25)
+  [성능] 250513_250526_05_나무늬_2610mAh_Gen5+B SDI MP1 Main SBR 0.9 DCI
+      INIT(1) → FORMATION(3) → RPT(1) → ACCEL(20) → SOC_DCIR(15) → SOC_DCIR(10) → SOC_DCIR(5) → SOC_DCIR(15) → ACCEL(25)
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter
+      ACCEL(30) → CHARGE_SET(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1)
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter
+      ACCEL(30) → CHARGE_SET(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1)
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter
+      ACCEL(30) → CHARGE_SET(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1)
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter
+      ACCEL(30) → CHARGE_SET(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → KVALUE(1) → RPT(1) → KVALUE(1)
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter
+      ACCEL(30) → CHARGE_SET(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1)
+  [성능] 250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter
+      ACCEL(30) → CHARGE_SET(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → KVALUE(1) → RPT(1) → RPT(1) → RPT(1) → RPT(1) → UNKNOWN(1) → ACCEL(30)
+
+======================================================================
+[4] 240919 SOC별DCIR 케이스 상세
+======================================================================
+
+--- 240919 선행랩 류성택  Gen4pGr ATL-mini-WD-Proto-422mAh-20C-450V-SOC별DCIR-15도.sch ---
+  #1  INIT               TC 1
+       DCHG_CC(I=422mA,V=2500mV,t=1s)
+  #2  FORMATION          TC 2-4 (3)
+       CHG_CC(I=338mA,V=4500mV) → REST(10m) → DCHG_CC(I=211mA,V=2500mV) → REST(10m)
+  #3  RPT                TC 5
+       CHG_CC(I=85mA,V=4500mV) → REST(10m) → DCHG_CC(I=85mA,V=1950mV) → REST(10m)
+  #4  CHARGE_SET         TC 6
+       CHG_CC(I=85mA,V=4500mV)
+  #5  SOC_DCIR           TC 7-11 (5)
+       REST(1.0h) → DCHG_CC(I=22mA,V=2500mV,t=20s) → CHG_CC(I=22mA,V=4500mV,[EC: TYPE_5376 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=43mA,V=4500mV,[EC: TYPE_6144 100.0]) → REST(30m) → DCHG_CC(I=85mA,V=2500mV,t=20s) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_6912 100.0]) → REST(30m) → DCHG_CC(I=211mA,V=2500mV,t=20s) → CHG_CC(I=211mA,V=4500mV,[EC: TYPE_7680 100.0]) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_3328 1.0])
+  #6  SOC_DCIR           TC 12-26 (15)
+       REST(1.0h) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=22mA,V=4500mV,[EC: TYPE_9216 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=43mA,V=4500mV,[EC: TYPE_9984 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_10752 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=211mA,V=4500mV,[EC: TYPE_11520 100.0]) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_3328 5.0])
+  #7  ACCEL              TC 27-51 (25)
+       REST(2.0h) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=22mA,V=4500mV,[EC: TYPE_13056 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=43mA,V=4500mV,[EC: TYPE_13824 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_14592 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=211mA,V=4500mV,[EC: TYPE_15360 100.0]) → DCHG_CC(I=85mA,V=1950mV,[EC: TYPE_3328 1.0])
+  #8  ACCEL              TC 52-71 (20)
+       REST(2.0h) → CHG_CC(I=22mA,V=4500mV,t=20s) → DCHG_CC(I=22mA,V=2500mV,[EC: TYPE_16896 100.0]) → REST(30m) → CHG_CC(I=43mA,V=4500mV,t=20s) → DCHG_CC(I=43mA,V=2500mV,[EC: TYPE_17664 100.0]) → REST(30m) → CHG_CC(I=85mA,V=4500mV,t=20s) → DCHG_CC(I=85mA,V=2500mV,[EC: SOC 100.0%]) → REST(30m) → CHG_CC(I=211mA,V=4500mV,t=20s) → DCHG_CC(I=211mA,V=2500mV,[EC: TYPE_19200 100.0]) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_4352 1.0])
+  #9  SOC_DCIR           TC 72-86 (15)
+       REST(1.0h) → CHG_CC(I=22mA,V=4500mV,t=20s) → DCHG_CC(I=22mA,V=2500mV,[EC: TYPE_20736 100.0]) → REST(30m) → CHG_CC(I=43mA,V=4500mV,t=20s) → DCHG_CC(I=43mA,V=2500mV,[EC: TYPE_21504 100.0]) → REST(30m) → CHG_CC(I=85mA,V=4500mV,t=20s) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_22272 100.0]) → REST(30m) → CHG_CC(I=211mA,V=4500mV,t=20s) → DCHG_CC(I=211mA,V=2500mV,[EC: TYPE_23040 100.0]) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_4352 5.0])
+  #10 SOC_DCIR           TC 87-96 (10)
+       REST(1.0h) → CHG_CC(I=22mA,V=4500mV,t=20s) → DCHG_CC(I=22mA,V=2500mV,[EC: TYPE_24576 100.0]) → REST(30m) → CHG_CC(I=43mA,V=4500mV,t=20s) → DCHG_CC(I=43mA,V=2500mV,[EC: TYPE_25344 100.0]) → REST(30m) → CHG_CC(I=85mA,V=4500mV,t=20s) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_26112 100.0]) → REST(30m) → CHG_CC(I=211mA,V=4500mV,t=20s) → DCHG_CC(I=211mA,V=2500mV,[EC: TYPE_26880 100.0]) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_4352 1.0])
+  총 스텝 108 / 총 loop 그룹 10 / 총 TC 96
+
+--- 240919 선행랩 류성택  Gen4pGr ATL-mini-WD-Proto-422mAh-20C-450V-SOC별DCIR-15도.sch ---
+  #1  INIT               TC 1
+       DCHG_CC(I=422mA,V=2500mV,t=1s)
+  #2  FORMATION          TC 2-4 (3)
+       CHG_CC(I=338mA,V=4500mV) → REST(10m) → DCHG_CC(I=211mA,V=2500mV) → REST(10m)
+  #3  RPT                TC 5
+       CHG_CC(I=85mA,V=4500mV) → REST(10m) → DCHG_CC(I=85mA,V=1950mV) → REST(10m)
+  #4  CHARGE_SET         TC 6
+       CHG_CC(I=85mA,V=4500mV)
+  #5  SOC_DCIR           TC 7-11 (5)
+       REST(1.0h) → DCHG_CC(I=22mA,V=2500mV,t=20s) → CHG_CC(I=22mA,V=4500mV,[EC: TYPE_5376 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=43mA,V=4500mV,[EC: TYPE_6144 100.0]) → REST(30m) → DCHG_CC(I=85mA,V=2500mV,t=20s) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_6912 100.0]) → REST(30m) → DCHG_CC(I=211mA,V=2500mV,t=20s) → CHG_CC(I=211mA,V=4500mV,[EC: TYPE_7680 100.0]) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_3328 1.0])
+  #6  SOC_DCIR           TC 12-26 (15)
+       REST(1.0h) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=22mA,V=4500mV,[EC: TYPE_9216 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=43mA,V=4500mV,[EC: TYPE_9984 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_10752 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=211mA,V=4500mV,[EC: TYPE_11520 100.0]) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_3328 5.0])
+  #7  ACCEL              TC 27-51 (25)
+       REST(2.0h) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=22mA,V=4500mV,[EC: TYPE_13056 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=43mA,V=4500mV,[EC: TYPE_13824 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_14592 100.0]) → REST(30m) → DCHG_CC(I=43mA,V=2500mV,t=20s) → CHG_CC(I=211mA,V=4500mV,[EC: TYPE_15360 100.0]) → DCHG_CC(I=85mA,V=1950mV,[EC: TYPE_3328 1.0])
+  #8  ACCEL              TC 52-71 (20)
+       REST(2.0h) → CHG_CC(I=22mA,V=4500mV,t=20s) → DCHG_CC(I=22mA,V=2500mV,[EC: TYPE_16896 100.0]) → REST(30m) → CHG_CC(I=43mA,V=4500mV,t=20s) → DCHG_CC(I=43mA,V=2500mV,[EC: TYPE_17664 100.0]) → REST(30m) → CHG_CC(I=85mA,V=4500mV,t=20s) → DCHG_CC(I=85mA,V=2500mV,[EC: SOC 100.0%]) → REST(30m) → CHG_CC(I=211mA,V=4500mV,t=20s) → DCHG_CC(I=211mA,V=2500mV,[EC: TYPE_19200 100.0]) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_4352 1.0])
+  #9  SOC_DCIR           TC 72-86 (15)
+       REST(1.0h) → CHG_CC(I=22mA,V=4500mV,t=20s) → DCHG_CC(I=22mA,V=2500mV,[EC: TYPE_20736 100.0]) → REST(30m) → CHG_CC(I=43mA,V=4500mV,t=20s) → DCHG_CC(I=43mA,V=2500mV,[EC: TYPE_21504 100.0]) → REST(30m) → CHG_CC(I=85mA,V=4500mV,t=20s) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_22272 100.0]) → REST(30m) → CHG_CC(I=211mA,V=4500mV,t=20s) → DCHG_CC(I=211mA,V=2500mV,[EC: TYPE_23040 100.0]) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_4352 5.0])
+  #10 SOC_DCIR           TC 87-96 (10)
+       REST(1.0h) → CHG_CC(I=22mA,V=4500mV,t=20s) → DCHG_CC(I=22mA,V=2500mV,[EC: TYPE_24576 100.0]) → REST(30m) → CHG_CC(I=43mA,V=4500mV,t=20s) → DCHG_CC(I=43mA,V=2500mV,[EC: TYPE_25344 100.0]) → REST(30m) → CHG_CC(I=85mA,V=4500mV,t=20s) → DCHG_CC(I=85mA,V=2500mV,[EC: TYPE_26112 100.0]) → REST(30m) → CHG_CC(I=211mA,V=4500mV,t=20s) → DCHG_CC(I=211mA,V=2500mV,[EC: TYPE_26880 100.0]) → CHG_CC(I=85mA,V=4500mV,[EC: TYPE_4352 1.0])
+  총 스텝 108 / 총 loop 그룹 10 / 총 TC 96
+
+======================================================================
+[5] 실험 전체 요약 (카테고리 다양성 순)
+======================================================================
+  [성능] 260306_260318_05_현혜정_6330mAh_LWN 25P(after LT100cy) SOC  grp=11 TC=85 ndist=7 (ACCEL,CHARGE_SET,FORMATION,INIT,RPT,RSS_DCIR,SOC_DCIR)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter10     grp=12 TC=47 ndist=7 (ACCEL,CHARGE_SET,FORMATION,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 240919 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450  grp=10 TC=96 ndist=6 (ACCEL,CHARGE_SET,FORMATION,INIT,RPT,SOC_DCIR)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter1      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter2      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter3      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter6      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter7      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter8      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter9      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter1      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter10     grp=11 TC=46 ndist=6 (ACCEL,FORMATION,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter2      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter3      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter4      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter5      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter6      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter7      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter8      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter9      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter1      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter2      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter3      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter4      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter5      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter6      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter10     grp=11 TC=46 ndist=6 (ACCEL,FORMATION,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter7      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter8      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+  [성능] 260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter9      grp=16 TC=45 ndist=6 (ACCEL,CHARGE_SET,KVALUE,RPT,TERMINATION,UNKNOWN)
+
+(상위 30개만 표시, 총 156건)
