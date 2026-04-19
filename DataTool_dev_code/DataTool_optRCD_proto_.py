@@ -11350,16 +11350,19 @@ class Ui_sitool(object):
         self.profile_cv_chk.setObjectName("profile_cv_chk")
         self._profile_opt_row2.addWidget(self.profile_cv_chk)
 
-        self._profile_opt_row2.addStretch()
+        self._profile_opt_row2.addSpacing(20)
 
         # 프리셋: 자주 쓰는 옵션 조합 일괄 적용
         self.profile_preset_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
-        self.profile_preset_label.setFont(_pf_font)
+        _pf_font_bold = QtGui.QFont(_pf_font)
+        _pf_font_bold.setBold(True)
+        self.profile_preset_label.setFont(_pf_font_bold)
         self.profile_preset_label.setObjectName("profile_preset_label")
         self._profile_opt_row2.addWidget(self.profile_preset_label)
 
         self.profile_preset_combo = QtWidgets.QComboBox(parent=self._data_scope_groupbox)
         self.profile_preset_combo.setFont(_pf_font)
+        self.profile_preset_combo.setMinimumWidth(140)
         self.profile_preset_combo.setObjectName("profile_preset_combo")
         self.profile_preset_combo.addItems([
             "(선택)",
@@ -11373,6 +11376,7 @@ class Ui_sitool(object):
             "프리셋: 자주 쓰는 옵션 조합 일괄 적용")
         self._profile_opt_row2.addWidget(self.profile_preset_combo)
 
+        self._profile_opt_row2.addStretch()
         _ds_layout.addLayout(self._profile_opt_row2)
 
         self.verticalLayout_4.addWidget(self._data_scope_groupbox)
