@@ -1785,37 +1785,39 @@ def _unified_filter_condition(
     #       OCV 기준점으로 활용 필요. 임의 임계값 기반 필터링은 휴리스틱.
 
     # --- CV 구간 제거 (include_cv=False) ---
-    # SaveEndData col[1] Stepmode 기반 (origin L1583 공식 정의):
-    #   1=CC-CV, 2=CC, 3=CV, 4=OCV
+    # 전략:
+    #   (a) Stepmode=3 (순수 CV) 스텝: 스텝 전체 제외 (Stepmode 있을 때만)
+    #   (b) 충전 레코드(Condition=1)의 전압 플래토: step_max - 5mV 이상을 CV로 판정
+    #       Stepmode 유무/정확도에 무관하게 전압 기반으로 일관 적용
+    #       (이전 Stepmode=1 분기만으로는 .cyc 보충 행·Stepmode 불일치 시 미동작)
+    #       단, Stepmode=2 (순수 CC) 스텝은 사용자 의도 존중 → 제외 대상 아님
     #
-    # Phase 2 (2026-04-18): 레코드 단위 경계 처리
-    #   - Stepmode=3 (순수 CV) 스텝: 스텝 전체 제외 (기존과 동일)
-    #   - Stepmode=1 (CC-CV 복합) 스텝: 스텝 내 실측 최대 전압 기준으로
-    #     CV 구간(= max_V 근처 유지 레코드)만 제외, CC 구간 레코드는 유지.
-    #     물리 근거: CV 단계는 설정 전압을 정전압 유지하므로, 스텝 내에서
-    #     측정된 최대 전압 = CV 설정 전압. 이 값에 측정 노이즈 허용치를
-    #     뺀 임계를 CC/CV 경계로 삼는다 (.sch 파싱 불필요).
-    if not include_cv and len(filtered) > 0 and "Stepmode" in filtered.columns:
-        # (a) 순수 CV 스텝(Stepmode=3): 전체 제외
-        pure_cv_mask = filtered["Stepmode"] == 3
-        if pure_cv_mask.any():
-            filtered = filtered[~pure_cv_mask].copy()
+    # 물리 근거: CV 단계는 설정 전압을 정전압 유지 → 스텝 내 max = CV 설정 전압.
+    # 노이즈 허용치(5mV)를 뺀 임계를 CC/CV 경계로 삼는다 (.sch 파싱 불필요).
+    if not include_cv and len(filtered) > 0:
+        # (a) 순수 CV 스텝 제거 (Stepmode 있을 때만)
+        if "Stepmode" in filtered.columns:
+            pure_cv_mask = filtered["Stepmode"] == 3
+            if pure_cv_mask.any():
+                filtered = filtered[~pure_cv_mask].copy()
 
-        # (b) CC-CV 스텝(Stepmode=1): 레코드 단위로 CV 구간만 제외
-        ccv_mask = (filtered["Stepmode"] == 1)
-        if (ccv_mask.any() and "Step" in filtered.columns
+        # (b) 충전 전압 플래토 제거 — Stepmode 무관
+        _grp_cols = [c for c in ("Cycle", "Step") if c in filtered.columns]
+        if (_grp_cols and "Condition" in filtered.columns
                 and "Voltage_raw" in filtered.columns):
-            # Voltage_raw 단위 판별 (PNE μV vs Toyo V) → 노이즈 허용치 5mV
-            _v_scale = float(filtered.loc[ccv_mask, "Voltage_raw"].abs().max())
-            cv_epsilon = 5000.0 if _v_scale > 100 else 0.005
-            # 스텝 단위 그룹핑(Cycle+Step) 내 최대 전압 기준 경계
-            _grp_cols = [c for c in ("Cycle", "Step") if c in filtered.columns]
-            if _grp_cols:
-                _ccv = filtered.loc[ccv_mask]
-                step_max_v = _ccv.groupby(_grp_cols)["Voltage_raw"].transform("max")
+            _chg_mask = (filtered["Condition"] == 1)
+            # Stepmode=2 (순수 CC)는 제외 — 사용자가 CC-only로 구성한 스텝은 유지
+            if "Stepmode" in filtered.columns:
+                _chg_mask &= (filtered["Stepmode"] != 2)
+            _chg = filtered[_chg_mask]
+            if not _chg.empty:
+                # Voltage_raw 단위 판별 (PNE μV vs Toyo V) → 노이즈 허용치 5mV
+                _v_scale = float(_chg["Voltage_raw"].abs().max())
+                cv_epsilon = 5000.0 if _v_scale > 100 else 0.005
+                step_max_v = _chg.groupby(_grp_cols)["Voltage_raw"].transform("max")
                 cv_record_mask = pd.Series(False, index=filtered.index)
-                cv_record_mask.loc[_ccv.index] = (
-                    _ccv["Voltage_raw"] >= step_max_v - cv_epsilon)
+                cv_record_mask.loc[_chg.index] = (
+                    _chg["Voltage_raw"] >= step_max_v - cv_epsilon)
                 if cv_record_mask.any():
                     filtered = filtered[~cv_record_mask].copy()
 
@@ -2449,7 +2451,7 @@ def unified_profile_core(
             and "SOC" in with_axis.columns):
         _pts = with_axis.dropna(subset=["OCV", "CCV"], how="all")
         if not _pts.empty:
-            _keep = [c for c in ("SOC", "OCV", "CCV") if c in _pts.columns]
+            _keep = [c for c in ("SOC", "OCV", "CCV", "Crate") if c in _pts.columns]
             _cycfile_soc = _pts[_keep].reset_index(drop=True)
             if "SOC" in _cycfile_soc.columns:
                 _cycfile_soc["SOC"] = _cycfile_soc["SOC"] * 100.0
@@ -2623,7 +2625,7 @@ def _unified_process_single_cycle_from_raw(
             and "SOC" in with_axis.columns):
         _pts = with_axis.dropna(subset=["OCV", "CCV"], how="all")
         if not _pts.empty:
-            _keep = [c for c in ("SOC", "OCV", "CCV") if c in _pts.columns]
+            _keep = [c for c in ("SOC", "OCV", "CCV", "Crate") if c in _pts.columns]
             _cycfile_soc = _pts[_keep].reset_index(drop=True)
             if "SOC" in _cycfile_soc.columns:
                 _cycfile_soc["SOC"] = _cycfile_soc["SOC"] * 100.0
@@ -2719,7 +2721,7 @@ def unified_profile_batch(
         result = unified_profile_core(
             raw_file_path, cycle_range, mincapacity, inirate,
             data_scope=data_scope, axis_mode=axis_mode,
-            overlap=overlap, include_rest=include_rest,
+            overlap=overlap, include_rest=include_rest, include_cv=include_cv,
             calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
             cutoff=cutoff, cycle_map=cycle_map,
         )
@@ -2789,6 +2791,7 @@ def unified_profile_batch_continue(
     *,
     data_scope: str = "cycle",
     include_rest: bool = True,
+    include_cv: bool = True,
     cycle_map: dict | None = None,
     is_pne: bool | None = None,
 ) -> dict:
@@ -2837,6 +2840,7 @@ def unified_profile_batch_continue(
             raw_file_path, (start, end), mincapacity, inirate,
             data_scope=data_scope, axis_mode="time",
             overlap="continuous", include_rest=include_rest,
+            include_cv=include_cv,
             calc_dqdv=False, smooth_degree=0, cutoff=0.0,
             cycle_map=cycle_map,
         )
@@ -19391,6 +19395,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     folder_path, step_ranges, mincapacity, inirate,
                     data_scope=options.get("data_scope", "cycle"),
                     include_rest=options.get("include_rest", True),
+                    include_cv=options.get("include_cv", True),
                     cycle_map=cycle_map,
                 )
             else:
@@ -23192,6 +23197,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if not checked:
             return
         self._update_overlap_availability()
+        self._apply_cyc_continue_rest_default()
+
+    def _apply_cyc_continue_rest_default(self) -> None:
+        """사이클 + 이어서 + 시간 조합이면 Rest를 기본 ON으로 설정."""
+        if (self.profile_scope_group.checkedId() == 0
+                and self.profile_overlap_group.checkedId() == 0
+                and self.profile_axis_group.checkedId() == 1):
+            self.profile_rest_chk.setChecked(True)
 
     def _profile_opt_axis_changed(self, btn_id: int, checked: bool = True) -> None:
         """X축 라디오 변경 시 overlap 의존성 처리.
@@ -23223,6 +23236,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.profile_axis_time.setChecked(True)
         elif btn_id == 3:  # 연결(히스테리시스) → SOC 축 강제
             self.profile_axis_soc.setChecked(True)
+        self._apply_cyc_continue_rest_default()
 
     def _on_timeline_selection_changed(self, row_idx: int, text: str) -> None:
         """타임라인 바 → 경로 테이블 해당 행 + stepnum 동기화.
@@ -24214,6 +24228,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope=options["data_scope"], axis_mode="time",
                     overlap="split", include_rest=options["include_rest"],
+                    include_cv=options["include_cv"],
                     cutoff=mincrate,  # Step/Rate: Crate 하한 (저율 제외)
                 )
                 return [r.mincapacity, r]
@@ -24272,6 +24287,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope="charge", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree,
+                    include_cv=options["include_cv"],
                     cutoff=mincrate,  # Chg 프로파일: Voltage 하한 (이전 chg_Profile_data 동작)
                 )
                 return [r.mincapacity, r]
@@ -24326,6 +24342,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope="discharge", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree,
+                    include_cv=options["include_cv"],
                     cutoff=mincrate,  # Dchg 프로파일: Voltage 하한 (이전 dchg_Profile_data 동작)
                 )
                 return [r.mincapacity, r]
@@ -24486,6 +24503,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
                     data_scope="cycle", axis_mode="soc", calc_dqdv=True,
                     smooth_degree=smoothdegree, include_rest=options["include_rest"],
+                    include_cv=options["include_cv"],
                     overlap=options.get("overlap", "split"),
                 )
                 return [r.mincapacity, r]
@@ -24517,34 +24535,69 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _artists.append(graph_continue(p.TimeMin, p.Vol, ax4,
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "Time(min)", "Voltage(V)", temp_lgnd))
-                # ax4 OCV/CCV 오버레이 (산점도)
+                # ax4 OCV/CCV 오버레이 — 순수 scatter (라인 없음, 마커 30% 축소)
+                _ocv_ccv_ms = THEME['MARKER_SIZE'] * 0.7
                 if has_ocv:
                     _ocv_pts = p.dropna(subset=["OCV"])
-                    _artists.append(graph_continue(
-                        _ocv_pts.TimeMin, _ocv_pts.OCV, ax4,
-                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                        "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
+                    _l, = ax4.plot(
+                        _ocv_pts.TimeMin, _ocv_pts.OCV,
+                        label="OCV_" + temp_lgnd, marker='o',
+                        markersize=_ocv_ccv_ms, linestyle='none',
+                        alpha=THEME['LINE_ALPHA'])
+                    _artists.append(_l)
                 if has_ccv:
                     _ccv_pts = p.dropna(subset=["CCV"])
-                    _artists.append(graph_continue(
-                        _ccv_pts.TimeMin, _ccv_pts.CCV, ax4,
-                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                        "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
+                    _l, = ax4.plot(
+                        _ccv_pts.TimeMin, _ccv_pts.CCV,
+                        label="CCV_" + temp_lgnd, marker='o',
+                        markersize=_ocv_ccv_ms, linestyle='none',
+                        alpha=THEME['LINE_ALPHA'])
+                    _artists.append(_l)
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
                     0, 3.4, 0.2, "Time(min)", "C-rate", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.SOC, ax3,
                     0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
-                # ax5: OCV/CCV vs SOC 산점도가 있으면 그것을, 없으면 방전 Crate
+                # ax5: OCV/CCV vs SOC — scatter+line, 충/방전 분리
                 if cf_soc is not None and not cf_soc.empty and "OCV" in cf_soc.columns:
-                    _artists.append(graph_soc_continue(
-                        cf_soc.SOC, cf_soc.OCV, ax5,
-                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                        "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
+                    _has_crate = "Crate" in cf_soc.columns and cf_soc["Crate"].notna().any()
+                    def _split_chg_dch(_df, _col):
+                        if not _has_crate:
+                            return [("", _df.dropna(subset=[_col]).sort_values("SOC"))]
+                        _d = _df.dropna(subset=[_col])
+                        _chg = _d[_d["Crate"] > 0].sort_values("SOC")
+                        _dch = _d[_d["Crate"] < 0].sort_values("SOC")
+                        _rest = _d[_d["Crate"] == 0].sort_values("SOC")
+                        _out = []
+                        if not _chg.empty:
+                            _out.append(("Chg", _chg))
+                        if not _dch.empty:
+                            _out.append(("Dch", _dch))
+                        if not _rest.empty:
+                            _out.append(("Rst", _rest))
+                        return _out
+                    def _plot_soc_line(_sub_df, _col, _label):
+                        _l, = ax5.plot(
+                            _sub_df.SOC, _sub_df[_col],
+                            label=_label, marker='o',
+                            markersize=THEME['MARKER_SIZE'],
+                            linewidth=THEME['LINE_WIDTH'],
+                            alpha=THEME['LINE_ALPHA'])
+                        return _l
+                    for _dir, _sub in _split_chg_dch(cf_soc, "OCV"):
+                        _suffix = f"_{_dir}" if _dir else ""
+                        _artists.append(_plot_soc_line(
+                            _sub, "OCV", f"OCV{_suffix}_" + temp_lgnd))
                     if "CCV" in cf_soc.columns:
-                        _artists.append(graph_soc_continue(
-                            cf_soc.SOC, cf_soc.CCV, ax5,
-                            self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
+                        for _dir, _sub in _split_chg_dch(cf_soc, "CCV"):
+                            _suffix = f"_{_dir}" if _dir else ""
+                            _artists.append(_plot_soc_line(
+                                _sub, "CCV", f"CCV{_suffix}_" + temp_lgnd))
+                    ax5.set_xticks(np.arange(0, 110, 10))
+                    ax5.set_yticks(np.arange(
+                        self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap))
+                    ax5.set_ylim(
+                        self.vol_y_llimit, self.vol_y_hlimit - self.vol_y_gap)
+                    graph_base_parameter(ax5, "SOC", "OCV/CCV")
                 else:
                     _artists.append(graph_continue(p.TimeMin, p.Crate, ax5,
                         -3.4, 0.2, 0.2, "Time(min)", "C-rate", temp_lgnd))
@@ -24589,6 +24642,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     data_scope=options["data_scope"], axis_mode="time",
                     overlap="continuous",
                     include_rest=options["include_rest"],
+                    include_cv=options["include_cv"],
                     cycle_map=_cm,
                 )
                 return [r.mincapacity, r]
