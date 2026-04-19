@@ -20,6 +20,7 @@ TYPE_CODES = {
     0xFF07: 'REST_SAFE',
     0xFF08: 'LOOP',
     0x0003: 'GITT_PAUSE',
+    0x0006: 'END',  # schedule terminator (LOOP 뒤 마지막 스텝, 모든 필드 0)
     0x0007: 'GITT_END',
     0x0008: 'GITT_START',
 }
@@ -113,6 +114,9 @@ def split_into_loop_groups(steps):
             continue
         elif s['type'] == 'GOTO':
             # GOTO is typically at the end, skip
+            continue
+        elif s['type'] == 'END':
+            # Schedule END marker (0x0006) - skip
             continue
         elif s['type'] in ('GITT_PAUSE', 'GITT_END', 'GITT_START'):
             # GITT markers - include in body
