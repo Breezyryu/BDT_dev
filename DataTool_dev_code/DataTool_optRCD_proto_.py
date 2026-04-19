@@ -2355,15 +2355,32 @@ def unified_profile_core(
         with_axis["Curr"] = with_axis["Current_mA"] / 1000  # mA → A
         output_cols = ["TimeSec"] + output_cols + ["Curr"]
 
+    # OCV/CCV 컬럼이 있으면 출력에 포함 (PNE continuous DCIR/HPPC 시각화용)
+    # 이전 pro_continue_confirm_button의 ax4 V-t OCV/CCV 오버레이 및
+    # ax5 OCV/CCV vs SOC 산점도 복원을 위함.
+    for _oc in ("OCV", "CCV"):
+        if _oc in with_axis.columns and _oc not in output_cols:
+            output_cols.append(_oc)
+
     # 존재하는 컬럼만 선택
     final_cols = [c for c in output_cols if c in with_axis.columns]
     result_df = with_axis[final_cols].reset_index(drop=True)
+
+    # OCV/CCV 요약 테이블 (스텝 종료 지점만 모은 SOC-OCV-CCV 매핑)
+    # 이전 버전 pne_Profile_continue_data가 temp[2]로 반환하던 CycfileSOC 대체.
+    _cycfile_soc = None
+    if ("OCV" in with_axis.columns and "CCV" in with_axis.columns
+            and "SOC" in with_axis.columns):
+        _pts = with_axis.dropna(subset=["OCV", "CCV"], how="all")
+        if not _pts.empty:
+            _keep = [c for c in ("SOC", "OCV", "CCV") if c in _pts.columns]
+            _cycfile_soc = _pts[_keep].reset_index(drop=True)
 
     return UnifiedProfileResult(
         df=result_df,
         mincapacity=mincapacity,
         columns=final_cols,
-        cycfile_soc=None,  # CycfileSOC는 별도 유틸로 분리 (Phase 3)
+        cycfile_soc=_cycfile_soc,
         metadata={
             "cycler_type": "PNE" if is_pne else "TOYO",
             "cycle_range": cycle_range,
@@ -2508,13 +2525,28 @@ def _unified_process_single_cycle_from_raw(
         with_axis["Curr"] = with_axis["Current_mA"] / 1000
         output_cols = ["TimeSec"] + output_cols + ["Curr"]
 
+    # OCV/CCV 컬럼이 있으면 출력에 포함 (PNE continuous DCIR/HPPC 시각화용)
+    for _oc in ("OCV", "CCV"):
+        if _oc in with_axis.columns and _oc not in output_cols:
+            output_cols.append(_oc)
+
     final_cols = [c for c in output_cols if c in with_axis.columns]
     result_df = with_axis[final_cols].reset_index(drop=True)
+
+    # OCV/CCV 요약 테이블 (스텝 종료 지점)
+    _cycfile_soc = None
+    if ("OCV" in with_axis.columns and "CCV" in with_axis.columns
+            and "SOC" in with_axis.columns):
+        _pts = with_axis.dropna(subset=["OCV", "CCV"], how="all")
+        if not _pts.empty:
+            _keep = [c for c in ("SOC", "OCV", "CCV") if c in _pts.columns]
+            _cycfile_soc = _pts[_keep].reset_index(drop=True)
 
     return UnifiedProfileResult(
         df=result_df,
         mincapacity=mincapacity,
         columns=final_cols,
+        cycfile_soc=_cycfile_soc,
         metadata={"cycle": cycle_val},
     )
 
@@ -24022,12 +24054,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         elif legacy_mode == "continue":
             # Continue 모드 — unified 경로 통합
+            # OCV/CCV 컬럼/테이블이 있는 경우 (PNE DCIR/HPPC 실험):
+            #   - ax4: V-t + OCV/CCV 산점도 오버레이
+            #   - ax5: OCV/CCV vs SOC 산점도 (이전 pro_continue 스타일)
+            # 없는 경우 (일반 사이클):
+            #   - ax4: V-t 중복 (Y 범위 다르게)
+            #   - ax5: 방전 Crate (-3.4~0.2, 이전 ECT 스타일)
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 p = temp[1].df
                 if p.empty or len(p) < 2:
                     return (writecolno, [])
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
+                has_ocv = "OCV" in p.columns and p["OCV"].notna().any()
+                has_ccv = "CCV" in p.columns and p["CCV"].notna().any()
+                cf_soc = getattr(temp[1], "cycfile_soc", None)
                 _artists = []
                 _artists.append(graph_continue(p.TimeMin, p.Vol, ax1,
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -24035,33 +24076,66 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _artists.append(graph_continue(p.TimeMin, p.Vol, ax4,
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "Time(min)", "Voltage(V)", temp_lgnd))
+                # ax4 OCV/CCV 오버레이 (산점도)
+                if has_ocv:
+                    _ocv_pts = p.dropna(subset=["OCV"])
+                    _artists.append(graph_continue(
+                        _ocv_pts.TimeMin, _ocv_pts.OCV, ax4,
+                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                        "Time(min)", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
+                if has_ccv:
+                    _ccv_pts = p.dropna(subset=["CCV"])
+                    _artists.append(graph_continue(
+                        _ccv_pts.TimeMin, _ccv_pts.CCV, ax4,
+                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                        "Time(min)", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
                     0, 3.4, 0.2, "Time(min)", "C-rate", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.SOC, ax3,
                     0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
-                _artists.append(graph_continue(p.TimeMin, p.Crate, ax5,
-                    -3.4, 0.2, 0.2, "Time(min)", "C-rate", temp_lgnd))
+                # ax5: OCV/CCV vs SOC 산점도가 있으면 그것을, 없으면 방전 Crate
+                if cf_soc is not None and not cf_soc.empty and "OCV" in cf_soc.columns:
+                    _artists.append(graph_soc_continue(
+                        cf_soc.SOC, cf_soc.OCV, ax5,
+                        self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                        "SOC", "OCV/CCV", "OCV_" + temp_lgnd, "o"))
+                    if "CCV" in cf_soc.columns:
+                        _artists.append(graph_soc_continue(
+                            cf_soc.SOC, cf_soc.CCV, ax5,
+                            self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                            "SOC", "OCV/CCV", "CCV_" + temp_lgnd, "o"))
+                else:
+                    _artists.append(graph_continue(p.TimeMin, p.Crate, ax5,
+                        -3.4, 0.2, 0.2, "Time(min)", "C-rate", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.Temp, ax6,
                     -15, 60, 5, "Time(min)", "Temp.", lgnd))
                 # Excel 저장
                 if self.saveok.isChecked() and save_file_name:
                     has_timesec = "TimeSec" in p.columns and "Curr" in p.columns
-                    if has_timesec:
-                        _save_df = p[["TimeSec", "Vol", "Curr", "Crate", "SOC", "Temp"]].copy()
-                        _save_df.to_excel(writer, sheet_name="Profile",
-                            startcol=writecolno, index=False,
-                            header=[headername + c for c in
-                                    ["time(s)", "Voltage(V)", "Current(A)",
-                                     "Crate", "SOC", "Temp."]])
-                        writecolno += 6
+                    if has_timesec and has_ocv and has_ccv:
+                        _cols = ["TimeSec", "Vol", "Curr", "OCV", "CCV",
+                                 "Crate", "SOC", "Temp"]
+                        _headers = ["time(s)", "Voltage(V)", "Current(A)",
+                                    "OCV", "CCV", "Crate", "SOC", "Temp."]
+                    elif has_timesec:
+                        _cols = ["TimeSec", "Vol", "Curr", "Crate", "SOC", "Temp"]
+                        _headers = ["time(s)", "Voltage(V)", "Current(A)",
+                                    "Crate", "SOC", "Temp."]
                     else:
-                        _save_df = p[["TimeMin", "SOC", "Vol", "Crate", "Temp"]].copy()
-                        _save_df.to_excel(writer, sheet_name="Profile",
-                            startcol=writecolno, index=False,
-                            header=[headername + c for c in
-                                    ["Time(min)", "SOC", "Voltage(V)",
-                                     "Crate", "Temp."]])
-                        writecolno += 5
+                        _cols = ["TimeMin", "SOC", "Vol", "Crate", "Temp"]
+                        _headers = ["Time(min)", "SOC", "Voltage(V)",
+                                    "Crate", "Temp."]
+                    _save_df = p[[c for c in _cols if c in p.columns]].copy()
+                    _save_df.to_excel(writer, sheet_name="Profile",
+                        startcol=writecolno, index=False,
+                        header=[headername + h for h in _headers[:len(_save_df.columns)]])
+                    writecolno += len(_save_df.columns)
+                    # OCV/CCV 요약 테이블을 별도 시트로 저장 (이전 버전 호환)
+                    if cf_soc is not None and not cf_soc.empty:
+                        _cf_headers = [headername + c for c in cf_soc.columns]
+                        cf_soc.to_excel(writer, sheet_name="OCV_CCV",
+                            startcol=writecolno - len(_save_df.columns),
+                            index=False, header=_cf_headers)
                 return (writecolno, _artists)
 
             def _fallback(FolderBase, CycNo, is_pne):
