@@ -24832,22 +24832,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     _color = mcolors.to_hex(_artists[0].get_color())
                                     channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                                     # Data output option — ECT용 데이터 저장 체크 시에만 CSV 출력
+                                    # 저장 경로: 원본 동작 유지 위해 D:\ 우선, 없으면 스크립트/exe 디렉토리로 폴백
                                     if self.ect_saveok.isChecked():
                                         continue_df = temp[1].stepchg.loc[:,["TimeSec", "Vol", "Curr", "Temp"]]
                                         continue_df['TimeSec'] = continue_df['TimeSec'].round(1)
                                         continue_df['Vol'] = continue_df['Vol'].round(4)
                                         continue_df['Curr'] = continue_df['Curr'].round(4)
                                         continue_df['Temp'] = continue_df['Temp'].round(1)
-                                        _ect_csv_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+                                        _ect_csv_dir = "D:\\"
                                         if not os.path.isdir(_ect_csv_dir):
-                                            _ect_csv_dir = "D:\\"
+                                            _ect_csv_dir = (os.path.dirname(sys.executable)
+                                                            if getattr(sys, 'frozen', False)
+                                                            else os.path.dirname(os.path.abspath(__file__)))
                                         if os.path.isdir(_ect_csv_dir):
-                                            _ect_csv_path = os.path.join(_ect_csv_dir, ect_save[i] + ".csv")
+                                            _ect_csv_path = os.path.join(_ect_csv_dir, str(ect_save[i]) + ".csv")
                                             continue_df.to_csv(_ect_csv_path, index=False, sep=',',
                                                                 header=["time(s)",
                                                                         "Voltage(V)",
                                                                         "Current(A)",
                                                                         "Temp."])
+                                            print(f'[ECT 저장] {_ect_csv_path}')
                             title = step_namelist[-2] + "=" + "%04d" % Step_CycNo
                             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
                             axes_list = [step_ax1, step_ax2, step_ax3, step_ax4, step_ax5, step_ax6]
