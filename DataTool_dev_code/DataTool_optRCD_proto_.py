@@ -21039,7 +21039,61 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if col == 1:
             self._highlight_path_cell(row)
             self._update_group_separators()
-            # 자동 메타 수집 제거 — btn_autofill_path 버튼으로 대체
+            # 경로 교체 감지: 이전 경로의 auto-hint 셀 정리 + 새 경로 자동 채우기
+            self._on_path_cell_changed(row)
+
+    def _on_path_cell_changed(self, row: int) -> None:
+        """경로(col=1) 변경 시 stale auto-hint 셀 정리 + 재자동입력.
+
+        이전 경로와 비교하여 교체/삭제/신규 입력을 구분한다.
+        - 교체/삭제: 이전 경로의 메타와 일치하는 col 0/2/3 셀 + col 4 회색 힌트 클리어
+        - 신규/교체: 새 경로가 유효하면 _autofill_row()로 재채우기
+        사용자가 직접 수정한 값(bold 또는 검정 폰트)은 보존한다.
+        """
+        new_path = self._get_table_cell(row, 1)
+        old_path = self._row_last_path.get(row, '')
+        if new_path == old_path:
+            return
+
+        tbl = self.cycle_path_table
+        _auto_fg = QtGui.QColor(160, 160, 160)
+        # 이전 경로 메타 — _path_meta_cache 히트면 즉시, 아니면 재계산 없이 None
+        old_meta = self._path_meta_cache.get(old_path) if old_path else None
+
+        # ── 교체/삭제: auto-state 셀 클리어 ──
+        if old_path and old_meta:
+            tbl.blockSignals(True)
+            try:
+                for _col, _key in ((0, 'name'), (2, 'ch'), (3, 'cap')):
+                    cur = self._get_table_cell(row, _col)
+                    old_auto = old_meta.get(_key, '') or ''
+                    if cur and old_auto and cur == old_auto:
+                        it = tbl.item(row, _col)
+                        if it is not None:
+                            it.setText('')
+                            it.setToolTip('')
+                            f = it.font()
+                            if f.bold():
+                                f.setBold(False)
+                                it.setFont(f)
+                # col 4: 회색 힌트(자동 생성)는 클리어, 사용자 입력(검정)은 보존
+                it4 = tbl.item(row, 4)
+                if it4 and it4.text().strip():
+                    if it4.foreground().color() == _auto_fg:
+                        it4.setText('')
+                        it4.setToolTip('')
+            finally:
+                tbl.blockSignals(False)
+
+        # ── 새 경로가 유효하면 자동 채우기 ──
+        if new_path:
+            self._autofill_row(row)
+
+        # ── 행→경로 매핑 갱신 ──
+        if new_path:
+            self._row_last_path[row] = new_path
+        else:
+            self._row_last_path.pop(row, None)
 
     def _autofill_all_rows(self):
         """버튼 트리거: 유효 경로가 있는 모든 행에 메타 자동 채우기."""
@@ -21186,6 +21240,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     # ── 경로 메타데이터 인스턴스 캐시 ──
     _path_meta_cache: dict[str, dict] = {}
+    # ── 행별 마지막 경로 (col=1 교체 감지용) ──
+    _row_last_path: dict[int, str] = {}
 
     def _resolve_path_meta(self, path: str) -> dict | None:
         """경로 1개에 대한 모든 메타데이터를 한 번에 산출.
@@ -21448,6 +21504,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._highlight_all_paths()
         self._highlight_channel_mismatch()
         self._highlight_capacity_mismatch()
+        # 행→경로 매핑 동기화 (경로 교체 감지 기준선)
+        self._row_last_path = {
+            r: self._get_table_cell(r, 1)
+            for r in range(self.cycle_path_table.rowCount())
+            if self._get_table_cell(r, 1)
+        }
 
     def _autofill_link_cumulative_hints(self):
         """연결 모드: 그룹 내 TC 최대값을 누적 합산하여 첫 행 힌트 보정."""
@@ -21501,21 +21563,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         dup_color = self._DUP_FG_COLOR
         # 중복 플래그가 적용되는 열: name(0), path(1)
         _dup_flag_map = {0: '_dup_name', 1: '_dup_path'}
-        for r, row in enumerate(rows):
-            if row is None:
-                # 그룹 구분자: 빈 행
-                for col in range(6):
-                    self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
-                continue
-            for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'mode']):
-                val = row.get(key, '')
-                item = QtWidgets.QTableWidgetItem(val)
-                item.setToolTip(val)
-                # ECT 중복 경로/시험명 → 회색 폰트
-                dup_flag = _dup_flag_map.get(col)
-                if dup_flag and row.get(dup_flag):
-                    item.setForeground(dup_color)
-                self.cycle_path_table.setItem(r, col, item)
+        # 로드 중 cellChanged 훅 불필요한 중복 I/O 방지 (뒤의 _autofill_table_empty_cells가 처리)
+        self.cycle_path_table.blockSignals(True)
+        try:
+            for r, row in enumerate(rows):
+                if row is None:
+                    # 그룹 구분자: 빈 행
+                    for col in range(6):
+                        self.cycle_path_table.setItem(r, col, QtWidgets.QTableWidgetItem(''))
+                    continue
+                for col, key in enumerate(['name', 'path', 'channel', 'capacity', 'cycle', 'mode']):
+                    val = row.get(key, '')
+                    item = QtWidgets.QTableWidgetItem(val)
+                    item.setToolTip(val)
+                    # ECT 중복 경로/시험명 → 회색 폰트
+                    dup_flag = _dup_flag_map.get(col)
+                    if dup_flag and row.get(dup_flag):
+                        item.setForeground(dup_color)
+                    self.cycle_path_table.setItem(r, col, item)
+        finally:
+            self.cycle_path_table.blockSignals(False)
 
     def _clear_table(self):
         """테이블 내용 초기화"""
@@ -21523,6 +21590,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.setColumnCount(6)
         self.cycle_path_table.clearContents()
         self._path_meta_cache.clear()
+        self._row_last_path.clear()
         self._update_ect_columns_state()
 
     # 인식 가능한 헤더 키워드 (소문자)
@@ -21954,21 +22022,37 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _swap_table_rows(self, row1, row2):
         """테이블 두 행의 내용을 교환"""
         tbl = self.cycle_path_table
-        for c in range(tbl.columnCount()):
-            text1 = self._get_table_cell(row1, c)
-            text2 = self._get_table_cell(row2, c)
-            item1 = tbl.item(row1, c)
-            item2 = tbl.item(row2, c)
-            if item1 is None:
-                item1 = QtWidgets.QTableWidgetItem('')
-                tbl.setItem(row1, c, item1)
-            if item2 is None:
-                item2 = QtWidgets.QTableWidgetItem('')
-                tbl.setItem(row2, c, item2)
-            item1.setText(text2)
-            item1.setToolTip(text2)
-            item2.setText(text1)
-            item2.setToolTip(text1)
+        # 신호 차단: 교체 도중 _on_path_cell_changed 오동작(부분 swap 상태) 방지
+        tbl.blockSignals(True)
+        try:
+            for c in range(tbl.columnCount()):
+                text1 = self._get_table_cell(row1, c)
+                text2 = self._get_table_cell(row2, c)
+                item1 = tbl.item(row1, c)
+                item2 = tbl.item(row2, c)
+                if item1 is None:
+                    item1 = QtWidgets.QTableWidgetItem('')
+                    tbl.setItem(row1, c, item1)
+                if item2 is None:
+                    item2 = QtWidgets.QTableWidgetItem('')
+                    tbl.setItem(row2, c, item2)
+                item1.setText(text2)
+                item1.setToolTip(text2)
+                item2.setText(text1)
+                item2.setToolTip(text1)
+        finally:
+            tbl.blockSignals(False)
+        # 행→경로 매핑 교환
+        p1 = self._row_last_path.pop(row1, None)
+        p2 = self._row_last_path.pop(row2, None)
+        if p2:
+            self._row_last_path[row1] = p2
+        if p1:
+            self._row_last_path[row2] = p1
+        # 신호 차단으로 건너뛴 처리 수동 수행
+        self._highlight_path_cell(row1)
+        self._highlight_path_cell(row2)
+        self._update_group_separators()
 
     def _highlight_path_cell(self, row):
         """경로 셀의 존재 여부에 따라 폰트색 표시"""
@@ -22735,6 +22819,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 시각 갱신
         self._highlight_all_paths()
         self._update_group_separators()
+        # 행 삭제/클리어 후 행→경로 매핑 재동기화 (행 번호 밀림 대응)
+        self._row_last_path = {
+            r: self._get_table_cell(r, 1)
+            for r in range(tbl.rowCount())
+            if self._get_table_cell(r, 1)
+        }
 
     def eventFilter(self, obj, event):
         """경로 테이블 이벤트 처리
@@ -23742,6 +23832,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if options["overlap"] == "continuous" and self.chk_ectpath.isChecked():
             self.ect_confirm_button()
             return
+
+        # 경로 교체 후 stale 셀 방지 — Phase 0 이전에 테이블 빈 셀 자동 채우기
+        # (사이클 분석 버튼과 동일한 처리, per_path_capacities 정확도 확보)
+        if self._has_table_data():
+            self._autofill_table_empty_cells()
 
         # ── 1. 공통 초기화 ──
         init_data = self._init_confirm_button(self.ProfileConfirm)
