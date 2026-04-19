@@ -1787,13 +1787,13 @@ def _unified_filter_condition(
     # --- CV 구간 제거 (include_cv=False) ---
     # 전략:
     #   (a) Stepmode=3 (순수 CV) 스텝: 스텝 전체 제외 (Stepmode 있을 때만)
-    #   (b) 충전 레코드(Condition=1)의 전압 플래토: step_max - 5mV 이상을 CV로 판정
-    #       Stepmode 유무/정확도에 무관하게 전압 기반으로 일관 적용
-    #       (이전 Stepmode=1 분기만으로는 .cyc 보충 행·Stepmode 불일치 시 미동작)
-    #       단, Stepmode=2 (순수 CC) 스텝은 사용자 의도 존중 → 제외 대상 아님
+    #   (b) 충전 레코드(Condition=1) 의 전압 플래토: step_max - 5mV 이상을 CV 로 판정
+    #       데이터 소스(PNE SaveEndData/.cyc gap-fill/Toyo) 무관 일관 적용.
     #
     # 물리 근거: CV 단계는 설정 전압을 정전압 유지 → 스텝 내 max = CV 설정 전압.
     # 노이즈 허용치(5mV)를 뺀 임계를 CC/CV 경계로 삼는다 (.sch 파싱 불필요).
+    # CC-only 스텝에서도 말미 5mV 구간이 제거될 수 있으나, 이는 CC 종료 직전
+    # CV 천이 임계 근처로 물리적 해석에 무해.
     if not include_cv and len(filtered) > 0:
         # (a) 순수 CV 스텝 제거 (Stepmode 있을 때만)
         if "Stepmode" in filtered.columns:
@@ -1801,14 +1801,11 @@ def _unified_filter_condition(
             if pure_cv_mask.any():
                 filtered = filtered[~pure_cv_mask].copy()
 
-        # (b) 충전 전압 플래토 제거 — Stepmode 무관
+        # (b) 충전 전압 플래토 제거 — 모든 충전 row 에 uniform 적용
         _grp_cols = [c for c in ("Cycle", "Step") if c in filtered.columns]
         if (_grp_cols and "Condition" in filtered.columns
                 and "Voltage_raw" in filtered.columns):
             _chg_mask = (filtered["Condition"] == 1)
-            # Stepmode=2 (순수 CC)는 제외 — 사용자가 CC-only로 구성한 스텝은 유지
-            if "Stepmode" in filtered.columns:
-                _chg_mask &= (filtered["Stepmode"] != 2)
             _chg = filtered[_chg_mask]
             if not _chg.empty:
                 # Voltage_raw 단위 판별 (PNE μV vs Toyo V) → 노이즈 허용치 5mV
