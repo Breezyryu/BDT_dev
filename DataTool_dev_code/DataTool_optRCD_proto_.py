@@ -8,7 +8,7 @@ import functools
 import warnings
 import json
 import struct
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pyodbc
@@ -4752,13 +4752,146 @@ def pne_build_cycle_map(
 # ═══════════════════════════════════════════════════════════════════
 
 CATEGORY_LABELS = {
+    # ── 신 9종 + 서브태그 (Phase 1, 260419) ──
+    '충전': '충전',
+    '충전(세팅)': '충전 (SOC 세팅)',
+    '방전': '방전',
+    '방전(초기)': '방전 (초기 반사이클)',
+    '방전(종료)': '방전 (시험 종료)',
+    '방전(저장준비)': '방전 (저장 준비 심방전)',
+    '방전(SOC세팅)': '방전 (SOC 세팅, DCHG_CCCV)',
+    '저장': '저장 (K-value / 장시간 휴지)',
+    '저장(floating)': '저장 (Floating, CC→CV 유지)',
+    '사이클': '사이클',
+    '사이클(FORMATION)': '사이클 (FORMATION)',
+    '사이클(ACCEL)': '사이클 (가속수명)',
     'RPT': 'RPT (0.2C 충방전)',
-    'Rss': 'Rss (DCIR pulse)',
-    '가속수명': '가속수명 (멀티스텝 충전)',
-    'GITT': 'GITT (펄스 그룹)',
-    'initial': 'initial (초기 반사이클)',
+    'GITT': 'GITT',
+    'GITT(full)': 'GITT (OCV·D_Li 측정)',
+    'GITT(simplified)': 'GITT (simplified, RSS 측정)',
+    'DCIR': 'DCIR (단일 펄스)',
+    'SOC별 사이클': 'SOC별 사이클',
+    '히스테리시스': '히스테리시스',
+    '히스테리시스(충전)': '히스테리시스 (충전 경로)',
+    '히스테리시스(방전)': '히스테리시스 (방전 경로)',
+    # ── 구 약어 alias (하위 호환) ──
+    'Rss': 'Rss (DCIR pulse)',          # 구 — 신 DCIR 또는 GITT(simplified) 로 매핑
+    '가속수명': '가속수명 (멀티스텝 충전)',  # 구 — 신 사이클(ACCEL)
+    'initial': 'initial (초기 반사이클)',  # 구 — 신 방전(초기)
     'unknown': 'unknown (분류불가)',
 }
+
+
+# ── proto 내부 .sch 분류명 (_classify_loop_group) → 신 9종 + 서브태그 매핑 ──
+# Phase 1 (260419): .sch 기반 세밀 카테고리를 사용자 친화 한글로 변환.
+_SCH_CAT_TO_NEW = {
+    'INIT':            ('방전', '초기'),
+    'FORMATION':       ('사이클', 'FORMATION'),
+    'ACCEL':           ('사이클', 'ACCEL'),
+    'RPT':             ('RPT', None),
+    'CHG_DCHG':        ('RPT', None),          # 일반 1회 충방전 → RPT 취급
+    'GITT_PULSE':      ('GITT', 'full'),
+    'SWEEP_PULSE':     ('GITT', 'simplified'),
+    'SOC_DCIR':        ('SOC별 사이클', None),
+    'PULSE_DCIR':      ('DCIR', None),
+    'RSS_DCIR':        ('DCIR', None),         # 짧은 REST — 순수 DCIR
+    'HYSTERESIS_CHG':  ('히스테리시스', '충전'),
+    'HYSTERESIS_DCHG': ('히스테리시스', '방전'),
+    'CHARGE_SET':      ('충전', '세팅'),
+    'DISCHARGE_SET':   ('방전', 'SOC세팅'),
+    'DCHG_SET':        ('방전', None),
+    'TERMINATION':     ('방전', '종료'),
+    'FLOATING':        ('저장', 'floating'),    # Phase 1 (260419)
+    'POWER_CHG':       ('저장', None),          # CHG_CP = K-value 측정
+    'REST_LONG':       ('저장', None),
+    'REST_SHORT':      ('저장', None),
+    'EMPTY':           ('unknown', None),
+    'UNKNOWN':         ('unknown', None),
+}
+
+
+def _sch_cat_to_label(cat: str, sub: str | None = None) -> str:
+    """proto 내부 .sch 분류명 → 신 CATEGORY_LABELS 키.
+    서브태그가 있으면 '충전(세팅)' 형식, 없으면 '충전' 형식.
+    """
+    if sub:
+        return f'{cat}({sub})'
+    return cat
+
+
+def _pne_cat_from_sch_group(sch_cat: str) -> str:
+    """proto 내부 .sch 분류명 → 신 CATEGORY_LABELS 키 (편의 함수)."""
+    cat, sub = _SCH_CAT_TO_NEW.get(sch_cat, ('unknown', None))
+    return _sch_cat_to_label(cat, sub)
+
+
+def _apply_sch_categories_to_classified(
+    classified: list[dict],
+    sch_struct: dict | None,
+) -> list[dict]:
+    """sch_struct 의 loop_groups 카테고리를 classified 목록에 덮어쓴다.
+
+    Phase 1 (260419): .sch 기반 카테고리가 데이터 휴리스틱보다 풍부하므로,
+    sch_struct 가 있으면 각 loop group 의 tc_start~tc_end 범위에 해당하는
+    classified 항목의 category 를 신 9종 + 서브태그로 교체.
+
+    컴퓨팅 최소화: sch_struct 는 이미 lru_cache(`_get_pne_sch_struct`) 경유.
+    본 함수는 O(n_classified + n_loop_groups) 단순 스캔.
+
+    Parameters
+    ----------
+    classified : list[dict]
+        classify_pne_cycles() 또는 classify_toyo_cycles() 결과.
+        각 항목은 {'cycle': int, 'category': str, ...} 형식.
+    sch_struct : dict | None
+        extract_schedule_structure_from_sch() 반환값.
+        'loop_groups' 키에 [{'category': str, 'tc_start': int, 'tc_end': int}, ...] 포함.
+
+    Returns
+    -------
+    list[dict]
+        category 가 덮어쓰기된 classified (새 리스트, 원본 비파괴).
+    """
+    if not sch_struct or not isinstance(sch_struct, dict):
+        return classified
+    loop_groups = sch_struct.get('loop_groups')
+    if not loop_groups:
+        return classified
+
+    # TC → (카테고리, 서브태그) 조회 테이블 구성 (한 번만)
+    # 각 loop_group 의 tc_start..tc_end 전부 채움.
+    tc_to_new_cat: dict[int, str] = {}
+    for g in loop_groups:
+        sch_cat = g.get('category', 'UNKNOWN')
+        new_cat, new_sub = _SCH_CAT_TO_NEW.get(sch_cat, ('unknown', None))
+        new_label = _sch_cat_to_label(new_cat, new_sub)
+        tc_start = g.get('tc_start', 0)
+        tc_end = g.get('tc_end', tc_start)
+        for tc in range(tc_start, tc_end + 1):
+            tc_to_new_cat[tc] = new_label
+
+    # 덮어쓰기 (원본 비파괴)
+    out = []
+    for entry in classified:
+        # GITT 병합 결과는 'raw_range' 기반, 그 외는 'cycle' 기반
+        tc_target = None
+        if 'raw_range' in entry:
+            # 예: '5-10' — 시작 TC 기준
+            raw = entry['raw_range']
+            try:
+                tc_target = int(str(raw).split('-')[0])
+            except (ValueError, IndexError):
+                tc_target = None
+        if tc_target is None:
+            tc_target = entry.get('cycle')
+        new_cat = tc_to_new_cat.get(int(tc_target)) if tc_target is not None else None
+        if new_cat:
+            e2 = dict(entry)
+            e2['category'] = new_cat
+            out.append(e2)
+        else:
+            out.append(entry)
+    return out
 
 
 def _classify_single_pne_cycle(group: pd.DataFrame) -> dict:
@@ -5257,6 +5390,15 @@ def classify_channel_path(channel_path: str, capacity: float = 0) -> dict | None
         if sch_file:
             sch_struct = extract_schedule_structure_from_sch(sch_file, capacity)
 
+    # Phase 1 (260419): sch_struct 가 있으면 loop_groups 의 풍부한 카테고리를
+    # classified 항목에 덮어쓴다 (데이터 휴리스틱 결과보다 우선).
+    if sch_struct:
+        classified = _apply_sch_categories_to_classified(classified, sch_struct)
+        counts = {}
+        for c in classified:
+            cat = c['category']
+            counts[cat] = counts.get(cat, 0) + 1
+
     if sch_struct:
         # .sch 기반 (설계 의도)
         test_type = sch_struct['schedule_type']
@@ -5404,6 +5546,15 @@ def _build_channel_meta(
         if ptn_file:
             sch_file = ptn_file
             accel_pattern = _parse_toyo_ptn(channel_path, min_capacity)
+
+    # Phase 1 (260419): schedule_struct 가 있으면 loop_groups 카테고리를
+    # classified 에 덮어쓴다. 신 9종 한글 + 서브태그 표기.
+    if schedule_struct:
+        classified = _apply_sch_categories_to_classified(classified, schedule_struct)
+        counts = {}
+        for c in classified:
+            cat = c['category']
+            counts[cat] = counts.get(cat, 0) + 1
 
     # CSV 폴백: 스케줄 파일 없거나 패턴 추출 실패 시
     if accel_pattern is None:
@@ -6378,6 +6529,7 @@ _SCH_TYPE_MAP: dict[int, str] = {
     0xFF07: 'REST_SAFE',
     0xFF08: 'LOOP',
     0x0003: 'GITT_PAUSE',
+    0x0006: 'END',          # schedule terminator (Phase 1, 260419)
     0x0007: 'GITT_END',
     0x0008: 'GITT_START',
 }
@@ -6692,9 +6844,9 @@ def _decompose_loop_groups(steps: list[dict]) -> list[dict]:
     """파싱된 스텝 리스트를 LOOP 기준으로 그룹 분할.
 
     각 그룹 = body(이전 LOOP/REST_SAFE 이후 ~ 현재 LOOP 직전) + loop_count.
-    REST_SAFE, LOOP, GOTO는 body에서 제외.
+    REST_SAFE, LOOP, GOTO, END는 body에서 제외.
     """
-    _CTRL = {'LOOP', 'GOTO', 'REST_SAFE'}
+    _CTRL = {'LOOP', 'GOTO', 'REST_SAFE', 'END'}
     groups: list[dict] = []
     body_start = 0
 
@@ -6772,15 +6924,29 @@ def _classify_loop_group(
                 return 'INIT'
 
     # 2. GITT_PULSE: GITT 블록 코드 또는 REST(≥600s)+충/방 1~2스텝, N≥10
+    # Phase 1 (260419): first-REST 뿐 아니라 any-REST 를 허용 (반셀 GITT 커버).
+    # 반셀 GITT 패턴: DCHG_CC(I≈0) → REST(1h) × N≥50
     if has_gitt_block and N >= 10:
         return 'GITT_PULSE'
-    if N >= 10 and len(body) <= 3:
-        if rest_steps and rest_steps[0].get('time_limit_s', 0) >= 600:
-            non_rest = [s for s in body if s['type'] != 'REST']
-            if non_rest and any(
-                s['type'] in (_SCH_CHG_TYPES | _SCH_DCHG_TYPES)
-                for s in non_rest):
-                return 'GITT_PULSE'
+    max_rest_s = max(
+        (s.get('time_limit_s', 0) for s in rest_steps), default=0)
+    if N >= 10 and len(body) <= 3 and max_rest_s >= 600:
+        non_rest = [s for s in body if s['type'] != 'REST']
+        if non_rest and any(
+            s['type'] in (_SCH_CHG_TYPES | _SCH_DCHG_TYPES)
+            for s in non_rest):
+            return 'GITT_PULSE'
+
+    # 2b. Floating (Phase 1): CC/CCCV 장시간(≥12h) 충전 + 방전 없음
+    # 패턴: CC → V 도달 후 CV 유지 → 일~수개월 방치 (SEI·calendar aging).
+    # 예: 김영환 Floating 70일(I=5005mA, V=4500mV, t=6048000s), HaeanProto N=999.
+    if chg_steps and not dchg_steps:
+        max_chg_time = max(
+            (s.get('time_limit_s', 0) for s in chg_steps), default=0)
+        has_v_cut = any(
+            s.get('v_chg_mV', s.get('v_chg', 0)) > 0 for s in chg_steps)
+        if max_chg_time >= 43200 and has_v_cut:
+            return 'FLOATING'
 
     # 3. ACCEL: 다단충전(CHG≥2) + 방전, N≥20
     if N >= 20 and len(chg_steps) >= 2 and dchg_steps:
@@ -6796,9 +6962,14 @@ def _classify_loop_group(
         s.get('end_condition', {}).get('type') == 18432 for s in ec_on_chg):
         return 'HYSTERESIS_CHG'
 
-    # 6. SOC_DCIR: EC≥4건, body≥8스텝, N≥5
-    if N >= 5 and len(ec_steps) >= 4 and len(body) >= 8:
-        return 'SOC_DCIR'
+    # 6. SOC_DCIR: EC≥4건, body≥8스텝, N=5~19, EC 타입 다양성 ≥3
+    # Phase 1 (260419): N<20 + EC 타입 다양성 조건 추가 — N≥20 은 ACCEL 우선.
+    # 240919 #7/#8 같은 가속수명(EC 다수)이 SOC_DCIR 로 오분류되는 문제 해결.
+    if 5 <= N < 20 and len(ec_steps) >= 4 and len(body) >= 8:
+        ec_type_set = {
+            s.get('end_condition', {}).get('type', 0) for s in ec_steps}
+        if len(ec_type_set) >= 3:
+            return 'SOC_DCIR'
 
     # 7. PULSE_DCIR: EC + 짧은 DCHG(≤30s) + DCHG≥2, body≥5
     if has_ec and has_short_dchg and len(dchg_steps) >= 2 and len(body) >= 5:
@@ -7954,12 +8125,44 @@ def _classify_cycle_pattern(step_types: tuple[int, ...]) -> str:
 # ── classified 기반 타임라인 (논리사이클 단위) ──────────────────
 
 # classified category → 타임라인 색상/설명 매핑
+# Phase 2 (260419): 신 9종 + 서브태그 체계. PALETTE 10색 배분:
+#   0 네이비    - 사이클 계열 (ACCEL, FORMATION)
+#   1 빨강      - DCIR
+#   2 청녹      - 충전 계열 (세팅)
+#   3 연주황    - GITT 계열 (full, simplified)
+#   4 하늘      - 방전 계열 (초기, 종료, 저장준비, SOC세팅, 반사이클)
+#   5 회보라    - RPT
+#   6 베이지    - SOC별 사이클
+#   7 민트      - 저장 계열 (floating 포함)
+#   8 진빨강    - 히스테리시스 계열
+#   9 브라운    - 분류 불가 (unknown)
 _CLASSIFIED_COLORS = {
-    'RPT':     {'color_idx': 5, 'desc': 'RPT (0.2C 충방전)'},
-    'Rss':     {'color_idx': 1, 'desc': 'Rss (DCIR pulse)'},
-    '가속수명': {'color_idx': 0, 'desc': '가속수명 (멀티스텝 충전)'},
-    'GITT':    {'color_idx': 3, 'desc': 'GITT (펄스 그룹)'},
-    'initial': {'color_idx': 4, 'desc': '초기 반사이클'},
+    # ── 신 9종 + 서브태그 ──
+    '충전':               {'color_idx': 2, 'desc': '충전'},
+    '충전(세팅)':          {'color_idx': 2, 'desc': '충전 (SOC 세팅)'},
+    '방전':               {'color_idx': 4, 'desc': '방전'},
+    '방전(초기)':          {'color_idx': 4, 'desc': '방전 (초기 반사이클)'},
+    '방전(종료)':          {'color_idx': 4, 'desc': '방전 (시험 종료)'},
+    '방전(저장준비)':       {'color_idx': 4, 'desc': '방전 (저장 준비 심방전)'},
+    '방전(SOC세팅)':       {'color_idx': 4, 'desc': '방전 (SOC 세팅, DCHG_CCCV)'},
+    '저장':               {'color_idx': 7, 'desc': '저장 (K-value / 장시간 휴지)'},
+    '저장(floating)':      {'color_idx': 7, 'desc': '저장 (Floating, CC→CV 유지)'},
+    '사이클':              {'color_idx': 0, 'desc': '사이클'},
+    '사이클(FORMATION)':   {'color_idx': 0, 'desc': '사이클 (FORMATION)'},
+    '사이클(ACCEL)':       {'color_idx': 0, 'desc': '사이클 (가속수명)'},
+    'RPT':                {'color_idx': 5, 'desc': 'RPT (0.2C 충방전)'},
+    'GITT':               {'color_idx': 3, 'desc': 'GITT'},
+    'GITT(full)':          {'color_idx': 3, 'desc': 'GITT (OCV·D_Li 측정)'},
+    'GITT(simplified)':    {'color_idx': 3, 'desc': 'GITT (simplified, RSS 측정)'},
+    'DCIR':               {'color_idx': 1, 'desc': 'DCIR (단일 펄스)'},
+    'SOC별 사이클':        {'color_idx': 6, 'desc': 'SOC별 사이클'},
+    '히스테리시스':         {'color_idx': 8, 'desc': '히스테리시스'},
+    '히스테리시스(충전)':    {'color_idx': 8, 'desc': '히스테리시스 (충전 경로)'},
+    '히스테리시스(방전)':    {'color_idx': 8, 'desc': '히스테리시스 (방전 경로)'},
+    # ── 구 약어 alias (하위 호환, 색상 유지) ──
+    'Rss':     {'color_idx': 1, 'desc': 'Rss (DCIR pulse)'},      # 신: DCIR/GITT(simplified)
+    '가속수명': {'color_idx': 0, 'desc': '가속수명 (멀티스텝 충전)'},  # 신: 사이클(ACCEL)
+    'initial': {'color_idx': 4, 'desc': '초기 반사이클'},          # 신: 방전(초기)
     '반사이클': {'color_idx': 4, 'desc': '반사이클'},
     'unknown': {'color_idx': 9, 'desc': '분류 불가'},
 }
@@ -10743,7 +10946,7 @@ class Ui_sitool(object):
         self.stepnum_2 = QtWidgets.QPlainTextEdit(parent=self._path_groupbox)
         self.stepnum_2.setVisible(False)
         self.stepnum_2.setObjectName("stepnum_2")
-        self._table_undo_stack = []          # 테이블 Undo 스택
+        self._table_undo_stack = deque(maxlen=50)  # 테이블 Undo 스택 (상한 50)
         self._table_undo_restoring = False   # Undo 복원 중 플래그
         self._path_groupbox_vlayout.addLayout(self.horizontalLayout_119)
         self.verticalLayout_6.addWidget(self._path_groupbox, stretch=0)
@@ -21640,10 +21843,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         root = Tk()
         root.withdraw()
         fps = filedialog.askopenfilenames(
-            initialdir="d://", title="Path 파일 선택",
+            initialdir=self._get_cycle_path_initial_dir(), title="Path 파일 선택",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
         if not fps:
             return
+        # 성공적으로 선택한 파일의 디렉토리 기억
+        self._set_cycle_path_last_dir(fps[0])
         # 다중 선택: 2개 이상이면 txt 파일 경로를 테이블에 기재
         if len(fps) >= 2:
             self._load_multi_path_files(fps)
@@ -21771,11 +21976,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         root = Tk()
         root.withdraw()
         fp = filedialog.asksaveasfilename(
-            initialdir="d://", title="Path 파일 저장",
+            initialdir=self._get_cycle_path_initial_dir(), title="Path 파일 저장",
             defaultextension=".txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
         if not fp:
             return
+        self._set_cycle_path_last_dir(fp)
         link_mode = self.chk_link_cycle.isChecked()
         ect_mode = self.chk_ectpath.isChecked()
         with open(fp, 'w', encoding='UTF-8') as f:
@@ -22621,6 +22827,32 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.stepnum.setStyleSheet("")
             self.stepnum.setPlaceholderText("")
 
+    # ── QSettings 기반 Path 다이얼로그 최근 경로 영속화 ──
+    _CYCLE_SETTINGS_ORG = "BDT"
+    _CYCLE_SETTINGS_APP = "DataTool"
+    _CYCLE_LAST_DIR_KEY = "cycle/last_path_dir"
+
+    def _cycle_settings(self):
+        return QtCore.QSettings(self._CYCLE_SETTINGS_ORG, self._CYCLE_SETTINGS_APP)
+
+    def _get_cycle_path_initial_dir(self):
+        """Path 파일 다이얼로그 초기 경로.
+        QSettings 에 저장된 최근 경로가 있으면 사용, 없거나 존재하지 않으면 d:// 폴백.
+        테이블의 첫 유효 경로는 네트워크 서버일 가능성이 커서 추정에서 제외.
+        """
+        d = self._cycle_settings().value(self._CYCLE_LAST_DIR_KEY, '', type=str)
+        if d and os.path.isdir(d):
+            return d
+        return "d://"
+
+    def _set_cycle_path_last_dir(self, fp):
+        """성공적으로 불러오기/저장한 파일의 디렉토리를 기억"""
+        if not fp:
+            return
+        d = fp if os.path.isdir(fp) else os.path.dirname(fp)
+        if d and os.path.isdir(d):
+            self._cycle_settings().setValue(self._CYCLE_LAST_DIR_KEY, d)
+
     def _push_table_undo(self):
         """현재 테이블 상태를 Undo 스택에 저장"""
         tbl = self.cycle_path_table
@@ -22632,8 +22864,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 row_data.append(item.text() if item else '')
             state.append(row_data)
         self._table_undo_stack.append(state)
-        if len(self._table_undo_stack) > 20:
-            self._table_undo_stack.pop(0)
 
     def _undo_table(self):
         """테이블 상태를 이전으로 복원 (Ctrl+Z)"""
