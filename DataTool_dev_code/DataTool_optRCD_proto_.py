@@ -81,6 +81,56 @@ if not _perf_logger.handlers:
 logger = _perf_logger
 
 
+# ── 프로파일 파싱 스테이지 추적 (디버그) ──────────────────────────
+# 런타임에 True로 켜면 각 Stage의 DataFrame을 pickle로 저장한다.
+# 기본은 False이며 함수 내부 분기 비용만 추가 (거의 0).
+# 사용법:
+#   import DataTool_optRCD_proto_ as bdt
+#   bdt._DEBUG_PROFILE_TRACE = True
+#   bdt._DEBUG_TRACE_DIR = r"C:\tmp\bdt_trace"   # (선택) 경로 지정
+#   # ... GUI에서 프로파일 분석 1회 실행 ...
+#   # 이후 노트북에서 pickle 로드 (tools/profile_trace_viewer.ipynb)
+_DEBUG_PROFILE_TRACE: bool = False
+_DEBUG_TRACE_DIR: str = r"C:\tmp\bdt_trace"
+_DEBUG_TRACE_SESSION: str | None = None  # 세션 식별자 (None=타임스탬프 자동)
+
+
+def _debug_snapshot(obj, stage: str, tag: str = "") -> None:
+    """프로파일 파이프라인 중간 산출물을 pickle로 저장 (_DEBUG_PROFILE_TRACE=True 시).
+
+    저장 파일명: {session}/{NN}_{stage}_{tag}.pkl
+    payload dict: stage, tag, shape, columns, dtypes, head(30), df(전체)
+    """
+    if not _DEBUG_PROFILE_TRACE:
+        return
+    try:
+        import pickle, time
+        global _DEBUG_TRACE_SESSION
+        if _DEBUG_TRACE_SESSION is None:
+            _DEBUG_TRACE_SESSION = time.strftime("session_%Y%m%d_%H%M%S")
+        sess_dir = os.path.join(_DEBUG_TRACE_DIR, _DEBUG_TRACE_SESSION)
+        os.makedirs(sess_dir, exist_ok=True)
+        # 스테이지 순번 유지용 카운터
+        _counter = _debug_snapshot.__dict__.setdefault("_n", 0)
+        _debug_snapshot._n = _counter + 1
+        fname = os.path.join(
+            sess_dir, f"{_counter:03d}_{stage}_{tag}.pkl" if tag
+            else f"{_counter:03d}_{stage}.pkl")
+        payload: dict = {"stage": stage, "tag": tag, "ts": time.time()}
+        if isinstance(obj, pd.DataFrame):
+            payload["shape"] = obj.shape
+            payload["columns"] = list(obj.columns)
+            payload["dtypes"] = {c: str(obj[c].dtype) for c in obj.columns}
+            payload["head"] = obj.head(30).copy()
+            payload["df"] = obj.copy()
+        else:
+            payload["obj"] = obj
+        with open(fname, "wb") as f:
+            pickle.dump(payload, f)
+    except Exception as _ex:
+        _perf_logger.warning(f"[debug_snapshot] {stage}/{tag}: {_ex}")
+
+
 def calc_optimal_workers(task_count: int) -> int:
     """PC 리소스 기반 최적 worker 수 계산
 
@@ -1272,6 +1322,8 @@ def _unified_pne_load_raw(
             result["Stepmode"] = result["Stepmode"].fillna(2).astype(int)
 
     result["CyclerType"] = "PNE"
+    _debug_snapshot(result, "S2_load_raw",
+                    tag=f"PNE_cyc{cycle_start}-{cycle_end}")
     return result
 
 
@@ -1384,6 +1436,8 @@ def _unified_toyo_load_raw(
         if start_idx < len(result):
             result.loc[start_idx, "_file_boundaries"] = cyc_no
 
+    _debug_snapshot(result, "S2_load_raw",
+                    tag=f"TOYO_cyc{cycle_start}-{cycle_end}")
     return result
 
 
@@ -1464,6 +1518,7 @@ def _unified_normalize_pne(
     if "Stepmode" in df.columns:
         result["Stepmode"] = df["Stepmode"].values
 
+    _debug_snapshot(result, "S4_normalize", tag="PNE")
     return result
 
 
@@ -1548,6 +1603,7 @@ def _unified_normalize_toyo(
     result["ChgWh"] = np.cumsum(chg_e)
     result["DchgWh"] = np.cumsum(dchg_e)
 
+    _debug_snapshot(result, "S4_normalize", tag="TOYO")
     return result
 
 
@@ -1763,6 +1819,8 @@ def _unified_filter_condition(
                 if cv_record_mask.any():
                     filtered = filtered[~cv_record_mask].copy()
 
+    _debug_snapshot(filtered, "S3_filter_condition",
+                    tag=f"{data_scope}_rest={include_rest}_cv={include_cv}")
     return filtered
 
 
@@ -1823,6 +1881,7 @@ def _unified_merge_steps(
                 if not anchor_mask.any():
                     continue
                 df[cap_col] = df[cap_col].where(anchor_mask).ffill().fillna(0)
+        _debug_snapshot(df, "S5_merge_steps", tag="cycle")
         return df
 
     # --- multi-TC: TotTime 기반 절대 시간 보존 + 용량 누적 보정 ---
@@ -2108,6 +2167,8 @@ def _unified_calculate_axis(
     df["TimeMin"] = df["Time_s"] / 60.0
     df["SOC"] = _calc_soc(df, data_scope, axis_mode, overlap)
 
+    _debug_snapshot(df, "S6_calc_axis",
+                    tag=f"{data_scope}_{axis_mode}_{overlap}")
     return df
 
 
@@ -2392,6 +2453,12 @@ def unified_profile_core(
             _cycfile_soc = _pts[_keep].reset_index(drop=True)
             if "SOC" in _cycfile_soc.columns:
                 _cycfile_soc["SOC"] = _cycfile_soc["SOC"] * 100.0
+
+    _debug_snapshot(result_df, "S7_output_df",
+                    tag=f"{data_scope}_{axis_mode}_{overlap}")
+    if _cycfile_soc is not None:
+        _debug_snapshot(_cycfile_soc, "S7_output_cycfile_soc",
+                        tag=f"{data_scope}_{axis_mode}_{overlap}")
 
     return UnifiedProfileResult(
         df=result_df,
@@ -9088,7 +9155,13 @@ def _process_pne_cycleraw(
                 _grouped = _mapped.groupby('_ln').agg(
                     {k: v for k, v in _agg.items() if k in _mapped.columns})
                 _grouped = _grouped.reset_index()
-                _grouped.rename(columns={'_ln': 'Cycle'}, inplace=True)
+                # TC 1원화: Sweep 집계 결과도 Cycle 컬럼은 대표 TC(OriCyc)로 출력.
+                # 논리사이클 번호는 _LogicalCyc 컬럼으로 남겨 디버깅/엑셀 참조용.
+                _grouped.rename(columns={'_ln': '_LogicalCyc'}, inplace=True)
+                if 'OriCyc' in _grouped.columns:
+                    _grouped.insert(0, 'Cycle', _grouped['OriCyc'].astype(int).values)
+                else:
+                    _grouped.insert(0, 'Cycle', _grouped['_LogicalCyc'].astype(int).values)
                 # Eff, Eff2 재계산 (집계 후 비율 재산출)
                 if 'Dchg' in _grouped.columns and 'Chg' in _grouped.columns:
                     _grouped['Eff'] = _grouped['Dchg'] / _grouped['Chg']
