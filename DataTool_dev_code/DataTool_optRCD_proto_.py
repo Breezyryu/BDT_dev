@@ -23680,8 +23680,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _hyst_applied += 1
 
             # Major/Minor 분류
+            # Major = 거의 풀 SOC 사이클(>=0.98)만. 이전 기준 0.5는 방전 히스테리시스
+            # 실험(Dchg 100~10% 10단계)에서 절반 이상이 major=검정으로 판정되어
+            # 레인보우 색상이 의도와 달리 적용되지 않음. 실무상 "기준 풀 루프"는
+            # 1개 또는 없음이 자연스러우므로 엄격한 임계값 사용.
             soc_range = df['SOC'].max() - df['SOC'].min() if len(df) > 0 else 0
-            result_obj._hyst_type = 'major' if soc_range > 0.5 else 'minor'
+            result_obj._hyst_type = 'major' if soc_range >= 0.98 else 'minor'
 
         _perf_logger.info(f'  [hysteresis] SOC 보정 적용: {_hyst_applied}개 사이클')
 
