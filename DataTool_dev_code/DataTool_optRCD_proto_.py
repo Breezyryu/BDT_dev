@@ -24195,8 +24195,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         options = self._read_profile_options()
         legacy_mode = self._map_options_to_legacy_mode(options)
 
-        # ECT 경로 체크 시 기존 Continue(ECT) 핸들러로 위임
-        if options["overlap"] == "continuous" and self.chk_ectpath.isChecked():
+        # ECT 경로 체크 시 기존 Continue(ECT) 핸들러로 무조건 위임
+        # (데이터 범위 옵션은 ECT 모드에서 의미 없음 — 연속 시간축 전용)
+        if self.chk_ectpath.isChecked():
             self.ect_confirm_button()
             return
 
