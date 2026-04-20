@@ -9719,12 +9719,23 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
                 # CDstate 정규화 (대소문자/공백 무관) + Rest 포함 여부는 include_rest 파라미터로 받음
                 # (데이터 범위 영역의 Rest 체크박스 상태를 ect_confirm_button 에서 전달)
                 _cd = CDstate.strip().upper() if isinstance(CDstate, str) else ""
-                if _cd == "CHG":
-                    _types = [9, 1] + ([3] if include_rest else [])
-                    Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin(_types)]
-                elif _cd in ("DCH", "DCHG"):
-                    _types = [9, 2] + ([3] if include_rest else [])
-                    Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin(_types)]
+                if _cd in ("CHG", "DCH", "DCHG"):
+                    _want_type = 1 if _cd == "CHG" else 2
+                    # 기본: 해당 스텝 + 레거시 9(loop 마커)
+                    _type_mask = Profileraw[2].isin([9, _want_type])
+                    if include_rest:
+                        # "직전 step 이 CHG 또는 DCHG 인 Rest 만" 포함 (사이클 내 다른 Rest 제외)
+                        # 1) StepType 이 연속 다른 값으로 바뀌는 지점에서 step ID 생성
+                        _is_boundary = Profileraw[2] != Profileraw[2].shift(1)
+                        _step_id = _is_boundary.cumsum()
+                        # 2) 각 step 의 대표 StepType
+                        _step_rep = Profileraw.groupby(_step_id)[2].first()
+                        # 3) 직전 step 의 StepType (경계 밖은 NaN)
+                        _prev_type = _step_id.map(_step_rep.shift(1))
+                        _rest_after = (Profileraw[2] == 3) & (_prev_type == _want_type)
+                        _type_mask = _type_mask | _rest_after
+                    Profileraw = Profileraw.loc[
+                        (Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & _type_mask]
                 elif _cd in ("CYC", "CYCLE", "7CYC", "GITT"):
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle)]
                 if Profileraw.empty:
