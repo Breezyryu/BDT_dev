@@ -22097,12 +22097,36 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 path = self._get_table_cell(r, 1)
                 ch = self._get_table_cell(r, 2)
                 cap = self._get_table_cell(r, 3)
-                cyc = self._get_table_cell(r, 4)
+                # col 4(TC): 회색 auto-fill 힌트("1-{max}")는 빈칸으로 저장.
+                # 재로드 시 _autofill_row가 동일 힌트를 재생성하여 gray 상태를 복원.
+                cyc = self._cycle_cell_text_for_save(r)
                 mode = self._get_table_cell(r, 5)
                 if path:
                     f.write(f"{name}\t{path}\t{ch}\t{cap}\t{cyc}\t{mode}\n")
                 elif link_mode:
                     f.write("\n")  # 그룹 구분자 (빈 행)
+
+    def _cycle_cell_text_for_save(self, row: int) -> str:
+        """col 4(TC) 저장용 텍스트. 회색 auto-fill 힌트는 빈 문자열 반환.
+
+        회색 fg(160,160,160) = `_autofill_row`/`_restore_cycle_hint`가 쓴
+        "최대 TC 힌트(사용자 입력 없음)". 이 텍스트를 그대로 저장하면 재로드
+        시 사용자 입력으로 오인되어 gray→default(검정) 전환이 일어나고,
+        ECT 실행 시에도 엉뚱한 전체 범위로 해석된다. 빈칸 저장 시 로드 후
+        autofill이 다시 gray 힌트를 그려 준다.
+        """
+        item = self.cycle_path_table.item(row, 4)
+        if not item:
+            return ''
+        text = item.text().strip().strip('"').strip("'")
+        if not text:
+            return ''
+        fg = item.foreground()
+        if fg.style() != QtCore.Qt.BrushStyle.NoBrush:
+            c = fg.color()
+            if c.red() == 160 and c.green() == 160 and c.blue() == 160:
+                return ''
+        return text
 
     def _cycle_table_copy(self):
         """선택 셀 → 클립보드 (탭 구분, 여러 행/열 지원)"""
