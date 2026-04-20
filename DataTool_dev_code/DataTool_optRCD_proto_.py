@@ -2092,6 +2092,22 @@ def _calc_soc(
         return df["DchgCap"]  # DOD 방향 (0~1)
 
     # data_scope == "cycle"
+    if axis_mode == "dod" and overlap == "connected":
+        # 히스테리시스 DOD 축: 방전 심도 기준.
+        # 방전은 DchgCap(0→방전량), 충전은 (-ChgCap)로 음수 영역 배치하여 "U 모양"
+        # 루프 모양을 유지하되, 두 곡선이 x=0에서 만나도록 한다. 실무에서는
+        # 방전만 관심인 경우가 많아 색상/alpha 로 시각 강조.
+        if "Condition" in df.columns:
+            dod = pd.Series(np.nan, index=df.index)
+            chg_mask = df["Condition"] == 1
+            dchg_mask = df["Condition"] == 2
+            if chg_mask.any():
+                dod[chg_mask] = -df.loc[chg_mask, "ChgCap"]
+            if dchg_mask.any():
+                dod[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
+            return dod.ffill()
+        return df["DchgCap"] - df["ChgCap"]
+
     if axis_mode == "soc" and overlap == "connected":
         # 히스테리시스: 충전 SOC 0→peak, 방전 SOC peak→0
         if "Condition" in df.columns:
@@ -2111,15 +2127,20 @@ def _calc_soc(
             return soc.ffill()
         return df["ChgCap"] - df["DchgCap"]
 
-    if axis_mode == "soc":
-        # SOC 축 (split 등): 충전/방전 독립 SOC 부여
+    if axis_mode in ("soc", "dod"):
+        # SOC/DOD 축 (split 등): 충전/방전 독립 좌표
+        # DOD 모드는 방전량을 양의 방향으로 직접 표시 (충전은 대칭 음수 방향)
         if "Condition" in df.columns:
             soc = pd.Series(np.nan, index=df.index)
             chg_mask = df["Condition"] == 1
             dchg_mask = df["Condition"] == 2
             rest_mask = df["Condition"] == 3
-            soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
-            soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
+            if axis_mode == "dod":
+                soc[chg_mask] = -df.loc[chg_mask, "ChgCap"]
+                soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
+            else:
+                soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
+                soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
             if rest_mask.any():
                 soc[rest_mask] = np.nan
                 soc = soc.ffill()
@@ -11342,11 +11363,14 @@ class Ui_sitool(object):
         self._profile_opt_row2.addWidget(self.profile_axis_label)
 
         self.profile_axis_group = QtWidgets.QButtonGroup(self.tab_6)
+        # 버튼 순서(id): 0=SOC, 1=DOD, 2=시간
+        # DOD는 히스테리시스(연결)·방전 시나리오에서 방전 심도 좌표로 표시
         _axis_seg, _axis_btns = self._make_seg_group(
-            ["SOC(DOD)", "시간"], self._data_scope_groupbox,
-            self.profile_axis_group, _pf_font, checked_idx=1)
+            ["SOC", "DOD", "시간"], self._data_scope_groupbox,
+            self.profile_axis_group, _pf_font, checked_idx=2)
         self.profile_axis_soc = _axis_btns[0]
-        self.profile_axis_time = _axis_btns[1]
+        self.profile_axis_dod = _axis_btns[1]
+        self.profile_axis_time = _axis_btns[2]
         self._profile_opt_row2.addWidget(_axis_seg)
 
         self._profile_opt_row2.addSpacing(16)
@@ -23221,19 +23245,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.profile_ovlp_split.setChecked(True)
             cur_id = 1  # split
 
-        # overlap → axis 제약
+        # overlap → axis 제약 (axis id: 0=SOC, 1=DOD, 2=시간)
         if cur_id == 0:  # 이어서 → 시간만
             self.profile_axis_soc.setEnabled(False)
+            self.profile_axis_dod.setEnabled(False)
             self.profile_axis_time.setEnabled(True)
-            if self.profile_axis_group.checkedId() != 1:
+            if self.profile_axis_group.checkedId() != 2:
                 self.profile_axis_time.setChecked(True)
-        elif cur_id == 2:  # 연결 → SOC만
+        elif cur_id == 2:  # 연결(히스테리시스) → SOC/DOD 둘 다, 시간 비활성
             self.profile_axis_soc.setEnabled(True)
+            self.profile_axis_dod.setEnabled(True)
             self.profile_axis_time.setEnabled(False)
-            if self.profile_axis_group.checkedId() != 0:
+            if self.profile_axis_group.checkedId() == 2:
                 self.profile_axis_soc.setChecked(True)
-        else:  # 분리: SOC/시간 둘 다
+        else:  # 분리: SOC/DOD/시간 모두 허용
             self.profile_axis_soc.setEnabled(True)
+            self.profile_axis_dod.setEnabled(True)
             self.profile_axis_time.setEnabled(True)
 
     def _profile_opt_scope_changed(self, btn_id: int, checked: bool = True) -> None:
@@ -23253,9 +23280,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _apply_cyc_continue_rest_default(self) -> None:
         """사이클 + 이어서 + 시간 조합이면 Rest를 기본 ON으로 설정."""
+        # 시간 버튼 id = 2 (axis: 0=SOC, 1=DOD, 2=시간)
         if (self.profile_scope_group.checkedId() == 0
                 and self.profile_overlap_group.checkedId() == 0
-                and self.profile_axis_group.checkedId() == 1):
+                and self.profile_axis_group.checkedId() == 2):
             self.profile_rest_chk.setChecked(True)
 
     def _profile_opt_axis_changed(self, btn_id: int, checked: bool = True) -> None:
@@ -23312,7 +23340,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         scope, overlap, axis, rest, cv, dqdv = presets[idx]
         scope_id = {"cycle": 0, "charge": 1, "discharge": 2}[scope]
         overlap_id = {"continuous": 0, "split": 1, "connected": 2}[overlap]
-        axis_id = {"soc": 0, "time": 1}[axis]
+        axis_id = {"soc": 0, "dod": 1, "time": 2}[axis]
         # 순서: scope → overlap → axis (의존성 갱신 순서)
         self.profile_scope_group.button(scope_id).setChecked(True)
         self.profile_overlap_group.button(overlap_id).setChecked(True)
@@ -24106,19 +24134,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         scope_map = {0: "cycle", 1: "charge", 2: "discharge"}
         overlap_map = {0: "continuous", 1: "split", 2: "connected"}
+        axis_map = {0: "soc", 1: "dod", 2: "time"}
 
         data_scope = scope_map.get(self.profile_scope_group.checkedId(), "cycle")
-        axis_mode = "time" if self.profile_axis_group.checkedId() == 1 else "soc"
+        axis_mode = axis_map.get(self.profile_axis_group.checkedId(), "soc")
         overlap = overlap_map.get(self.profile_overlap_group.checkedId(), "continuous")
         include_rest = self.profile_rest_chk.isChecked()
 
         # 강제 규칙 (UI에서 비활성이어도 방어적으로 재적용)
-        if axis_mode == "soc" and overlap == "continuous":
+        if axis_mode in ("soc", "dod") and overlap == "continuous":
             overlap = "split"
         if data_scope != "cycle" and overlap == "connected":
             overlap = "split"
 
-        calc_dqdv = (axis_mode == "soc")
+        # dQ/dV 는 SOC·DOD 좌표계에서만 의미 있음 (시간축에서는 스킵)
+        calc_dqdv = (axis_mode in ("soc", "dod"))
         include_cv = self.profile_cv_chk.isChecked()
 
         return {
@@ -24140,11 +24170,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         if options["overlap"] == "continuous":
             return "continue"
-        if options["axis_mode"] == "soc" and options["data_scope"] == "charge":
+        # SOC / DOD 축 모두 동일 legacy_mode 경로로 라우팅 (좌표계만 다름)
+        _is_soc_like = options["axis_mode"] in ("soc", "dod")
+        if _is_soc_like and options["data_scope"] == "charge":
             return "chg"
-        if options["axis_mode"] == "soc" and options["data_scope"] == "discharge":
+        if _is_soc_like and options["data_scope"] == "discharge":
             return "dchg"
-        if options["axis_mode"] == "soc" and options["data_scope"] == "cycle":
+        if _is_soc_like and options["data_scope"] == "cycle":
             return "cycle_soc"
         # time + 비연속 → step 스타일
         return "step"
@@ -24298,6 +24330,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _compat_data[key] = val
 
         # ── 3-b. 히스테리시스 모드: SOC 절대좌표 보정 ──
+        # DOD 축은 모든 cycle이 0에서 시작하므로 offset 불필요.
         if options.get('overlap') == 'connected' and options.get('axis_mode') == 'soc':
             self._apply_hysteresis_soc_offsets(
                 _compat_data, all_data_folder, mincapacity, data_attr)
@@ -24441,6 +24474,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         elif legacy_mode == "cycle_soc":
             # 사이클+SOC+오버레이: 충전(0→1)+방전(1→0) 루프를 SOC 축에 표시
             _is_hysteresis = (options.get('overlap') == 'connected')
+            _axis_label = "DOD" if options.get('axis_mode') == 'dod' else "SOC"
+            # DOD 축은 충전을 -1~0, 방전을 0~+1 범위로 표시 (방전 위주 해석)
+            _is_dod = (options.get('axis_mode') == 'dod')
+            _x_lo, _x_hi = (-1.1, 1.2) if _is_dod else (-0.1, 1.2)
 
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
@@ -24455,7 +24492,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                     _n_cyc = len(CycleNo)
 
-                    # 충전/방전 세그먼트별 색상 분기 (V-SOC 플롯)
+                    # 충전/방전 세그먼트별 색상 분기 (V-x 플롯)
                     if 'Condition' in p.columns and not _is_major:
                         for _cond in [1, 2]:
                             _seg = p[p['Condition'] == _cond]
@@ -24465,26 +24502,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 'chg_dchg', _cyc_idx, _n_cyc,
                                 condition=_cond, is_major=False)
                             _a1 = graph_profile(_seg.SOC, _seg.Vol, ax1,
-                                -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                "SOC", "Voltage(V)", temp_lgnd)
+                                _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                _axis_label, "Voltage(V)", temp_lgnd)
                             _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                             _artists.append(_a1)
                             _a3 = graph_profile(_seg.SOC, _seg.Vol, ax3,
-                                -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                "SOC", "Voltage(V)", '_nolegend_')
+                                _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                _axis_label, "Voltage(V)", '_nolegend_')
                             _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
                             _artists.append(_a3)
                     else:
                         _color, _lw, _alpha = _get_profile_color(
                             'chg_dchg', _cyc_idx, _n_cyc, is_major=_is_major)
                         _a1 = graph_profile(p.SOC, p.Vol, ax1,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "Voltage(V)", temp_lgnd)
+                            _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                            _axis_label, "Voltage(V)", temp_lgnd)
                         _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                         _artists.append(_a1)
                         _a3 = graph_profile(p.SOC, p.Vol, ax3,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "Voltage(V)", '_nolegend_')
+                            _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                            _axis_label, "Voltage(V)", '_nolegend_')
                         _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
                         _artists.append(_a3)
 
@@ -24498,17 +24535,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _a2.set_color(_sub_color); _a2.set_linewidth(_sub_lw); _a2.set_alpha(_sub_alpha)
                         _artists.append(_a2)
                     _a5 = graph_profile(p.SOC, p.Crate, ax5,
-                        -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                        _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", temp_lgnd)
                     _a5.set_color(_sub_color); _a5.set_linewidth(_sub_lw); _a5.set_alpha(_sub_alpha)
                     _artists.append(_a5)
                     if 'dVdQ' in p.columns:
                         _a4 = graph_profile(p.SOC, p.dVdQ, ax4,
-                            -0.1, 1.2, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
-                            "SOC", "dVdQ", temp_lgnd)
+                            _x_lo, _x_hi, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
+                            _axis_label, "dVdQ", temp_lgnd)
                         _a4.set_color(_sub_color); _a4.set_linewidth(_sub_lw); _a4.set_alpha(_sub_alpha)
                         _artists.append(_a4)
                     _a6 = graph_profile(p.SOC, p.Temp, ax6,
-                        -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                        _x_lo, _x_hi, 0.1, -15, 60, 5, _axis_label, "Temp.", lgnd)
                     _a6.set_color(_sub_color); _a6.set_linewidth(_sub_lw); _a6.set_alpha(_sub_alpha)
                     _artists.append(_a6)
                 else:
