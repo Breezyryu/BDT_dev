@@ -4673,6 +4673,7 @@ def pne_build_cycle_map(
         _near_boundary = (0.35 <= sig_ratio <= 0.65) or (0.2 <= has_both_ratio <= 0.4)
         _perf_logger.warning(
             f'  [cycle_map] .sch 없음 - 데이터 휴리스틱 폴백 '
+            f'path={raw_file_path!r} '
             f'(sig={sig_ratio:.2f}, both={has_both_ratio:.2f}) '
             f'-> {"GENERAL" if _use_general else "SWEEP"}'
             f'{" [!] 경계값 근방 - 판별 불확실" if _near_boundary else ""}')
@@ -7343,65 +7344,38 @@ def _merge_tc_info(prior: dict, measured: dict) -> dict:
 
 @functools.lru_cache(maxsize=128)
 def _find_sch_file(channel_path: str) -> str | None:
-    """채널 폴더 및 주변에서 .sch 파일 경로를 반환. 없으면 None.
+    """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None.
 
-    탐색 우선순위 (첫 발견 반환):
-      1. 채널 폴더 자체
-      2. 채널 폴더의 Pattern 서브폴더 (대소문자 변형)
-      3. 상위(시험) 폴더 — 여러 채널이 공유하는 공용 스케줄
-      4. 상위(시험) 폴더의 Pattern 서브폴더
-
-    동일 위치에 _000, _001 등 채널별 사본이 있으면
+    동일 스케줄에 _000, _001 등 채널별 사본이 있으면
     접미사 번호가 가장 큰 파일(=최신 패턴)을 선택한다.
     lru_cache: 같은 경로 중복 탐색 방지 (classify + analyze_accel 2회 호출).
+
+    운영 전제: .sch 는 항상 채널 폴더(channel_path) 내부에 존재.
+    실패 원인 진단을 위해 OSError 및 빈 결과 케이스를 로깅한다.
     """
     _SCH_SUFFIX_RE = re.compile(r'^(.+?)(?:_(\d{3}))\.sch$', re.IGNORECASE)
-
-    def _collect(dir_path: str) -> list[tuple[str, str]]:
-        """해당 디렉토리에서 .sch 파일 (절대경로, 파일명) 목록. 오류 시 빈 리스트."""
-        try:
-            return [(os.path.join(dir_path, f), f)
-                    for f in os.listdir(dir_path)
-                    if f.lower().endswith('.sch')]
-        except OSError:
-            return []
-
-    def _pick(items: list[tuple[str, str]]) -> str | None:
-        """접미사 번호 가장 큰 파일 선택 (없으면 None)."""
-        if not items:
-            return None
-        if len(items) == 1:
-            return items[0][0]
-        def _k(it: tuple[str, str]) -> int:
-            m = _SCH_SUFFIX_RE.match(it[1])
-            return int(m.group(2)) if m else -1
-        return sorted(items, key=_k, reverse=True)[0][0]
-
-    # 1) 채널 폴더 자체
-    found = _pick(_collect(channel_path))
-    if found:
-        return found
-    # 2) 채널 폴더/Pattern (대소문자 변형)
-    for _sub in ('Pattern', 'pattern', 'PATTERN'):
-        _p = os.path.join(channel_path, _sub)
-        if os.path.isdir(_p):
-            found = _pick(_collect(_p))
-            if found:
-                return found
-    # 3) 상위(시험) 폴더 — 공용 스케줄 위치
-    parent = os.path.dirname(channel_path.rstrip('/\\'))
-    if parent and parent != channel_path:
-        found = _pick(_collect(parent))
-        if found:
-            return found
-        # 4) 상위 폴더/Pattern
-        for _sub in ('Pattern', 'pattern', 'PATTERN'):
-            _p = os.path.join(parent, _sub)
-            if os.path.isdir(_p):
-                found = _pick(_collect(_p))
-                if found:
-                    return found
-    return None
+    try:
+        _all = os.listdir(channel_path)
+    except OSError as _e:
+        _perf_logger.warning(
+            f'_find_sch_file: os.listdir 실패 — path={channel_path!r} err={_e}')
+        return None
+    sch_files = [f for f in _all if f.lower().endswith('.sch')]
+    if not sch_files:
+        # 진단: 채널 폴더 실제 내용 일부를 로그에 남겨 호출 맥락 확인
+        _sample = _all[:10] if len(_all) > 10 else _all
+        _perf_logger.warning(
+            f'_find_sch_file: .sch 파일 없음 — path={channel_path!r} '
+            f'파일수={len(_all)} 샘플={_sample}')
+        return None
+    if len(sch_files) == 1:
+        return os.path.join(channel_path, sch_files[0])
+    # 접미사 번호 기준 정렬 → 가장 큰 번호 우선, 접미사 없는 원본은 -1
+    def _sort_key(name):
+        m = _SCH_SUFFIX_RE.match(name)
+        return int(m.group(2)) if m else -1
+    sch_files.sort(key=_sort_key, reverse=True)
+    return os.path.join(channel_path, sch_files[0])
 
 
 @functools.lru_cache(maxsize=256)
