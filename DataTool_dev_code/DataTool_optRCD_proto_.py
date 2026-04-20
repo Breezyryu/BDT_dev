@@ -3348,6 +3348,22 @@ _COOL_STOPS = [
     (42, 96, 153),    # #2A6099
     (27, 58, 92),     # #1B3A5C 진남색
 ]
+# 히스테리시스 레인보우 시퀀셜: SOC 단조 변화에 맞춰 검정→파랑→녹→노랑→빨강.
+# 방전 전용 히스테리시스(10개 곡선이 각자 다른 SOC 영역을 차지)에서 엑셀
+# 자동 색상 배치와 유사한 분별력을 제공한다. 충/방전 condition 구분 없이
+# cycle_idx만으로 색을 할당해, 사용자가 시계열을 색으로 추적할 수 있도록.
+_HYST_RAINBOW_STOPS = [
+    (0,   0,   0),    # #000000 검정     — 최고 SOC
+    (77,  77,  178),  # #4D4DB2 보라
+    (51,  153, 170),  # #3399AA 청록
+    (51,  102, 51),   # #336633 짙은녹
+    (51,  153, 51),   # #339933 녹
+    (153, 204, 102),  # #99CC66 연두
+    (255, 153, 51),   # #FF9933 주황
+    (255, 136, 102),  # #FF8866 연빨강
+    (255, 153, 204),  # #FF99CC 분홍
+    (255, 51,  51),   # #FF3333 빨강     — 최저 SOC
+]
 
 
 def _interpolate_stops(stops: list[tuple], norm: float) -> str:
@@ -3446,14 +3462,14 @@ def _get_profile_color(
         return color, base_lw + emphasis_lw, base_alpha + emphasis_alpha
 
     elif mode == 'chg_dchg':
-        # 히스테리시스: Major=검정, Minor=충전빨강/방전파랑 그라데이션
+        # 히스테리시스: Major=검정, Minor=레인보우 시퀀셜(cycle_idx 기반).
+        # 이전에는 충/방전을 warm/cool 이중 계열로 분리했으나, 방전 전용
+        # 히스테리시스(SOC별 10개 곡선)에서 구별이 더 어려워 실무 관례(엑셀
+        # 자동 색상류)에 맞는 단일 스펙트럼으로 변경.
         if is_major:
             return '#333333', 1.8, 0.9
-        if condition == 1:
-            color = _interpolate_stops(_WARM_STOPS, norm)
-        else:
-            color = _interpolate_stops(_COOL_STOPS, norm)
-        return color, 1.0, 0.7
+        color = _interpolate_stops(_HYST_RAINBOW_STOPS, norm)
+        return color, base_lw + emphasis_lw, base_alpha + emphasis_alpha
 
     elif mode == 'group':
         # 그룹별 색상군 + 그룹 내 농도 그라데이션
@@ -23287,7 +23303,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         presets = {
             1: ("cycle", "continuous", "time", True, True, False),
             2: ("cycle", "split", "soc", False, True, True),
-            3: ("cycle", "connected", "soc", False, False, False),
+            3: ("cycle", "connected", "soc", False, True, False),
             4: ("charge", "split", "soc", False, True, False),
             5: ("discharge", "split", "soc", False, True, False),
         }
