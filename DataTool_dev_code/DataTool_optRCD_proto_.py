@@ -25493,13 +25493,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 0=기본, 1=셀없음, 2=셀있음, 3=작업멈춤(이상), 4=사용자멈춤/중단점
                     bg_level = 0
                     use_val = self.df.loc[i + (j - 1) * num_i, "use"]
+                    vol_val = self.df.loc[i + (j - 1) * num_i, "vol"]
                     self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
-                    if use_val in ("대기", "준비"):
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
-                        bg_level = 1
-                    elif use_val == "완료":
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
-                        bg_level = 2
+                    # 유휴 상태 (완료/대기/준비/작업정지) — vol 기반 셀있음/셀없음 구분
+                    if use_val in ("완료", "대기", "준비", "작업정지"):
+                        if vol_val == "-":
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
+                            bg_level = 1   # 녹: 셀없음
+                        else:
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
+                            bg_level = 2   # 연녹: 셀있음
                     elif use_val not in self._NORMAL_STATES:
                         if use_val == "사용자멈춤" or use_val.startswith("중단점 도달"):
                             self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(240,220,160))
@@ -26556,6 +26559,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for ch_no, testname, status, elapsed_str, cyc, vol, type_str, temp_str, cell_path in channels:
                     bg_color = STATUS_BG.get(status)
                     status_base = status.split(" (")[0] if " (" in status else status
+                    # 유휴 상태 (완료/시험완료/대기/준비/작업정지) — vol 기반 셀있음/셀없음 override
+                    # _IDLE_BG(녹)=셀없음, _COMPLETED_BG(연녹)=셀있음 로 통일
+                    if bg_color in (_IDLE_BG, _COMPLETED_BG):
+                        bg_color = _COMPLETED_BG if vol != "-" else _IDLE_BG
                     # STATUS_BG 미매칭 + 비정상 상태 → 3색 분기
                     if bg_color is None and status_base not in self._NORMAL_STATES:
                         if status.startswith("중단점 도달"):
