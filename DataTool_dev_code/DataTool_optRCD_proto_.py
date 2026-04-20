@@ -9714,13 +9714,24 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
             # data 기본 처리
             pneProfile = pne_continue_data(raw_file_path, inicycle, endcycle)
             if hasattr(pneProfile, 'Profileraw'):
-                # Profile 데이터를 기준으로 산정 
+                # Profile 데이터를 기준으로 산정
                 Profileraw = pneProfile.Profileraw
-                if CDstate == "CHG":
-                    Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin([9,1])]
-                elif CDstate in ("DCH", "DCHG"):
-                    Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin([9,2])]
-                elif CDstate in ("CYC", "Cycle", "7cyc", "GITT"):
+                # CDstate 파싱: 대소문자/공백 무관, "+R"/"+REST" 접미사로 Rest 포함 옵션
+                # 예: "CHG" → 충전만 / "CHG+R" → 충전 + 충전 후 Rest
+                #     "DCHG" → 방전만 / "DCHG+R" → 방전 + 방전 후 Rest
+                _cd_raw = CDstate.strip().upper() if isinstance(CDstate, str) else ""
+                _cd_base = _cd_raw
+                _include_rest = False
+                if _cd_raw.endswith("+REST") or _cd_raw.endswith("+R"):
+                    _cd_base = _cd_raw.rsplit("+", 1)[0].strip()
+                    _include_rest = True
+                if _cd_base == "CHG":
+                    _types = [9, 1] + ([3] if _include_rest else [])
+                    Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin(_types)]
+                elif _cd_base in ("DCH", "DCHG"):
+                    _types = [9, 2] + ([3] if _include_rest else [])
+                    Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin(_types)]
+                elif _cd_base in ("CYC", "CYCLE", "7CYC", "GITT"):
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle)]
                 if Profileraw.empty:
                     # 해당 TC 범위에 데이터 없음 (시험 미도달 등) → 빈 결과 반환
