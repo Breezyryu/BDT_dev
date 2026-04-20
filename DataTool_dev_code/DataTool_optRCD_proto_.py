@@ -10537,7 +10537,8 @@ class Ui_sitool(object):
             btn = QtWidgets.QPushButton(text, parent=container)
             btn.setCheckable(True)
             btn.setFont(font)
-            btn.setMinimumWidth(_fm.horizontalAdvance(text) + 20)
+            # bold(체크 시) 렌더링 편차 + PyQt6 기본 버튼 좌우 padding 흡수
+            btn.setMinimumWidth(_fm.horizontalAdvance(text) + 28)
             if i == checked_idx:
                 btn.setChecked(True)
             button_group.addButton(btn, i)
@@ -11373,7 +11374,7 @@ class Ui_sitool(object):
         self.profile_axis_time = _axis_btns[2]
         self._profile_opt_row2.addWidget(_axis_seg)
 
-        self._profile_opt_row2.addSpacing(16)
+        self._profile_opt_row2.addSpacing(12)
 
         self.profile_rest_chk = QtWidgets.QCheckBox(parent=self._data_scope_groupbox)
         self.profile_rest_chk.setFont(_pf_font)
@@ -11387,7 +11388,7 @@ class Ui_sitool(object):
         self.profile_cv_chk.setObjectName("profile_cv_chk")
         self._profile_opt_row2.addWidget(self.profile_cv_chk)
 
-        self._profile_opt_row2.addSpacing(20)
+        self._profile_opt_row2.addSpacing(14)
 
         # 프리셋: 자주 쓰는 옵션 조합 일괄 적용
         self.profile_preset_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
