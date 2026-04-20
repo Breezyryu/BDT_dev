@@ -9695,7 +9695,7 @@ def pne_continue_profile_scale_change(raw_file_path, df, mincapacity):
     return df
 
 # PNE 연속 data 처리 class
-def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, inirate, CDstate):
+def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, inirate, CDstate, include_rest=False):
     '''0:Index 1:Stepmode(1:CC-CV, 2:CC, 3:CV, 4:OCV) 2:StepType(0, 1:충전,2:방전,3:휴지,4: OCV, 5: Impedance, 6: End, 8:loop)
     3:ChgDchg 4:State 5:Loop 255:Pattern (Loop:1)
     6:Code(66:충전,65:방전,64:휴지,64:loop) 7:StepNo 8:Voltage(uV) 9:Current(uA) 10:Chg Capacity(uAh)
@@ -9716,22 +9716,16 @@ def pne_Profile_continue_data(raw_file_path, inicycle, endcycle, mincapacity, in
             if hasattr(pneProfile, 'Profileraw'):
                 # Profile 데이터를 기준으로 산정
                 Profileraw = pneProfile.Profileraw
-                # CDstate 파싱: 대소문자/공백 무관, "+R"/"+REST" 접미사로 Rest 포함 옵션
-                # 예: "CHG" → 충전만 / "CHG+R" → 충전 + 충전 후 Rest
-                #     "DCHG" → 방전만 / "DCHG+R" → 방전 + 방전 후 Rest
-                _cd_raw = CDstate.strip().upper() if isinstance(CDstate, str) else ""
-                _cd_base = _cd_raw
-                _include_rest = False
-                if _cd_raw.endswith("+REST") or _cd_raw.endswith("+R"):
-                    _cd_base = _cd_raw.rsplit("+", 1)[0].strip()
-                    _include_rest = True
-                if _cd_base == "CHG":
-                    _types = [9, 1] + ([3] if _include_rest else [])
+                # CDstate 정규화 (대소문자/공백 무관) + Rest 포함 여부는 include_rest 파라미터로 받음
+                # (데이터 범위 영역의 Rest 체크박스 상태를 ect_confirm_button 에서 전달)
+                _cd = CDstate.strip().upper() if isinstance(CDstate, str) else ""
+                if _cd == "CHG":
+                    _types = [9, 1] + ([3] if include_rest else [])
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin(_types)]
-                elif _cd_base in ("DCH", "DCHG"):
-                    _types = [9, 2] + ([3] if _include_rest else [])
+                elif _cd in ("DCH", "DCHG"):
+                    _types = [9, 2] + ([3] if include_rest else [])
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle) & Profileraw[2].isin(_types)]
-                elif _cd_base in ("CYC", "CYCLE", "7CYC", "GITT"):
+                elif _cd in ("CYC", "CYCLE", "7CYC", "GITT"):
                     Profileraw = Profileraw.loc[(Profileraw[27] >= inicycle) & (Profileraw[27] <= endcycle)]
                 if Profileraw.empty:
                     # 해당 TC 범위에 데이터 없음 (시험 미도달 등) → 빈 결과 반환
@@ -24920,7 +24914,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 lgnd = "%04d" % Step_CycNo
                             else:
                                 lgnd = step_namelist[-1]
-                            temp = pne_Profile_continue_data(FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate, ect_CD[i])
+                            # Rest 체크박스 상태를 ECT 필터에 전달
+                            # (CHG/DCHG 모드에서 충전·방전 직후 Rest 포함 여부 결정)
+                            temp = pne_Profile_continue_data(
+                                FolderBase, Step_CycNo, Step_CycEnd, mincapacity, firstCrate,
+                                ect_CD[i],
+                                include_rest=self.profile_rest_chk.isChecked())
                             if len(all_data_name) == 0:
                                 temp_lgnd = ""
                             else:	
