@@ -22629,22 +22629,28 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return {'max_cycle': str(max_cyc), 'max_raw': max_raw or str(max_cyc)}
 
     def _restore_cycle_hint(self, row: int, col: int):
-        """col4(TC) 셀이 비워졌을 때 회색 max TC 힌트를 복원."""
+        """col4(TC) 셀이 비워졌을 때 회색 max TC 힌트를 복원.
+
+        col 4 는 TC(TotlCycle) 단위이므로 max_raw 를 사용.
+        General 모드에서는 max_cycle == max_raw 이지만, Sweep 모드(GITT/DCIR)
+        에서는 max_raw 가 실제 TC 최대값을 정확히 표현한다.
+        """
         info = self._get_row_max_cycle_info(row)
         if not info:
             return
         tbl = self.cycle_path_table
         _auto_fg = QtGui.QColor(160, 160, 160)
+        max_tc = info['max_raw']  # col 4 = TC 컬럼 → TC 최대값 사용
         tbl.blockSignals(True)
         try:
             item4 = tbl.item(row, 4)
             if item4 is None:
-                item4 = QtWidgets.QTableWidgetItem(f"1-{info['max_cycle']}")
+                item4 = QtWidgets.QTableWidgetItem(f"1-{max_tc}")
                 tbl.setItem(row, 4, item4)
             else:
-                item4.setText(f"1-{info['max_cycle']}")
+                item4.setText(f"1-{max_tc}")
             item4.setForeground(_auto_fg)
-            item4.setToolTip(f"최대 TC: {info['max_cycle']}")
+            item4.setToolTip(f"최대 TC: {max_tc}")
         finally:
             tbl.blockSignals(False)
 
@@ -22652,7 +22658,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """col4(TC) 셀 변경 시 타임라인 바 + stepnum 동기화.
 
         col4 편집 → 검정 폰트 + 타임라인 바 동기화 + stepnum 동기화
-        비우면 → 회색 max TC 힌트 복원
+        비우면 → 회색 max TC 힌트 복원 + stepnum·바 선택도 해제
         """
         if col != 4:
             return
@@ -22664,6 +22670,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self._timeline_syncing = True
                 self._set_bar_selection_for_row(bar_row, text)
                 self.stepnum.setPlainText(text)
+                self._timeline_syncing = False
+            else:
+                # 셀 비움 → stepnum·바 선택도 함께 해제
+                # (이전 선택이 남아있으면 후속 이벤트에서 _write_cycle_to_table
+                #  가 검정색으로 col 4 힌트를 덮어쓸 수 있음)
+                self._timeline_syncing = True
+                self._set_bar_selection_for_row(bar_row, '')
+                self.stepnum.setPlainText('')
                 self._timeline_syncing = False
         # Undo 복원 중이면 무시
         if getattr(self, '_table_undo_restoring', False):
