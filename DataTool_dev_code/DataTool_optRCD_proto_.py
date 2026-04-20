@@ -25761,6 +25761,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _classify_paused_reason(channel_path: str) -> tuple[str, str]:
         """Code:153 작업멈춤 채널의 .log에서 중단 사유 판별
 
+        입력 계층 (JSON-우선 원칙):
+        - 호출부가 JSON(State=작업멈춤 + Code=153)으로 '멈춤' 대분류 확정
+        - 본 함수는 .log를 *참조*하여 세분 사유 결정
+        - .log 불완전/누락 시 .csv(Restore/) 및 .cyc mtime으로 교차 검증
+
         마지막 act 줄과 마지막 Paused 줄 중 더 뒤에 있는 것이 현재 상태:
         - act가 뒤: act 내용으로 직접 판별
         - Paused가 뒤: Paused 윗줄 act로 판별
@@ -25772,7 +25777,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         tail = WindowClass._read_log_tail(channel_path)
         if tail is None:
-            return "작업멈춤", ""
+            # .log 접근 실패/부재 → CSV/CYC mtime 교차검증
+            return "작업멈춤", WindowClass._crosscheck_elapsed(channel_path)
         lines = tail.splitlines()
         # ── 마지막 "act" / "Paused" / "Test work completed" 위치 (역순) ──
         last_act_idx, last_paused_idx, last_completed_idx = -1, -1, -1
@@ -25790,24 +25796,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             log_time = WindowClass._extract_log_time(lines[last_completed_idx])
             return "시험완료", WindowClass._elapsed_str(log_time)
         # ── act가 Paused보다 뒤 (또는 Paused 없음): act 줄로 직접 판별 ──
+        # 호출부는 이미 State=작업멈춤/잠시멈춤 + Code=153 을 확정한 뒤 이 함수를
+        # 부르므로, Paused 줄 누락(PNE 미기록) 이어도 '작업중' 반환은 모순.
+        # → 멈춤 사유만 세분 분류한다.
         if last_act_idx > last_paused_idx:
             act_line = lines[last_act_idx]
             log_time = WindowClass._extract_log_time(act_line)
             elapsed = WindowClass._elapsed_str(log_time)
-            # Reserve Cycle 포함: 예약 "설정"만 되어있고 도달하지 않음 → 작업중
-            # (Paused가 없으므로 채널은 아직 진행 중)
+            # Reserve Cycle 패턴 → 예약 지점에 도달해 멈춘 것으로 해석
+            # (PNE가 Paused 이벤트를 .log에 기록하지 못한 케이스 포함)
             reserve_m = re.search(
                 r'Reserve Cycle:\s*(\d+),\s*Step:\s*(\d+)', act_line)
             if reserve_m:
                 rc, rs = reserve_m.group(1), reserve_m.group(2)
-                return f"작업중 (→S{rs}/C{rc})", ""
-            # 사용자 멈춤 (즉시 멈춤/완료, Reserve 없음)
+                return f"중단점 도달 (S{rs}/C{rc})", elapsed
+            # 사용자 멈춤 (즉시 멈춤/완료)
             if "즉시 멈춤 시행" in act_line or "즉시 완료 시행" in act_line:
                 return "사용자멈춤", elapsed
-            # 작업 시작/계속/다음 Step → 진행중 (Paused 없음)
-            if ("작업 시작 act" in act_line or "작업 계속 act" in act_line
-                    or "다음 Step act" in act_line):
-                return "작업중", ""
+            # 그 외 act (작업 시작/계속/다음 Step) → 일반 작업멈춤
+            # .log act 시각이 비거나 매우 오래됐으면 CSV/CYC 교차검증으로 보강
+            if not elapsed:
+                elapsed = WindowClass._crosscheck_elapsed(channel_path)
             return "작업멈춤", elapsed
         # ── Paused가 뒤: Paused 내용 + 윗줄 act로 판별 ──
         if last_paused_idx >= 0:
@@ -25832,8 +25841,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return f"중단점 도달 (S{rs}/C{rc})", elapsed
             if "즉시 멈춤 시행" in act_line or "즉시 완료 시행" in act_line:
                 return "사용자멈춤", elapsed
+            if not elapsed:
+                elapsed = WindowClass._crosscheck_elapsed(channel_path)
             return "작업멈춤", elapsed
-        return "작업멈춤", ""
+        # ── tail 내 키워드 전무 → CSV/CYC 교차검증으로 elapsed 보강 ──
+        return "작업멈춤", WindowClass._crosscheck_elapsed(channel_path)
 
     @staticmethod
     def _parse_reserve_info(channel_path: str) -> str:
@@ -25925,27 +25937,81 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         except Exception:
             return None
 
-    def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
-        """작업멈춤/잠시멈춤 채널에 대해 Code/Code_Desc + .log 기반 세부 분류 적용
+    @staticmethod
+    def _get_csv_mtime(channel_path: str):
+        """채널 폴더 내 Restore\\*.csv 중 최신 mtime → datetime | None.
 
-        분류 로직:
-        1) Code==153, Code_Desc in ("작업멈춤종료","잠시멈춤") → .log 파싱
-           - Reserve Cycle 패턴 → "중단점 도달 (C{rc}/S{rs})"
-           - 즉시 멈춤 시행만 → "사용자멈춤"
-           - 패턴 없음 → "작업멈춤"
-        2) Code!=153 → "작업멈춤 - {Code_Desc}"
+        SaveEndData.csv 는 스텝 완료 시 PNE가 기록하는 요약 CSV.
+        .log에 Paused 이벤트가 누락되는 PNE 펌웨어 버그 케이스에서
+        실제 데이터 기록 중단 시점을 교차 검증할 수 있는 3차 소스.
+
+        계층: JSON(1순위) → .log(참조) → .csv/.cyc(교차검증)
+        """
+        try:
+            if not os.path.isdir(channel_path):
+                return None
+            restore_path = os.path.join(channel_path, "Restore")
+            if not os.path.isdir(restore_path):
+                return None
+            csv_files = [f.path for f in os.scandir(restore_path)
+                         if f.name.lower().endswith('.csv') and f.is_file()]
+            if not csv_files:
+                return None
+            newest = max(csv_files, key=os.path.getmtime)
+            return datetime.fromtimestamp(os.path.getmtime(newest))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _crosscheck_elapsed(channel_path: str) -> str:
+        """.csv (Restore/) / .cyc mtime 중 최신 → 경과 문자열.
+
+        .log 가 불완전하거나 Paused 이벤트 미기록 시 elapsed_str 보강용.
+        PNE는 스텝 완료 시 CSV를, 실시간 데이터를 .cyc에 기록하므로
+        두 파일의 최신 mtime이 채널의 마지막 활동 시각에 근접.
+        """
+        csv_dt = WindowClass._get_csv_mtime(channel_path)
+        cyc_dt = WindowClass._get_cyc_mtime(channel_path)
+        candidates = [dt for dt in (csv_dt, cyc_dt) if dt is not None]
+        if not candidates:
+            return ""
+        best_dt = max(candidates)
+        return WindowClass._elapsed_str(
+            best_dt.strftime("%Y/%m/%d %H:%M:%S"))
+
+    def _refine_paused_status(self, df: pd.DataFrame) -> pd.DataFrame:
+        """채널 상태 세부 분류 — JSON 1순위 + .log 참조 + CSV 교차검증.
+
+        JSON 우선 원칙:
+        - Code=153 + Code_Desc ∈ {작업멈춤종료, 잠시멈춤} 이면 State 값과
+          무관하게 '멈춤' 확정 → .log 로 세분 사유 판별.
+        - State=작업멈춤/잠시멈춤 이지만 Code≠153 이면 Code_Desc 텍스트 사용.
+
+        분류 결과:
+        1) Code=153 (state 무관): .log 파싱 → "중단점 도달 (S{rs}/C{rc})" /
+           "사용자멈춤" / "챔버이슈" / "작업멈춤" / "시험완료"
+        2) State=멈춤 + Code≠153: "작업멈춤 - {Code_Desc}"
 
         Note: df["path"]는 change_drive()에서 채널폴더가 잘린 상위 경로.
         .log 파일은 채널폴더 내부에 있으므로 Result_Path에서 채널폴더명을
         추출하여 붙인다.
         """
-        mask = df["use"].isin(("작업멈춤", "잠시멈춤"))
-        if not mask.any():
-            return df
         has_code = "Code" in df.columns
         has_code_desc = "Code_Desc" in df.columns
         has_rpath = "Result_Path" in df.columns
         has_path = "path" in df.columns
+        # JSON 1순위: State OR (Code=153 + Code_Desc) 로 확장 마스킹
+        state_mask = df["use"].isin(("작업멈춤", "잠시멈춤"))
+        if has_code and has_code_desc:
+            code_series = df["Code"].astype(str).str.strip()
+            cd_series = df["Code_Desc"].astype(str).str.strip()
+            code_mask = (code_series == "153") & cd_series.isin(
+                ("작업멈춤종료", "잠시멈춤"))
+            mask = state_mask | code_mask
+        else:
+            mask = state_mask
+        if not mask.any():
+            return df
         for idx in df.index[mask]:
             code = str(df.at[idx, "Code"]).strip() if has_code else ""
             code_desc = str(df.at[idx, "Code_Desc"]).strip() if has_code_desc else ""
@@ -26283,41 +26349,38 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             temp_str = str(raw_temp) if raw_temp else "-"
                     if self.match_filter_text(search_text, testname, status):
                         elapsed_str = ""
-                        # PNE 채널만 .log 기반 세분류 (v3: JSON 우선 + .log 보조)
+                        # PNE 채널만 .log 기반 세분류 (v4: JSON 1순위 + .log 참조 + CSV 교차검증)
                         if cycler_text in pne_info:
                             has_rpath = "Result_Path" in df.columns
                             has_path = "path" in df.columns
-                            # (2) 작업멈춤/잠시멈춤 + Code:153 → .log 파싱 (세분화)
-                            if status in ("작업멈춤", "잠시멈춤"):
-                                code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
-                                code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
-                                if code == "153" and code_desc in ("작업멈춤종료", "잠시멈춤"):
-                                    ch_path = self._build_channel_path(
-                                        df, ch_idx, has_rpath, has_path)
-                                    if ch_path:
-                                        status, elapsed_str = self._classify_paused_reason(ch_path)
-                                        # 작업중(→S/C) 판정이지만 실제 중단점 도달 재검증
-                                        # 조건: Reserve S/C == JSON Step/Cycle AND .cyc mtime > 1일
-                                        if status.startswith("작업중 (→S"):
-                                            _m = re.match(r"작업중 \(→S(\d+)/C(\d+)\)", status)
-                                            if _m:
-                                                _rs, _rc = _m.group(1), _m.group(2)
-                                                _j_step = str(df.loc[ch_idx, "Step_No"]).strip() if "Step_No" in df.columns else ""
-                                                _j_cycle = str(df.loc[ch_idx, "Current_Cycle_Num"]).strip() if "Current_Cycle_Num" in df.columns else ""
-                                                if _rs == _j_step and _rc == _j_cycle:
-                                                    _cyc_dt = self._get_cyc_mtime(ch_path)
-                                                    if _cyc_dt and (datetime.now() - _cyc_dt).total_seconds() > 86400:
-                                                        status = f"중단점 도달 (S{_rs}/C{_rc})"
-                                                        elapsed_str = self._elapsed_str(
-                                                            _cyc_dt.strftime("%Y/%m/%d %H:%M:%S"))
-                                # (3) 작업멈춤/잠시멈춤 + Code != 153 → Code_Desc + 경과시간
-                                elif code_desc:
+                            # JSON 우선 추출 — status 분기 전에 Code/Code_Desc 확정
+                            code = str(df.loc[ch_idx, "Code"]).strip() if "Code" in df.columns else ""
+                            code_desc = str(df.loc[ch_idx, "Code_Desc"]).strip() if "Code_Desc" in df.columns else ""
+                            is_paused_by_code = (
+                                code == "153"
+                                and code_desc in ("작업멈춤종료", "잠시멈춤")
+                            )
+                            # (A) Code=153 + 작업멈춤종료/잠시멈춤 → State 무관 멈춤 확정
+                            #     JSON 1순위: State가 '작업중'이어도 Code가 멈춤이면 멈춤
+                            if is_paused_by_code:
+                                ch_path = self._build_channel_path(
+                                    df, ch_idx, has_rpath, has_path)
+                                if ch_path:
+                                    status, elapsed_str = self._classify_paused_reason(ch_path)
+                                else:
+                                    # 경로 구성 실패 fallback
+                                    status = "작업멈춤"
+                            # (B) 작업멈춤/잠시멈춤 + Code != 153 → Code_Desc 그대로
+                            elif status in ("작업멈춤", "잠시멈춤"):
+                                if code_desc:
                                     status = code_desc
-                                    ch_path = self._build_channel_path(
-                                        df, ch_idx, has_rpath, has_path)
-                                    if ch_path:
-                                        elapsed_str = self._elapsed_from_log(ch_path)
-                            # (1) 작업중/충전/방전/진행/휴지 → .log Reserve 예약 정보
+                                ch_path = self._build_channel_path(
+                                    df, ch_idx, has_rpath, has_path)
+                                if ch_path:
+                                    elapsed_str = self._elapsed_from_log(ch_path)
+                                    if not elapsed_str:
+                                        elapsed_str = self._crosscheck_elapsed(ch_path)
+                            # (C) 작업중/충전/방전/진행/휴지 → Reserve 예약 정보 부가
                             elif status in ("작업중", "충전", "방전", "진행", "휴지"):
                                 ch_path = self._build_channel_path(
                                     df, ch_idx, has_rpath, has_path)
@@ -26325,13 +26388,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     reserve = self._parse_reserve_info(ch_path)
                                     if reserve:
                                         status = f"{status} ({reserve})"
-                            # (4) 완료/시험완료 → .log mtime 기반 경과 시간
+                            # (D) 완료/시험완료 → .log + CSV 교차검증 경과 시간
                             _sb_tmp = status.split(" (")[0] if " (" in status else status
                             if status == "완료" or _sb_tmp == "시험완료":
                                 ch_path = self._build_channel_path(
                                     df, ch_idx, has_rpath, has_path)
                                 if ch_path:
                                     elapsed_str = self._elapsed_from_log(ch_path)
+                                    if not elapsed_str:
+                                        elapsed_str = self._crosscheck_elapsed(ch_path)
                         floor_name = ""
                         for fn, fc in floor_cyclers:
                             if cycler_text in fc:
