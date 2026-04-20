@@ -7346,11 +7346,19 @@ def _merge_tc_info(prior: dict, measured: dict) -> dict:
 def _find_sch_file(channel_path: str) -> str | None:
     """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None.
 
-    동일 스케줄에 _000, _001 등 채널별 사본이 있으면
-    접미사 번호가 가장 큰 파일(=최신 패턴)을 선택한다.
-    lru_cache: 같은 경로 중복 탐색 방지 (classify + analyze_accel 2회 호출).
+    PNE 운영 규칙:
+      - 접미사 없는 원본(`~~.sch`)      = 현재 적용 중인 패턴 (최신, mtime 최근)
+      - `~~_000.sch`                    = 가장 최근 백업 (직전 업데이트 이전 버전)
+      - `~~_001.sch`, `~~_002.sch` ...  = 더 이전 백업 (번호 커질수록 과거)
 
-    운영 전제: .sch 는 항상 채널 폴더(channel_path) 내부에 존재.
+    패턴을 업데이트하면 이전 버전이 `_000`, `_001` 순서로 쌓인다.
+    즉 **접미사 없는 원본이 현재 실행 중 스케줄**이므로 이를 1순위로 반환.
+
+    선택 순서:
+      1) 접미사 없는 원본(`.sch`) 존재 → 해당 파일
+      2) 원본이 없으면 → 접미사 번호가 가장 작은 백업 (가장 최근 백업)
+
+    lru_cache: 같은 경로 중복 탐색 방지 (classify + analyze_accel 2회 호출).
     실패 원인 진단을 위해 OSError 및 빈 결과 케이스를 로깅한다.
     """
     _SCH_SUFFIX_RE = re.compile(r'^(.+?)(?:_(\d{3}))\.sch$', re.IGNORECASE)
@@ -7362,7 +7370,6 @@ def _find_sch_file(channel_path: str) -> str | None:
         return None
     sch_files = [f for f in _all if f.lower().endswith('.sch')]
     if not sch_files:
-        # 진단: 채널 폴더 실제 내용 일부를 로그에 남겨 호출 맥락 확인
         _sample = _all[:10] if len(_all) > 10 else _all
         _perf_logger.warning(
             f'_find_sch_file: .sch 파일 없음 — path={channel_path!r} '
@@ -7370,11 +7377,24 @@ def _find_sch_file(channel_path: str) -> str | None:
         return None
     if len(sch_files) == 1:
         return os.path.join(channel_path, sch_files[0])
-    # 접미사 번호 기준 정렬 → 가장 큰 번호 우선, 접미사 없는 원본은 -1
-    def _sort_key(name):
+    # 1) 접미사 없는 원본 우선 (현재 적용 중 패턴)
+    originals = [f for f in sch_files if not _SCH_SUFFIX_RE.match(f)]
+    if originals:
+        if len(originals) == 1:
+            return os.path.join(channel_path, originals[0])
+        # 드물게 여러 원본 → mtime 최신 (방어적)
+        try:
+            originals.sort(
+                key=lambda f: os.path.getmtime(os.path.join(channel_path, f)),
+                reverse=True)
+        except OSError:
+            pass
+        return os.path.join(channel_path, originals[0])
+    # 2) 원본이 없으면 → 번호 가장 작은 백업 (가장 최근 백업)
+    def _suffix_num(name):
         m = _SCH_SUFFIX_RE.match(name)
-        return int(m.group(2)) if m else -1
-    sch_files.sort(key=_sort_key, reverse=True)
+        return int(m.group(2)) if m else float('inf')
+    sch_files.sort(key=_suffix_num)
     return os.path.join(channel_path, sch_files[0])
 
 
