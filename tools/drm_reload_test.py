@@ -1,4 +1,4 @@
-"""DRM 걸린 Excel / PPT 를 Fasoo 훅이 감시하지 않는 포맷으로 추출.
+"""DRM 걸린 Excel / PPT / PDF / Word 를 Fasoo 훅이 감시하지 않는 포맷으로 추출.
 
 2026-04-21 실측 결과:
     - `.xlsx` / `.pptx` / `.png` / `.csv` 모두 DRM 상속 (확장자 훅)
@@ -25,12 +25,27 @@
     #   *_bundle.txt                      → 차트 렌더링
     python drm_reload_test.py --batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]
 
+지원 확장자:
+    Excel — .xlsx / .xls / .xlsm          (값 / 수식 / 차트 시리즈)
+    PPT   — .pptx / .ppt / .pptm           (슬라이드 텍스트 / 도형)
+    PDF   — .pdf                            (페이지별 텍스트, PyMuPDF)
+    Word  — .docx / .doc / .docm            (단락 / 표, Word COM)
+
+추가 의존성:
+    pymupdf   (PDF 용)       — pip install pymupdf
+    pywin32   (Word COM 용)  — 이미 사용 중
+
 프로그램 내 재로드:
     from tools.drm_reload_test import load_bundle, render_bundle_charts
     b = load_bundle('<stem>_bundle.txt')
-    # b['values']['Sheet1']          → list[list]  (TSV raw)
-    # b['formulas']['Sheet1']['A1']  → '=SUM(...)'
-    # b['charts'][0]                 → {id, title, x_axis, y_axis, series:[{name,x,y}]}
+    # Excel:
+    #   b['values']['Sheet1']          → list[list]  (TSV raw)
+    #   b['formulas']['Sheet1']['A1']  → '=SUM(...)'
+    #   b['charts'][0]                 → {id, title, x_axis, y_axis, series}
+    # PPT:    b['slides']        → [{id, shapes:[{idx,name,text}]}, ...]
+    # PDF:    b['pages']         → {page_num: text}
+    # Word:   b['paragraphs']    → [str, ...]
+    #         b['tables']        → [{name, rows:[[cell, ...]]}, ...]
     render_bundle_charts('<stem>_bundle.txt', 'out_dir', format='png')
 """
 from __future__ import annotations
@@ -88,6 +103,32 @@ def _join_values(vals) -> str:
     if not vals:
         return ""
     return ",".join(_ser_value(v) for v in vals)
+
+
+def _esc(s: str) -> str:
+    """탭/개행/백슬래시 이스케이프 — PDF/Word 의 다중 줄 텍스트 한 줄로 평탄화."""
+    if s is None:
+        return ""
+    return (str(s).replace('\\', '\\\\')
+            .replace('\r\n', '\\n').replace('\r', '\\n').replace('\n', '\\n')
+            .replace('\t', '\\t'))
+
+
+def _unesc(s: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == '\\' and i + 1 < len(s):
+            nxt = s[i + 1]
+            if nxt == 'n':
+                out.append('\n'); i += 2; continue
+            if nxt == 't':
+                out.append('\t'); i += 2; continue
+            if nxt == '\\':
+                out.append('\\'); i += 2; continue
+        out.append(c); i += 1
+    return ''.join(out)
 
 
 # ── Excel 차트 메타 추출 (이미지 export 없음 — DRM 대상) ─────────────
@@ -246,11 +287,26 @@ def export_excel_bundle(src: Path, bundle_txt: Path) -> dict:
 
 # ── 번들 로더 ───────────────────────────────────────────────────────
 def load_bundle(path: str | Path) -> dict:
-    """번들 txt 파싱 → {'values', 'formulas', 'charts'}."""
-    result: dict = {"values": {}, "formulas": {}, "charts": []}
+    """번들 txt 파싱 → dict.
+
+    키:
+      values      {sheet: [[cell,...]]}        (Excel)
+      formulas    {sheet: {cell: formula}}     (Excel)
+      charts      [{id,title,x_axis,y_axis,series:[{name,x,y}]}, ...]  (Excel)
+      slides      [{id, shapes:[{idx,name,text}]}, ...]                 (PPT)
+      pages       {page_num: text}             (PDF)
+      paragraphs  [str, ...]                   (Word)
+      tables      [{name, rows:[[cell,...]]}, ...]  (Word)
+    """
+    result: dict = {
+        "values": {}, "formulas": {}, "charts": [],
+        "slides": [], "pages": {}, "paragraphs": [], "tables": [],
+    }
     section: str | None = None
     key: str | None = None
     chart: dict | None = None
+    table_rows: list[list[str]] | None = None
+    table_name: str | None = None
     value_buf: list[str] = []
 
     def _flush_values():
@@ -263,6 +319,13 @@ def load_bundle(path: str | Path) -> dict:
         if chart is not None:
             result["charts"].append(chart)
         chart = None
+
+    def _flush_table():
+        nonlocal table_rows, table_name
+        if table_rows is not None and table_name is not None:
+            result["tables"].append({"name": table_name, "rows": table_rows})
+        table_rows = None
+        table_name = None
 
     def _parse_scalar(s: str):
         s = s.strip()
@@ -284,21 +347,27 @@ def load_bundle(path: str | Path) -> dict:
             if line.startswith('===') and line.endswith('==='):
                 if section == 'VALUES': _flush_values()
                 if section == 'CHARTS': _flush_chart()
+                if section == 'TABLES': _flush_table()
                 section = line.strip('=').strip()
                 key = None
                 continue
 
             if line.startswith('[') and line.endswith(']'):
+                label = line[1:-1]
                 if section == 'VALUES':
                     _flush_values()
-                    key = line[1:-1]
+                    key = label
                 elif section == 'FORMULAS':
-                    key = line[1:-1]
+                    key = label
                     result["formulas"].setdefault(key, {})
                 elif section == 'CHARTS':
                     _flush_chart()
-                    chart = {"id": line[1:-1], "title": None, "x_axis": None,
+                    chart = {"id": label, "title": None, "x_axis": None,
                              "y_axis": None, "series": []}
+                elif section == 'TABLES':
+                    _flush_table()
+                    table_rows = []
+                    table_name = label
                 continue
 
             if section == 'VALUES':
@@ -333,9 +402,22 @@ def load_bundle(path: str | Path) -> dict:
                     k, v = line.split('=', 1)
                     if k in ("title", "x_axis", "y_axis"):
                         chart[k] = v
+            elif section == 'PAGES':
+                parts = line.split('\t', 1)
+                if len(parts) == 2:
+                    try: pno = int(parts[0])
+                    except ValueError: continue
+                    result["pages"][pno] = _unesc(parts[1])
+            elif section == 'PARAGRAPHS':
+                result["paragraphs"].append(_unesc(line))
+            elif section == 'TABLES':
+                if table_rows is None:
+                    continue
+                table_rows.append([_unesc(c) for c in line.split('\t')])
 
     if section == 'VALUES': _flush_values()
     if section == 'CHARTS': _flush_chart()
+    if section == 'TABLES': _flush_table()
 
     return result
 
@@ -398,6 +480,153 @@ def render_bundle_charts(bundle_path: str | Path, out_dir: str | Path,
             except Exception: pass
 
     return count
+
+
+# ── PDF — PyMuPDF 로 페이지별 텍스트 추출 ────────────────────────────
+def export_pdf_bundle(src: Path, bundle_txt: Path) -> dict:
+    """PyMuPDF(fitz) 로 페이지 텍스트 → 번들 txt.
+
+    사내 DRM PDF 는 Fasoo 가 Adobe 프로세스에 훅해 복호화 — PyMuPDF 가 읽을 수
+    있을지 여부는 정책에 따라 다름. 실패 시 메시지로 안내.
+    """
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        raise RuntimeError("pymupdf 미설치 — pip install pymupdf")
+
+    stats = {"pages": 0, "chars": 0}
+    pages: list[str] = []
+
+    doc = fitz.open(str(src))
+    try:
+        if doc.needs_pass:
+            raise RuntimeError("PDF 암호 보호됨 — 인증 없이 열 수 없음")
+        for page in doc:
+            text = page.get_text("text") or ""
+            pages.append(text)
+            stats["pages"] += 1
+            stats["chars"] += len(text)
+    finally:
+        doc.close()
+
+    with open(bundle_txt, 'w', encoding='utf-8') as f:
+        f.write("\n")  # DRM 회피용 공란
+        f.write("# DRM-bypass PDF bundle\n")
+        f.write(f"# Source: {src}\n")
+        f.write(f"# Exported: {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write(f"# Pages: {stats['pages']}, Chars: {stats['chars']:,}\n")
+        f.write("# Format: '<page_num>\\t<escaped_text>' per page (\\n \\t \\\\ escaped).\n")
+        f.write("\n")
+        f.write("===PAGES===\n")
+        for i, text in enumerate(pages, start=1):
+            f.write(f"{i}\t{_esc(text)}\n")
+
+    return stats
+
+
+# ── Word — Word COM 으로 단락 + 표 추출 ──────────────────────────────
+def export_word_bundle(src: Path, bundle_txt: Path) -> dict:
+    """Word COM (pywin32) 으로 단락 + 표 → 번들 txt.
+
+    Excel/PPT 와 동일 패턴 — 사내 Fasoo 에이전트가 Word 프로세스에 훅해
+    DRM 복호화 제공. 단락은 한 줄 평탄화(이스케이프), 표는 `\\t` 구분.
+    """
+    import win32com.client as win32
+    import pythoncom
+
+    stats = {"paragraphs": 0, "tables": 0, "chars": 0}
+    paragraphs: list[str] = []
+    tables: list[list[list[str]]] = []
+
+    pythoncom.CoInitialize()
+    app = None
+    doc = None
+    try:
+        app = win32.DispatchEx("Word.Application")
+        app.Visible = False
+        app.DisplayAlerts = 0
+        doc = app.Documents.Open(
+            str(src),
+            ReadOnly=True,
+            ConfirmConversions=False,
+            AddToRecentFiles=False,
+        )
+
+        try:
+            n_para = doc.Paragraphs.Count
+        except Exception:
+            n_para = 0
+        for i in range(1, n_para + 1):
+            try:
+                p = doc.Paragraphs(i)
+                text = (p.Range.Text or "").rstrip('\r\x07\n')
+                paragraphs.append(text)
+                stats["paragraphs"] += 1
+                stats["chars"] += len(text)
+            except Exception:
+                continue
+
+        try:
+            n_tbl = doc.Tables.Count
+        except Exception:
+            n_tbl = 0
+        for ti in range(1, n_tbl + 1):
+            try:
+                tbl = doc.Tables(ti)
+                rows: list[list[str]] = []
+                n_rows = tbl.Rows.Count
+                for r in range(1, n_rows + 1):
+                    cells: list[str] = []
+                    try:
+                        n_cells = tbl.Rows(r).Cells.Count
+                    except Exception:
+                        n_cells = 0
+                    for c in range(1, n_cells + 1):
+                        try:
+                            ct = tbl.Cell(r, c).Range.Text or ""
+                            # Word cell 끝은 \r\x07 — 제거
+                            ct = ct.rstrip('\r\x07\n ')
+                            cells.append(ct)
+                        except Exception:
+                            cells.append("")
+                    rows.append(cells)
+                tables.append(rows)
+                stats["tables"] += 1
+            except Exception:
+                continue
+    finally:
+        if doc is not None:
+            try: doc.Close(False)
+            except Exception: pass
+        if app is not None:
+            try: app.Quit()
+            except Exception: pass
+        pythoncom.CoUninitialize()
+
+    with open(bundle_txt, 'w', encoding='utf-8') as f:
+        f.write("\n")  # DRM 회피용 공란
+        f.write("# DRM-bypass Word bundle\n")
+        f.write(f"# Source: {src}\n")
+        f.write(f"# Exported: {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write(f"# Paragraphs: {stats['paragraphs']}, Tables: {stats['tables']}, "
+                f"Chars: {stats['chars']:,}\n")
+        f.write("# Format: PARAGRAPHS=one escaped line per paragraph, "
+                "TABLES=[Table N] header then TSV rows.\n")
+        f.write("\n")
+
+        f.write("===PARAGRAPHS===\n")
+        for p in paragraphs:
+            f.write(_esc(p) + "\n")
+        f.write("\n")
+
+        f.write("===TABLES===\n")
+        for ti, rows in enumerate(tables, start=1):
+            f.write(f"[Table {ti}]\n")
+            for row in rows:
+                f.write("\t".join(_esc(c) for c in row) + "\n")
+            f.write("\n")
+
+    return stats
 
 
 # ── PowerPoint — pptx 도 DRM 걸리므로 슬라이드를 번들 txt 로 ─────────
@@ -504,6 +733,16 @@ def _cmd_extract(argv: list[str]) -> int:
             print(f"[출력] {bundle}  (슬라이드 텍스트/도형 메타 — 첫 줄 공란)")
             stats = export_pptx_bundle(src_path, bundle)
             print(f"[PPT] 슬라이드 {stats['slides']}, 도형 {stats['shapes']}")
+        elif ext == ".pdf":
+            bundle = Path(f"{out_stem}_bundle.txt")
+            print(f"[출력] {bundle}  (PDF 페이지별 텍스트 — 첫 줄 공란)")
+            stats = export_pdf_bundle(src_path, bundle)
+            print(f"[PDF] 페이지 {stats['pages']}, 문자 {stats['chars']:,}")
+        elif ext in (".docx", ".doc", ".docm"):
+            bundle = Path(f"{out_stem}_bundle.txt")
+            print(f"[출력] {bundle}  (Word 단락+표 — 첫 줄 공란)")
+            stats = export_word_bundle(src_path, bundle)
+            print(f"[Word] 단락 {stats['paragraphs']}, 표 {stats['tables']}, 문자 {stats['chars']:,}")
         else:
             print(f"[에러] 지원 않는 확장자: {ext}")
             return 2
@@ -540,7 +779,10 @@ def _cmd_render(argv: list[str]) -> int:
     return 0
 
 
-_OFFICE_EXTS = {'.xlsx', '.xls', '.xlsm', '.pptx', '.ppt', '.pptm'}
+_OFFICE_EXTS = {'.xlsx', '.xls', '.xlsm',
+                '.pptx', '.ppt', '.pptm',
+                '.docx', '.doc', '.docm',
+                '.pdf'}
 
 
 def _collect_batch_inputs(paths: list[str]) -> list[Path]:
@@ -607,6 +849,23 @@ def _process_one(src: Path, out_dir: Path | None, fmt: str) -> tuple[str, str]:
         bundle.parent.mkdir(parents=True, exist_ok=True)
         stats = export_pptx_bundle(src, bundle)
         msg = f"→ {bundle.name}  (slide={stats['slides']}, shape={stats['shapes']})"
+        return 'ok', msg
+
+    if ext == '.pdf':
+        out_stem = _batch_out_stem(src, out_dir)
+        bundle = Path(f"{out_stem}_bundle.txt")
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        stats = export_pdf_bundle(src, bundle)
+        msg = f"→ {bundle.name}  (page={stats['pages']}, char={stats['chars']:,})"
+        return 'ok', msg
+
+    if ext in ('.docx', '.doc', '.docm'):
+        out_stem = _batch_out_stem(src, out_dir)
+        bundle = Path(f"{out_stem}_bundle.txt")
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        stats = export_word_bundle(src, bundle)
+        msg = (f"→ {bundle.name}  "
+               f"(para={stats['paragraphs']}, table={stats['tables']}, char={stats['chars']:,})")
         return 'ok', msg
 
     if ext == '.txt':

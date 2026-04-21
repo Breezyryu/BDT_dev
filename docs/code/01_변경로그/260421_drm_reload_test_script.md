@@ -321,6 +321,77 @@ C:/tmp/dir_test/
 
 출력: `dir_test_a_charts/`, `sub_b_charts/` — 부모명 접두로 구분.
 
+## 8차 — PDF / Word 지원 추가
+
+Excel / PPT 와 동일한 번들 txt 포맷으로 PDF 와 Word 도 지원. DRM 회피 구조는 동일:
+프로세스 훅을 통과하는 첫 줄 공란 `.txt` 단일 번들.
+
+### 신규 추출 함수
+
+**`export_pdf_bundle(src, bundle_txt)`** — PyMuPDF(fitz) 사용
+
+- 페이지별 `page.get_text()` 텍스트 추출
+- `needs_pass` 시 명시적 에러
+- 포맷: `===PAGES===` 섹션에 `<page_num>\t<escaped_text>` 한 줄씩
+- 한 페이지 다중 줄 텍스트는 `\n`/`\t`/`\\` 이스케이프로 평탄화
+
+사내 DRM PDF 가 PyMuPDF 로 열릴지는 Fasoo 정책에 따라 다름 — Adobe 전용 훅이면
+PyMuPDF 는 평문 접근 불가, 범용 파일시스템 훅이면 접근 가능. **실측 필요**.
+
+**`export_word_bundle(src, bundle_txt)`** — Word COM (pywin32)
+
+- `Word.Application` DispatchEx → `Documents.Open(ReadOnly=True)`
+- 단락: `doc.Paragraphs(i).Range.Text` (끝의 `\r\x07` 제거)
+- 표: `doc.Tables(i).Cell(r, c).Range.Text`
+- 포맷:
+  - `===PARAGRAPHS===` — 단락당 한 줄 (이스케이프 적용)
+  - `===TABLES===` — `[Table N]` 헤더 + TSV 행
+
+Excel/PPT 와 동일하게 사내 Fasoo 가 Word 프로세스에 훅해 DRM 복호화 → 사내 환경에서만 동작.
+
+### 공용 이스케이프 헬퍼
+
+`_esc(s)` / `_unesc(s)` — 다중 줄 텍스트를 단일 라인 안전 포맷으로:
+- `\\` → `\\\\`
+- `\n` / `\r\n` / `\r` → `\\n`
+- `\t` → `\\t`
+
+라운드트립 6 케이스 검증 통과 (한글/탭/개행/백슬래시 혼합).
+
+### `load_bundle` 확장
+
+반환 dict 에 새 키 추가:
+
+| 키 | 구조 | 소스 |
+|---|---|---|
+| `pages` | `{page_num: text}` | PDF |
+| `paragraphs` | `[str, ...]` | Word |
+| `tables` | `[{name, rows:[[cell]]}, ...]` | Word |
+| `slides` | `[{id, shapes}]` (후속) | PPT |
+
+기존 `values / formulas / charts` 는 그대로. 한 번들에 하나의 파일 타입만 들어가므로 섹션 충돌 없음.
+
+### CLI / `--batch` 통합
+
+- 단일: `python drm_reload_test.py foo.pdf` → `foo_bundle.txt`
+- 단일: `python drm_reload_test.py foo.docx` → `foo_bundle.txt`
+- 배치: 디렉터리 재귀 수집에 `.pdf/.docx/.doc/.docm` 포함
+- 확장자별 자동 분기:
+  - `.pdf` → `export_pdf_bundle`
+  - `.docx/.doc/.docm` → `export_word_bundle`
+
+### 의존성
+
+| 포맷 | 필요 | 상태 |
+|---|---|---|
+| PDF | `pymupdf` | **추가 — `pip install pymupdf`** |
+| Word | `pywin32` | 기존 |
+
+### 검증
+
+이스케이프 라운드트립 + `load_bundle` 의 PAGES/PARAGRAPHS/TABLES 파싱 모두 통과.
+실제 PDF/Word 파일 왕복 테스트는 사내 환경에서 수행 필요 (DRM 원본 + PyMuPDF 설치).
+
 ## 테스트
 
 실제 DRM 파일 검증은 사용자 환경(사내 Fasoo)에서 수행 필요.
