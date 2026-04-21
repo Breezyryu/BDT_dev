@@ -440,6 +440,57 @@ SET 번들의 "온도" 범례가 깨지지 않고 정상 표시됨.
 
 PPT 번들과 차트 없는 Excel 번들은 당연히 0 렌더링. 실질 차트 있는 SET 만 PNG 생성.
 
+## 10차 — PPT 번들 → `.pptx` 복원 (`--to-pptx`)
+
+사용자 요청: 사내에서 뽑아온 PPT 번들 txt 를 외부 환경에서 다시 `.pptx` 로 되돌리기.
+외부에는 Fasoo 없으므로 `.pptx` 쓰기에 DRM 걸리지 않음.
+
+### `load_bundle` — SLIDES 섹션 파싱 추가
+
+기존에 `result["slides"]` 키만 초기화돼 있고 실제 파싱은 미구현이었음. 이번에 구현:
+
+- `[Slide N]` 헤더 블록에서 `slide = {"id": label, "_shapes": {}}` 시작
+- `shape.<idx>.name` / `shape.<idx>.text` 라인 파싱
+- `export_pptx_bundle` 이 `\r` → `\\r`, `\n` → `\\n` 으로 저장했으므로 역변환
+- 섹션 전환 / 파일 끝에서 `_flush_slide` 호출 → `shapes` 를 idx 순서대로 list 화
+
+결과 구조: `result['slides'] = [{"id", "shapes": [{"idx", "name", "text"}]}, ...]`
+
+### 신규 `render_slides_pptx(bundle_path, out_pptx)`
+
+`python-pptx` 로 빈 16:9 Presentation 생성 후 슬라이드별:
+- blank 레이아웃 추가
+- 각 shape.text 를 수직 텍스트박스로 배치 (상단부터 누적 y)
+- 텍스트 없는 도형은 이름만 `[name]` 작은 italic 로 표시
+- 줄 수에 비례하는 높이 (0.28 × 줄 + 0.2 인치, 0.4–5 인치 범위)
+
+### 한계 (번들에 없어 복원 불가)
+
+- 원본 슬라이드 레이아웃 / 마스터 / 테마
+- 도형 실제 위치 / 크기 / 색상 / 폰트
+- 이미지, 차트, 표의 시각적 구조
+- 애니메이션, 전환 효과
+
+즉 **텍스트 덤프 수준** 복원. 원본 내용 참고용 — 발표용은 아님.
+
+### 신규 CLI `--to-pptx`
+
+```bash
+python drm_reload_test.py --to-pptx <bundle.txt> [out.pptx]
+```
+
+- 출력 미지정 시 `<base>_restored.pptx` (번들과 같은 폴더)
+- 슬라이드 0 개면 경고 + exit 1
+
+### 의존성
+
+`python-pptx` — `pip install python-pptx`. 외부 환경(이 PC)에서 자동 설치 확인.
+
+### 검증
+
+[w18] 선행BatteryLab 번들(슬라이드 27, 도형 450) → `[w18] ..._restored.pptx` 68 KB 생성.
+각 슬라이드에 원본 텍스트 누적 배치됨. 외부 PowerPoint 로 정상 개방.
+
 ## 테스트
 
 실제 DRM 파일 검증은 사용자 환경(사내 Fasoo)에서 수행 필요.

@@ -305,6 +305,7 @@ def load_bundle(path: str | Path) -> dict:
     section: str | None = None
     key: str | None = None
     chart: dict | None = None
+    slide: dict | None = None
     table_rows: list[list[str]] | None = None
     table_name: str | None = None
     value_buf: list[str] = []
@@ -319,6 +320,15 @@ def load_bundle(path: str | Path) -> dict:
         if chart is not None:
             result["charts"].append(chart)
         chart = None
+
+    def _flush_slide():
+        nonlocal slide
+        if slide is not None:
+            # shapes dict (idx → shape) → 정렬된 list
+            shapes_dict = slide.pop("_shapes", {})
+            slide["shapes"] = [shapes_dict[k] for k in sorted(shapes_dict.keys())]
+            result["slides"].append(slide)
+        slide = None
 
     def _flush_table():
         nonlocal table_rows, table_name
@@ -347,6 +357,7 @@ def load_bundle(path: str | Path) -> dict:
             if line.startswith('===') and line.endswith('==='):
                 if section == 'VALUES': _flush_values()
                 if section == 'CHARTS': _flush_chart()
+                if section == 'SLIDES': _flush_slide()
                 if section == 'TABLES': _flush_table()
                 section = line.strip('=').strip()
                 key = None
@@ -364,6 +375,9 @@ def load_bundle(path: str | Path) -> dict:
                     _flush_chart()
                     chart = {"id": label, "title": None, "x_axis": None,
                              "y_axis": None, "series": []}
+                elif section == 'SLIDES':
+                    _flush_slide()
+                    slide = {"id": label, "_shapes": {}}
                 elif section == 'TABLES':
                     _flush_table()
                     table_rows = []
@@ -402,6 +416,26 @@ def load_bundle(path: str | Path) -> dict:
                     k, v = line.split('=', 1)
                     if k in ("title", "x_axis", "y_axis"):
                         chart[k] = v
+            elif section == 'SLIDES':
+                if slide is None:
+                    continue
+                if not line.startswith('shape.'):
+                    continue
+                parts = line.split('\t', 1)
+                if len(parts) != 2:
+                    continue
+                key_parts = parts[0].split('.')
+                if len(key_parts) != 3:
+                    continue
+                _, idx_s, field = key_parts
+                try: idx = int(idx_s)
+                except ValueError: continue
+                sh = slide["_shapes"].setdefault(idx, {"idx": idx})
+                if field == "name":
+                    sh["name"] = parts[1]
+                elif field == "text":
+                    # export_pptx_bundle 은 \r → \\r, \n → \\n 으로 저장
+                    sh["text"] = parts[1].replace('\\r', '\r').replace('\\n', '\n')
             elif section == 'PAGES':
                 parts = line.split('\t', 1)
                 if len(parts) == 2:
@@ -417,6 +451,7 @@ def load_bundle(path: str | Path) -> dict:
 
     if section == 'VALUES': _flush_values()
     if section == 'CHARTS': _flush_chart()
+    if section == 'SLIDES': _flush_slide()
     if section == 'TABLES': _flush_table()
 
     return result
@@ -639,6 +674,64 @@ def export_word_bundle(src: Path, bundle_txt: Path) -> dict:
             f.write("\n")
 
     return stats
+
+
+# ── PPT 번들 → pptx 복원 (외부 환경 — DRM 없음) ────────────────────
+def render_slides_pptx(bundle_path: str | Path, out_pptx: str | Path) -> int:
+    """PPT 번들 txt 의 ===SLIDES=== 섹션을 읽어 pptx 로 복원.
+
+    복원 범위 (번들에 담긴 정보만):
+        - 슬라이드별 도형들의 `text` → 수직 나열된 텍스트박스
+    손실:
+        - 원본 레이아웃, 폰트, 색, 크기, 도형 위치
+        - 이미지, 차트, 표의 시각적 구조
+        - 애니메이션, 슬라이드 마스터
+
+    외부 환경(Fasoo 없음)에서만 의미 있음 — 사내에서 만들면 .pptx 가 다시 DRM.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    bundle = load_bundle(bundle_path)
+    if not bundle.get('slides'):
+        return 0
+
+    prs = Presentation()  # 기본 16:9 (10" × 7.5")
+    blank = prs.slide_layouts[6]
+
+    for sl in bundle['slides']:
+        slide = prs.slides.add_slide(blank)
+        y = Inches(0.3)
+        for sh in sl.get('shapes', []):
+            text = sh.get('text', '') or ''
+            name = sh.get('name', '') or ''
+            if not text.strip():
+                # 텍스트 없는 도형은 이름만 작은 플레이스홀더로 표시
+                if not name:
+                    continue
+                tb = slide.shapes.add_textbox(Inches(0.3), y, Inches(9), Inches(0.25))
+                tf = tb.text_frame
+                tf.word_wrap = True
+                tf.text = f"[{name}]"
+                for para in tf.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9)
+                        run.font.italic = True
+                y += Inches(0.3)
+                continue
+            lines = text.count('\n') + 1
+            h = Inches(max(0.4, min(5.0, 0.28 * lines + 0.2)))
+            tb = slide.shapes.add_textbox(Inches(0.3), y, Inches(9.4), h)
+            tf = tb.text_frame
+            tf.word_wrap = True
+            tf.text = text
+            for para in tf.paragraphs:
+                for run in para.runs:
+                    run.font.size = Pt(14)
+            y += h + Inches(0.05)
+
+    prs.save(str(out_pptx))
+    return len(bundle['slides'])
 
 
 # ── PowerPoint — pptx 도 DRM 걸리므로 슬라이드를 번들 txt 로 ─────────
@@ -967,12 +1060,44 @@ def _cmd_batch(argv: list[str]) -> int:
     return 0 if fail == 0 else 1
 
 
+def _cmd_to_pptx(argv: list[str]) -> int:
+    """--to-pptx <bundle.txt> [out.pptx] — PPT 번들을 pptx 로 복원."""
+    if len(argv) < 3:
+        print("[에러] 사용법: --to-pptx <bundle.txt> [out.pptx]")
+        return 2
+    src = Path(argv[2]).expanduser().resolve()
+    if not src.is_file():
+        print(f"[에러] 번들 파일 없음: {src}")
+        return 2
+    if len(argv) >= 4:
+        dst = Path(argv[3]).expanduser().resolve()
+    else:
+        base = src.name[:-len('_bundle.txt')] if src.name.endswith('_bundle.txt') else src.stem
+        dst = src.parent / f"{base}_restored.pptx"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[번들] {src}")
+    print(f"[출력] {dst}")
+    try:
+        n = render_slides_pptx(src, dst)
+    except Exception as e:
+        print(f"[실패] {type(e).__name__}: {e}")
+        return 1
+    if n == 0:
+        print("[주의] 슬라이드 섹션 비어있음 — PPT 번들이 맞는지 확인하세요.")
+        return 1
+    print(f"[완료] 슬라이드 {n}개  ({dst.stat().st_size:,} bytes)")
+    print("  참고: 텍스트만 복원됨. 원본 레이아웃/이미지/차트/도형위치는 손실.")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) >= 2:
         if argv[1] == '--render':
             return _cmd_render(argv)
         if argv[1] == '--batch':
             return _cmd_batch(argv)
+        if argv[1] == '--to-pptx':
+            return _cmd_to_pptx(argv)
     return _cmd_extract(argv)
 
 
