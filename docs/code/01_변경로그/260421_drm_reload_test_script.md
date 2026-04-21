@@ -491,6 +491,74 @@ python drm_reload_test.py --to-pptx <bundle.txt> [out.pptx]
 [w18] 선행BatteryLab 번들(슬라이드 27, 도형 450) → `[w18] ..._restored.pptx` 68 KB 생성.
 각 슬라이드에 원본 텍스트 누적 배치됨. 외부 PowerPoint 로 정상 개방.
 
+## 11차 — 4종 완전 양방향: `--to-xlsx` / `--to-pdf` / `--to-docx` 추가
+
+사용자 요청: 사내→외부 번들 반출 → 외부 환경에서 **원본 포맷으로 재변환**. 기존 `--render`(차트 이미지) 와 `--to-pptx` 외에 나머지 3종 추가해 **전 포맷 왕복** 완성.
+
+### 신규 복원 함수
+
+**`render_values_xlsx(bundle, out)`** — openpyxl
+- 시트별 VALUES 셀 입력 (int/float/str 타입 추정)
+- FORMULAS 셀별 주입 (A1 → (row, col) 변환)
+- CHARTS 는 별도 `Charts` 시트에 시리즈 데이터 블록 + `LineChart` 추가
+- 한계: 원본 서식/차트 스타일 손실
+
+**`render_pages_pdf(bundle, out)`** — reportlab
+- 한글 폰트 자동 등록 (`C:\Windows\Fonts\malgun.ttf` 우선, `NanumGothic.ttf` 폴백)
+- A4 페이지, 페이지별 텍스트 줄단위 배치, 100자 초과 시 단순 줄바꿈
+- 한계: 원본 레이아웃/이미지/폰트 크기/스타일 손실
+
+**`render_word_docx(bundle, out)`** — python-docx
+- PARAGRAPHS → `doc.add_paragraph`
+- TABLES → `doc.add_table(rows, cols)` + 셀 텍스트 주입
+- 한계: 원본 서식/스타일 손실
+
+### 공통 CLI — `_cmd_restore(argv, kind)`
+
+4개 서브커맨드 동일 파이프라인으로 통일:
+```bash
+python drm_reload_test.py --to-xlsx <bundle.txt> [out.xlsx]
+python drm_reload_test.py --to-pdf  <bundle.txt> [out.pdf]
+python drm_reload_test.py --to-docx <bundle.txt> [out.docx]
+python drm_reload_test.py --to-pptx <bundle.txt> [out.pptx]
+```
+
+출력 미지정 시 `<base>_restored.<ext>`. 기존 `_cmd_to_pptx` 는 `_cmd_restore(kind='pptx')` 로 흡수.
+
+### 헬퍼 추가
+
+`_letter_to_col(letters)` / `_split_a1(addr)` — A1 주소 → (row, col) 역변환. FORMULAS 주입용.
+
+### 의존성 (외부 환경)
+
+| 포맷 | 라이브러리 |
+|---|---|
+| xlsx | `openpyxl` |
+| pdf | `reportlab` (+ `C:/Windows/Fonts/malgun.ttf` 한글) |
+| docx | `python-docx` |
+| pptx | `python-pptx` (기존) |
+
+`pip install openpyxl reportlab python-docx python-pptx`
+
+### 최종 양방향 매핑
+
+| 원본 | 사내 (DRM) | 외부 (재변환) |
+|---|---|---|
+| `.xlsx` | `_bundle.txt` (값/수식/차트시리즈) | `--to-xlsx` → `.xlsx` (+ `--render` → 차트 이미지) |
+| `.pptx` | `_bundle.txt` (슬라이드/도형/텍스트) | `--to-pptx` → `.pptx` |
+| `.pdf` | `_bundle.txt` (페이지별 텍스트) | `--to-pdf` → `.pdf` |
+| `.docx` | `_bundle.txt` (단락/표) | `--to-docx` → `.docx` |
+
+### 검증 (실제 사용자 번들 + 더미)
+
+| 번들 | 재변환 | 결과 |
+|---|---|---|
+| SET xlsx (차트 2) | `--to-xlsx` | 9.5 KB, 1시트 + Charts 시트 |
+| use_수명조건표 xlsx (17시트) | `--to-xlsx` | 53 KB, 17시트 |
+| [w18] pptx (27슬라이드) | `--to-pptx` | 68 KB |
+| 멀티 더미 (페이지2) | `--to-pdf` | 21 KB, 2페이지 (한글 Malgun) |
+| 멀티 더미 (단락2/표2) | `--to-docx` | 35 KB |
+
 ## 테스트
 
 실제 DRM 파일 검증은 사용자 환경(사내 Fasoo)에서 수행 필요.

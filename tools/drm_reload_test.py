@@ -676,6 +676,218 @@ def export_word_bundle(src: Path, bundle_txt: Path) -> dict:
     return stats
 
 
+# ── Excel 번들 → xlsx 복원 (외부 환경) ───────────────────────────────
+def _letter_to_col(letters: str) -> int:
+    """A1 레터 → 1-indexed 컬럼 번호 ('A'→1, 'AA'→27)."""
+    n = 0
+    for c in letters.upper():
+        if not c.isalpha():
+            break
+        n = n * 26 + (ord(c) - 64)
+    return n
+
+
+def _split_a1(addr: str) -> tuple[int, int] | None:
+    """'A1' → (row=1, col=1). 실패 시 None."""
+    m = re.match(r'^([A-Za-z]+)(\d+)$', addr.strip())
+    if not m:
+        return None
+    return int(m.group(2)), _letter_to_col(m.group(1))
+
+
+def render_values_xlsx(bundle_path: str | Path, out_xlsx: str | Path) -> int:
+    """Excel 번들 → xlsx 복원. 값/수식/차트 시리즈를 openpyxl 로 작성."""
+    from openpyxl import Workbook
+    from openpyxl.chart import LineChart, Reference, Series
+
+    bundle = load_bundle(bundle_path)
+    wb = Workbook()
+    # 기본 시트 제거 후 번들 순서대로 재생성
+    default = wb.active
+    wb.remove(default)
+
+    created = 0
+    sheet_names = list(bundle['values'].keys())
+    if not sheet_names and bundle['charts']:
+        sheet_names = ['Sheet1']
+
+    # 시트별 값 입력
+    for name in sheet_names:
+        safe = (name or 'Sheet')[:31]
+        ws = wb.create_sheet(title=safe)
+        rows = bundle['values'].get(name, [])
+        for r, row in enumerate(rows, start=1):
+            for c, cell in enumerate(row, start=1):
+                if cell == '':
+                    continue
+                # 타입 추정 — 정수/실수/문자열
+                v = cell
+                try:
+                    if '.' in v or 'e' in v.lower():
+                        v = float(cell)
+                    else:
+                        v = int(cell)
+                except (ValueError, AttributeError):
+                    pass
+                ws.cell(row=r, column=c, value=v)
+        created += 1
+
+    # 수식 주입 — 시트명 불일치 시 스킵
+    for name, cells in bundle.get('formulas', {}).items():
+        safe = (name or 'Sheet')[:31]
+        if safe not in wb.sheetnames:
+            continue
+        ws = wb[safe]
+        for addr, formula in cells.items():
+            pos = _split_a1(addr)
+            if pos is None:
+                continue
+            r, c = pos
+            ws.cell(row=r, column=c, value=formula)
+
+    # 차트 — 별도 시트 'Charts' 에 시리즈별 데이터 + LineChart 추가
+    charts = bundle.get('charts', [])
+    if charts:
+        chart_ws = wb.create_sheet(title='Charts')
+        data_row_start = 1
+        for ci, ch in enumerate(charts, start=1):
+            title = ch.get('title') or ch.get('id') or f'Chart {ci}'
+            chart_ws.cell(row=data_row_start, column=1, value=f"[{title}]")
+            data_row_start += 1
+
+            series_list = ch.get('series', [])
+            if not series_list:
+                data_row_start += 1
+                continue
+
+            # 데이터 블록: 헤더(X, 시리즈 이름들) + 값들
+            max_len = max((len(s.get('y', [])) for s in series_list), default=0)
+            header = ['X'] + [str(s.get('name') or f'series{i}') for i, s in enumerate(series_list, 1)]
+            for ci_col, h in enumerate(header, start=1):
+                chart_ws.cell(row=data_row_start, column=ci_col, value=h)
+            # X 축은 첫 시리즈의 x 사용 (공통 가정), 없으면 인덱스
+            base_x = series_list[0].get('x') or list(range(1, max_len + 1))
+            for k in range(max_len):
+                chart_ws.cell(row=data_row_start + 1 + k, column=1,
+                              value=(base_x[k] if k < len(base_x) else k + 1))
+                for si, s in enumerate(series_list, start=2):
+                    yvals = s.get('y', [])
+                    if k < len(yvals) and yvals[k] is not None:
+                        chart_ws.cell(row=data_row_start + 1 + k, column=si, value=yvals[k])
+
+            # LineChart
+            chart = LineChart()
+            chart.title = title
+            if ch.get('x_axis'):
+                chart.x_axis.title = ch['x_axis']
+            if ch.get('y_axis'):
+                chart.y_axis.title = ch['y_axis']
+            data_ref = Reference(chart_ws,
+                                 min_col=2, max_col=1 + len(series_list),
+                                 min_row=data_row_start, max_row=data_row_start + max_len)
+            cat_ref = Reference(chart_ws, min_col=1,
+                                min_row=data_row_start + 1, max_row=data_row_start + max_len)
+            chart.add_data(data_ref, titles_from_data=True)
+            chart.set_categories(cat_ref)
+            anchor = f"E{data_row_start}"
+            chart_ws.add_chart(chart, anchor)
+
+            data_row_start += max_len + 3  # 다음 차트 블록까지 간격
+
+    wb.save(str(out_xlsx))
+    return created
+
+
+# ── PDF 번들 → pdf 복원 (외부 환경) ──────────────────────────────────
+def render_pages_pdf(bundle_path: str | Path, out_pdf: str | Path) -> int:
+    """PDF 번들 → pdf 복원. 페이지별 텍스트만 (원본 레이아웃/이미지 손실).
+
+    한글 폰트: Windows 는 Malgun Gothic(malgun.ttf) 을 TTFont 로 등록.
+    없으면 Helvetica 로 폴백 (한글 깨질 수 있음).
+    """
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    bundle = load_bundle(bundle_path)
+    pages = bundle.get('pages', {})
+    if not pages:
+        return 0
+
+    # 한글 폰트 등록 시도
+    font_name = 'Helvetica'
+    for candidate, path in [
+        ('MalgunGothic', r'C:\Windows\Fonts\malgun.ttf'),
+        ('NanumGothic', r'C:\Windows\Fonts\NanumGothic.ttf'),
+    ]:
+        if os.path.isfile(path):
+            try:
+                pdfmetrics.registerFont(TTFont(candidate, path))
+                font_name = candidate
+                break
+            except Exception:
+                continue
+
+    w, h = A4
+    c = canvas.Canvas(str(out_pdf), pagesize=A4)
+    c.setFont(font_name, 10)
+    margin = 40
+    line_h = 13
+
+    count = 0
+    for pno in sorted(pages.keys()):
+        text = pages[pno]
+        y = h - margin
+        for line in text.split('\n'):
+            if y < margin:
+                c.showPage()
+                c.setFont(font_name, 10)
+                y = h - margin
+            # 너무 긴 줄은 잘라서 표시 (간단 wrap — 폰트메트릭 무시, 80자 기준)
+            while len(line) > 100:
+                c.drawString(margin, y, line[:100])
+                line = line[100:]
+                y -= line_h
+                if y < margin:
+                    c.showPage(); c.setFont(font_name, 10); y = h - margin
+            c.drawString(margin, y, line)
+            y -= line_h
+        c.showPage()
+        count += 1
+
+    c.save()
+    return count
+
+
+# ── Word 번들 → docx 복원 (외부 환경) ────────────────────────────────
+def render_word_docx(bundle_path: str | Path, out_docx: str | Path) -> dict:
+    """Word 번들 → docx 복원. 단락 + 표만 (서식 손실)."""
+    from docx import Document
+
+    bundle = load_bundle(bundle_path)
+    paragraphs = bundle.get('paragraphs', [])
+    tables = bundle.get('tables', [])
+
+    doc = Document()
+    for p in paragraphs:
+        doc.add_paragraph(p)
+
+    for tbl in tables:
+        rows = tbl.get('rows', [])
+        if not rows:
+            continue
+        ncols = max(len(r) for r in rows)
+        t = doc.add_table(rows=len(rows), cols=ncols)
+        for ri, row in enumerate(rows):
+            for ci in range(ncols):
+                t.rows[ri].cells[ci].text = row[ci] if ci < len(row) else ''
+        doc.add_paragraph("")  # 표 사이 공백
+
+    doc.save(str(out_docx))
+    return {"paragraphs": len(paragraphs), "tables": len(tables)}
+
+
 # ── PPT 번들 → pptx 복원 (외부 환경 — DRM 없음) ────────────────────
 def render_slides_pptx(bundle_path: str | Path, out_pptx: str | Path) -> int:
     """PPT 번들 txt 의 ===SLIDES=== 섹션을 읽어 pptx 로 복원.
@@ -1060,10 +1272,12 @@ def _cmd_batch(argv: list[str]) -> int:
     return 0 if fail == 0 else 1
 
 
-def _cmd_to_pptx(argv: list[str]) -> int:
-    """--to-pptx <bundle.txt> [out.pptx] — PPT 번들을 pptx 로 복원."""
+def _cmd_restore(argv: list[str], kind: str) -> int:
+    """공통: --to-<kind> <bundle.txt> [out.ext]."""
+    ext_map = {"xlsx": ".xlsx", "pdf": ".pdf", "docx": ".docx", "pptx": ".pptx"}
+    ext = ext_map[kind]
     if len(argv) < 3:
-        print("[에러] 사용법: --to-pptx <bundle.txt> [out.pptx]")
+        print(f"[에러] 사용법: --to-{kind} <bundle.txt> [out{ext}]")
         return 2
     src = Path(argv[2]).expanduser().resolve()
     if not src.is_file():
@@ -1073,20 +1287,35 @@ def _cmd_to_pptx(argv: list[str]) -> int:
         dst = Path(argv[3]).expanduser().resolve()
     else:
         base = src.name[:-len('_bundle.txt')] if src.name.endswith('_bundle.txt') else src.stem
-        dst = src.parent / f"{base}_restored.pptx"
+        dst = src.parent / f"{base}_restored{ext}"
     dst.parent.mkdir(parents=True, exist_ok=True)
     print(f"[번들] {src}")
     print(f"[출력] {dst}")
+
     try:
-        n = render_slides_pptx(src, dst)
+        if kind == 'xlsx':
+            n = render_values_xlsx(src, dst)
+            print(f"[완료] 시트 {n}개 (+ 차트시트) / {dst.stat().st_size:,} bytes")
+            print("  한계: 원본 서식/차트 스타일 손실, 수식은 그대로 주입.")
+        elif kind == 'pdf':
+            n = render_pages_pdf(src, dst)
+            if n == 0:
+                print("[주의] PAGES 섹션 비어있음"); return 1
+            print(f"[완료] 페이지 {n}개 / {dst.stat().st_size:,} bytes")
+            print("  한계: 원본 레이아웃/이미지/폰트 손실. 한글은 Malgun Gothic 사용.")
+        elif kind == 'docx':
+            stats = render_word_docx(src, dst)
+            print(f"[완료] 단락 {stats['paragraphs']}, 표 {stats['tables']} / {dst.stat().st_size:,} bytes")
+            print("  한계: 원본 서식/스타일 손실.")
+        elif kind == 'pptx':
+            n = render_slides_pptx(src, dst)
+            if n == 0:
+                print("[주의] SLIDES 섹션 비어있음"); return 1
+            print(f"[완료] 슬라이드 {n}개 / {dst.stat().st_size:,} bytes")
+            print("  한계: 텍스트만 복원. 레이아웃/이미지/차트/도형위치 손실.")
     except Exception as e:
         print(f"[실패] {type(e).__name__}: {e}")
         return 1
-    if n == 0:
-        print("[주의] 슬라이드 섹션 비어있음 — PPT 번들이 맞는지 확인하세요.")
-        return 1
-    print(f"[완료] 슬라이드 {n}개  ({dst.stat().st_size:,} bytes)")
-    print("  참고: 텍스트만 복원됨. 원본 레이아웃/이미지/차트/도형위치는 손실.")
     return 0
 
 
@@ -1097,7 +1326,13 @@ def main(argv: list[str]) -> int:
         if argv[1] == '--batch':
             return _cmd_batch(argv)
         if argv[1] == '--to-pptx':
-            return _cmd_to_pptx(argv)
+            return _cmd_restore(argv, 'pptx')
+        if argv[1] == '--to-xlsx':
+            return _cmd_restore(argv, 'xlsx')
+        if argv[1] == '--to-pdf':
+            return _cmd_restore(argv, 'pdf')
+        if argv[1] == '--to-docx':
+            return _cmd_restore(argv, 'docx')
     return _cmd_extract(argv)
 
 
