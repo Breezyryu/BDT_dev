@@ -431,7 +431,18 @@ def render_bundle_charts(bundle_path: str | Path, out_dir: str | Path,
     """
     import matplotlib
     matplotlib.use('Agg')
+    from matplotlib import font_manager
     import matplotlib.pyplot as plt
+
+    # 한글 폰트 자동 탐색 (Win/Mac/Linux 순)
+    for fname in ('Malgun Gothic', 'AppleGothic', 'NanumGothic', 'Noto Sans CJK KR', 'Noto Sans KR'):
+        try:
+            font_manager.findfont(fname, fallback_to_default=False)
+            matplotlib.rcParams['font.family'] = fname
+            break
+        except Exception:
+            continue
+    matplotlib.rcParams['axes.unicode_minus'] = False
 
     bundle = load_bundle(bundle_path)
     out_path = Path(out_dir)
@@ -469,7 +480,8 @@ def render_bundle_charts(bundle_path: str | Path, out_dir: str | Path,
             ax.grid(True, alpha=0.3)
 
             chart_id = ch.get('id') or f'chart_{idx}'
-            out_file = out_path / f'{_safe_name(chart_id)}.{format}'
+            # 순번 접두로 중복 id 덮어쓰기 방지
+            out_file = out_path / f'{idx:02d}_{_safe_name(chart_id)}.{format}'
             fig.tight_layout()
             fig.savefig(out_file, dpi=dpi, format=format)
             plt.close(fig)
