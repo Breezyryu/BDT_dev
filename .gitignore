@@ -8,7 +8,8 @@ Rawdata/
 Parameter_Generator_v9.4_for_MX_2026/
 DataTool/
 BAK/
-vault/
+raw/
+# vault/ — 2026-04-21: vault was merged into wiki/ (tracked as LLM-owned knowledge)
 *.egg-info
 *.exe
 *.spec
