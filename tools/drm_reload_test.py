@@ -676,6 +676,97 @@ def export_word_bundle(src: Path, bundle_txt: Path) -> dict:
     return stats
 
 
+# ── Full-bundle — 원본 바이너리 base64 (무손실 복원 시도) ─────────────
+_B64_LINE_WIDTH = 76
+
+
+def pack_file(src: Path, dst_txt: Path) -> dict:
+    """원본 파일 bytes → base64 인코딩 → 첫 줄 공란 txt 로 덤프.
+
+    주의: Fasoo DRM 은 파일시스템에 암호문을 저장하고 Office/Adobe 프로세스만
+    복호화 권한. Python 의 `read_bytes()` 로 DRM 파일을 읽으면 암호문 그대로
+    읽힐 가능성 큼 — 그 경우 unpack 후에도 원본 안 열림. **사내 실측 필수**.
+    평문 파일(DRM 없음)에는 항상 무손실 왕복.
+    """
+    import base64
+    import hashlib
+
+    data = src.read_bytes()
+    sha256 = hashlib.sha256(data).hexdigest()
+    b64 = base64.b64encode(data).decode('ascii')
+
+    # DRM 감지 힌트 — Fasoo 헤더 패턴(`<## NASCA DRM`) 있으면 경고 메시지
+    drm_marker = data[:32].lower()
+    is_likely_drm = b'nasca' in drm_marker or b'<##' in drm_marker[:4]
+
+    with open(dst_txt, 'w', encoding='utf-8') as f:
+        f.write("\n")  # DRM 회피용 첫 줄 공란
+        f.write("# DRM-bypass full-bundle (binary base64)\n")
+        f.write(f"# Source: {src}\n")
+        f.write(f"# Original-Name: {src.name}\n")
+        f.write(f"# Original-Size: {len(data)}\n")
+        f.write(f"# Original-SHA256: {sha256}\n")
+        f.write(f"# Exported: {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write("# Content-Encoding: base64\n")
+        if is_likely_drm:
+            f.write("# WARNING: source bytes look like Fasoo-wrapped ciphertext — unpack may not yield a readable file.\n")
+        f.write("\n")
+        for i in range(0, len(b64), _B64_LINE_WIDTH):
+            f.write(b64[i:i + _B64_LINE_WIDTH] + "\n")
+
+    return {"size": len(data), "sha256": sha256,
+            "b64_lines": (len(b64) + _B64_LINE_WIDTH - 1) // _B64_LINE_WIDTH,
+            "likely_drm": is_likely_drm}
+
+
+def unpack_file(src_txt: Path, out_path: Path | None = None) -> dict:
+    """base64 full-bundle txt → 원본 바이너리 복원 + SHA256 무결성 검증."""
+    import base64
+    import hashlib
+
+    meta: dict[str, str] = {}
+    b64_parts: list[str] = []
+    with open(src_txt, 'r', encoding='utf-8') as f:
+        for raw in f:
+            line = raw.rstrip('\r\n')
+            if not line.strip():
+                continue
+            if line.startswith('#'):
+                body = line.lstrip('#').strip()
+                if ':' in body:
+                    k, v = body.split(':', 1)
+                    meta[k.strip().lower()] = v.strip()
+                continue
+            b64_parts.append(line.strip())
+
+    if not b64_parts:
+        raise RuntimeError("base64 본문이 없음 — full-bundle 포맷이 맞는지 확인")
+
+    data = base64.b64decode(''.join(b64_parts), validate=False)
+
+    expected_sha = meta.get('original-sha256')
+    verified = False
+    if expected_sha:
+        actual_sha = hashlib.sha256(data).hexdigest()
+        if actual_sha != expected_sha:
+            raise RuntimeError(
+                f"SHA256 mismatch: expected {expected_sha[:16]}..., got {actual_sha[:16]}...")
+        verified = True
+
+    orig_name = meta.get('original-name') or src_txt.stem
+    if out_path is None:
+        out = src_txt.parent / orig_name
+    elif out_path.exists() and out_path.is_dir():
+        out = out_path / orig_name
+    else:
+        out = out_path
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+
+    return {"size": len(data), "out": out, "verified": verified,
+            "original_name": orig_name}
+
+
 # ── Excel 번들 → xlsx 복원 (외부 환경) ───────────────────────────────
 def _letter_to_col(letters: str) -> int:
     """A1 레터 → 1-indexed 컬럼 번호 ('A'→1, 'AA'→27)."""
@@ -1319,6 +1410,50 @@ def _cmd_restore(argv: list[str], kind: str) -> int:
     return 0
 
 
+def _cmd_pack(argv: list[str]) -> int:
+    """--pack <file> [out.txt] — 임의 파일을 base64 full-bundle 로 덤프."""
+    if len(argv) < 3:
+        print("[에러] 사용법: --pack <입력파일> [출력.txt]")
+        return 2
+    src = Path(argv[2]).expanduser().resolve()
+    if not src.is_file():
+        print(f"[에러] 파일 없음: {src}"); return 2
+    dst = (Path(argv[3]).expanduser().resolve() if len(argv) >= 4
+           else src.with_name(f"{src.stem}_fullbundle.txt"))
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[입력] {src}  ({src.stat().st_size:,} bytes)")
+    print(f"[출력] {dst}  (첫 줄 공란, base64)")
+    try:
+        s = pack_file(src, dst)
+    except Exception as e:
+        print(f"[실패] {type(e).__name__}: {e}"); return 1
+    print(f"[완료] {dst.stat().st_size:,} bytes / b64 {s['b64_lines']:,}줄 / "
+          f"sha256 {s['sha256'][:16]}...")
+    if s["likely_drm"]:
+        print("  주의: 원본 바이트가 Fasoo 암호문 패턴(<##NASCA...) — unpack 후 열리지 않을 수 있음.")
+        print("  → Fasoo 파일은 COM 경유 텍스트 번들(--extract)이 유일한 실용 경로.")
+    return 0
+
+
+def _cmd_unpack(argv: list[str]) -> int:
+    """--unpack <bundle.txt> [out_path] — base64 full-bundle → 원본 복원."""
+    if len(argv) < 3:
+        print("[에러] 사용법: --unpack <fullbundle.txt> [출력경로]")
+        return 2
+    src = Path(argv[2]).expanduser().resolve()
+    if not src.is_file():
+        print(f"[에러] 파일 없음: {src}"); return 2
+    out_path = (Path(argv[3]).expanduser().resolve() if len(argv) >= 4 else None)
+    print(f"[입력] {src}  ({src.stat().st_size:,} bytes)")
+    try:
+        r = unpack_file(src, out_path)
+    except Exception as e:
+        print(f"[실패] {type(e).__name__}: {e}"); return 1
+    verify_tag = "SHA256 일치" if r['verified'] else "SHA256 없음(검증 스킵)"
+    print(f"[완료] {r['out']}  ({r['size']:,} bytes, {verify_tag})")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) >= 2:
         if argv[1] == '--render':
@@ -1333,6 +1468,10 @@ def main(argv: list[str]) -> int:
             return _cmd_restore(argv, 'pdf')
         if argv[1] == '--to-docx':
             return _cmd_restore(argv, 'docx')
+        if argv[1] == '--pack':
+            return _cmd_pack(argv)
+        if argv[1] == '--unpack':
+            return _cmd_unpack(argv)
     return _cmd_extract(argv)
 
 

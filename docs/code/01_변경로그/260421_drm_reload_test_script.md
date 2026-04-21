@@ -559,6 +559,68 @@ python drm_reload_test.py --to-pptx <bundle.txt> [out.pptx]
 | 멀티 더미 (페이지2) | `--to-pdf` | 21 KB, 2페이지 (한글 Malgun) |
 | 멀티 더미 (단락2/표2) | `--to-docx` | 35 KB |
 
+## 12차 — 완전 무손실 시도: `--pack` / `--unpack` (OOXML base64)
+
+텍스트 번들 접근의 근본적 한계(원본 서식/이미지/레이아웃 손실)를 우회하려는 실험 모드.
+원본 파일 bytes 를 통째로 base64 인코딩해 첫 줄 공란 txt 에 덤프.
+
+### 신규 함수
+
+**`pack_file(src, dst_txt)`** — 임의 파일 → base64 full-bundle txt
+- `src.read_bytes()` → `base64.b64encode` → 76자 단위 줄바꿈
+- 메타: `Original-Name / Size / SHA256 / Exported / Content-Encoding`
+- 첫 바이트에 Fasoo 헤더 패턴(`<## NASCA`) 감지되면 경고 추가
+
+**`unpack_file(src_txt, out_path)`** — full-bundle → 원본 바이너리
+- `#` 시작 라인은 메타, 빈 라인 무시, 나머지를 base64 디코드
+- `Original-SHA256` 으로 무결성 검증 후 `Original-Name` 으로 저장
+- `out_path` 가 기존 디렉터리면 그 안에 원래 이름, 아니면 파일 경로
+
+### 메타 포맷
+
+```
+<빈 줄>
+# DRM-bypass full-bundle (binary base64)
+# Source: ...
+# Original-Name: <basename>
+# Original-Size: <bytes>
+# Original-SHA256: <hex>
+# Exported: <iso>
+# Content-Encoding: base64
+
+<76자 단위 base64 라인들>
+```
+
+### 근본 한계 (반드시 실측 필요)
+
+Fasoo DRM 은 **파일시스템에 암호문 저장** + **Office/Adobe 프로세스만 복호화** 구조.
+Python 의 `open()` / `read_bytes()` 로 DRM 파일을 읽으면:
+- 정책에 따라 평문 통과 (투명 복호화) — 성공 시나리오
+- 또는 Fasoo-wrapped 암호문 (`<## NASCA DRM ...`) — 실패 시나리오
+
+실패 시 unpack 결과가 암호문 파일이라 외부에서 열리지 않음. 이 경우 pack 코드가
+경고 메시지 출력하고 사용자가 텍스트 번들(`--extract`) 경로로 전환해야 함.
+
+평문 파일(non-DRM)에는 항상 **완전 무손실** 왕복.
+
+### CLI
+
+```bash
+python drm_reload_test.py --pack <file> [out.txt]        # 파일 → base64 txt
+python drm_reload_test.py --unpack <fullbundle.txt> [out]  # txt → 원본
+```
+
+출력 미지정:
+- `--pack`: `<src_stem>_fullbundle.txt`
+- `--unpack`: 번들과 같은 폴더에 `Original-Name` 으로 복원
+
+### 검증
+
+평문 SET.xlsx (9,492 bytes) → full-bundle (13,271 bytes, ~40% 증가) → 삭제 후 unpack
+→ **SHA256 일치** 확인. Bytes 완전 동일 복원.
+
+사내 DRM 파일 pack 은 **사용자 실측 필요** — 암호문이면 경고 메시지 뜨고 unpack 결과도 열리지 않음. 이 경우 `--extract` (텍스트 번들) 경로로 전환.
+
 ## 테스트
 
 실제 DRM 파일 검증은 사용자 환경(사내 Fasoo)에서 수행 필요.
