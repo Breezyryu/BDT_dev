@@ -94,9 +94,57 @@ C3	=VLOOKUP(A3, Sheet2!A:B, 2, FALSE)
 |---|---|---|
 | `Workbook.SaveAs` (COM 직접) | O | Fasoo SaveAs 훅 |
 | `Presentation.SaveAs` (COM 직접) | O | Fasoo SaveAs 훅 |
-| COM 으로 값 읽기 → `xlsxwriter` 로 새 파일 | X | 훅 경로 우회 |
-| COM 으로 슬라이드 PNG export → `python-pptx` 로 새 파일 | X | 훅 경로 우회 |
-| **수식 → 첫 줄 공란 .txt 로 직접 기록** | **X** | **Fasoo 서명 패턴 매칭 실패** |
+| ~~COM 으로 값 읽기 → `xlsxwriter` 로 새 파일~~ | **O** (2026-04-21 실측) | **확장자 기반 훅** (`.xlsx` 쓰기 자체 감시) |
+| COM 으로 슬라이드 PNG export → `python-pptx` 로 새 파일 | ? (pptx 확장자라 위험) | — |
+| **데이터/수식/차트 시리즈 → 첫 줄 공란 .txt** | **X** | **Fasoo 서명 패턴 매칭 실패** |
+| 차트 이미지 → `.png` | 정책 따라 다름 | 이미지 훅 미설정 시 통과 |
+
+## 2차 개편 — xlsx 출력 제거, 번들 txt + PNG 로 재설계
+
+사용자 실측: xlsxwriter 로 만든 .xlsx 도 즉시 DRM 걸림 → **Office 확장자 자체를 피해야 함**.
+
+### Excel 경로 재설계
+
+산출물 2종:
+1. **`<stem>_bundle.txt`** — 첫 줄 공란, 3섹션 통합
+   - `===VALUES===` : 시트별 TSV (`[SheetName]` 헤더 + 탭 구분 2D)
+   - `===FORMULAS===` : `[SheetName]` + `<cell>\t<formula>` per line
+   - `===CHARTS===` : `[SheetName::ChartName]` + `title/x_axis/y_axis/png` 메타 + `series.N.name/x/y` 시리즈 원본 데이터
+2. **`<stem>_chart_<sheet>_NN.png`** — 차트별 PNG (`chart.Export`, Fasoo 이미지 훅 미설정 시 즉시 사용)
+
+### 차트 시리즈 추출 (핵심)
+
+PNG 가 Fasoo 에 걸려도 `.txt` 의 시리즈 원본 데이터로 재플롯 가능 (이중화).
+- `sh.api.ChartObjects(i).Chart.SeriesCollection(j)` 로 접근
+- `.Name`, `.Values`, `.XValues`, `.HasTitle`, `.Axes(1/2).AxisTitle.Text` 추출
+- 각 단계 try-except 로 격리 — 차트 하나 깨져도 다음 차트 계속 처리
+
+### 재로더
+
+`load_bundle(path) -> {'values', 'formulas', 'charts'}` 구현:
+- values: `{sheet: list[list]}` (TSV 원본, 헤더 없음)
+- formulas: `{sheet: {cell: formula}}`
+- charts: `[{id, title, x_axis, y_axis, png, series:[{name, x, y}]}, ...]`
+- 외부 환경에서 matplotlib 으로 재플롯 시 `b['charts'][i]['series']` 바로 사용
+
+### 제거된 것
+
+- 기존 `<stem>_export.xlsx` 경로 — DRM 걸리므로 무의미
+- `<stem>_formula.txt` — 번들 txt 의 `===FORMULAS===` 섹션으로 통합
+- `xlsxwriter` 의존성 (pandas 의 `to_csv(sep='\t')` 만 사용)
+
+### 의존성 변경
+
+| | Before | After |
+|---|---|---|
+| xlsxwriter | 필요 | 제거 |
+| xlwings / pandas / pywin32 / python-pptx | 유지 | 유지 |
+
+### PPT 경로
+
+현 pptx 재작성 방식 유지. pptx 확장자도 같은 원리로 걸릴 가능성이 높지만 사용자가
+Excel 결과 먼저 확인 요청 — PPT 도 걸리면 `<stem>_slides.txt` + 슬라이드별 PNG 구조로
+재설계 예정.
 
 ## 테스트
 
