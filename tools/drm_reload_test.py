@@ -14,11 +14,16 @@
         외부: 번들 txt 를 matplotlib 으로 PNG/SVG/PDF 재렌더링
 
 사용법:
-    # 사내 — txt 번들 추출
+    # 사내 — 단일 추출
     python drm_reload_test.py <입력파일> [출력stem]
 
-    # 외부 — 번들에서 차트 재렌더링
+    # 외부 — 단일 렌더링
     python drm_reload_test.py --render <bundle.txt> [출력디렉터리] [png|svg|pdf]
+
+    # 여러 경로 한번에 (파일/디렉터리 혼합 가능, 디렉터리는 재귀 탐색)
+    #   .xlsx/.xls/.xlsm/.pptx/.ppt/.pptm → bundle.txt 추출
+    #   *_bundle.txt                      → 차트 렌더링
+    python drm_reload_test.py --batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]
 
 프로그램 내 재로드:
     from tools.drm_reload_test import load_bundle, render_bundle_charts
@@ -535,9 +540,168 @@ def _cmd_render(argv: list[str]) -> int:
     return 0
 
 
+_OFFICE_EXTS = {'.xlsx', '.xls', '.xlsm', '.pptx', '.ppt', '.pptm'}
+
+
+def _collect_batch_inputs(paths: list[str]) -> list[Path]:
+    """파일/디렉터리 경로 리스트 → 처리 대상 파일 리스트.
+
+    디렉터리는 재귀 탐색: Office 파일 + `*_bundle.txt` 만 수집.
+    중복 제거, 정렬 순서 보존.
+    """
+    collected: list[Path] = []
+    for p in paths:
+        path = Path(p).expanduser().resolve()
+        if path.is_file():
+            # 명시 인자: 관대 — Office 확장자 또는 .txt 면 bundle 로 간주
+            ext = path.suffix.lower()
+            if ext in _OFFICE_EXTS or ext == '.txt':
+                collected.append(path)
+            else:
+                print(f"[건너뜀] 미지원 확장자: {path}")
+        elif path.is_dir():
+            # 재귀 탐색: 엄격 — 임의의 .txt 가 섞이면 오처리 위험
+            for f in sorted(path.rglob('*')):
+                if not f.is_file():
+                    continue
+                ext = f.suffix.lower()
+                if ext in _OFFICE_EXTS or f.name.endswith('_bundle.txt'):
+                    collected.append(f)
+        else:
+            print(f"[건너뜀] 경로 없음: {path}")
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for p in collected:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
+def _batch_out_stem(src: Path, out_dir: Path | None) -> Path:
+    """출력 파일 stem 결정. out_dir 있으면 평탄화 + 부모명 접두로 충돌 회피."""
+    if out_dir is None:
+        return src.with_suffix('')
+    parent = src.parent.name or 'root'
+    return out_dir / _safe_name(f"{parent}_{src.stem}")
+
+
+def _process_one(src: Path, out_dir: Path | None, fmt: str) -> tuple[str, str]:
+    """단일 파일 처리. Returns (status, message). status ∈ {'ok', 'skip'}."""
+    ext = src.suffix.lower()
+
+    if ext in ('.xlsx', '.xls', '.xlsm'):
+        out_stem = _batch_out_stem(src, out_dir)
+        bundle = Path(f"{out_stem}_bundle.txt")
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        stats = export_excel_bundle(src, bundle)
+        msg = (f"→ {bundle.name}  "
+               f"(sheet={stats['sheets']}, row={stats['rows_total']:,}, "
+               f"formula={stats['formulas']}, chart={stats['charts']})")
+        return 'ok', msg
+
+    if ext in ('.pptx', '.ppt', '.pptm'):
+        out_stem = _batch_out_stem(src, out_dir)
+        bundle = Path(f"{out_stem}_bundle.txt")
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        stats = export_pptx_bundle(src, bundle)
+        msg = f"→ {bundle.name}  (slide={stats['slides']}, shape={stats['shapes']})"
+        return 'ok', msg
+
+    if ext == '.txt':
+        # _bundle 접미 떼어내기 (없으면 stem 그대로)
+        base = src.name[:-len('_bundle.txt')] if src.name.endswith('_bundle.txt') else src.stem
+        if out_dir is None:
+            chart_dir = src.parent / f"{base}_charts"
+        else:
+            chart_dir = out_dir / f"{_safe_name(src.parent.name or 'root')}_{base}_charts"
+        n = render_bundle_charts(src, chart_dir, format=fmt)
+        return 'ok', f"→ {chart_dir.name}/  ({n} charts as {fmt})"
+
+    return 'skip', f"미지원: {ext}"
+
+
+def _cmd_batch(argv: list[str]) -> int:
+    """--batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]"""
+    i = 2
+    out_dir: Path | None = None
+    fmt = 'png'
+    paths: list[str] = []
+
+    while i < len(argv):
+        a = argv[i]
+        if a == '--out':
+            if i + 1 >= len(argv):
+                print("[에러] --out 값 필요"); return 2
+            out_dir = Path(argv[i + 1]).expanduser().resolve()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            i += 2
+        elif a == '--format':
+            if i + 1 >= len(argv):
+                print("[에러] --format 값 필요"); return 2
+            fmt = argv[i + 1].lower()
+            if fmt not in ('png', 'svg', 'pdf'):
+                print(f"[에러] format 은 png/svg/pdf: {fmt}"); return 2
+            i += 2
+        else:
+            paths.append(a)
+            i += 1
+
+    if not paths:
+        print("[에러] 사용법: --batch [--out <dir>] [--format png|svg|pdf] <path>...")
+        return 2
+
+    files = _collect_batch_inputs(paths)
+    if not files:
+        print("[에러] 처리할 파일 없음")
+        return 2
+
+    print(f"[배치] {len(files)}개 파일")
+    if out_dir:
+        print(f"[출력] {out_dir}  (평탄화, <parent>_<stem>_* 네이밍)")
+    else:
+        print(f"[출력] 각 원본 옆")
+    print()
+
+    ok = skip = fail = 0
+    failures: list[tuple[Path, str]] = []
+
+    for idx, src in enumerate(files, 1):
+        try:
+            size = src.stat().st_size
+        except OSError:
+            size = 0
+        print(f"[{idx}/{len(files)}] {src}  ({size:,} bytes)")
+        try:
+            status, msg = _process_one(src, out_dir, fmt)
+            print(f"  {msg}")
+            if status == 'ok':
+                ok += 1
+            else:
+                skip += 1
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            print(f"  → 실패: {err}")
+            fail += 1
+            failures.append((src, err))
+
+    print()
+    print(f"[완료] 성공 {ok}, 건너뜀 {skip}, 실패 {fail}")
+    if failures:
+        print("[실패 목록]")
+        for src, err in failures:
+            print(f"  ! {src}: {err}")
+
+    return 0 if fail == 0 else 1
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) >= 2 and argv[1] == '--render':
-        return _cmd_render(argv)
+    if len(argv) >= 2:
+        if argv[1] == '--render':
+            return _cmd_render(argv)
+        if argv[1] == '--batch':
+            return _cmd_batch(argv)
     return _cmd_extract(argv)
 
 

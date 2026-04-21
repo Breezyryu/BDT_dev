@@ -272,6 +272,55 @@ Fasoo 훅은 단순 확장자 매칭이 아니라 **프로세스 단위**로 동
 - 모듈 docstring 에 프로세스 훅 설명과 캡처도구 예외 추가
 - 메모리 `project_fasoo_drm_saveas_vs_export` 갱신
 
+## 7차 — `--batch` 다중 경로 처리 옵션 추가
+
+여러 Office 파일/번들을 한 번에 처리. 사내에서 여러 .xlsx 를 한 번에 번들 뽑거나,
+외부에서 여러 bundle.txt 를 한 번에 차트 렌더링할 때 사용.
+
+### 사용법
+
+```bash
+python drm_reload_test.py --batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]
+```
+
+- `<path>` 는 파일 / 디렉터리 혼합 가능
+- 디렉터리는 재귀 탐색 (`rglob`) — Office 확장자 + `*_bundle.txt` 만 수집
+- 파일 명시 인자는 관대: `.txt` 이면 bundle 로 간주
+- 확장자 자동 판별로 처리 분기:
+  - `.xlsx/.xls/.xlsm` → `export_excel_bundle`
+  - `.pptx/.ppt/.pptm` → `export_pptx_bundle`
+  - `.txt` → `render_bundle_charts`
+
+### 출력 경로 규칙
+
+| 옵션 | 위치 | 네이밍 |
+|---|---|---|
+| `--out` 미지정 | 각 원본 옆 | `<src_stem>_bundle.txt` / `<base>_charts/` |
+| `--out <dir>` 지정 | 공통 디렉터리 | `<parent>_<stem>_*` 접두로 충돌 회피 |
+
+충돌 회피: 같은 파일명이 다른 폴더에 있어도 부모 폴더명을 접두로 붙여 고유화.
+
+### 에러 격리 / 요약
+
+- 파일 하나가 실패해도 다음 파일 계속 진행
+- 진행 표시 `[i/n]` + 상세 요약(sheet/row/formula/chart 수)
+- 종료 시 `성공 N, 건너뜀 M, 실패 K` + 실패 목록 출력
+- 실패 있으면 exit code 1
+
+### 검증
+
+더미 bundle 2개 + 중첩 디렉터리 재귀 테스트 모두 통과:
+
+```
+C:/tmp/dir_test/
+  ├── a_bundle.txt         → 수집됨
+  ├── unrelated.txt        → 재귀 엄격 모드로 제외
+  └── sub/
+      └── b_bundle.txt     → 수집됨
+```
+
+출력: `dir_test_a_charts/`, `sub_b_charts/` — 부모명 접두로 구분.
+
 ## 테스트
 
 실제 DRM 파일 검증은 사용자 환경(사내 Fasoo)에서 수행 필요.
