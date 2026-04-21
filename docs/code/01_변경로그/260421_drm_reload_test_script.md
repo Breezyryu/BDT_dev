@@ -199,33 +199,78 @@ python drm_reload_test.py --render <bundle.txt> <outdir> [png|svg|pdf]
 - 재렌더링: `matplotlib` (BDT 본체 의존성과 공유)
 - 제거: `xlsxwriter`, `python-pptx`
 
-## 4차 — `.csv` 실험 모드 추가
+## 4차 — `.csv` 실험 모드 추가 → **5차에서 철회**
 
-사용자 요청(2026-04-21): "csv 로 한번 시도해줄래? 사내에서 확인해볼게".
-Fasoo 가 `.csv` 확장자도 훅 대상인지 실측 필요.
+사용자 요청으로 `--csv` 모드를 추가해 시트/수식/차트시리즈를 CSV 세트로 분할.
+각 파일 첫 줄 공란 트릭 동일 적용.
 
-### 신규 서브커맨드 `--csv`
+## 5차 — `.csv` 도 DRM 대상으로 확정, `--csv` 경로 제거
 
-```bash
-python drm_reload_test.py --csv <입력파일> [출력stem]
-```
+2026-04-21 사내 실측: 첫 줄 공란을 넣은 `.csv` 도 즉시 DRM 상속.
+→ Fasoo 훅이 `.csv` 확장자도 감시 대상으로 잡고 있음.
 
-Excel 입력을 **CSV 세트**로 분할 출력 (각 파일 첫 줄 공란):
+### 최종 회피 포맷 확정
 
-| 파일 | 내용 |
-|---|---|
-| `<stem>_<sheet>.csv` | 시트별 값 (행렬 그대로) |
-| `<stem>_formulas.csv` | 수식 (`sheet,cell,formula` 3컬럼, 쉼표/따옴표 escape) |
-| `<stem>_charts_meta.csv` | 차트 메타 (`sheet,chart,title,x_axis,y_axis,series_count`) |
-| `<stem>_chart_<sheet>_<chart>_NN_<name>.csv` | 차트 시리즈별 (`x,y` 2컬럼) |
+실측으로 확인된 통과 포맷: **첫 줄 공란 `.txt` 하나뿐**.
 
-모두 UTF-8, no-BOM. 첫 write 는 `f.write("\n")`.
+| 포맷 | 결과 | 비고 |
+|---|---|---|
+| `.xlsx` (SaveAs / xlsxwriter / openpyxl) | 차단 | 확장자 훅 |
+| `.pptx` (SaveAs / python-pptx) | 차단 (추정) | 원리상 동일 |
+| `.png` (chart.Export) | 차단 | 이미지 훅 |
+| `.csv` (첫 줄 공란) | 차단 | 확장자 훅 |
+| **첫 줄 공란 `.txt`** | **통과** | 유일 검증 경로 |
 
-### 목적
+### 코드 정리
 
-이 모드는 **회피 가능성 실험용**. 결과:
-- 사내에서 통과하면 → CSV 를 기본 포맷으로 승격 (txt 번들보다 pandas 호환성 훨씬 좋음)
-- 막히면 → txt 번들만 사용 (현재 기본)
+- `export_excel_csv` 함수 삭제
+- `_cmd_csv` 서브커맨드 삭제
+- `--csv` 모드 메인 분기 삭제
+- 문서/주석에서 CSV 언급 제거
+
+### 최종 상태
+
+| 입력 | 추출 (사내) | 재렌더링 (외부) |
+|---|---|---|
+| `.xlsx/.xls/.xlsm` | `<stem>_bundle.txt` | `--render` → PNG/SVG/PDF |
+| `.pptx/.ppt/.pptm` | `<stem>_bundle.txt` | 텍스트만 |
+
+**사내 반출물은 단일 `.txt` 파일**. 확실한 경로 하나로 수렴.
+
+## 6차 — 프로세스 기반 훅 확인
+
+사용자 추가 실측(2026-04-21): **캡처도구(Snipping Tool 등)로 저장한 PNG 는 DRM 안 걸림,
+코드로 저장한 PNG 는 걸림**.
+
+### 해석
+
+Fasoo 훅은 단순 확장자 매칭이 아니라 **프로세스 단위**로 동작:
+- 감시 대상 프로세스 (Python, Office 등) → write 시 DRM 태깅
+- 비(非)감시 프로세스 (캡처도구, 외부 유틸) → 화이트리스트, 태깅 없음
+
+이는 DLL 인젝션 기반 enterprise DRM 의 일반적 구조와 부합 — Fasoo 에이전트가
+보호 대상 프로세스에 훅을 설치하고, file I/O API 호출을 가로채 생성 파일에
+보호 속성을 부여.
+
+### 현재 아키텍처와의 관계
+
+**우리 접근은 이미 최적**:
+- 사내(Python, Fasoo 영향권) 에서는 `.txt` 번들만 생성 → 통과
+- 외부 PC (Fasoo 없음) 에서는 Python 의 PNG 쓰기도 자유 → `--render` 로 차트 재생성
+
+### 추가 활용 (필요 시 수동)
+
+사내에서 차트를 즉시 시각적으로 확인하고 싶다면:
+1. Excel 원본에서 차트 직접 보기 (이미 가능)
+2. Python 으로 matplotlib GUI 창 띄우기 → 캡처도구로 저장 (반자동)
+
+자동화가 필요하면 `--render` + 외부 PC 경로가 여전히 정답. 사내 자동 PNG 생성은
+프로세스 훅으로 인해 본질적으로 불가능.
+
+### 문서/주석 업데이트
+
+- 모듈 docstring 에 프로세스 훅 설명과 캡처도구 예외 추가
+- 메모리 `project_fasoo_drm_saveas_vs_export` 갱신
 
 ## 테스트
 

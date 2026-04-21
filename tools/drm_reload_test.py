@@ -1,9 +1,12 @@
 """DRM 걸린 Excel / PPT 를 Fasoo 훅이 감시하지 않는 포맷으로 추출.
 
-2026-04-21 실측:
-    - `.xlsx`, `.pptx` 쓰기 → 즉시 DRM 상속 (확장자 훅)
-    - `.png` 쓰기 → 즉시 DRM 상속 (이미지 훅)
+2026-04-21 실측 결과:
+    - `.xlsx` / `.pptx` / `.png` / `.csv` 모두 DRM 상속 (확장자 훅)
     - **첫 줄 공란 `.txt` 만 통과** (서명 패턴 매칭 실패, proto_:22176 트릭)
+    - 캡처도구로 저장한 `.png` 는 통과 → Fasoo 는 **프로세스 기반 훅**
+      (Python/Office 는 감시 대상, 캡처도구는 화이트리스트 외).
+      사내에서 시각 확인 필요 시: matplotlib 창을 띄워 캡처도구로 저장하거나,
+      외부 PC 로 bundle.txt 반출 후 `--render` 로 재생성.
 
 회피 전략:
     사내 반출물은 **.txt 단일 번들 하나만**. 이미지/차트는 외부 환경에서 재생성.
@@ -11,11 +14,8 @@
         외부: 번들 txt 를 matplotlib 으로 PNG/SVG/PDF 재렌더링
 
 사용법:
-    # 사내 — txt 번들 추출 (기본)
+    # 사내 — txt 번들 추출
     python drm_reload_test.py <입력파일> [출력stem]
-
-    # 사내 — CSV 세트로 분할 (Fasoo 가 .csv 를 잡는지 실험)
-    python drm_reload_test.py --csv <입력파일> [출력stem]
 
     # 외부 — 번들에서 차트 재렌더링
     python drm_reload_test.py --render <bundle.txt> [출력디렉터리] [png|svg|pdf]
@@ -235,128 +235,6 @@ def export_excel_bundle(src: Path, bundle_txt: Path) -> dict:
                     f.write(f"series.{si}.x\t{_join_values(s.get('x', []))}\n")
                     f.write(f"series.{si}.y\t{_join_values(s.get('y', []))}\n")
                 f.write("\n")
-
-    return stats
-
-
-# ── Excel → CSV 분할 (.csv 가 Fasoo 훅 대상인지 실험용) ──────────────
-def export_excel_csv(src: Path, out_stem: Path) -> dict:
-    """시트별 .csv + formulas.csv + charts_meta.csv + 차트 시리즈별 .csv.
-
-    각 CSV 첫 줄 공란 (Fasoo 서명 패턴 회피 시도).
-    """
-    import xlwings as xw
-    import pandas as pd
-
-    stats = {"sheets": 0, "rows_total": 0, "formulas": 0,
-             "charts": 0, "series_csv": 0, "files": 0}
-
-    all_formulas: list[tuple[str, str, str]] = []    # (sheet, cell, formula)
-    all_charts_meta: list[dict] = []                 # dict per chart
-    chart_series_rows: list[tuple[Path, list[tuple]]] = []  # (csv_path, rows)
-
-    app = xw.App(visible=False, add_book=False)
-    try:
-        app.display_alerts = False
-        wb = app.books.open(str(src), update_links=False, read_only=True)
-        try:
-            for sh in wb.sheets:
-                rng = sh.used_range
-                empty = (rng.last_cell.row == 1 and rng.last_cell.column == 1
-                         and rng.value is None)
-
-                # 시트 값 → <stem>_<sheet>.csv
-                sheet_tag = _safe_name(sh.name)
-                sheet_csv = Path(f"{out_stem}_{sheet_tag}.csv")
-                with open(sheet_csv, 'w', encoding='utf-8', newline='') as f:
-                    f.write("\n")  # DRM 회피용 공란
-                    if not empty:
-                        val = rng.options(pd.DataFrame, index=False, header=False).value
-                        df = val if isinstance(val, pd.DataFrame) else pd.DataFrame([[val]])
-                        df.to_csv(f, index=False, header=False, lineterminator='\n', na_rep='')
-                        stats["rows_total"] += len(df)
-                stats["files"] += 1
-                stats["sheets"] += 1
-
-                # 수식 수집
-                if not empty:
-                    row0, col0 = rng.row, rng.column
-                    nrows = rng.last_cell.row - row0 + 1
-                    ncols = rng.last_cell.column - col0 + 1
-                    formulas_2d = _to_2d(rng.formula, nrows, ncols)
-                    for i, row in enumerate(formulas_2d):
-                        for j, v in enumerate(row):
-                            if isinstance(v, str) and v.startswith('='):
-                                addr = f"{_col_to_letter(col0 + j)}{row0 + i}"
-                                all_formulas.append((sh.name, addr, v))
-
-                # 차트 메타 + 시리즈 CSV
-                for ch in _extract_charts(sh):
-                    tag = ch.get("name") or f"Chart{ch['id']}"
-                    all_charts_meta.append({
-                        "sheet": sh.name,
-                        "chart": tag,
-                        "title": ch.get("title") or "",
-                        "x_axis": ch.get("x_axis") or "",
-                        "y_axis": ch.get("y_axis") or "",
-                        "series_count": len(ch.get("series", [])),
-                    })
-                    stats["charts"] += 1
-                    for si, s in enumerate(ch.get("series", []), start=1):
-                        xs = s.get("x") or []
-                        ys = s.get("y") or []
-                        n = max(len(xs), len(ys))
-                        rows = []
-                        for k in range(n):
-                            xv = xs[k] if k < len(xs) else None
-                            yv = ys[k] if k < len(ys) else None
-                            rows.append((_ser_value(xv), _ser_value(yv)))
-                        series_name = _safe_name(str(s.get("name") or f"series{si}"))
-                        series_csv = Path(
-                            f"{out_stem}_chart_{_safe_name(sh.name)}_{_safe_name(tag)}_{si:02d}_{series_name}.csv"
-                        )
-                        chart_series_rows.append((series_csv, rows))
-                        stats["series_csv"] += 1
-                        stats["files"] += 1
-        finally:
-            wb.close()
-    finally:
-        app.quit()
-
-    # 수식 CSV
-    formulas_csv = Path(f"{out_stem}_formulas.csv")
-    with open(formulas_csv, 'w', encoding='utf-8', newline='') as f:
-        f.write("\n")  # DRM 회피용 공란
-        f.write("sheet,cell,formula\n")
-        for sh_name, addr, formula in all_formulas:
-            # CSV 안전 escape (쉼표/따옴표 포함 수식)
-            sh_e = sh_name.replace('"', '""')
-            fml_e = formula.replace('"', '""')
-            f.write(f'"{sh_e}",{addr},"{fml_e}"\n')
-    stats["formulas"] = len(all_formulas)
-    stats["files"] += 1
-
-    # 차트 메타 CSV
-    charts_meta_csv = Path(f"{out_stem}_charts_meta.csv")
-    with open(charts_meta_csv, 'w', encoding='utf-8', newline='') as f:
-        f.write("\n")
-        f.write("sheet,chart,title,x_axis,y_axis,series_count\n")
-        for m in all_charts_meta:
-            def esc(s): return str(s).replace('"', '""')
-            f.write(f'"{esc(m["sheet"])}","{esc(m["chart"])}",'
-                    f'"{esc(m["title"])}","{esc(m["x_axis"])}","{esc(m["y_axis"])}",'
-                    f'{m["series_count"]}\n')
-    stats["files"] += 1
-
-    # 차트 시리즈 CSV 각각
-    for series_csv, rows in chart_series_rows:
-        with open(series_csv, 'w', encoding='utf-8', newline='') as f:
-            f.write("\n")
-            f.write("x,y\n")
-            for xv, yv in rows:
-                x_e = xv.replace('"', '""')
-                y_e = yv.replace('"', '""')
-                f.write(f'"{x_e}","{y_e}"\n')
 
     return stats
 
@@ -657,54 +535,9 @@ def _cmd_render(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_csv(argv: list[str]) -> int:
-    """--csv <입력파일> [출력stem] — Excel 을 CSV 세트로 분할 (첫 줄 공란)."""
-    if len(argv) < 3:
-        print("[에러] 사용법: --csv <입력파일> [출력stem]")
-        return 2
-    src = argv[2]
-    dst = argv[3] if len(argv) >= 4 else ""
-
-    src_path = Path(src).expanduser().resolve()
-    if not src_path.is_file():
-        print(f"[에러] 파일 없음: {src_path}")
-        return 2
-
-    ext = src_path.suffix.lower()
-    if ext not in (".xlsx", ".xls", ".xlsm"):
-        print(f"[에러] CSV 모드는 Excel 입력만 지원: {ext}")
-        return 2
-
-    out_stem = Path(dst).expanduser().resolve() if dst else src_path.with_suffix("")
-    out_stem.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"[입력] {src_path}  ({src_path.stat().st_size:,} bytes)")
-    print(f"[출력] {out_stem}_*.csv  (첫 줄 공란 — Fasoo 훅 실험용)")
-
-    try:
-        stats = export_excel_csv(src_path, out_stem)
-        print(f"[CSV] 시트 {stats['sheets']}, 행 {stats['rows_total']:,}, "
-              f"수식 {stats['formulas']}, 차트 {stats['charts']}, "
-              f"시리즈CSV {stats['series_csv']}, 파일 총 {stats['files']}개")
-        print()
-        print("── 산출물 구조 ──")
-        print(f"  {out_stem.name}_<sheet>.csv                         시트별 값")
-        print(f"  {out_stem.name}_formulas.csv                        수식 (sheet,cell,formula)")
-        print(f"  {out_stem.name}_charts_meta.csv                     차트 메타")
-        print(f"  {out_stem.name}_chart_<sheet>_<chart>_NN_<name>.csv 차트 시리즈 (x,y)")
-    except Exception as e:
-        print(f"[실패] {type(e).__name__}: {e}")
-        print("  사내 Fasoo 미설치 환경이면 정상 실패.")
-        return 1
-    return 0
-
-
 def main(argv: list[str]) -> int:
-    if len(argv) >= 2:
-        if argv[1] == '--render':
-            return _cmd_render(argv)
-        if argv[1] == '--csv':
-            return _cmd_csv(argv)
+    if len(argv) >= 2 and argv[1] == '--render':
+        return _cmd_render(argv)
     return _cmd_extract(argv)
 
 
