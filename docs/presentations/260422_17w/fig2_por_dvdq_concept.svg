@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="460" viewBox="0 0 1120 460" font-family="Malgun Gothic, 'Noto Sans KR', sans-serif">
+  <defs>
+    <marker id="arrNavy" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L0,10 L10,5 z" fill="#1F3A6B"/>
+    </marker>
+    <marker id="arrRed" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L0,8 L8,4 z" fill="#B1351B"/>
+    </marker>
+  </defs>
+
+  <text x="560" y="30" font-size="18" font-weight="700" text-anchor="middle" fill="#1A1A1A">POR (급방전 이슈) 셀 dV/dQ Peak 해석 — 프레쉬셀 반전극 기반 비교</text>
+
+  <!-- ================== Panel 1: Fresh Cell ================== -->
+  <g transform="translate(30, 60)">
+    <rect x="0" y="0" width="500" height="340" fill="#FAFBFD" stroke="#CCC"/>
+    <text x="250" y="25" font-size="14" font-weight="600" text-anchor="middle" fill="#333">Fresh 셀  —  반전극 기반 dV/dQ 합성</text>
+
+    <!-- Axes -->
+    <line x1="60" y1="290" x2="470" y2="290" stroke="#333" stroke-width="1.2"/>
+    <line x1="60" y1="60" x2="60" y2="290" stroke="#333" stroke-width="1.2"/>
+    <text x="265" y="315" font-size="11" text-anchor="middle" fill="#555">SOC (%)</text>
+    <text x="25" y="175" font-size="11" text-anchor="middle" fill="#555" transform="rotate(-90 25 175)">|dV/dQ|</text>
+    <text x="60" y="305" font-size="9" text-anchor="middle" fill="#888">0</text>
+    <text x="265" y="305" font-size="9" text-anchor="middle" fill="#888">50</text>
+    <text x="470" y="305" font-size="9" text-anchor="middle" fill="#888">100</text>
+
+    <!-- Cathode (red) - 2 humps -->
+    <path d="M 60,275 C 100,275 130,180 170,170 C 210,160 230,255 270,250 C 310,245 340,150 380,145 C 420,140 450,250 470,265"
+          fill="none" stroke="#D1453A" stroke-width="2"/>
+    <!-- Anode (blue) - 2 humps offset -->
+    <path d="M 60,270 C 90,270 110,210 140,200 C 170,190 200,265 240,258 C 280,250 300,170 340,165 C 380,160 420,230 470,255"
+          fill="none" stroke="#2E64AD" stroke-width="2"/>
+    <!-- Full cell (black dashed) - composite-ish -->
+    <path d="M 60,272 C 100,265 130,195 170,180 C 210,170 240,245 280,225 C 320,205 350,135 390,130 C 430,135 455,220 470,255"
+          fill="none" stroke="#1A1A1A" stroke-width="2.2" stroke-dasharray="6,3"/>
+
+    <!-- Peak markers on full cell -->
+    <circle cx="170" cy="180" r="4" fill="#1A1A1A"/>
+    <text x="170" y="170" font-size="10" text-anchor="middle" fill="#1A1A1A" font-weight="600">Peak A</text>
+    <circle cx="390" cy="130" r="4" fill="#1A1A1A"/>
+    <text x="390" y="120" font-size="10" text-anchor="middle" fill="#1A1A1A" font-weight="600">Peak B</text>
+
+    <!-- Legend -->
+    <g transform="translate(305, 60)">
+      <rect x="-5" y="-12" width="160" height="60" fill="#FFFFFF" fill-opacity="0.9" stroke="#DDD"/>
+      <line x1="0" y1="0" x2="20" y2="0" stroke="#D1453A" stroke-width="2"/>
+      <text x="25" y="4" font-size="10" fill="#333">양극 dV/dQ (Cathode)</text>
+      <line x1="0" y1="16" x2="20" y2="16" stroke="#2E64AD" stroke-width="2"/>
+      <text x="25" y="20" font-size="10" fill="#333">음극 dV/dQ (Anode)</text>
+      <line x1="0" y1="32" x2="20" y2="32" stroke="#1A1A1A" stroke-width="2.2" stroke-dasharray="6,3"/>
+      <text x="25" y="36" font-size="10" fill="#333">풀셀 dV/dQ (예측)</text>
+    </g>
+  </g>
+
+  <!-- ================== Arrow between panels ================== -->
+  <g transform="translate(555, 230)">
+    <text x="0" y="-20" font-size="12" font-weight="600" text-anchor="middle" fill="#1F3A6B">열화 분리</text>
+    <line x1="-18" y1="0" x2="18" y2="0" stroke="#1F3A6B" stroke-width="2.8" marker-end="url(#arrNavy)"/>
+    <text x="0" y="22" font-size="10" text-anchor="middle" fill="#888">LLI · LAM</text>
+  </g>
+
+  <!-- ================== Panel 2: POR Cell ================== -->
+  <g transform="translate(590, 60)">
+    <rect x="0" y="0" width="500" height="340" fill="#FAFBFD" stroke="#CCC"/>
+    <text x="250" y="25" font-size="14" font-weight="600" text-anchor="middle" fill="#333">POR 셀  —  0.2C 방전 실측 dV/dQ</text>
+
+    <!-- Axes -->
+    <line x1="60" y1="290" x2="470" y2="290" stroke="#333" stroke-width="1.2"/>
+    <line x1="60" y1="60" x2="60" y2="290" stroke="#333" stroke-width="1.2"/>
+    <text x="265" y="315" font-size="11" text-anchor="middle" fill="#555">SOC (%)</text>
+    <text x="25" y="175" font-size="11" text-anchor="middle" fill="#555" transform="rotate(-90 25 175)">|dV/dQ|</text>
+    <text x="60" y="305" font-size="9" text-anchor="middle" fill="#888">0</text>
+    <text x="265" y="305" font-size="9" text-anchor="middle" fill="#888">50</text>
+    <text x="470" y="305" font-size="9" text-anchor="middle" fill="#888">100</text>
+
+    <!-- Fresh baseline (gray dotted) -->
+    <path d="M 60,272 C 100,265 130,195 170,180 C 210,170 240,245 280,225 C 320,205 350,135 390,130 C 430,135 455,220 470,255"
+          fill="none" stroke="#999" stroke-width="1.8" stroke-dasharray="3,3"/>
+    <!-- POR actual (black solid) - shifted + shrunk peaks -->
+    <path d="M 60,275 C 100,270 135,215 195,205 C 235,198 260,250 295,240 C 330,230 365,170 410,165 C 440,165 455,225 470,260"
+          fill="none" stroke="#1A1A1A" stroke-width="2.5"/>
+
+    <!-- Peak shift: Peak A -->
+    <circle cx="170" cy="180" r="3.5" fill="#BBB"/>
+    <circle cx="195" cy="205" r="4" fill="#B1351B"/>
+    <line x1="173" y1="182" x2="192" y2="203" stroke="#B1351B" stroke-width="1.5" marker-end="url(#arrRed)"/>
+    <text x="150" y="155" font-size="10" fill="#B1351B" font-weight="600">Peak A: shift →</text>
+    <text x="150" y="170" font-size="9" fill="#B1351B">(강도 ↓)</text>
+
+    <!-- Peak shift: Peak B -->
+    <circle cx="390" cy="130" r="3.5" fill="#BBB"/>
+    <circle cx="410" cy="165" r="4" fill="#B1351B"/>
+    <line x1="392" y1="132" x2="408" y2="163" stroke="#B1351B" stroke-width="1.5" marker-end="url(#arrRed)"/>
+    <text x="405" y="115" font-size="10" fill="#B1351B" font-weight="600">Peak B: shrink</text>
+    <text x="405" y="128" font-size="9" fill="#B1351B">(위치 변화)</text>
+
+    <!-- Legend -->
+    <g transform="translate(290, 60)">
+      <rect x="-5" y="-12" width="175" height="44" fill="#FFFFFF" fill-opacity="0.9" stroke="#DDD"/>
+      <line x1="0" y1="0" x2="20" y2="0" stroke="#999" stroke-width="1.8" stroke-dasharray="3,3"/>
+      <text x="25" y="4" font-size="10" fill="#333">Fresh 예상 dV/dQ (baseline)</text>
+      <line x1="0" y1="16" x2="20" y2="16" stroke="#1A1A1A" stroke-width="2.5"/>
+      <text x="25" y="20" font-size="10" fill="#333">POR 실측 dV/dQ</text>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <text x="560" y="435" font-size="12" text-anchor="middle" fill="#555">
+    Peak 위치·강도 변화 패턴 → 양극·음극 개별 열화 기여 (LLI · LAM) 정량 분리 해석
+  </text>
+</svg>
