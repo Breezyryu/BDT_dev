@@ -20340,6 +20340,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         output_data(nd, "방전용량", _dc, start_row, "Dchg", headername)
         output_data(nd, "Rest End", writecolno, start_row, "OriCyc", cyc_head)
         output_data(nd, "Rest End", _dc, start_row, "RndV", headername)
+        # 충전 Rest End V 시트 (Step 4) — 데이터 있을 때만 생성
+        if "RndV_chg_rest" in nd.columns and not nd["RndV_chg_rest"].dropna().empty:
+            _chg_rest = nd[["OriCyc", "RndV_chg_rest"]].dropna(subset=["RndV_chg_rest"])
+            output_data(_chg_rest, "Rest End Chg", writecolno, 0, "OriCyc", cyc_head)
+            output_data(_chg_rest, "Rest End Chg", _dc, 0, "RndV_chg_rest", headername)
         output_data(nd, "평균 전압", writecolno, start_row, "OriCyc", cyc_head)
         output_data(nd, "평균 전압", _dc, start_row, "AvgV", headername)
         output_data(nd, "충방효율", writecolno, start_row, "OriCyc", cyc_head)
