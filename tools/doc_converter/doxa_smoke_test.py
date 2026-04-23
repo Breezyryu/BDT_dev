@@ -17,9 +17,23 @@ import socket
 import ssl
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import urllib3
 import requests
+
+# .env 자동 로드 (tools/doc_converter/.env 또는 상위 디렉토리)
+try:
+    from dotenv import load_dotenv
+
+    # 스크립트 옆 .env 를 명시적으로 로드 (CWD 영향 배제)
+    _env = Path(__file__).resolve().parent / ".env"
+    if _env.is_file():
+        load_dotenv(_env)
+    else:
+        load_dotenv()  # CWD/상위 자동 탐색
+except ImportError:
+    pass  # python-dotenv 미설치 시 env var 만 사용
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

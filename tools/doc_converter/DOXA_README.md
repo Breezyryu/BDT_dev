@@ -38,12 +38,25 @@ REM   B) 로컬 clone 한 경로에서 editable install
 REM   C) uv 환경이면
 uv pip install -e C:\path\to\doxa-sdk-main
 
-REM 4. 토큰 설정 (현재 세션만)
-set DOXA_TOKEN=<AI Asset Hub에서 발급한 토큰>
+REM 4. 토큰 설정 — 아래 3가지 중 하나
+REM   (A) 권장: .env 파일 (gitignored, git pull 해도 유지)
+copy tools\doc_converter\.env.example tools\doc_converter\.env
+REM    → .env 편집해 DOXA_TOKEN=<토큰> 채우기
 
-REM 5. 영구 설정 (선택)
+REM   (B) setx 영구 환경변수 (시스템 전체)
 setx DOXA_TOKEN "<토큰>"
+
+REM   (C) 현재 세션만
+set DOXA_TOKEN=<AI Asset Hub에서 발급한 토큰>
 ```
+
+## 토큰 관리 — 반드시 지킬 것
+
+- ❌ **파일 하드코딩 금지** (스크립트/노트북/배치파일 전부)
+- ❌ **git commit 금지** — 현재 리포 `github.com/Breezyryu/BDT_dev` 는 **외부 공개 GitHub**
+- ✅ **`.env` 사용** — `tools/doc_converter/.env.example` 복사 → `.env` 로 이름 변경 후 값 채우기
+- ✅ **스크립트는 `python-dotenv` 로 .env 자동 로드** — 따로 import 없이 동작
+- ✅ **만료 확인** — JWT `exp` 필드로 확인 (smoke test 가 자동 출력)
 
 ## 사용법
 

@@ -27,6 +27,18 @@ if __name__ == "__main__":
     except (AttributeError, ValueError):
         pass
 
+# .env 자동 로드 (tools/doc_converter/.env)
+try:
+    from dotenv import load_dotenv
+
+    _env = Path(__file__).resolve().parent / ".env"
+    if _env.is_file():
+        load_dotenv(_env)
+    else:
+        load_dotenv()
+except ImportError:
+    pass
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SUPPORTED_EXTS = {

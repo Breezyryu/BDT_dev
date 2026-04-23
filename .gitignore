@@ -16,6 +16,12 @@ raw/
 # Virtual environments
 .venv
 .agent
+# Secrets / tokens — NEVER commit
+.env
+.env.*
+!.env.example
+*.token
+secrets/
 .vscode/
 !tools/doc_converter/.vscode/
 !tools/doc_converter/.vscode/**

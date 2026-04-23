@@ -31,4 +31,7 @@ tabulate>=0.10
 requests>=2.32
 urllib3>=2.0
 
+# .env 파일 자동 로드 (토큰 등 시크릿 관리)
+python-dotenv>=1.0
+
 # DoXA SDK 는 별도 설치: uv pip install -e <doxa-sdk 경로>

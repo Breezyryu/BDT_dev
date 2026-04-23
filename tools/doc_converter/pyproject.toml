@@ -17,6 +17,7 @@ dependencies = [
     "tabulate>=0.10",
     "requests>=2.32",
     "urllib3>=2.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
