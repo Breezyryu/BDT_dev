@@ -781,6 +781,8 @@ def _reset_all_caches():
     _get_pne_cycle_map.cache_clear()
     _get_toyo_cycle_map.cache_clear()
     _get_pne_sch_struct.cache_clear()
+    _get_pne_sch_parsed.cache_clear()
+    _estimate_sch_cycle_seconds.cache_clear()
     _find_sch_file.cache_clear()
     # 경로 메타 인스턴스 캐시 초기화
     WindowClass._path_meta_cache.clear()
@@ -7426,6 +7428,153 @@ def _get_pne_sch_struct(channel_path: str, mincapacity: float) -> dict | None:
         return extract_schedule_structure_from_sch(sch_file, mincapacity)
     except Exception:
         return None
+
+
+# ── ETA (시험 남은 시간 예측) 유틸리티 ───────────────────────────
+# 계층: JSON(Current/Total_Cycle_Num, Step_No) + .sch 이론 시간
+# v1: 사이클당 평균 시간 × 남은 사이클 수
+# v2: 현재 사이클 내 이미 지난 Step 의 이론 시간을 제외한 tail 보정
+@functools.lru_cache(maxsize=256)
+def _get_pne_sch_parsed(channel_path: str) -> dict | None:
+    """_parse_pne_sch() 결과 전체 (steps 등) 를 캐시로 반환."""
+    sch_file = _find_sch_file(channel_path)
+    if not sch_file:
+        return None
+    try:
+        return _parse_pne_sch(sch_file)
+    except Exception:
+        return None
+
+
+def _estimate_step_seconds(step: dict, mincapacity: float) -> float:
+    """.sch 스텝 1개의 이론 소요시간(초).
+
+    Rules
+    -----
+    CC  (CHG_CC/DCHG_CC/CHG_CP): time_limit_s 우선, 없으면
+        cap_limit/current × 3600 (mAh ÷ mA), 둘 다 없으면 0.
+    CCCV (CHG_CCCV/DCHG_CCCV): cc_time + cv_tail.
+        cc_time = cap_limit/current × 3600 또는 time_limit_s.
+        cv_tail = cc_time × 0.25 (상한 540s = 0.15h).
+    REST/REST_SAFE: time_limit_s, 없으면 60s.
+    LOOP/GOTO/GITT_*/UNKNOWN: 0 (제어/펄스 스텝).
+    """
+    stype = step.get('type', '')
+    t_limit = float(step.get('time_limit_s') or 0)
+    cap_limit = float(step.get('capacity_limit_mAh') or 0)
+    current = float(step.get('current_mA') or 0)
+
+    def _cc_time() -> float:
+        if t_limit > 0:
+            return t_limit
+        if cap_limit > 0 and current > 0:
+            return cap_limit / current * 3600.0
+        return 0.0
+
+    if stype in ('CHG_CC', 'DCHG_CC', 'CHG_CP'):
+        return _cc_time()
+    if stype in ('CHG_CCCV', 'DCHG_CCCV'):
+        cc_t = _cc_time()
+        cv_tail = min(cc_t * 0.25, 540.0) if cc_t > 0 else 0.0
+        return cc_t + cv_tail
+    if stype in ('REST', 'REST_SAFE'):
+        return t_limit if t_limit > 0 else 60.0
+    return 0.0  # LOOP/GOTO/GITT_*/UNKNOWN
+
+
+@functools.lru_cache(maxsize=256)
+def _estimate_sch_cycle_seconds(
+    channel_path: str, mincapacity: float,
+) -> tuple[float, int] | None:
+    """.sch 기반 (사이클당 평균 시간 초, 전체 TC 수) 반환. 캐시.
+
+    전체 스케줄의 이론 총 시간을 TC 총 수로 나눠 평균 사이클 시간 산출.
+    실패 시 None.
+    """
+    parsed = _get_pne_sch_parsed(channel_path)
+    if not parsed or not parsed.get('steps'):
+        return None
+    try:
+        groups = _decompose_loop_groups(parsed['steps'])
+    except Exception:
+        return None
+    if not groups:
+        return None
+    total_seconds = 0.0
+    total_tc = 0
+    for g in groups:
+        n = max(int(g.get('loop_count', 1) or 1), 1)
+        body_sec = sum(
+            _estimate_step_seconds(s, mincapacity) for s in g.get('body', []))
+        total_seconds += body_sec * n
+        total_tc += n
+    if total_tc <= 0 or total_seconds <= 0:
+        return None
+    return (total_seconds / total_tc, total_tc)
+
+
+def _estimate_remaining_seconds(
+    channel_path: str,
+    current_cycle: int,
+    total_cycle: int,
+    step_no: int,
+    mincapacity: float,
+) -> float | None:
+    """시험 남은 시간(초) 예측. .sch 기반 v1+v2.
+
+    v1: 남은 사이클 수 × 평균 사이클 시간.
+    v2: 현재 사이클 내 이미 지난 Step 의 이론 시간을 빼 tail 시간 보정.
+
+    사이클 초기(current_cycle < 2) / .sch 없음 / 총사이클<=현재 이면 None.
+    """
+    if current_cycle is None or current_cycle < 2:
+        return None
+    cs_result = _estimate_sch_cycle_seconds(channel_path, mincapacity)
+    if cs_result is None:
+        return None
+    cycle_sec, sch_max_tc = cs_result
+
+    # total_cycle 은 JSON 값 우선, 결측/이상 시 .sch max_tc 폴백
+    if total_cycle is None or total_cycle <= 0 or total_cycle < current_cycle:
+        total = sch_max_tc
+    else:
+        total = total_cycle
+    remain_cycles = max(0, total - current_cycle)
+
+    # v2 보정: 현재 사이클 내 Step 진행도
+    remain_cur = cycle_sec * 0.5  # 보수적 기본값 (절반 남았다고 가정)
+    if step_no and step_no > 0:
+        parsed = _get_pne_sch_parsed(channel_path)
+        if parsed and parsed.get('steps'):
+            # 첫 사이클 body 기준 (LOOP 전) — Step_No 는 1-based
+            passed = 0.0
+            for s in parsed['steps']:
+                snum = int(s.get('step', 0))
+                if snum >= step_no:
+                    break
+                if s.get('type') in ('LOOP', 'GOTO', 'REST_SAFE', 'END'):
+                    continue
+                passed += _estimate_step_seconds(s, mincapacity)
+            remain_cur = max(0.0, cycle_sec - passed)
+
+    return remain_cycles * cycle_sec + remain_cur
+
+
+def _format_remain_str(seconds: float | None) -> str:
+    """남은 시간(초) → "3d 5h" / "2h" / "45m" / "" (음수/None)."""
+    if seconds is None or seconds <= 0:
+        return ""
+    total_min = int(seconds / 60)
+    if total_min < 60:
+        return f"{total_min}m"
+    hours = total_min // 60
+    if hours < 24:
+        return f"{hours}h"
+    days = hours // 24
+    rem_h = hours % 24
+    if rem_h > 0:
+        return f"{days}d {rem_h}h"
+    return f"{days}d"
 
 
 @functools.lru_cache(maxsize=256)
@@ -26439,6 +26588,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     if not elapsed_str:
                                         elapsed_str = self._crosscheck_elapsed(ch_path)
                             # (C) 작업중/충전/방전/진행/휴지 → Reserve 예약 정보 부가
+                            #     + .sch 기반 남은 시간 예측 (ETA)
                             elif status in ("작업중", "충전", "방전", "진행", "휴지"):
                                 ch_path = self._build_channel_path(
                                     df, ch_idx, has_rpath, has_path)
@@ -26446,6 +26596,38 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     reserve = self._parse_reserve_info(ch_path)
                                     if reserve:
                                         status = f"{status} ({reserve})"
+                                    # ETA: .sch 이론 시간 + JSON Step/Cycle 진행도
+                                    try:
+                                        _cur = int(str(df.loc[
+                                            ch_idx, "Current_Cycle_Num"
+                                        ]).strip())
+                                        _tot = int(str(df.loc[
+                                            ch_idx, "Total_Cycle_Num"
+                                        ]).strip())
+                                        _stp = int(str(df.loc[
+                                            ch_idx, "Step_No"
+                                        ]).strip())
+                                    except (ValueError, KeyError, TypeError):
+                                        _cur = _tot = _stp = 0
+                                    _mincap = 0.0
+                                    try:
+                                        _mincap = float(
+                                            pne_min_cap(ch_path, 0, 1.0) or 0)
+                                    except Exception:
+                                        _mincap = 0.0
+                                    _remain_s = _estimate_remaining_seconds(
+                                        ch_path, _cur, _tot, _stp, _mincap)
+                                    _remain_str = _format_remain_str(_remain_s)
+                                    if _remain_str:
+                                        # 경과 컬럼 확장: "3d 5h → +2d 1h"
+                                        if not elapsed_str:
+                                            elapsed_str = self._elapsed_from_log(
+                                                ch_path)
+                                        if elapsed_str:
+                                            elapsed_str = (
+                                                f"{elapsed_str} → +{_remain_str}")
+                                        else:
+                                            elapsed_str = f"+{_remain_str}"
                             # (D) 완료/시험완료 → .log + CSV 교차검증 경과 시간
                             _sb_tmp = status.split(" (")[0] if " (" in status else status
                             if status == "완료" or _sb_tmp == "시험완료":
@@ -26758,15 +26940,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     item = tb.item(r, c)
                     cells.append(item.clone() if item else None)
                 sort_key = tb.item(r, col_idx)
-                row_data.append((sort_key.text() if sort_key else "", cells))
+                # 경과 컬럼의 ETA 확장("3d 5h → +2d 1h") 은 → 앞만 정렬 키로 사용
+                _txt = sort_key.text() if sort_key else ""
+                _key = _txt.split("→")[0].strip()
+                row_data.append((_key, _txt, cells))
             # 숫자 우선 정렬 시도
             try:
                 row_data.sort(key=lambda x: float(x[0].replace(" ", "")),
                               reverse=not ascending)
             except (ValueError, AttributeError):
-                row_data.sort(key=lambda x: x[0], reverse=not ascending)
+                row_data.sort(key=lambda x: x[1], reverse=not ascending)
             # 정렬된 순서로 재배치
-            for i, (_, cells) in enumerate(row_data):
+            for i, (_, _txt_ignored, cells) in enumerate(row_data):
                 r = rows[i]
                 for c in range(num_cols):
                     if cells[c]:
