@@ -21140,24 +21140,43 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         irscale = int(1 / (cyctemp[0] / 5000) + 1) // 2 * 2
                                         irscale = min(irscale, 20)  # DC-IR 스케일 상한 제한
 
-                                    # index 오프셋 적용
+                                    # 연결 모드 누적 오프셋 상태
+                                    #   offset/last_len : row index (엑셀 연속 저장용)
+                                    #   cycle_offset    : Cycle/OriCyc 컬럼 누적 (그래프 x축 + 엑셀 OriCyc)
                                     if sub_label not in channel_state:
-                                        channel_state[sub_label] = {'offset': 0, 'last_len': 0}
+                                        channel_state[sub_label] = {
+                                            'offset': 0, 'last_len': 0,
+                                            'cycle_offset': 0,
+                                        }
                                     st = channel_state[sub_label]
                                     writerowno = st['offset'] + st['last_len']
-                                    cyctemp[1].NewData.index = cyctemp[1].NewData.index + writerowno
+                                    # 캐시 오염 방지: 원본 NewData 를 건드리지 않고 복사본에만 오프셋 적용
+                                    _nd_link = cyctemp[1].NewData.copy()
+                                    _nd_link.index = _nd_link.index + writerowno
+                                    # Cycle/OriCyc 컬럼에 누적 오프셋 (이전 path 최대값 합산) → 그래프 x축 이어붙이기
+                                    _co = st['cycle_offset']
+                                    if _co > 0:
+                                        if 'Cycle' in _nd_link.columns:
+                                            _nd_link['Cycle'] = _nd_link['Cycle'].astype(int) + _co
+                                        if 'OriCyc' in _nd_link.columns:
+                                            _nd_link['OriCyc'] = _nd_link['OriCyc'].astype(int) + _co
+                                    # 다음 path 를 위한 누적 최대 Cycle 갱신
+                                    if 'Cycle' in _nd_link.columns and len(_nd_link) > 0:
+                                        st['cycle_offset'] = int(_nd_link['Cycle'].max())
+                                    elif len(_nd_link) > 0:
+                                        st['cycle_offset'] = _co + len(_nd_link)
                                     st['offset'] = writerowno
-                                    st['last_len'] = len(cyctemp[1].NewData)
+                                    st['last_len'] = len(_nd_link)
 
                                     if sub_label not in merged:
                                         merged[sub_label] = {
                                             'frames': [], 'colorno': local_colorno, 'ch_label': ch_label
                                         }
-                                    merged[sub_label]['frames'].append(cyctemp[1].NewData.copy())
+                                    merged[sub_label]['frames'].append(_nd_link)
 
                                     if self.saveok.isChecked() and save_file_name:
                                         self._save_cycle_excel_data(
-                                            cyctemp[1].NewData, writecolno, writerowno, headername)
+                                            _nd_link, writecolno, writerowno, headername)
                                         writecolno += 2
                                     local_colorno += 1
 
