@@ -1,36 +1,41 @@
-# doc_converter 의존성 — 모든 라이브러리 로컬 실행, 외부 AI API 호출 없음.
+# doc_converter 의존성 — 로컬 실행 전용, 외부 AI API 호출 없음.
+# 2026-04-22 Python 3.12 + uv 환경에서 함께 설치되는 것 확인된 버전.
 #
-# 주의: markitdown[all] 은 youtube-transcript-api / openai / azure-ai-* 등
-#       클라우드 AI 라이브러리를 설치하므로 사용 금지.
-#       대신 문서 포맷 extras 만 명시.
+# [주의] markitdown[all] 은 OpenAI/Azure/YouTube 등 클라우드 SDK 를 설치하므로 금지.
+#        문서 포맷 extras (pdf,pptx,docx) 만 명시.
 
-# PDF 변환 SOTA (marker-pdf, Surya OCR 내장)
-marker-pdf>=1.0
+# PDF 변환 SOTA (Surya OCR 내장)
+marker-pdf>=1.10,<2
 
-# IBM 문서 파서 (office 포맷 + PDF 구조화)
-docling>=2.8
+# IBM 문서 파서 (office + PDF 구조화)
+docling>=2.90,<3
 
-# Microsoft 다형식 파서 — 문서 포맷만 (클라우드 extras 제외)
-markitdown[pdf,pptx,docx]>=0.0.2
+# Microsoft 다형식 파서 — 문서 포맷만
+markitdown[pdf,pptx,docx]>=0.1,<1
 
-# MinerU 2.5-Pro (PDF SOTA, 한글/수식/표 이미지) — core 만 (vlm 원격 옵션 제외)
-mineru[core]>=2.5
+# MinerU (PDF SOTA, 한글/수식/표) — core 만 (vlm 원격 옵션 제외)
+# 주의: mineru 패키지 버전은 model 버전(2.5-Pro)과 별개. 실제 pypi 는 3.x
+mineru[core]>=3.1,<4
 
-# OCR (한국어+영어) — 로컬 모델
+# 한국어+영어 OCR
 easyocr>=1.7
 
 # PDF 텍스트 추출 fallback
-pymupdf>=1.24
+pymupdf>=1.27
 
-# xlsx 복구 경로 (custom_doc_props 손상 대응)
+# xlsx 복구 (custom_doc_props 손상 대응)
 pandas>=2.2
 openpyxl>=3.1
-tabulate>=0.9
+tabulate>=0.10
 
 # HTTP (DoXA SDK 가 requests 사용)
 requests>=2.32
 urllib3>=2.0
 
-# Note:
+# 비고:
 # - DoXA SDK 는 별도 설치: uv pip install -e <doxa-sdk 경로>
-# - 사내 AI Asset Hub 에서 토큰 발급 후 DOXA_TOKEN 환경변수 설정
+# - 해상 conflict 시 아래 "sequential install" 참고:
+#   uv pip install docling marker-pdf
+#   uv pip install mineru[core]
+#   uv pip install markitdown[pdf,pptx,docx]
+#   uv pip install easyocr pymupdf pandas openpyxl tabulate requests urllib3
