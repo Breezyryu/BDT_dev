@@ -1,32 +1,23 @@
 """
 DoXA 어댑터 — 사내 DoXA API 를 통해 문서를 Markdown + 이미지로 변환.
 
-요건:
-- 사내 네트워크 (doxa.sec.samsung.net 접근 가능)
-- `doxa-sdk` 설치 (사내 GitHub 에서 pip install git+https://github.sec.samsung.net/...)
-- 환경변수 `DOXA_TOKEN` 설정 (AI Asset Hub 발급 토큰)
-- 선택: 환경변수 `DOXA_URL` (기본 https://doxa.sec.samsung.net)
-- 선택: 환경변수 `IPAAS_TOKEN` (iPaaS 게이트웨이 경유 시)
+튜토리얼(`parser_tutorial.ipynb`, `parser_ipaas_tutorial.ipynb`) 을 그대로 따르는 단순 래퍼.
+SDK 의 `parser.parse_document()` + `parser.write_result()` 를 사용.
 
-사용법:
-    python doxa_convert.py <source_dir> [output_dir]
-    python doxa_convert.py <single_file> [output_dir]
-
-출력:
-    <output_dir>/<stem>/<stem>.md
-    <output_dir>/<stem>/image/*     (본문 이미지)
-    <output_dir>/<stem>/page_image/* (페이지 스냅샷)
-    <output_dir>/<stem>/<stem>.json  (구조화 데이터)
+환경변수:
+    DOXA_TOKEN  (필수)  AI Asset Hub 발급 토큰
+    DOXA_URL    (선택)  기본 https://doxa.sec.samsung.net
+                        iPaaS 사내 : https://ipaas-sca.sec.samsung.net/sec/kr/doxa_parser_document_v2/1.0
+                        iPaaS 외부 : https://sca.ipaas.samsung.com/sec/kr/doxa_parser_document_v2/1.0
+    IPAAS_TOKEN (선택)  iPaaS 게이트웨이 경유 시
 """
 from __future__ import annotations
 import argparse
 import io
 import os
-import shutil
 import sys
 import traceback
 import urllib3
-import zipfile
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -36,18 +27,13 @@ if __name__ == "__main__":
     except (AttributeError, ValueError):
         pass
 
-# DoXA SDK 는 verify=False 호출 → InsecureRequestWarning 억제
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-SUPPORTED_EXTS = {".pdf", ".pptx", ".docx", ".xlsx", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
-
-
-def _safe_stem(p: Path) -> str:
-    name = p.name
-    for ext in (".mht.eml", ".xlsx.xlsx", ".xlsx.pdf"):
-        if name.lower().endswith(ext):
-            return name[: -len(ext)]
-    return p.stem
+SUPPORTED_EXTS = {
+    ".pdf", ".pptx", ".docx", ".xlsx",
+    ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp",
+    ".csv", ".txt",
+}
 
 
 def _get_parser():
@@ -56,77 +42,62 @@ def _get_parser():
     token = os.environ.get("DOXA_TOKEN", "").strip()
     if not token:
         print(
-            "[ERROR] DOXA_TOKEN 환경변수가 설정되지 않았습니다.\n"
-            "  사내 AI Asset Hub (https://aia.sec.samsung.net) 에서 토큰 발급 후:\n"
-            "    Windows:  set DOXA_TOKEN=<발급토큰>\n"
-            "    Bash   :  export DOXA_TOKEN=<발급토큰>",
+            "[ERROR] DOXA_TOKEN 환경변수 미설정.\n"
+            "  set DOXA_TOKEN=<AI Asset Hub 토큰>",
             file=sys.stderr,
         )
         sys.exit(2)
 
     url = os.environ.get("DOXA_URL", "https://doxa.sec.samsung.net")
     ipaas_token = os.environ.get("IPAAS_TOKEN", "")
+
+    print(f"[doxa] URL   : {url}")
+    print(f"[doxa] iPaaS : {'O' if ipaas_token else 'X'}")
+
     return DoxaParser(token=token, doxa_url=url, ipaas_token=ipaas_token)
 
 
-def _process_response(response, src: Path, stem_out: Path) -> str:
-    """응답 타입(JSON / ZIP / text)에 따라 stem_out 아래에 전개."""
-    import json
+def _params(response_format: str):
+    """튜토리얼 패턴: BaseModel 서브클래스로 옵션 지정."""
+    from pydantic import BaseModel
 
-    stem_out.mkdir(parents=True, exist_ok=True)
-    content_type = response.headers.get("content-type", "").lower()
+    class RequestDocumentOptions(BaseModel):
+        response_format: str = response_format
+        image_captioning_level: int = 0
+        image_with_inner_text: bool = False
+        layout_model: str = "default"
+        layout_manual_entity: bool = False
+        ocr_module: str = "hybrid"
+        ocr_lang: str = "korean"
+        recognize_table: bool = True
+        bbox_scale: float = 0
+        include_image_base64: bool = False
+        escape: bool = True
+        indent: bool = True
 
-    if "application/zip" in content_type:
-        # ZIP → 전개
-        z = zipfile.ZipFile(io.BytesIO(response.content))
-        z.extractall(stem_out)
-        z.close()
-        md_files = list(stem_out.rglob("*.md"))
-        size = sum(f.stat().st_size for f in md_files)
-        return f"DoXA ZIP OK (md_files={len(md_files)}, md_total={size:,}B, names={len(z.namelist())} entries)"
-
-    if "application/json" in content_type:
-        out = stem_out / f"{_safe_stem(src)}.json"
-        out.write_text(
-            json.dumps(response.json(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        return f"DoXA JSON OK ({out.stat().st_size:,}B)"
-
-    # text/plain
-    out = stem_out / f"{_safe_stem(src)}.txt"
-    out.write_text(response.text, encoding="utf-8")
-    return f"DoXA TEXT OK ({out.stat().st_size:,}B)"
+    return RequestDocumentOptions()
 
 
-def convert_one(parser, src: Path, out_root: Path, response_format: str = "standard") -> tuple[bool, str]:
-    from doxa.parser.params import (
-        DocumentRequestParam,
-        OcrLangOption,
-        OCRModuleOption,
-        ResponseFormatOption,
-    )
-
+def convert_one(parser, src: Path, out_dir: Path, response_format: str) -> tuple[bool, str]:
     if src.suffix.lower() not in SUPPORTED_EXTS:
         return False, f"SKIP (unsupported: {src.suffix})"
 
-    stem = _safe_stem(src)
-    stem_out = out_root / stem
-
-    params = DocumentRequestParam(
-        response_format=ResponseFormatOption(response_format),
-        ocr_lang=OcrLangOption.KOREAN,
-        ocr_module=OCRModuleOption.Hybrid,
-        recognize_table=True,
-        indent=True,
-        escape=True,
-    )
-
     try:
         response = parser.parse_document(
-            input_path=str(src), params=params, timeout=3600
+            input_path=str(src),
+            params=_params(response_format),
+            timeout=3600,
         )
-        msg = _process_response(response, src, stem_out)
-        return True, msg
+        # SDK 의 write_result 그대로 사용 (ZIP/JSON/TXT 자동 처리)
+        parser.write_result(response, str(src), str(out_dir))
+
+        # 출력 파일 찾기 (정확한 파일명은 SDK 내부에서 결정됨)
+        stem = src.stem
+        candidates = sorted(out_dir.glob(f"{stem}.*"))
+        if candidates:
+            f = candidates[0]
+            return True, f"DoXA OK: {f.name} ({f.stat().st_size:,} B)"
+        return True, "DoXA OK (파일 확인 불가)"
     except Exception as e:
         return False, f"DoXA FAIL: {type(e).__name__}: {e}"
 
@@ -135,12 +106,14 @@ def iter_sources(source: Path) -> list[Path]:
     if source.is_file():
         return [source]
     if source.is_dir():
-        return sorted(f for f in source.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTS)
+        return sorted(
+            f for f in source.iterdir()
+            if f.is_file() and f.suffix.lower() in SUPPORTED_EXTS
+        )
     return []
 
 
 def _pick_interactive() -> tuple[Path | None, Path | None, str]:
-    """DoXA 대화식 모드: 소스/출력 폴더 + 응답 포맷 선택."""
     try:
         import tkinter as tk
         from tkinter import filedialog, messagebox, simpledialog
@@ -152,20 +125,18 @@ def _pick_interactive() -> tuple[Path | None, Path | None, str]:
     root.withdraw()
     root.attributes("-topmost", True)
 
-    # DOXA_TOKEN 사전 확인
     if not os.environ.get("DOXA_TOKEN", "").strip():
         messagebox.showerror(
             "DOXA_TOKEN 미설정",
-            "DOXA_TOKEN 환경변수를 설정해야 합니다.\n\n"
-            "PowerShell/cmd 에서:\n"
-            "  set DOXA_TOKEN=<AI Asset Hub 발급 토큰>\n"
-            "그 후 VS Code 를 재시작하세요.",
+            "DOXA_TOKEN 환경변수를 설정하세요.\n"
+            "  set DOXA_TOKEN=<AI Asset Hub 토큰>\n"
+            "그 후 VS Code 를 재시작.",
         )
         root.destroy()
         return None, None, "standard"
 
     choice = messagebox.askyesnocancel(
-        "선택", "단일 파일을 변환하시겠습니까?\n\n예 = 파일 한 개\n아니요 = 폴더 일괄"
+        "선택", "단일 파일 변환하시겠습니까?\n\n예 = 파일 한 개\n아니요 = 폴더 일괄"
     )
     if choice is None:
         root.destroy()
@@ -175,7 +146,7 @@ def _pick_interactive() -> tuple[Path | None, Path | None, str]:
         src = filedialog.askopenfilename(
             title="변환할 파일 선택",
             filetypes=[
-                ("지원 문서", "*.pdf *.pptx *.docx *.xlsx *.jpg *.jpeg *.png *.tif *.tiff *.bmp"),
+                ("지원 문서", "*.pdf *.pptx *.docx *.xlsx *.jpg *.jpeg *.png *.tif *.tiff *.bmp *.csv *.txt"),
                 ("전체", "*.*"),
             ],
         )
@@ -189,22 +160,16 @@ def _pick_interactive() -> tuple[Path | None, Path | None, str]:
     base = src_path if src_path.is_dir() else src_path.parent
     default_out = base.parent / f"{base.name}_doxa"
 
-    use_default = messagebox.askyesno(
-        "출력 폴더", f"기본 출력 경로를 사용하시겠습니까?\n\n{default_out}"
-    )
+    use_default = messagebox.askyesno("출력 폴더", f"기본 출력 경로를 사용하시겠습니까?\n\n{default_out}")
     if use_default:
         out = default_out
     else:
         out_sel = filedialog.askdirectory(title="출력 폴더 선택")
         out = Path(out_sel).resolve() if out_sel else default_out
 
-    # 포맷 선택
     fmt = simpledialog.askstring(
         "응답 포맷",
-        "DoXA 응답 포맷:\n"
-        "  standard (기본, MD + JSON + 이미지)\n"
-        "  markdown_only / json_only\n"
-        "  json_with_image / page_image_only / debug_info",
+        "standard (기본)\nmarkdown_only / json_only\njson_with_image / page_image_only / debug_info",
         initialvalue="standard",
     ) or "standard"
 
@@ -214,13 +179,12 @@ def _pick_interactive() -> tuple[Path | None, Path | None, str]:
 
 def main():
     ap = argparse.ArgumentParser(description="DoXA 기반 문서 → Markdown 변환")
-    ap.add_argument("source", type=Path, nargs="?", default=None, help="변환할 파일 또는 디렉토리")
-    ap.add_argument("output", type=Path, nargs="?", default=None, help="출력 디렉토리 (기본: <source>_doxa)")
+    ap.add_argument("source", type=Path, nargs="?", default=None)
+    ap.add_argument("output", type=Path, nargs="?", default=None)
     ap.add_argument(
         "--format",
         default="standard",
         choices=["standard", "json_only", "markdown_only", "page_image_only", "json_with_image", "debug_info"],
-        help="DoXA 응답 포맷 (기본: standard = MD + json + page image)",
     )
     args = ap.parse_args()
 
@@ -262,6 +226,7 @@ def main():
         "# DoXA Conversion Report\n",
         f"- Source: `{src}`",
         f"- Output: `{out}`",
+        f"- Format: {args.format}",
         f"- Success: {ok_cnt}/{len(results)}\n",
         "| # | File | Status | Detail |",
         "|---|------|--------|--------|",

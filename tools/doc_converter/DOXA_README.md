@@ -1,10 +1,22 @@
 # DoXA 어댑터 — 사내 API 기반 문서 변환
 
 ## 전제 조건
-- **사내 네트워크 (`doxa.sec.samsung.net` 접근 가능)**
-- Python 3.12+
+- **사내 네트워크** (아래 3가지 URL 중 최소 1개 접근 가능)
+  1. 직접 : `https://doxa.sec.samsung.net`
+  2. iPaaS 사내 : `https://ipaas-sca.sec.samsung.net/sec/kr/doxa_parser_document_v2/1.0`
+  3. iPaaS 외부 : `https://sca.ipaas.samsung.com/sec/kr/doxa_parser_document_v2/1.0`
+- Python 3.12+, uv
 - AI Asset Hub 에서 발급받은 `DOXA_TOKEN`
 - DoXA SDK (`doxa-sdk`) — 사내 GitHub 에서 설치
+
+### 네트워크 존별 권장 URL
+| 환경 | 권장 URL | 환경변수 설정 |
+|------|----------|---------------|
+| 사내 PC 직접 접속 가능 | `doxa.sec.samsung.net` (기본) | (설정 불필요) |
+| 사내 PC 에서 iPaaS 경유 | iPaaS 사내 | `set DOXA_URL=https://ipaas-sca.sec.samsung.net/sec/kr/doxa_parser_document_v2/1.0` + `set IPAAS_TOKEN=<토큰>` |
+| 외부/VPN | iPaaS 외부 | `set DOXA_URL=https://sca.ipaas.samsung.com/sec/kr/doxa_parser_document_v2/1.0` + `set IPAAS_TOKEN=<토큰>` |
+
+**어떤 URL 이 되는지 자동 확인**: `uv run python doxa_smoke_test.py` 는 3개 URL 모두 시도해서 동작하는 것을 알려줍니다.
 
 ## 사내 PC 첫 셋업 (1회)
 
