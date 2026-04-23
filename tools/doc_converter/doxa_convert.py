@@ -29,8 +29,12 @@ import urllib3
 import zipfile
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+if __name__ == "__main__":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 # DoXA SDK 는 verify=False 호출 → InsecureRequestWarning 억제
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -135,9 +139,82 @@ def iter_sources(source: Path) -> list[Path]:
     return []
 
 
+def _pick_interactive() -> tuple[Path | None, Path | None, str]:
+    """DoXA 대화식 모드: 소스/출력 폴더 + 응답 포맷 선택."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, simpledialog
+    except ImportError:
+        print("[interactive] tkinter 미설치 → CLI 인자 사용 필요", file=sys.stderr)
+        return None, None, "standard"
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    # DOXA_TOKEN 사전 확인
+    if not os.environ.get("DOXA_TOKEN", "").strip():
+        messagebox.showerror(
+            "DOXA_TOKEN 미설정",
+            "DOXA_TOKEN 환경변수를 설정해야 합니다.\n\n"
+            "PowerShell/cmd 에서:\n"
+            "  set DOXA_TOKEN=<AI Asset Hub 발급 토큰>\n"
+            "그 후 VS Code 를 재시작하세요.",
+        )
+        root.destroy()
+        return None, None, "standard"
+
+    choice = messagebox.askyesnocancel(
+        "선택", "단일 파일을 변환하시겠습니까?\n\n예 = 파일 한 개\n아니요 = 폴더 일괄"
+    )
+    if choice is None:
+        root.destroy()
+        return None, None, "standard"
+
+    if choice:
+        src = filedialog.askopenfilename(
+            title="변환할 파일 선택",
+            filetypes=[
+                ("지원 문서", "*.pdf *.pptx *.docx *.xlsx *.jpg *.jpeg *.png *.tif *.tiff *.bmp"),
+                ("전체", "*.*"),
+            ],
+        )
+    else:
+        src = filedialog.askdirectory(title="변환할 폴더 선택")
+
+    if not src:
+        root.destroy()
+        return None, None, "standard"
+    src_path = Path(src).resolve()
+    base = src_path if src_path.is_dir() else src_path.parent
+    default_out = base.parent / f"{base.name}_doxa"
+
+    use_default = messagebox.askyesno(
+        "출력 폴더", f"기본 출력 경로를 사용하시겠습니까?\n\n{default_out}"
+    )
+    if use_default:
+        out = default_out
+    else:
+        out_sel = filedialog.askdirectory(title="출력 폴더 선택")
+        out = Path(out_sel).resolve() if out_sel else default_out
+
+    # 포맷 선택
+    fmt = simpledialog.askstring(
+        "응답 포맷",
+        "DoXA 응답 포맷:\n"
+        "  standard (기본, MD + JSON + 이미지)\n"
+        "  markdown_only / json_only\n"
+        "  json_with_image / page_image_only / debug_info",
+        initialvalue="standard",
+    ) or "standard"
+
+    root.destroy()
+    return src_path, out, fmt
+
+
 def main():
     ap = argparse.ArgumentParser(description="DoXA 기반 문서 → Markdown 변환")
-    ap.add_argument("source", type=Path, help="변환할 파일 또는 디렉토리")
+    ap.add_argument("source", type=Path, nargs="?", default=None, help="변환할 파일 또는 디렉토리")
     ap.add_argument("output", type=Path, nargs="?", default=None, help="출력 디렉토리 (기본: <source>_doxa)")
     ap.add_argument(
         "--format",
@@ -147,12 +224,19 @@ def main():
     )
     args = ap.parse_args()
 
-    src = args.source.resolve()
-    if args.output:
-        out = args.output.resolve()
+    if args.source is None:
+        src_path, out, fmt = _pick_interactive()
+        if src_path is None:
+            sys.exit(0)
+        args.format = fmt
+        src = src_path
     else:
-        base = src if src.is_dir() else src.parent
-        out = base.parent / f"{base.name}_doxa"
+        src = args.source.resolve()
+        if args.output:
+            out = args.output.resolve()
+        else:
+            base = src if src.is_dir() else src.parent
+            out = base.parent / f"{base.name}_doxa"
     out.mkdir(parents=True, exist_ok=True)
 
     parser = _get_parser()

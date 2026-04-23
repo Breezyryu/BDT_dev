@@ -17,6 +17,8 @@ raw/
 .venv
 .agent
 .vscode/
+!tools/doc_converter/.vscode/
+!tools/doc_converter/.vscode/**
 .github/
 analysis_dev_env/
 .gitignore

@@ -1,8 +1,36 @@
-docling>=2.8
+# doc_converter 의존성 — 모든 라이브러리 로컬 실행, 외부 AI API 호출 없음.
+#
+# 주의: markitdown[all] 은 youtube-transcript-api / openai / azure-ai-* 등
+#       클라우드 AI 라이브러리를 설치하므로 사용 금지.
+#       대신 문서 포맷 extras 만 명시.
+
+# PDF 변환 SOTA (marker-pdf, Surya OCR 내장)
 marker-pdf>=1.0
-markitdown[all]>=0.0.2
+
+# IBM 문서 파서 (office 포맷 + PDF 구조화)
+docling>=2.8
+
+# Microsoft 다형식 파서 — 문서 포맷만 (클라우드 extras 제외)
+markitdown[pdf,pptx,docx]>=0.0.2
+
+# MinerU 2.5-Pro (PDF SOTA, 한글/수식/표 이미지) — core 만 (vlm 원격 옵션 제외)
+mineru[core]>=2.5
+
+# OCR (한국어+영어) — 로컬 모델
 easyocr>=1.7
+
+# PDF 텍스트 추출 fallback
 pymupdf>=1.24
+
+# xlsx 복구 경로 (custom_doc_props 손상 대응)
 pandas>=2.2
 openpyxl>=3.1
 tabulate>=0.9
+
+# HTTP (DoXA SDK 가 requests 사용)
+requests>=2.32
+urllib3>=2.0
+
+# Note:
+# - DoXA SDK 는 별도 설치: uv pip install -e <doxa-sdk 경로>
+# - 사내 AI Asset Hub 에서 토큰 발급 후 DOXA_TOKEN 환경변수 설정

@@ -23,9 +23,13 @@ import traceback
 import zipfile
 from pathlib import Path
 
-# UTF-8 stdout (Windows cp949 회피)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# UTF-8 stdout (Windows cp949 회피, 메인 실행 시에만)
+if __name__ == "__main__":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass  # stream already wrapped or not writable (e.g., during tests)
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -275,9 +279,49 @@ def process_file(f: Path, out_root: Path, force: bool) -> tuple[bool, str]:
     return False, f"SKIP (unsupported: {ext})"
 
 
+def _pick_folders_interactive() -> tuple[Path | None, Path | None, bool]:
+    """tkinter 다이얼로그로 폴더 선택 (VS Code F5 / 더블클릭 시나리오)."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox
+    except ImportError:
+        print("[interactive] tkinter 미설치 → CLI 인자 사용 필요", file=sys.stderr)
+        return None, None, False
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    print("[interactive] 변환할 소스 폴더 선택 창 표시 중...")
+    src = filedialog.askdirectory(title="변환할 폴더 선택")
+    if not src:
+        print("[interactive] 취소됨")
+        root.destroy()
+        return None, None, False
+    src_path = Path(src).resolve()
+    default_out = src_path.parent / f"{src_path.name}_md"
+
+    use_default = messagebox.askyesno(
+        "출력 폴더",
+        f"기본 출력 경로를 사용하시겠습니까?\n\n{default_out}",
+    )
+    if use_default:
+        out = default_out
+    else:
+        out_sel = filedialog.askdirectory(title="출력 폴더 선택")
+        out = Path(out_sel).resolve() if out_sel else default_out
+
+    force = messagebox.askyesno(
+        "재변환",
+        "기존 MD 파일도 무시하고 다시 변환하시겠습니까?\n(처음 실행이면 '아니요' 권장)",
+    )
+    root.destroy()
+    return src_path, out, force
+
+
 def main():
     ap = argparse.ArgumentParser(description="Document → Markdown batch converter")
-    ap.add_argument("source", type=Path, help="변환할 소스 디렉토리")
+    ap.add_argument("source", type=Path, nargs="?", default=None, help="변환할 소스 디렉토리")
     ap.add_argument(
         "output",
         type=Path,
@@ -288,12 +332,19 @@ def main():
     ap.add_argument("--force", action="store_true", help="기존 MD 무시 재변환")
     args = ap.parse_args()
 
-    src_dir = args.source.resolve()
-    if not src_dir.is_dir():
-        print(f"ERROR: {src_dir} 가 디렉토리가 아닙니다", file=sys.stderr)
-        sys.exit(2)
+    # CLI 인자 없으면 GUI 다이얼로그
+    if args.source is None:
+        src_dir, out_dir, force = _pick_folders_interactive()
+        if src_dir is None:
+            sys.exit(0)
+        args.force = force
+    else:
+        src_dir = args.source.resolve()
+        if not src_dir.is_dir():
+            print(f"ERROR: {src_dir} 가 디렉토리가 아닙니다", file=sys.stderr)
+            sys.exit(2)
+        out_dir = (args.output or src_dir.parent / f"{src_dir.name}_md").resolve()
 
-    out_dir = (args.output or src_dir.parent / f"{src_dir.name}_md").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files = sorted(f for f in src_dir.iterdir() if f.is_file())

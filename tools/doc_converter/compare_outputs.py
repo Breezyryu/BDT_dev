@@ -22,7 +22,11 @@ import re
 import sys
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if __name__ == "__main__":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".svg"}
 
@@ -65,14 +69,45 @@ def diff_ratio(a_text: str, b_text: str) -> float:
     return sm.ratio()
 
 
+def _pick_interactive() -> tuple[Path | None, Path | None, Path | None]:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox
+    except ImportError:
+        return None, None, None
+    root = tk.Tk(); root.withdraw(); root.attributes("-topmost", True)
+    a = filedialog.askdirectory(title="비교 대상 A 폴더 선택")
+    if not a:
+        root.destroy(); return None, None, None
+    b = filedialog.askdirectory(title="비교 대상 B 폴더 선택")
+    if not b:
+        root.destroy(); return None, None, None
+    save = None
+    if messagebox.askyesno("리포트 저장", "결과를 MD 파일로도 저장하시겠습니까?"):
+        save = filedialog.asksaveasfilename(
+            title="리포트 저장 경로",
+            defaultextension=".md",
+            filetypes=[("Markdown", "*.md")],
+        )
+        save = Path(save).resolve() if save else None
+    root.destroy()
+    return Path(a).resolve(), Path(b).resolve(), save
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("a", type=Path)
-    ap.add_argument("b", type=Path)
+    ap.add_argument("a", type=Path, nargs="?", default=None)
+    ap.add_argument("b", type=Path, nargs="?", default=None)
     ap.add_argument("--label-a", default="A")
     ap.add_argument("--label-b", default="B")
     ap.add_argument("--save-md", type=Path, default=None, help="리포트 MD 로 저장")
     args = ap.parse_args()
+
+    if args.a is None or args.b is None:
+        a, b, save = _pick_interactive()
+        if a is None:
+            sys.exit(0)
+        args.a, args.b, args.save_md = a, b, save
 
     a = args.a.resolve()
     b = args.b.resolve()

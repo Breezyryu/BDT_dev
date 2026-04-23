@@ -17,11 +17,11 @@ if not exist ".venv" (
     exit /b 1
 )
 
-call .venv\Scripts\activate.bat
 set PYTHONIOENCODING=utf-8
 REM HF 오프라인 강제 (모델 재다운로드 차단)
 set HF_HUB_OFFLINE=1
 set TRANSFORMERS_OFFLINE=1
 
-python convert.py %*
+REM uv 기반 실행 (uv 가 자동으로 .venv 사용)
+uv run python convert.py %*
 endlocal

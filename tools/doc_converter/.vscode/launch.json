@@ -1,0 +1,66 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "① 문서 변환 (로컬 OSS, 대화식)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/convert.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "env": {
+                "PYTHONIOENCODING": "utf-8"
+            },
+            "justMyCode": true
+        },
+        {
+            "name": "② 문서 변환 (DoXA API, 사내 전용)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/doxa_convert.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "env": {
+                "PYTHONIOENCODING": "utf-8"
+            },
+            "justMyCode": true
+        },
+        {
+            "name": "③ DoXA 스모크 테스트 (연결성 확인)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/doxa_smoke_test.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "env": {
+                "PYTHONIOENCODING": "utf-8"
+            }
+        },
+        {
+            "name": "④ 두 결과 비교 (Web vs API 등)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/compare_outputs.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "env": {
+                "PYTHONIOENCODING": "utf-8"
+            }
+        },
+        {
+            "name": "⑤ 현재 파일 디버그",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "env": {
+                "PYTHONIOENCODING": "utf-8"
+            }
+        }
+    ]
+}

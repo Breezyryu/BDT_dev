@@ -24,8 +24,7 @@ if not exist ".venv" (
     exit /b 1
 )
 
-call .venv\Scripts\activate.bat
 set PYTHONIOENCODING=utf-8
 
-python doxa_convert.py %*
+uv run python doxa_convert.py %*
 endlocal
