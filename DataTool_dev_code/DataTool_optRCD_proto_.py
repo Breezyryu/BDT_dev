@@ -18879,11 +18879,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return overlay
     
-    def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no, 
+    def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
                             channel_map, fig, axes_list, sub_channel_map=None,
                             classify_info=None, classify_by_group=None,
                             save_context=None, voltage_condition_text=None,
-                            group_names=None):
+                            group_names=None,
+                            extra_figs=None, subtab_titles=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
@@ -18891,6 +18892,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         save_context: dict — Figure 저장 시 포함할 데이터 소스/파라미터 정보
         voltage_condition_text: str | list[tuple[str, str]] | None — 전압 변경 요약 (str=단일, list=다중 그룹)
         group_names: list[str] | None — 그룹별 표시명 (패턴 라벨용)
+        extra_figs: list[matplotlib.figure.Figure] | None — 추가 서브탭 figure.
+            None 이면 기존 단일 canvas 경로 (하위 호환). 있으면 외부 탭 내부에
+            QTabWidget 중첩으로 "요약"/"상세" 등 서브탭을 구성한다.
+        subtab_titles: list[str] | None — 서브탭 라벨 (첫 원소=기본 canvas, 이후 extra_figs 순).
+            예: ["요약", "상세"]. None 이면 기본값 사용.
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # save_context에 classify_info 포함
@@ -18899,21 +18905,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 {k: v for k, v in cr.items() if k != 'classified'}
                 for cr in classify_info
             ]
+        _use_subtabs = bool(extra_figs)
         # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
                 channel_map, canvas, fig, axes_list, args_parent_tab=tab,
                 sub_channel_map=sub_channel_map,
                 save_context=save_context)
-            # toolbar + toggle_btn 을 한 줄에 배치
+            # 서브탭 모드: 외부 toolbar_row 에는 toggle_btn 만 (toolbar 는 서브탭 내부로 이동)
+            # 단일 모드: 기존 toolbar + toggle_btn 한 줄 배치
             toolbar_row = QHBoxLayout()
             toolbar_row.setContentsMargins(0, 0, 0, 0)
             toolbar_row.setSpacing(4)
-            toolbar_row.addWidget(toolbar)
+            if not _use_subtabs:
+                toolbar_row.addWidget(toolbar)
+            toolbar_row.addStretch()
             toolbar_row.addWidget(toggle_btn)
             tab_layout.addLayout(toolbar_row)
         else:
-            tab_layout.addWidget(toolbar)
+            if not _use_subtabs:
+                tab_layout.addWidget(toolbar)
 
         # ── 사이클 카테고리 분류 정보 바 ──
         if classify_info:
@@ -18929,7 +18940,45 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if hasattr(info_label, '_collapse_popup'):
                     self._classify_popups.append(info_label._collapse_popup)
 
-        tab_layout.addWidget(canvas)
+        if _use_subtabs:
+            # ── 서브탭 구성 (외부 탭 내부에 QTabWidget 중첩) ──
+            from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget as _QW
+            from matplotlib.backends.backend_qtagg import (
+                FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
+            inner = QTabWidget()
+            titles = list(subtab_titles) if subtab_titles else ["요약", "상세"]
+            # subtab 1: 기존 canvas + 기존 toolbar 내장
+            _s1 = _QW()
+            _l1 = QVBoxLayout(_s1)
+            _l1.setContentsMargins(0, 0, 0, 0)
+            _l1.setSpacing(0)
+            _l1.addWidget(toolbar)
+            _l1.addWidget(canvas)
+            inner.addTab(_s1, titles[0] if len(titles) > 0 else "요약")
+            # subtab N+1: extra_figs 각각 자체 toolbar 생성
+            for _i, _ef in enumerate(extra_figs):
+                _ec = FigureCanvas(_ef)
+                _et = NavigationToolbar(_ec, None)
+                _sn = _QW()
+                _ln = QVBoxLayout(_sn)
+                _ln.setContentsMargins(0, 0, 0, 0)
+                _ln.setSpacing(0)
+                _ln.addWidget(_et)
+                _ln.addWidget(_ec)
+                _t = (titles[_i + 1] if len(titles) > _i + 1
+                      else f"상세{_i + 1}")
+                inner.addTab(_sn, _t)
+            inner.setCurrentIndex(0)   # 기본 "요약"
+            tab_layout.addWidget(inner)
+            # extra figs tight_layout
+            for _ef in extra_figs:
+                try:
+                    _ef.tight_layout(pad=1, w_pad=1, h_pad=1)
+                except Exception:
+                    pass
+        else:
+            tab_layout.addWidget(canvas)
+
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
@@ -20938,6 +20987,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     nrows=2, ncols=3, figsize=(_fig_w, 8))
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
 
+                # ── 상세(탭2) placeholder figure (Step 2) ──
+                # Step 3 에서 실제 그래프 (2×3: Dchg/Chg/AvgV/DchgEng/RndV_chg_rest/RndV) 로 덮어씀
+                fig2, axes_b_grid = plt.subplots(
+                    nrows=2, ncols=3, figsize=(_fig_w, 8))
+                axes_list_b = [axes_b_grid[_r][_c] for _r in range(2) for _c in range(3)]
+                for _ax_b in axes_list_b:
+                    _ax_b.text(0.5, 0.5, '상세 그래프 (Step 3)',
+                               ha='center', va='center',
+                               transform=_ax_b.transAxes,
+                               fontsize=10, color='#888')
+                    _ax_b.set_xticks([])
+                    _ax_b.set_yticks([])
+
                 tab = None
                 tab_layout = None
                 canvas = None
@@ -21498,7 +21560,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                  classify_by_group=_tab_classify_by_group if _tab_classify_by_group else None,
                                                  save_context=_save_ctx,
                                                  voltage_condition_text=_vc_text,
-                                                 group_names=_group_names)
+                                                 group_names=_group_names,
+                                                 extra_figs=[fig2],
+                                                 subtab_titles=["요약", "상세"])
                         tab_no += 1
                         if suptitle_name:
                             output_fig(self.figsaveok, suptitle_name)
@@ -21506,8 +21570,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         logger.warning('탭 %d 탭 생성 오류: %s', tab_idx + 1, _fin_err)
                         _folder_errors.append(f'탭{tab_idx+1}: {_fin_err}')
                         plt.close(fig)
+                        plt.close(fig2)
                 else:
                     plt.close(fig)
+                    plt.close(fig2)
 
                 # 진행률
                 self.progressBar.setValue(50 + int((tab_idx + 1) / total_tabs * 50))
