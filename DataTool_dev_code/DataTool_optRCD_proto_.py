@@ -900,6 +900,102 @@ def _ensure_dcir_columns(nd: 'pd.DataFrame') -> 'pd.DataFrame':
     return nd
 
 
+# ── Rest End Voltage 분리 컬럼 (충전 후/방전 후) ─────────────────
+# 기존 RndV(= Condition==3 전체 Ocv min) 는 충전 후/방전 후 Rest 가 섞여
+# 분리 분석이 어려워 두 컬럼으로 나눈다.
+#   RndV_chg_rest : 충전 직후 Rest 종료 전압 (만충 OCV ≈ 4.05–4.25V)
+#   RndV_dchg_rest: 방전 직후 Rest 종료 전압 (만방 OCV ≈ 2.80–3.30V)
+_RNDV_SPLIT_COLS = ['RndV_chg_rest', 'RndV_dchg_rest']
+
+
+def _ensure_rndv_split_columns(
+    nd: 'pd.DataFrame',
+    cycleraw: 'pd.DataFrame',
+    cycle_map: dict | None = None,
+    *,
+    ocv_scale: float = 1.0,
+    chg_cond: int = 1,
+    dchg_cond: int = 2,
+    rest_cond: int = 3,
+) -> 'pd.DataFrame':
+    """df.NewData 에 RndV_chg_rest / RndV_dchg_rest 컬럼 생성.
+
+    알고리즘:
+      1) cycle_map 존재 → chg_rest / dchg_rest TC 목록으로 Cycleraw 필터,
+         groupby(TotlCycle)[Ocv].last() 를 OriCyc 기준 매핑
+      2) cycle_map 미제공 → StepType 전이 기반 폴백
+         (Condition shift 하여 prev==chg_cond → chg_rest, prev==dchg_cond → dchg_rest)
+
+    둘 다 실패 시 컬럼은 NaN 으로 보장만 한다.
+
+    Parameters
+    ----------
+    nd : pd.DataFrame
+        df.NewData. OriCyc 컬럼이 있어야 매핑 가능.
+    cycleraw : pd.DataFrame
+        TotlCycle / Condition / Ocv 컬럼을 가진 원본 사이클 데이터.
+    cycle_map : dict | None
+        {논리사이클: {'chg_rest': [TC...], 'dchg_rest': [TC...]}}.
+        None 이면 폴백 경로 사용.
+    ocv_scale : float
+        Cycleraw['Ocv'] 값을 V 로 환산할 배율 (PNE=1/1_000_000, Toyo=1.0).
+    chg_cond / dchg_cond / rest_cond : int
+        Condition 컬럼에서 충전/방전/휴지를 표현하는 값.
+    """
+    # 기본 NaN 보장
+    for col in _RNDV_SPLIT_COLS:
+        if col not in nd.columns:
+            nd[col] = np.nan
+    # OriCyc 없으면 매핑 불가 — NaN 으로 보장만
+    if 'OriCyc' not in nd.columns:
+        return nd
+    # Cycleraw 필수 컬럼 확인
+    if not {'TotlCycle', 'Condition', 'Ocv'}.issubset(cycleraw.columns):
+        return nd
+
+    # ── 1) cycle_map 기반 (PNE 일반 / Sweep 모두) ──
+    chg_rest_tcs: set[int] = set()
+    dchg_rest_tcs: set[int] = set()
+    if cycle_map:
+        for _entry in cycle_map.values():
+            if isinstance(_entry, dict):
+                chg_rest_tcs.update(int(t) for t in _entry.get('chg_rest', []) or [])
+                dchg_rest_tcs.update(int(t) for t in _entry.get('dchg_rest', []) or [])
+
+    rest_rows = cycleraw[cycleraw['Condition'] == rest_cond]
+
+    def _map_rest_volt(tc_set: set[int]) -> 'pd.Series':
+        if not tc_set or rest_rows.empty:
+            return pd.Series(dtype=float)
+        _sub = rest_rows[rest_rows['TotlCycle'].isin(tc_set)]
+        if _sub.empty:
+            return pd.Series(dtype=float)
+        return _sub.groupby('TotlCycle')['Ocv'].last() * ocv_scale
+
+    _chg_volt = _map_rest_volt(chg_rest_tcs)
+    _dchg_volt = _map_rest_volt(dchg_rest_tcs)
+
+    # ── 2) 폴백: cycle_map 으로 해결 안 된 경우 StepType 전이 사용 ──
+    # cycle_map 이 비어있거나 매핑 결과가 전부 NaN 이면 폴백 시도
+    if _chg_volt.empty and _dchg_volt.empty and not rest_rows.empty:
+        prev_cond = cycleraw['Condition'].shift(1)
+        _is_chg_rest = (cycleraw['Condition'] == rest_cond) & (prev_cond == chg_cond)
+        _is_dchg_rest = (cycleraw['Condition'] == rest_cond) & (prev_cond == dchg_cond)
+        if _is_chg_rest.any():
+            _chg_volt = (cycleraw.loc[_is_chg_rest]
+                         .groupby('TotlCycle')['Ocv'].last() * ocv_scale)
+        if _is_dchg_rest.any():
+            _dchg_volt = (cycleraw.loc[_is_dchg_rest]
+                          .groupby('TotlCycle')['Ocv'].last() * ocv_scale)
+
+    if not _chg_volt.empty:
+        nd['RndV_chg_rest'] = nd['OriCyc'].map(_chg_volt)
+    if not _dchg_volt.empty:
+        nd['RndV_dchg_rest'] = nd['OriCyc'].map(_dchg_volt)
+
+    return nd
+
+
 def resolve_tc_range(
     cycle_map: dict,
     logical: int,
@@ -4081,6 +4177,14 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         df.NewData = df.NewData.drop("TotlCycle", axis=1)
         # DCIR 표준 컬럼 보장 (모드 무관하게 동일 컬럼 세트)
         _ensure_dcir_columns(df.NewData)
+        # Rest End Voltage 분리 컬럼 (충전 후/방전 후)
+        # Toyo 는 기존 RndV(= chgdata.Ocv) 가 이미 충전 직후 OCV → 그대로 chg_rest 로 복사
+        # dchg_rest 는 Cycleraw 에서 Condition==rest 직전 방전 전이로 추출 (Toyo 는 Ocv 이미 V 단위)
+        # cycle_map 은 이 시점에 아직 없으므로 폴백(전이) 경로를 타게 됨
+        if 'RndV' in df.NewData.columns:
+            df.NewData['RndV_chg_rest'] = df.NewData['RndV']
+        _ensure_rndv_split_columns(
+            df.NewData, Cycleraw, cycle_map=None, ocv_scale=1.0)
         # ── .ptn 구조 분석 → 논리사이클 힌트 ──
         _ptn_struct = None
         try:
@@ -9625,6 +9729,10 @@ def _process_pne_cycleraw(
     # DCIR 표준 컬럼 보장 (모드 무관하게 동일 컬럼 세트)
     if hasattr(df, 'NewData'):
         _ensure_dcir_columns(df.NewData)
+    # Rest End Voltage 분리 컬럼 (충전 후/방전 후) — cycle_map 기반, PNE 는 Ocv μV→V
+    if hasattr(df, 'NewData'):
+        _ensure_rndv_split_columns(
+            df.NewData, Cycleraw, cycle_map, ocv_scale=1.0 / 1_000_000)
     # Dchg/Chg 중 하나라도 NaN인 행 제거 (불완전 사이클 제외)
     if hasattr(df, 'NewData'):
         df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
@@ -9656,6 +9764,10 @@ def _process_pne_cycleraw(
                     'Dchg': 'max', 'Chg': 'max', 'DchgEng': 'max',
                     'RndV': 'first', 'Temp': 'max', 'AvgV': 'mean',
                     'OriCyc': 'last',
+                    # Rest End V 분리 컬럼: Sweep 에서는 SOC 별 의미가 혼재하므로
+                    # 첫 TC 값으로 대표 (mean 은 물리 의미 희석)
+                    'RndV_chg_rest': 'first',
+                    'RndV_dchg_rest': 'first',
                 }
                 for _dc in ['dcir', 'dcir2', 'soc70_dcir', 'soc70_rss_dcir', 'rssocv', 'rssccv']:
                     if _dc in _mapped.columns and _mapped[_dc].notna().any():
@@ -9676,7 +9788,8 @@ def _process_pne_cycleraw(
                     _chg_next = _grouped['Chg'].shift(-1)
                     _grouped['Eff2'] = _chg_next / _grouped['Dchg']
                 # 필수 컬럼 보장 (집계에서 제외된 경우 NaN으로 추가)
-                for _req in ['dcir', 'dcir2', 'soc70_dcir', 'soc70_rss_dcir', 'rssocv', 'rssccv']:
+                for _req in ['dcir', 'dcir2', 'soc70_dcir', 'soc70_rss_dcir', 'rssocv', 'rssccv',
+                             'RndV_chg_rest', 'RndV_dchg_rest']:
                     if _req not in _grouped.columns:
                         _grouped[_req] = np.nan
                 df.NewData = _grouped
