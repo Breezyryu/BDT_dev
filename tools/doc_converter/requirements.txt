@@ -1,26 +1,25 @@
 # doc_converter 의존성 — 로컬 실행 전용, 외부 AI API 호출 없음.
-# 2026-04-22 Python 3.12 + uv 환경에서 함께 설치되는 것 확인된 버전.
+# 2026-04-22 Python 3.12.12 + uv 환경에서 함께 설치 확인된 버전 대역.
 #
-# [주의] markitdown[all] 은 OpenAI/Azure/YouTube 등 클라우드 SDK 를 설치하므로 금지.
-#        문서 포맷 extras (pdf,pptx,docx) 만 명시.
+# [중요] 외부 AI SDK (anthropic / openai / google-genai / azure-ai-*) 를 transitively
+#        설치하는 라이브러리는 제외:
+#        - marker-pdf (anthropic, openai, google-genai 를 optional extras 로 끌어옴)
+#        - markitdown[all] (openai, azure-ai-* 포함)
 
-# PDF 변환 SOTA (Surya OCR 내장)
-marker-pdf>=1.10,<2
-
-# IBM 문서 파서 (office + PDF 구조화)
-docling>=2.90,<3
-
-# Microsoft 다형식 파서 — 문서 포맷만
-markitdown[pdf,pptx,docx]>=0.1,<1
-
-# MinerU (PDF SOTA, 한글/수식/표) — core 만 (vlm 원격 옵션 제외)
-# 주의: mineru 패키지 버전은 model 버전(2.5-Pro)과 별개. 실제 pypi 는 3.x
+# MinerU (PDF SOTA, 한글/수식/표/이미지) — core 만 (vlm 원격 옵션 제외)
+# pypi 버전 3.x (model 버전 'MinerU 2.5-Pro' 와 별개), Apache 2.0, 클라우드 SDK 의존성 없음
 mineru[core]>=3.1,<4
 
-# 한국어+영어 OCR
+# IBM 문서 파서 (docx/pptx/xlsx 전용, PDF 도 지원)
+docling>=2.90,<3
+
+# Microsoft 다형식 파서 — 문서 포맷 extras 만 (cloud AI 제외)
+markitdown[pdf,pptx,docx]>=0.1,<1
+
+# 한국어+영어 OCR (docling 의 EasyOcrOptions 가 사용)
 easyocr>=1.7
 
-# PDF 텍스트 추출 fallback
+# PDF 텍스트 추출 fallback (순수 C/Python, 외부 호출 없음)
 pymupdf>=1.27
 
 # xlsx 복구 (custom_doc_props 손상 대응)
@@ -32,10 +31,4 @@ tabulate>=0.10
 requests>=2.32
 urllib3>=2.0
 
-# 비고:
-# - DoXA SDK 는 별도 설치: uv pip install -e <doxa-sdk 경로>
-# - 해상 conflict 시 아래 "sequential install" 참고:
-#   uv pip install docling marker-pdf
-#   uv pip install mineru[core]
-#   uv pip install markitdown[pdf,pptx,docx]
-#   uv pip install easyocr pymupdf pandas openpyxl tabulate requests urllib3
+# DoXA SDK 는 별도 설치: uv pip install -e <doxa-sdk 경로>

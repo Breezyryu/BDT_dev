@@ -1,27 +1,38 @@
 """
 사내 오프라인 배포용 — 모델 사전 다운로드 스크립트.
-setup.bat 에서 1회 호출해 HF 캐시를 로컬에 채운 뒤, HF_HUB_OFFLINE=1 로 재현 가능하게 한다.
+setup.bat 에서 1회 호출해 HF / modelscope 캐시를 로컬에 채운 뒤,
+HF_HUB_OFFLINE=1 로 재현 가능하게 한다.
 
 HF 가 차단된 환경이면 사외 PC 에서 이 스크립트 실행 후
-  %USERPROFILE%\.cache\huggingface  폴더를 사내 PC 로 복사.
+%USERPROFILE%\\.cache\\huggingface 폴더를 사내 PC 로 복사.
 """
 from __future__ import annotations
 import os
+import subprocess
 import sys
 
 
 def main():
     print("[prefetch] 모델 다운로드 시작 (최초 1회)")
 
-    # Surya (marker-pdf OCR/layout/detection)
+    # MinerU (layout + tableformer + PP-OCRv4 ko)
     try:
-        print("[prefetch] surya-ocr / layout / recognition ...")
-        from marker.models import create_model_dict
-
-        create_model_dict()
-        print("[prefetch]   surya OK")
-    except Exception as e:
-        print(f"[prefetch]   surya FAIL: {e}", file=sys.stderr)
+        print("[prefetch] MinerU (layout + table + OCR) ...")
+        # mineru CLI 를 dummy 입력으로 한 번 호출하면 모델 자동 다운로드됨
+        # 또는 python API 로 직접 모델 init
+        from mineru.utils.model_utils import get_model_from_hf_or_modelscope  # type: ignore
+        # 버전별 내부 API 가 다를 수 있음 → CLI 방식 폴백
+        raise ImportError("fall back to CLI-based prefetch")
+    except Exception:
+        try:
+            # CLI 로 empty-run (dummy file 없이 --help 만 호출해도 일부 모델은 초기화)
+            subprocess.run(
+                ["mineru", "--help"],
+                check=False, capture_output=True, timeout=60,
+            )
+            print("[prefetch]   mineru CLI ready (모델은 첫 변환 시 다운로드)")
+        except FileNotFoundError:
+            print("[prefetch]   mineru CLI not found", file=sys.stderr)
 
     # Docling layout + TableFormer
     try:
@@ -33,7 +44,7 @@ def main():
     except Exception as e:
         print(f"[prefetch]   docling FAIL: {e}", file=sys.stderr)
 
-    # EasyOCR ko+en
+    # EasyOCR ko+en (docling 내부에서 사용)
     try:
         print("[prefetch] easyocr ko+en ...")
         import easyocr

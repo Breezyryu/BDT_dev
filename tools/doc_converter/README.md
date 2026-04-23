@@ -5,10 +5,12 @@
 ## 지원 포맷
 | 입력 | 엔진 (순차 fallback) |
 |------|---------------------|
-| `.pdf` | marker-pdf (Surya OCR ko/en) → docling → pymupdf → markitdown |
+| `.pdf` | MinerU 2.5-Pro (한글/수식/표/이미지 SOTA) → docling → pymupdf → markitdown |
 | `.xlsx` | docling → pandas (custom_doc_props strip) → markitdown |
 | `.pptx` / `.docx` | docling → markitdown |
 | `.eml` / `.mht` | markitdown |
+
+**외부 AI SDK 없음** — 이전 파이프라인에 포함됐던 marker-pdf 는 anthropic/openai/google-genai 를 transitively 설치하므로 제외.
 
 ## 빠른 시작 (사내 PC)
 
@@ -38,9 +40,9 @@ convert.bat "C:\path\to\source_folder"
 - **Fasoo DRM xls/xlsx**: 사내 환경에서만 decrypt 가능. 사외 실행 시 COM 에러 발생
 
 ## 의존성
-- Python 3.12+
-- `requirements.txt` 참조 (docling, marker-pdf, markitdown, easyocr, pymupdf, pandas)
-- 최초 다운로드 모델 ~3GB (Surya, docling-layout, TableFormer, EasyOCR ko/en)
+- Python 3.12+, uv
+- `requirements.txt` 참조 (**mineru[core], docling, markitdown[pdf,pptx,docx], easyocr, pymupdf, pandas**)
+- 최초 다운로드 모델 ~3GB (MinerU layout + table + OCR, docling-layout, TableFormer, EasyOCR ko/en)
 
 ## 리포트
 변환 완료 후 `<output>/_conversion_report.md` 에 파일별 성공/실패 상세 기록.

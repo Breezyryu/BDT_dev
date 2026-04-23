@@ -54,9 +54,8 @@ if errorlevel 1 (
     echo [WARN] Combined install failed. Trying sequential install
     echo        (works around resolver conflicts with older PyPI mirrors).
     echo.
-    uv pip install "docling>=2.90,<3" || exit /b 1
-    uv pip install "marker-pdf>=1.10,<2" || exit /b 1
     uv pip install "mineru[core]>=3.1,<4" || exit /b 1
+    uv pip install "docling>=2.90,<3" || exit /b 1
     uv pip install "markitdown[pdf,pptx,docx]>=0.1,<1" || exit /b 1
     uv pip install "easyocr>=1.7" "pymupdf>=1.27" || exit /b 1
     uv pip install "pandas>=2.2" "openpyxl>=3.1" "tabulate>=0.10" ^

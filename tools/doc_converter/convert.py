@@ -1,14 +1,15 @@
 """
 문서 → Markdown + 이미지 변환 파이프라인 (로컬 OSS 전용, 외부 API 없음)
 
-- PDF   : marker-pdf (Surya OCR ko/en) → docling → pymupdf → markitdown
+- PDF   : MinerU 2.5-Pro (SOTA) → docling → pymupdf → markitdown
 - xlsx  : docling → pandas (in-memory custom_doc_props strip) → markitdown
 - pptx  : docling → markitdown
 - docx  : docling → markitdown
 - eml   : markitdown
 
 사용:
-    python convert.py <source_dir> [output_dir] [--force] [--pdf-only] [--failed-only]
+    python convert.py <source_dir> [output_dir] [--force]
+    (인자 없이 실행하면 tkinter 다이얼로그로 폴더 선택)
 
 환경변수:
     HF_HUB_OFFLINE=1       : 모델 재다운로드 차단 (모델 캐시된 후 오프라인 강제)
@@ -38,7 +39,6 @@ PDF_EXTS = {".pdf"}
 OFFICE_EXTS = {".docx", ".pptx", ".xlsx"}
 MARKITDOWN_EXTS = {".eml", ".mht", ".msg", ".html", ".htm"}
 
-_MARKER = None
 _DOCLING = None
 
 
@@ -50,41 +50,73 @@ def safe_stem(p: Path) -> str:
     return p.stem
 
 
-# ---------- marker-pdf ----------
-def get_marker():
-    global _MARKER
-    if _MARKER is not None:
-        return _MARKER
-    from marker.converters.pdf import PdfConverter
-    from marker.models import create_model_dict
+# ---------- MinerU 2.5-Pro (PDF 1순위) ----------
+def convert_mineru(src: Path, out_dir: Path) -> tuple[bool, str]:
+    """MinerU CLI 호출 (pipeline 백엔드, 외부 API 없음)."""
+    import shutil
+    import subprocess
 
-    _MARKER = PdfConverter(
-        artifact_dict=create_model_dict(),
-        config={"output_format": "markdown", "languages": "ko,en"},
-    )
-    return _MARKER
-
-
-def convert_marker(src: Path, out_dir: Path) -> tuple[bool, str]:
     try:
-        from marker.output import text_from_rendered
-
-        conv = get_marker()
-        rendered = conv(str(src))
-        text, _, images = text_from_rendered(rendered)
         stem = safe_stem(src)
-        md_path = out_dir / f"{stem}.md"
-        img_dir = out_dir / "images"
-        img_dir.mkdir(parents=True, exist_ok=True)
-        for img_name, img in images.items():
-            try:
-                img.save(img_dir / img_name)
-            except Exception:
-                pass
-        md_path.write_text(text, encoding="utf-8")
-        return True, f"marker OK ({md_path.stat().st_size:,} B, {len(images)} imgs)"
+        # mineru CLI 는 output 디렉토리 아래 <stem>/auto/ 또는 <stem>/office/ 에 결과물 생성
+        # out_dir/<stem>/ 에 정리하기 위해 임시 출력 디렉토리 사용
+        work = out_dir / f"_mineru_tmp_{stem}"
+        work.mkdir(parents=True, exist_ok=True)
+
+        result = subprocess.run(
+            [
+                "mineru",
+                "-p", str(src),
+                "-o", str(work),
+                "-b", "pipeline",
+                "-l", "korean",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3600,
+        )
+        if result.returncode != 0:
+            return False, f"mineru FAIL: exit {result.returncode}: {result.stderr[-300:]}"
+
+        # MinerU 출력 구조: work/<stem>/{auto|office}/<stem>.md + images/
+        md_candidates = list(work.rglob(f"{stem}.md"))
+        if not md_candidates:
+            return False, f"mineru FAIL: no MD produced in {work}"
+
+        # 첫 MD 를 out_dir/<stem>/ 으로 이동
+        md_src = md_candidates[0]
+        mineru_dir = md_src.parent  # <stem>/auto/ or <stem>/office/
+        final_dir = out_dir / stem
+        final_dir.mkdir(parents=True, exist_ok=True)
+
+        # MD 파일
+        md_dest = final_dir / f"{stem}.md"
+        shutil.copy2(md_src, md_dest)
+
+        # images/ 디렉토리 (있으면)
+        img_dir = mineru_dir / "images"
+        img_count = 0
+        if img_dir.exists():
+            dest_img = final_dir / "images"
+            dest_img.mkdir(exist_ok=True)
+            for img in img_dir.iterdir():
+                if img.is_file():
+                    shutil.copy2(img, dest_img / img.name)
+                    img_count += 1
+
+        # 임시 work 디렉토리 정리
+        shutil.rmtree(work, ignore_errors=True)
+
+        return True, f"mineru OK ({md_dest.stat().st_size:,} B, {img_count} imgs)"
+    except subprocess.TimeoutExpired:
+        return False, "mineru FAIL: timeout"
+    except FileNotFoundError:
+        return False, "mineru FAIL: mineru CLI 설치 안 됨 (uv pip install 'mineru[core]')"
     except Exception as e:
-        return False, f"marker FAIL: {type(e).__name__}: {e}"
+        return False, f"mineru FAIL: {type(e).__name__}: {e}"
 
 
 # ---------- docling ----------
@@ -255,7 +287,7 @@ def process_file(f: Path, out_root: Path, force: bool) -> tuple[bool, str]:
         return False, f"SKIP (DRM: {drm})"
 
     if ext in PDF_EXTS:
-        for fn in (convert_marker, convert_docling, convert_pymupdf, convert_markitdown):
+        for fn in (convert_mineru, convert_docling, convert_pymupdf, convert_markitdown):
             ok, msg = fn(f, out_dir)
             if ok:
                 return True, msg

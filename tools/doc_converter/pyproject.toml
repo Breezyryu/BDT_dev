@@ -5,13 +5,11 @@ description = "Document → Markdown local OSS pipeline + DoXA adapter"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    # 2026-04-22 테스트 환경에서 함께 설치 확인된 버전 대역
-    "docling>=2.90,<3",
-    "marker-pdf>=1.10,<2",
-    # markitdown: pdf/pptx/docx 만. [all] 은 OpenAI/Azure/YouTube 등 클라우드 extras 포함
-    "markitdown[pdf,pptx,docx]>=0.1,<1",
-    # mineru: core 만. pypi 버전 3.x (model 버전 2.5-Pro 와 별개)
+    # 2026-04-22 Python 3.12.12 + uv 환경에서 함께 설치 확인.
+    # 외부 AI SDK (anthropic/openai/google-genai) 끌어오는 marker-pdf 제외.
     "mineru[core]>=3.1,<4",
+    "docling>=2.90,<3",
+    "markitdown[pdf,pptx,docx]>=0.1,<1",
     "easyocr>=1.7",
     "pymupdf>=1.27",
     "pandas>=2.2",
