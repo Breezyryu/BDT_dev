@@ -3058,12 +3058,11 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                     "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Temp, ax3, 0, 50, 5,
                     "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
+        # 1-6 ax6: RndV 단독 (AvgV 는 탭2 2-3 으로 이동됨)
         artists.append(graph_cycle(_x, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
-                    "Cycle", "Rest End Voltage (V)", "_nolegend_", xscale, color))
+                    "Cycle", "Rest End Voltage (V)", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
                           "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
-        artists.append(graph_cycle_empty(_x, df.NewData.AvgV, ax6, 3.00, 4.00, 0.1,
-                          "Cycle", "Average/Discharge Rest Voltage (V)", temp_lgnd, xscale, color))
         _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
         _dcir_es = THEME['SCATTER_EMPTY_SIZE'] * 3
         if dcir.isChecked() and not df.NewData["dcir2"].dropna().empty:
@@ -3095,6 +3094,73 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
     except Exception as e:
         logger.warning('graph_output_cycle 오류: %s — %s', temp_lgnd, e)
         return artists, color
+
+
+def graph_output_cycle_tab2(df, xscale, temp_lgnd, colorno, graphcolor,
+                            ax1, ax2, ax3, ax4, ax5, ax6):
+    """탭2(상세) 2×3 그래프 — 용량/전압/에너지 중심.
+
+    축 매핑:
+      ax1: Discharge Capacity Ratio (Dchg)      ← 탭1 1-1 과 동일 참조
+      ax2: Charge Capacity Ratio (Chg)
+      ax3: Average Discharge Voltage (AvgV)      ← 탭1 ax6 에서 이동
+      ax4: Discharge Energy (DchgEng, Wh)
+      ax5: Charge Rest End Voltage (RndV_chg_rest, 만충 OCV)
+      ax6: Discharge Rest End Voltage (RndV, 방전 후 OCV)
+
+    Parameters 는 graph_output_cycle 와 동일 패턴. 같은 colorno·graphcolor 를
+    쓰면 채널별 색상이 탭1/탭2 에서 자동 일치한다.
+
+    Returns
+    -------
+    (artists, color)
+        artists: 이 탭2 에서 그린 모든 scatter artist 리스트
+        color  : 이 채널의 대표 색상
+    """
+    artists = []
+    color = graphcolor[colorno % len(THEME['PALETTE'])]
+    try:
+        if 'Cycle' in df.NewData.columns:
+            _x = df.NewData['Cycle'].values
+        else:
+            _x = df.NewData.index.values
+        nd = df.NewData
+        # 2-1 Dchg (ratio) — 탭1 ax1 과 동일 데이터, 참조용
+        artists.append(graph_cycle(_x, nd.Dchg, ax1, 0.70, 1.02, 0.05,
+                    "Cycle", "Discharge Capacity Ratio",
+                    temp_lgnd, xscale, color))
+        # 2-2 Chg (ratio)
+        if 'Chg' in nd.columns:
+            artists.append(graph_cycle(_x, nd.Chg, ax2, 0.70, 1.02, 0.05,
+                    "Cycle", "Charge Capacity Ratio",
+                    temp_lgnd, xscale, color))
+        # 2-3 Average Discharge Voltage (탭1 ax6 에서 이동)
+        if 'AvgV' in nd.columns:
+            artists.append(graph_cycle(_x, nd.AvgV, ax3, 3.00, 4.00, 0.1,
+                    "Cycle", "Average Discharge Voltage (V)",
+                    temp_lgnd, xscale, color))
+        # 2-4 Discharge Energy
+        if 'DchgEng' in nd.columns:
+            artists.append(graph_cycle(_x, nd.DchgEng, ax4, 0, 15, 1,
+                    "Cycle", "Discharge Energy (Wh)",
+                    temp_lgnd, xscale, color))
+        # 2-5 Charge Rest End Voltage (RndV_chg_rest — Step 1 에서 생성한 파생)
+        if ('RndV_chg_rest' in nd.columns
+                and not nd['RndV_chg_rest'].dropna().empty):
+            artists.append(graph_cycle(
+                _x, nd.RndV_chg_rest, ax5, 4.00, 4.25, 0.05,
+                "Cycle", "Charge Rest End Voltage (V)",
+                temp_lgnd, xscale, color))
+        # 2-6 Discharge Rest End Voltage (기존 RndV — 방전 후 OCV min)
+        if 'RndV' in nd.columns:
+            artists.append(graph_cycle(_x, nd.RndV, ax6, 2.80, 3.20, 0.05,
+                    "Cycle", "Discharge Rest End Voltage (V)",
+                    temp_lgnd, xscale, color))
+        return artists, color
+    except Exception as e:
+        logger.warning('graph_output_cycle_tab2 오류: %s — %s', temp_lgnd, e)
+        return artists, color
+
 
 def _opaque_legend_markers(*axes):
     '''범례 마커 alpha를 1.0으로 설정 (scatter alpha와 독립)'''
@@ -20987,18 +21053,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     nrows=2, ncols=3, figsize=(_fig_w, 8))
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
 
-                # ── 상세(탭2) placeholder figure (Step 2) ──
-                # Step 3 에서 실제 그래프 (2×3: Dchg/Chg/AvgV/DchgEng/RndV_chg_rest/RndV) 로 덮어씀
+                # ── 상세(탭2) figure — Step 3: 실제 그래프 ──
+                # (2×3: Dchg / Chg / AvgV / DchgEng / RndV_chg_rest / RndV)
                 fig2, axes_b_grid = plt.subplots(
                     nrows=2, ncols=3, figsize=(_fig_w, 8))
-                axes_list_b = [axes_b_grid[_r][_c] for _r in range(2) for _c in range(3)]
-                for _ax_b in axes_list_b:
-                    _ax_b.text(0.5, 0.5, '상세 그래프 (Step 3)',
-                               ha='center', va='center',
-                               transform=_ax_b.transAxes,
-                               fontsize=10, color='#888')
-                    _ax_b.set_xticks([])
-                    _ax_b.set_yticks([])
+                ax1b, ax2b, ax3b = axes_b_grid[0]
+                ax4b, ax5b, ax6b = axes_b_grid[1]
+                axes_list_b = [ax1b, ax2b, ax3b, ax4b, ax5b, ax6b]
 
                 tab = None
                 tab_layout = None
@@ -21123,6 +21184,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _plot_colorno, graphcolor, self.mkdcir,
                                 ax1, ax2, ax3, ax4, ax5, ax6
                             )
+                            # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
+                            _artists_b, _ = graph_output_cycle_tab2(
+                                _wrapper, xscale, lgnd,
+                                _plot_colorno, graphcolor,
+                                ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
+                            )
+                            _all_artists = _artists + _artists_b
 
                             _ch = info['ch_label']
                             _base = _ch
@@ -21131,11 +21199,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _ch = f"{_base} ({_sfx})"
                                 _sfx += 1
                             if _ch in channel_map:
-                                channel_map[_ch]['artists'].extend(_artists)
+                                channel_map[_ch]['artists'].extend(_all_artists)
                             else:
-                                channel_map[_ch] = {'artists': _artists, 'color': _color}
+                                channel_map[_ch] = {'artists': _all_artists, 'color': _color}
                             sub_channel_map[sub_label] = {
-                                'artists': list(_artists), 'color': _color, 'parent': _ch}
+                                'artists': list(_all_artists), 'color': _color, 'parent': _ch}
 
                         # 개별: sub 수만큼 증가 / 통합: 그룹 1개분만 증가
                         if is_individual:
@@ -21206,6 +21274,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         colorno, graphcolor, self.mkdcir,
                                         ax1, ax2, ax3, ax4, ax5, ax6
                                     )
+                                    # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
+                                    _artists_b, _ = graph_output_cycle_tab2(
+                                        cyctemp[1], xscale, lgnd,
+                                        colorno, graphcolor,
+                                        ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
+                                    )
+                                    _all_artists = _artists + _artists_b
 
                                     _base = ch_label
                                     _sfx = 2
@@ -21213,9 +21288,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         ch_label = f"{_base} ({_sfx})"
                                         _sfx += 1
                                     if ch_label in channel_map:
-                                        channel_map[ch_label]['artists'].extend(_artists)
+                                        channel_map[ch_label]['artists'].extend(_all_artists)
                                     else:
-                                        channel_map[ch_label] = {'artists': _artists, 'color': _color}
+                                        channel_map[ch_label] = {'artists': _all_artists, 'color': _color}
 
                                     _sub_base = sub_label
                                     _sub_sfx = 2
@@ -21223,7 +21298,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         sub_label = f"{_sub_base} ({_sub_sfx})"
                                         _sub_sfx += 1
                                     sub_channel_map[sub_label] = {
-                                        'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                                        'artists': list(_all_artists), 'color': _color, 'parent': ch_label}
 
                                     if is_individual:
                                         colorno += 1
@@ -21257,6 +21332,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 축 범위 자동 조정 (xlim 동기화, ylim 확장, DCIR 상한 제한)
                 if has_valid_data:
                     _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale)
+                    # 탭2(상세) xlim 을 탭1 ax1 에 동기화
+                    _x1_lim = ax1.get_xlim()
+                    for _ax_b in axes_list_b:
+                        _ax_b.set_xlim(_x1_lim)
 
                 if has_valid_data:
                     n_legend = len(channel_map)
