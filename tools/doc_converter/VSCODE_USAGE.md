@@ -9,23 +9,26 @@
   irm https://astral.sh/uv/install.ps1 | iex
   ```
 
-## 가상환경 위치 규칙 (중요)
+## 가상환경 분리 (중요)
 
-사내 표준 레이아웃:
+**doc_converter 는 BDT 와 별도 venv 를 사용합니다.** 이유:
+1. BDT `.venv` 오염 방지 (문서 변환 의존성 ~5GB: torch/docling/mineru/marker-pdf 등)
+2. **DataTool.exe PyInstaller 번들에 절대 포함되지 않도록** 격리 (BDT 메인 코드가 이 라이브러리를 import 하지 않음)
+3. 문서 변환 파이프라인을 선택적으로 설치/제거 가능
+
+표준 레이아웃:
 ```
 <workdir>/
-├── .venv/              ← uv 가상환경 (BDT_code 형제)
-└── BDT_code/           ← git clone 저장소
+├── .venv/                  ← BDT 전용 uv venv (BDT_code 형제)
+└── BDT_code/               ← git clone 저장소
     └── tools/
         └── doc_converter/
-            └── .venv/  ← setup.bat 이 공유 venv 로 junction 생성 (자동)
+            └── .venv/      ← doc_converter 전용 uv venv (로컬)
 ```
 
-`setup.bat` 은 자동으로 탐지:
-1. `<BDT_code>/../.venv` (사내 표준) 있으면 → `tools/doc_converter/.venv` 로 **junction 연결**
-2. 없으면 → `tools/doc_converter/.venv` 에 **uv venv 로 신규 생성**
+`setup.bat` (기본값): `tools/doc_converter/.venv` 에 별도 venv 생성.
 
-→ **VS Code 설정과 `.bat` 런처는 모두 `tools/doc_converter/.venv/Scripts/python.exe` 로 일관 접근** (junction 투명하게 동작)
+`setup.bat --shared` (선택): BDT .venv 공유 (junction). 디스크는 아끼지만 BDT venv 비대화.
 
 ## 사용 방식 (둘 중 하나 선택)
 
