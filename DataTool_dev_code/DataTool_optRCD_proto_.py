@@ -3327,6 +3327,32 @@ def place_dcir_labels(ax4):
     if dcir_median is not None:
         ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
 
+def _auto_adjust_axes_y_from_data(axes):
+    """각 ax 의 scatter 데이터 기반 ylim 확장 (각 축 독립).
+
+    graph_cycle 에서 설정된 초기 ylim 을 존중하되, 데이터가 범위 밖이면 확장.
+    탭2(상세) 등 축별 지표가 다양한 경우에도 데이터 가시성 보장.
+    """
+    for ax in axes:
+        ys = []
+        for coll in ax.collections:
+            offs = coll.get_offsets()
+            if len(offs) > 0:
+                y = np.array(offs[:, 1], dtype=float)
+                valid = y[~np.isnan(y)]
+                if len(valid) > 0:
+                    ys.extend(valid.tolist())
+        if not ys:
+            continue
+        y_min, y_max = min(ys), max(ys)
+        cur_low, cur_high = ax.get_ylim()
+        _pad = (y_max - y_min) * 0.05 if y_max > y_min else 0.01
+        new_low = min(cur_low, y_min - _pad)
+        new_high = max(cur_high, y_max + _pad)
+        if new_low < new_high:
+            ax.set_ylim(new_low, new_high)
+
+
 def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
     """사이클 그래프 축 범위 자동 조정
     - xlim: 전체 채널 데이터 기반 x축 동기화 (마지막 채널 덮어쓰기 방지)
@@ -21433,10 +21459,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # 축 범위 자동 조정 (xlim 동기화, ylim 확장, DCIR 상한 제한)
                 if has_valid_data:
                     _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale)
-                    # 탭2(상세) xlim 을 탭1 ax1 에 동기화
+                    # 탭2(상세) 스타일 통일: xlim/xticks 동기화 + ylim 데이터 기반 확장
                     _x1_lim = ax1.get_xlim()
+                    _x1_ticks = ax1.get_xticks()
                     for _ax_b in axes_list_b:
                         _ax_b.set_xlim(_x1_lim)
+                        _ax_b.set_xticks(_x1_ticks)
+                    _auto_adjust_axes_y_from_data(axes_list_b)
 
                 if has_valid_data:
                     n_legend = len(channel_map)
