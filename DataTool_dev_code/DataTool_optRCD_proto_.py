@@ -19004,41 +19004,45 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for cr in classify_info
             ]
         _use_subtabs = bool(extra_figs)
-        # 채널이 있을 때만 제어 위젯 추가 (토글 버튼만 레이아웃에 들어감)
+        # Canvas 가 탭 폭을 꽉 채우도록 Expanding 정책 명시
+        from PyQt6.QtWidgets import QSizePolicy as _QSP
+        try:
+            canvas.setSizePolicy(_QSP.Policy.Expanding, _QSP.Policy.Expanding)
+        except Exception:
+            pass
+        # 채널이 있을 때만 제어 위젯 추가
+        toggle_btn = None
         if channel_map:
             toggle_btn = self._create_cycle_channel_control(
                 channel_map, canvas, fig, axes_list, args_parent_tab=tab,
                 sub_channel_map=sub_channel_map,
                 save_context=save_context)
-            # 서브탭 모드: 외부 toolbar_row 에는 toggle_btn 만 (toolbar 는 서브탭 내부로 이동)
-            # 단일 모드: 기존 toolbar + toggle_btn 한 줄 배치
-            toolbar_row = QHBoxLayout()
-            toolbar_row.setContentsMargins(0, 0, 0, 0)
-            toolbar_row.setSpacing(4)
-            if not _use_subtabs:
-                toolbar_row.addWidget(toolbar)
-            toolbar_row.addStretch()
-            toolbar_row.addWidget(toggle_btn)
-            tab_layout.addLayout(toolbar_row)
-        else:
-            if not _use_subtabs:
-                tab_layout.addWidget(toolbar)
 
         # ── 사이클 카테고리 분류 정보 바 ──
+        info_label = None
         if classify_info:
             info_label = self._build_classify_info_label(
                 classify_info, classify_by_group,
                 voltage_condition_text=voltage_condition_text,
                 group_names=group_names)
-            if info_label:
-                tab_layout.addWidget(info_label)
-                # 자동 접기용 팝업 참조 등록
+            if info_label and hasattr(info_label, '_collapse_popup'):
                 if not hasattr(self, '_classify_popups'):
                     self._classify_popups = []
-                if hasattr(info_label, '_collapse_popup'):
-                    self._classify_popups.append(info_label._collapse_popup)
+                self._classify_popups.append(info_label._collapse_popup)
 
         if _use_subtabs:
+            # ── 서브탭 모드: classify_info + toggle_btn 한 줄 통합 ──
+            if info_label is not None or toggle_btn is not None:
+                header_row = QHBoxLayout()
+                header_row.setContentsMargins(0, 0, 0, 0)
+                header_row.setSpacing(4)
+                if info_label is not None:
+                    header_row.addWidget(info_label, 1)  # info 가 가로 stretch 독점
+                else:
+                    header_row.addStretch(1)
+                if toggle_btn is not None:
+                    header_row.addWidget(toggle_btn)
+                tab_layout.addLayout(header_row)
             # ── 서브탭 구성 (외부 탭 내부에 QTabWidget 중첩) ──
             from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget as _QW
             from matplotlib.backends.backend_qtagg import (
@@ -19051,23 +19055,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _l1.setContentsMargins(0, 0, 0, 0)
             _l1.setSpacing(0)
             _l1.addWidget(toolbar)
-            _l1.addWidget(canvas)
+            _l1.addWidget(canvas, 1)  # canvas 가 세로 stretch 독점
             inner.addTab(_s1, titles[0] if len(titles) > 0 else "요약")
             # subtab N+1: extra_figs 각각 자체 toolbar 생성
             for _i, _ef in enumerate(extra_figs):
                 _ec = FigureCanvas(_ef)
+                try:
+                    _ec.setSizePolicy(_QSP.Policy.Expanding, _QSP.Policy.Expanding)
+                except Exception:
+                    pass
                 _et = NavigationToolbar(_ec, None)
                 _sn = _QW()
                 _ln = QVBoxLayout(_sn)
                 _ln.setContentsMargins(0, 0, 0, 0)
                 _ln.setSpacing(0)
                 _ln.addWidget(_et)
-                _ln.addWidget(_ec)
+                _ln.addWidget(_ec, 1)
                 _t = (titles[_i + 1] if len(titles) > _i + 1
                       else f"상세{_i + 1}")
                 inner.addTab(_sn, _t)
             inner.setCurrentIndex(0)   # 기본 "요약"
-            tab_layout.addWidget(inner)
+            tab_layout.addWidget(inner, 1)  # inner 가 세로 공간 전부 차지
             # extra figs tight_layout
             for _ef in extra_figs:
                 try:
@@ -19075,7 +19083,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 except Exception:
                     pass
         else:
-            tab_layout.addWidget(canvas)
+            # ── 단일 모드 (하위 호환): 기존 레이아웃 유지 ──
+            if toggle_btn is not None:
+                toolbar_row = QHBoxLayout()
+                toolbar_row.setContentsMargins(0, 0, 0, 0)
+                toolbar_row.setSpacing(4)
+                toolbar_row.addWidget(toolbar)
+                toolbar_row.addWidget(toggle_btn)
+                tab_layout.addLayout(toolbar_row)
+            else:
+                tab_layout.addWidget(toolbar)
+            if info_label is not None:
+                tab_layout.addWidget(info_label)
+            tab_layout.addWidget(canvas, 1)
 
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
