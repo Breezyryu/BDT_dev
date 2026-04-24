@@ -3077,22 +3077,11 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                     "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Temp, ax3, 0, 50, 5,
                     "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
-        # 1-6 ax6: 충전 후 Rest 종료 = 방전 직전 전압 (만충 OCV ≈ 4.1V)
-        # RndV_chg_rest (Step 1 신규 파생) 가 있으면 우선, 없거나 전부 NaN 이면
-        # 기존 RndV (pivot Ocv min) 로 폴백 — 안전망
-        _rest_series = None
-        _rest_ylow, _rest_yhi, _rest_ystep = 4.00, 4.25, 0.05
-        if ('RndV_chg_rest' in df.NewData.columns
-                and not df.NewData.RndV_chg_rest.dropna().empty):
-            _rest_series = df.NewData.RndV_chg_rest
-        elif 'RndV' in df.NewData.columns:
-            _rest_series = df.NewData.RndV
-            _rest_ylow, _rest_yhi, _rest_ystep = 3.00, 4.00, 0.1
-        if _rest_series is not None:
-            artists.append(graph_cycle(
-                _x, _rest_series, ax6,
-                _rest_ylow, _rest_yhi, _rest_ystep,
-                "Cycle", "Rest End Voltage (V)", temp_lgnd, xscale, color))
+        # 1-6 ax6: Rest End Voltage = 충전 직전 V = 방전 후 Rest 종료 OCV
+        # (= 기존 RndV, pivot Ocv.min 이 실제로 방전 후 OCV 를 캡처)
+        # 2-5 (Charge Rest End V = RndV_chg_rest) 와 의미가 다름
+        artists.append(graph_cycle(_x, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
+                    "Cycle", "Rest End Voltage (V)", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
                           "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
         _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
