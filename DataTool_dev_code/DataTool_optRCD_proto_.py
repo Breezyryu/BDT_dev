@@ -978,6 +978,25 @@ def _ensure_rndv_split_columns(
     if not _chg_volt.empty:
         nd['RndV_chg_rest'] = nd['OriCyc'].map(_chg_volt)
 
+    # 진단: 결과 전부 NaN 이면 원인 추적 로그
+    if nd['RndV_chg_rest'].dropna().empty:
+        try:
+            _cond_dist = (cycleraw['Condition'].value_counts().to_dict()
+                          if len(cycleraw) > 0 else {})
+            _cm_types = set()
+            if cycle_map:
+                for _e in cycle_map.values():
+                    _cm_types.add(type(_e).__name__)
+            _perf_logger.warning(
+                '_ensure_rndv_split_columns: RndV_chg_rest 전부 NaN — '
+                f'cycle_map entries={len(cycle_map) if cycle_map else 0} '
+                f'entry types={_cm_types} '
+                f'chg_rest_tcs={len(chg_rest_tcs)} '
+                f'rest_rows(Condition=={rest_cond})={len(rest_rows)} '
+                f'Condition dist={_cond_dist}')
+        except Exception:
+            pass
+
     return nd
 
 
@@ -3058,9 +3077,22 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                     "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Temp, ax3, 0, 50, 5,
                     "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
-        # 1-6 ax6: RndV 단독 (AvgV 는 탭2 2-3 으로 이동됨)
-        artists.append(graph_cycle(_x, df.NewData.RndV, ax6, 3.00, 4.00, 0.1,
-                    "Cycle", "Rest End Voltage (V)", temp_lgnd, xscale, color))
+        # 1-6 ax6: 충전 후 Rest 종료 = 방전 직전 전압 (만충 OCV ≈ 4.1V)
+        # RndV_chg_rest (Step 1 신규 파생) 가 있으면 우선, 없거나 전부 NaN 이면
+        # 기존 RndV (pivot Ocv min) 로 폴백 — 안전망
+        _rest_series = None
+        _rest_ylow, _rest_yhi, _rest_ystep = 4.00, 4.25, 0.05
+        if ('RndV_chg_rest' in df.NewData.columns
+                and not df.NewData.RndV_chg_rest.dropna().empty):
+            _rest_series = df.NewData.RndV_chg_rest
+        elif 'RndV' in df.NewData.columns:
+            _rest_series = df.NewData.RndV
+            _rest_ylow, _rest_yhi, _rest_ystep = 3.00, 4.00, 0.1
+        if _rest_series is not None:
+            artists.append(graph_cycle(
+                _x, _rest_series, ax6,
+                _rest_ylow, _rest_yhi, _rest_ystep,
+                "Cycle", "Rest End Voltage (V)", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Eff2, ax5, 0.996, 1.008, 0.002,
                           "Cycle", "Charge/Discharge Efficiency", temp_lgnd, xscale, color))
         _dcir_s = THEME['SCATTER_SIZE'] * 3  # DC-IR scatter 크기 증가
