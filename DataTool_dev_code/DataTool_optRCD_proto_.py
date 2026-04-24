@@ -20847,6 +20847,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         excel_groups = [g for g in groups if g.data_type == 'excel']
         folder_groups = [g for g in groups if g.data_type == 'folder']
 
+        # 진단: folder_groups 구조 요약 (연결처리 이슈 추적용)
+        try:
+            _mode_s = '개별' if is_individual else '통합'
+            _perf_logger.info(
+                f'  [탭생성] mode={_mode_s}  excel_groups={len(excel_groups)}  folder_groups={len(folder_groups)}')
+            for _gi, _g in enumerate(folder_groups):
+                _perf_logger.info(
+                    f'    group#{_gi}  name={_g.name!r}  '
+                    f'paths={len(_g.paths)}  is_link={_g.is_link}  '
+                    f'file_idx={_g.file_idx}')
+        except Exception:
+            pass
+
         tab_no = 0
         writecolno = 0
         self.progressBar.setValue(0)
@@ -21068,7 +21081,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             _user_irscale = irscale
             _folder_errors = []  # 탭별 에러 수집
 
+            # 진단: tab_units 구성 요약 (연결처리 이슈 추적용)
+            try:
+                for _ti, _gi_list in enumerate(tab_units):
+                    _names = [folder_groups[_gi].name for _gi in _gi_list]
+                    _perf_logger.info(
+                        f'    tab_unit#{_ti}  group_indices={_gi_list}  '
+                        f'names={_names}')
+            except Exception:
+                pass
+
             for tab_idx, group_indices in enumerate(tab_units):
+                _perf_logger.info(
+                    f'  [탭 {tab_idx + 1}/{total_tabs}] 시작 — group_indices={group_indices}')
                 # 탭 단위로 auto-detect 값 리셋
                 xscale = _user_xscale
                 irscale = _user_irscale
