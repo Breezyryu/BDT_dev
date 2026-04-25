@@ -4298,11 +4298,43 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         except Exception:
             _cycle_map = None
         if len(df.NewData) > 0:
-            # TC 1원화: OriCyc(TC)를 Cycle로 사용
-            if 'OriCyc' in df.NewData.columns and df.NewData['OriCyc'].notna().any():
-                df.NewData.insert(0, "Cycle", df.NewData['OriCyc'].astype(int).values)
-            else:
-                df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
+            # ── Cycle 컬럼 부여 ──
+            # Toyo TotlCycle 은 step 단위로 카운팅되므로 (한 사이클 = 다단 충전 + 방전 + Rest)
+            # cycle_map 이 있으면 OriCyc(step TC) → 논리사이클 변환 적용
+            # cycle_map 없거나 매핑 실패 시 폴백
+            _cycle_assigned = False
+            if _cycle_map and 'OriCyc' in df.NewData.columns:
+                # TC → 논리사이클 역매핑 (PNE 와 동일 패턴, value 형식 dict/tuple/int 모두 처리)
+                _tc_to_ln: dict[int, int] = {}
+                _is_sweep = False
+                for _ln, _tc_val in _cycle_map.items():
+                    if isinstance(_tc_val, dict) and 'all' in _tc_val:
+                        _s, _e = _tc_val['all']
+                        if _s != _e:
+                            _is_sweep = True
+                        for _t in range(int(_s), int(_e) + 1):
+                            _tc_to_ln[_t] = _ln
+                    elif isinstance(_tc_val, (tuple, list)) and len(_tc_val) == 2:
+                        _s, _e = _tc_val
+                        if _s != _e:
+                            _is_sweep = True
+                        for _t in range(int(_s), int(_e) + 1):
+                            _tc_to_ln[_t] = _ln
+                    elif isinstance(_tc_val, (int, np.integer)):
+                        _tc_to_ln[int(_tc_val)] = _ln
+                if _tc_to_ln:
+                    _logical_col = df.NewData['OriCyc'].astype(int).map(_tc_to_ln)
+                    if _logical_col.notna().any():
+                        df.NewData.insert(
+                            0, "Cycle",
+                            _logical_col.fillna(0).astype(int).values)
+                        _cycle_assigned = True
+            # 폴백: cycle_map 없거나 매핑 실패 → OriCyc 그대로 사용
+            if not _cycle_assigned:
+                if 'OriCyc' in df.NewData.columns and df.NewData['OriCyc'].notna().any():
+                    df.NewData.insert(0, "Cycle", df.NewData['OriCyc'].astype(int).values)
+                else:
+                    df.NewData.insert(0, "Cycle", range(1, len(df.NewData) + 1))
         df.cycle_map = _cycle_map if _cycle_map else {}
         # ── 충전 전용 사이클 df.NewData에 추가 (스윕 시험만) ──
         # 스윕 시험에서 cycle_map에는 있지만 df.NewData에 없는 논리사이클 = 충전 전용 (화성 등)
