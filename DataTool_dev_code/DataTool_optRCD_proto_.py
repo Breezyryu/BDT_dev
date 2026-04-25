@@ -511,6 +511,7 @@ def disconnect_change(button):
     button.setStyleSheet(f"color: {color.name()}")
 
 # 충방전기 구분 (패턴 폴더 유무로 구분)
+@functools.lru_cache(maxsize=512)
 def check_cycler(raw_file_path):
     """충방전기 데이터 폴더로 PNE와 Toyo를 구분한다.
 
@@ -518,6 +519,10 @@ def check_cycler(raw_file_path):
     1. Pattern 폴더 존재 → PNE
     2. Restore 폴더 내 SaveData CSV 존재 → PNE (Pattern 없는 GITT 등 대응)
     3. 그 외 → Toyo
+
+    네트워크 드라이브에서 os.path.isdir/os.listdir 비용이 50-200ms 이므로
+    경로 단위 lru_cache 로 반복 호출 비용 0 으로 줄임.
+    무효화는 `_reset_all_caches()` 에서 일괄 처리.
 
     Returns
     -------
@@ -565,6 +570,7 @@ def is_pne_folder(data_path: str) -> bool:
     return check_cycler(data_path)
 
 
+@functools.lru_cache(maxsize=256)
 def _quick_max_cycle(data_path: str, mincapacity: float = 0) -> int | None:
     """경로의 첫 채널 폴더에서 최대 **논리 사이클** 수를 빠르게 추정
 
@@ -578,6 +584,10 @@ def _quick_max_cycle(data_path: str, mincapacity: float = 0) -> int | None:
       1) 연속 동일 Condition 행을 하나의 이벤트로 병합 (다단 CC 충전 등)
       2) 병합 후 Condition==2(방전) 중 Cap > mincapacity/60 만 카운트
       3) mincapacity가 없으면 경로명에서 추출, 그래도 없으면 첫 사이클에서 추정
+
+    네트워크 드라이브 환경에서 os.scandir + check_cycler + get_cycle_map 의
+    비용이 누적되므로 (path, cap) 키 lru_cache 로 반복 호출 비용 0 으로 줄임.
+    무효화는 `_reset_all_caches()` 에서 일괄 처리.
 
     Parameters
     ----------
@@ -784,6 +794,9 @@ def _reset_all_caches():
     _get_pne_sch_parsed.cache_clear()
     _sch_total_seconds.cache_clear()
     _find_sch_file.cache_clear()
+    # 경로 단위 IO 캐시 (Step 1 패치)
+    check_cycler.cache_clear()
+    _quick_max_cycle.cache_clear()
     # 경로 메타 인스턴스 캐시 초기화
     WindowClass._path_meta_cache.clear()
 
