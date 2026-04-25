@@ -22007,9 +22007,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             finally:
                 tbl.blockSignals(False)
 
-        # ── 새 경로가 유효하면 자동 채우기 ──
+        # ── 새 경로가 유효하면 자동 채우기 (light: IO 0, col0/col3 만) ──
+        # 채널·TC 등 무거운 IO 는 confirm 시점에 일괄 처리.
         if new_path:
-            self._autofill_row(row)
+            self._autofill_row(row, mode='light')
 
         # ── 행→경로 매핑 갱신 ──
         if new_path:
@@ -22326,7 +22327,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._path_meta_cache[path] = result
         return result
 
-    def _autofill_row(self, row: int, *, link_info: dict | None = None) -> None:
+    def _autofill_row(self, row: int, *, link_info: dict | None = None,
+                      mode: str = 'full') -> None:
         """단일 행의 빈 셀을 경로 기반 메타데이터로 자동 채우기.
 
         Parameters
@@ -22336,6 +22338,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         link_info : dict | None
             연결 모드 정보. {'is_first': bool, 'first_meta': dict}.
             None이면 연결 모드 아님.
+        mode : str
+            'light': IO 없는 경량 채우기 (col0 시험명·col3 용량만, IO 0).
+                     col2 채널·col4 TC 은 비워둠 (confirm 시점에 full 채워짐).
+            'full' (기본): 기존 동작. scandir + cycle_map 으로 모든 컬럼 채움.
+            paste·셀 입력 직후엔 'light' 호출, confirm 진입부에선 'full' 호출.
         """
         tbl = self.cycle_path_table
         path = self._get_table_cell(row, 1)
@@ -22349,7 +22356,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _has_hint = bool(hint_name and hint_ch and hint_cap)
 
         # 힌트 완비 시 캐시에 이미 있으면 경량 검증만
-        meta = self._resolve_path_meta(path)
+        # mode='light': IO 없는 경량 메타 (col0/col3 만 산출).
+        # mode='full': 기존 IO 포함 메타 (모든 컬럼).
+        if mode == 'light':
+            meta = self._resolve_path_meta_light(path)
+        else:
+            meta = self._resolve_path_meta(path)
         if meta is None:
             return
 
@@ -22438,11 +22450,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         finally:
             tbl.blockSignals(False)
 
-    def _autofill_table_empty_cells(self):
+    def _autofill_table_empty_cells(self, *, mode: str = 'full'):
         """전체 테이블 자동 채우기 — _autofill_row 기반.
 
         경로파일 로드, Ctrl+V, 사이클 분석 실행 등 전체 행 갱신이 필요할 때 사용.
         연결 모드: 그룹 내 사이클/Loop 누적 합산 후 첫 행 힌트에 반영.
+
+        Parameters
+        ----------
+        mode : str
+            'full' (기본): 기존 동작 — scandir + cycle_map 으로 모든 컬럼 채움.
+                           confirm 진입부 등 Step 3 미명시 호출자 모두 이 경로.
+            'light': paste·셀 입력 직후 IO 없는 경량 채우기 (col0/col3 만).
+                     네트워크 드라이브 환경에서 즉시 응답 보장.
+                     channel·TC 는 비워둠 (다음 confirm 시 full 로 채워짐).
         """
         tbl = self.cycle_path_table
         link_mode = self.chk_link_cycle.isChecked()
@@ -22454,18 +22475,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if not path:
                 first_meta = None  # 빈 행 = 그룹 구분자
                 continue
-            meta = self._resolve_path_meta(path)
+            # mode 따라 light/full 메타 해석
+            if mode == 'light':
+                meta = self._resolve_path_meta_light(path)
+            else:
+                meta = self._resolve_path_meta(path)
             is_grp_first = (first_meta is None)
             if is_grp_first:
                 first_meta = meta
             if link_mode:
                 self._autofill_row(r, link_info={
-                    'is_first': is_grp_first, 'first_meta': first_meta})
+                    'is_first': is_grp_first, 'first_meta': first_meta},
+                    mode=mode)
             else:
-                self._autofill_row(r)
+                self._autofill_row(r, mode=mode)
 
         # ── 연결 모드: 사이클/Loop 누적 합산 (첫 행 힌트 보정) ──
-        if link_mode:
+        # light 모드에서는 cycle 정보가 없으므로 누적 hint skip
+        if link_mode and mode == 'full':
             self._autofill_link_cumulative_hints()
 
         # ── 후처리 ──
@@ -22821,8 +22848,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._set_table_rows(rows)
         # 파일 로드 후 ECT 열 상태 명시적 갱신 (새 셀 생성으로 flag 초기화됨)
         self._update_ect_columns_state()
-        # 경로 파일 로드 후 자동 채우기 (경로명, 채널, 용량, 최대사이클)
-        self._autofill_table_empty_cells()
+        # 경로 파일 로드 후 light 자동 채우기 (경로명·용량만, IO 0).
+        # 채널·TC 는 다음 confirm 시 자동 full 채워짐.
+        self._autofill_table_empty_cells(mode='light')
 
     def _save_table_to_path_file(self):
         """테이블 내용을 6열 탭구분 Path 파일로 저장
@@ -23007,7 +23035,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _pasted_cols.add(start_col + ci)
         if 1 in _pasted_cols:
             self._update_group_separators()
-            self._autofill_table_empty_cells()
+            # paste 직후엔 light 만 (IO 0). 채널·TC 는 confirm 시점에 채워짐.
+            self._autofill_table_empty_cells(mode='light')
 
     def _cycle_table_delete(self):
         """선택 셀 내용 삭제"""
@@ -23948,7 +23977,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         finally:
             tbl.blockSignals(False)
         self._update_group_separators()
-        self._autofill_table_empty_cells()
+        # drag-and-drop 직후 light 만 (paste 와 동일 정책). confirm 시 full 자동.
+        self._autofill_table_empty_cells(mode='light')
 
     def _on_cyclepath_toggled(self, checked):
         """지정Path사용 체크 시 연결처리 스위치 비활성화"""
