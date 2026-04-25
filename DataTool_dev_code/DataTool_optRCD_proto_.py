@@ -20912,9 +20912,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.cycle_confirm.setEnabled(True)
             return
 
-        # 테이블 빈 셀 자동 채우기 (경로명, 채널, 용량)
+        # 테이블 빈 셀 자동 채우기 (경로명, 채널, 용량, 최대사이클)
+        # confirm 시점에 채널·TC 등 무거운 IO 일괄 처리 (Step 3·4 정책).
+        # 네트워크 드라이브 환경에서 freeze 완화 위해 statusBar 진행률 + processEvents.
         if self._has_table_data():
-            self._autofill_table_empty_cells()
+            try:
+                _status = self.statusBar()
+            except Exception:
+                _status = None
+
+            def _autofill_progress(done: int, total: int) -> None:
+                if _status is not None and total > 0:
+                    _status.showMessage(f"채널·TC 채우기 중... ({done}/{total})")
+                # 동기 코드 안에서 UI 응답 확보 (paint/move 이벤트 처리)
+                QtWidgets.QApplication.processEvents()
+
+            self._autofill_table_empty_cells(
+                mode='full', progress_cb=_autofill_progress)
+            if _status is not None:
+                _status.showMessage("분석 시작...", 2000)
 
         # 용량: 테이블 용량 열 입력 또는 자동파싱(빈칸)
         # mincapacity=0 유지 → 각 서브폴더가 자체 경로에서 용량 감지
@@ -21980,6 +21996,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tbl = self.cycle_path_table
         _auto_fg = QtGui.QColor(160, 160, 160)
         # 이전 경로 메타 — _path_meta_cache 히트면 즉시, 아니면 재계산 없이 None
+        # full 캐시는 stale 셀 정리 후 pop, light 캐시도 같이 pop (Step 5)
         old_meta = self._path_meta_cache.get(old_path) if old_path else None
 
         # ── 교체/삭제: auto-state 셀 클리어 ──
@@ -22006,6 +22023,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         it4.setToolTip('')
             finally:
                 tbl.blockSignals(False)
+
+        # ── 이전 경로 캐시 정리 (Step 5: light/full 모두) ──
+        # 이 행에서만 사용되던 경로면 stale 캐시 정리. 다른 행이 같은 경로를
+        # 쓰고 있어도 다음 confirm 시 재계산되므로 안전.
+        if old_path and old_path != new_path:
+            # 다른 행에서 같은 경로 사용 여부 확인 (보수적으로 유지)
+            still_in_use = any(
+                self._get_table_cell(r, 1) == old_path
+                for r in range(self.cycle_path_table.rowCount())
+                if r != row
+            )
+            if not still_in_use:
+                self._path_meta_cache.pop(old_path, None)
+                self._path_meta_cache_light.pop(old_path, None)
 
         # ── 새 경로가 유효하면 자동 채우기 (light: IO 0, col0/col3 만) ──
         # 채널·TC 등 무거운 IO 는 confirm 시점에 일괄 처리.
@@ -22450,7 +22481,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         finally:
             tbl.blockSignals(False)
 
-    def _autofill_table_empty_cells(self, *, mode: str = 'full'):
+    def _autofill_table_empty_cells(self, *, mode: str = 'full',
+                                    progress_cb=None):
         """전체 테이블 자동 채우기 — _autofill_row 기반.
 
         경로파일 로드, Ctrl+V, 사이클 분석 실행 등 전체 행 갱신이 필요할 때 사용.
@@ -22464,12 +22496,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             'light': paste·셀 입력 직후 IO 없는 경량 채우기 (col0/col3 만).
                      네트워크 드라이브 환경에서 즉시 응답 보장.
                      channel·TC 는 비워둠 (다음 confirm 시 full 로 채워짐).
+        progress_cb : callable(done: int, total: int) | None
+            매 행 처리 후 호출되는 콜백. statusBar 업데이트·processEvents 호출용.
+            None 이면 진행 표시 없음 (기존 동작).
+            네트워크 드라이브에서 full 모드 호출 시 UI 응답 확보 목적.
         """
         tbl = self.cycle_path_table
         link_mode = self.chk_link_cycle.isChecked()
 
+        # 진행 표시용 총 행 수 (경로 비어있는 행 제외)
+        if progress_cb:
+            n_total = sum(1 for r in range(tbl.rowCount())
+                          if self._get_table_cell(r, 1))
+        else:
+            n_total = 0
+
         # ── 행별 메타 산출 + 셀 채우기 ──
         first_meta = None  # 연결 그룹 첫 행의 메타
+        n_done = 0
         for r in range(tbl.rowCount()):
             path = self._get_table_cell(r, 1)
             if not path:
@@ -22489,6 +22533,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     mode=mode)
             else:
                 self._autofill_row(r, mode=mode)
+            n_done += 1
+            if progress_cb:
+                progress_cb(n_done, n_total)
 
         # ── 연결 모드: 사이클/Loop 누적 합산 (첫 행 힌트 보정) ──
         # light 모드에서는 cycle 정보가 없으므로 누적 hint skip
@@ -23039,10 +23086,25 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._autofill_table_empty_cells(mode='light')
 
     def _cycle_table_delete(self):
-        """선택 셀 내용 삭제"""
+        """선택 셀 내용 삭제 — col1 경로 삭제 시 메타 캐시도 정리 (Step 5)."""
         self._push_table_undo()
-        for item in self.cycle_path_table.selectedItems():
+        tbl = self.cycle_path_table
+        deleted_paths: set[str] = set()
+        for item in tbl.selectedItems():
+            # col1 (경로) 삭제 시 캐시 무효화 대상으로 기록
+            if item.column() == 1 and item.text():
+                deleted_paths.add(item.text())
             item.setText('')
+        # 삭제된 경로 중 다른 행에서 더 이상 사용되지 않는 것만 캐시 정리
+        if deleted_paths:
+            for p in deleted_paths:
+                still_in_use = any(
+                    self._get_table_cell(r, 1) == p
+                    for r in range(tbl.rowCount())
+                )
+                if not still_in_use:
+                    self._path_meta_cache.pop(p, None)
+                    self._path_meta_cache_light.pop(p, None)
 
     def _swap_table_rows(self, row1, row2):
         """테이블 두 행의 내용을 교환"""
