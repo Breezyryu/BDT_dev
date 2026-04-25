@@ -17656,8 +17656,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.installEventFilter(self)
         # 우클릭 컨텍스트 메뉴
         self.cycle_path_table.customContextMenuRequested.connect(self._cycle_table_context_menu)
-        # 연결처리 토글 시 그룹 구분선 갱신
+        # 연결처리 토글 시 그룹 구분선 + TC 누적 hint 즉시 갱신 (Step 6)
+        # cache_only=True 로 호출하여 캐시 hit 행만 즉시 갱신 (IO 0).
+        # cache miss 행은 다음 confirm 시 full IO 후 자연스럽게 채워짐.
         self.chk_link_cycle.toggled.connect(self._update_group_separators)
+        self.chk_link_cycle.toggled.connect(
+            lambda _checked: self._autofill_link_cumulative_hints(
+                cache_only=True))
         # ECT 경로 체크 토글 시 사이클·모드 열 편집 가능 여부 갱신
         self.chk_ectpath.toggled.connect(self._update_ect_columns_state)
         self.cycle_confirm.clicked.connect(self.unified_cyc_confirm_button)
@@ -22553,8 +22558,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if self._get_table_cell(r, 1)
         }
 
-    def _autofill_link_cumulative_hints(self):
-        """연결 모드: 그룹 내 TC 최대값을 누적 합산하여 첫 행 힌트 보정."""
+    def _autofill_link_cumulative_hints(self, *, cache_only: bool = False):
+        """연결 모드: 그룹 내 TC 최대값을 누적 합산하여 첫 행 힌트 보정.
+
+        Parameters
+        ----------
+        cache_only : bool
+            True 면 _path_meta_cache (full) 캐시 hit 인 경로만 사용 (IO 0).
+            연결처리 토글 시그널에서 즉시 hint 갱신용 (Step 6).
+            False (기본): 기존 동작 — _resolve_path_meta() 호출하여 풀 메타 산출.
+        """
         tbl = self.cycle_path_table
         _auto_fg = QtGui.QColor(160, 160, 160)
         tbl.blockSignals(True)
@@ -22572,7 +22585,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         pp = self._get_table_cell(rr, 1)
                         if not pp and rr > r:
                             break
-                        m = self._resolve_path_meta(pp) if pp else None
+                        # cache_only: cache hit 만 사용 (IO 0).
+                        # 토글 즉시 응답이 목적 — full 메타 없으면 hint 갱신 보류.
+                        if cache_only:
+                            m = self._path_meta_cache.get(pp) if pp else None
+                        else:
+                            m = self._resolve_path_meta(pp) if pp else None
                         if m:
                             c = m.get('cycle', '')
                             if c:
@@ -23012,11 +23030,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         except Exception:
             return ''
 
+    # 헤더 자동 검출용 토큰 (Step 6) — 6열 테이블 헤더 키워드
+    # 테이블 컬럼명 (한글) + 경로 파일 키워드 (영문) + UI 헤더("경로(필수입력)")
+    _PASTE_HEADER_TOKENS = frozenset({
+        # 한글 (테이블 헤더)
+        '시험명', '경로', '채널', '용량', 'tc', '모드',
+        '경로(필수입력)', '경로(필수)',
+        # 영문 (path 파일 헤더 / 외부 엑셀)
+        'pathname', 'path', 'ch', 'channel', 'capacity', 'cycle', 'mode',
+        'name',
+    })
+
     def _cycle_table_paste(self):
         """클립보드 → 테이블 붙여넣기 (탭/줄바꿈 구분, 자동 행 확장)
 
         6열 테이블 대응: [시험명, 경로, 채널, 용량, TC, 모드]
         엑셀 등 외부 앱 클립보드 점유 시 Win32 API 폴백.
+        Step 6: 헤더 행 자동 검출 — 첫 줄 토큰이 모두 헤더 키워드면 skip.
         """
         text = QtWidgets.QApplication.clipboard().text()
         if not text:
@@ -23027,6 +23057,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         tbl = self.cycle_path_table
         text = text.replace('\r\n', '\n').replace('\r', '\n')
         raw_lines = text.strip().split('\n')
+
+        # ── 헤더 자동 검출 (Step 6) ──
+        # 첫 줄을 탭으로 split 했을 때 비어있지 않은 토큰이 2개 이상이고
+        # 모두 _PASTE_HEADER_TOKENS 에 포함되면 헤더로 간주하고 skip.
+        # 2 토큰 이상 조건: 단일 셀 paste ("TC" 등 단일 키워드) 의 오탐 방지.
+        if raw_lines:
+            first_tokens = [
+                t.strip().lower()
+                for t in raw_lines[0].split('\t')
+            ]
+            non_empty = [t for t in first_tokens if t]
+            if (len(non_empty) >= 2
+                    and all(t in self._PASTE_HEADER_TOKENS for t in non_empty)):
+                raw_lines = raw_lines[1:]
         rows = []
         prev_empty = False
         for line in raw_lines:
