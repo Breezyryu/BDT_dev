@@ -797,8 +797,9 @@ def _reset_all_caches():
     # 경로 단위 IO 캐시 (Step 1 패치)
     check_cycler.cache_clear()
     _quick_max_cycle.cache_clear()
-    # 경로 메타 인스턴스 캐시 초기화
+    # 경로 메타 인스턴스 캐시 초기화 (light/full 두 dict 모두)
     WindowClass._path_meta_cache.clear()
+    WindowClass._path_meta_cache_light.clear()
 
 
 def clear_channel_cache():
@@ -22160,9 +22161,55 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         return groups
 
     # ── 경로 메타데이터 인스턴스 캐시 ──
+    # full: scandir + cycle_map 등 IO 결과까지 포함
     _path_meta_cache: dict[str, dict] = {}
+    # light: basename + name_capacity (regex만, IO 0). Step 2 추가.
+    _path_meta_cache_light: dict[str, dict] = {}
     # ── 행별 마지막 경로 (col=1 교체 감지용) ──
     _row_last_path: dict[int, str] = {}
+
+    def _resolve_path_meta_light(self, path: str) -> dict | None:
+        """경로명·용량(regex) 만 산출하는 light 메타 — IO 없음.
+
+        paste·셀 입력 직후 즉시 호출되므로 디스크 IO 0 보장.
+        col0(시험명)·col3(용량) 만 채워주고 col2(채널)·col4(TC) 은 비움.
+        무거운 IO (scandir, cycle_map 빌드) 는 `_resolve_path_meta` (full) 에서.
+
+        Returns
+        -------
+        dict | None
+            {'name', 'ch'='', 'cap', 'cycle'='',
+             '_cap_num', '_meta_hit'=None, '_io'=False}
+            full 결과와 동일 키 셋 (호환성). 미산출 항목은 빈 문자열/None.
+        """
+        if not path:
+            return None
+        if path in self._path_meta_cache_light:
+            return self._path_meta_cache_light[path]
+
+        # ── 경로명: basename 파싱 (IO 0) ──
+        basename = os.path.basename(path)
+        auto_name = basename
+        if "mAh_" in auto_name:
+            auto_name = auto_name.split("mAh_", 1)[1]
+        if len(auto_name) > 30:
+            auto_name = auto_name[:30] + "..."
+
+        # ── 용량: 경로명 regex (IO 0) ──
+        _name_cap = name_capacity(path) if "mAh" in path else 0
+        auto_cap_str = str(int(_name_cap)) if _name_cap and _name_cap > 0 else ""
+
+        result = {
+            'name': auto_name,
+            'ch': '',         # light 미산출 — Step 3 에서 명시 placeholder 처리
+            'cap': auto_cap_str,
+            'cycle': '',      # light 미산출
+            '_cap_num': _name_cap or None,
+            '_meta_hit': None,
+            '_io': False,     # full 결과와 구분용 플래그
+        }
+        self._path_meta_cache_light[path] = result
+        return result
 
     def _resolve_path_meta(self, path: str) -> dict | None:
         """경로 1개에 대한 모든 메타데이터를 한 번에 산출.
@@ -22511,6 +22558,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_path_table.setColumnCount(6)
         self.cycle_path_table.clearContents()
         self._path_meta_cache.clear()
+        self._path_meta_cache_light.clear()
         self._row_last_path.clear()
         self._update_ect_columns_state()
 
