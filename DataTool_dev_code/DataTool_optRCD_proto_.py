@@ -7071,22 +7071,29 @@ def extract_accel_pattern_from_sch(
         return None
 
     # 반환 형식: _analyze_accel_pattern_pne() 호환
+    # CCCV 판정 임계값: cv_cutoff_mA 가 이 값 미만이면 CV 단계 미사용 → CC 로 표기
+    # (PNE 시험에서 type_code=CHG_CCCV 여도 cv_cutoff=0 입력 = 전압 도달 즉시
+    #  다음 step 으로 전환 = 실질 CC 모드. 다단 충전 빠른 전환 phase 에 흔함)
+    _CCCV_MIN_CUTOFF_MA = 1.0
     charge_result = []
     for idx, s in enumerate(chg_steps):
         cur_mA = s.get('current_mA', 0)
         v_cutoff = s.get('voltage_mV', 0) / 1000  # mV → V
+        _cv_cut_mA = s.get('cv_cutoff_mA', 0)
+        _is_real_cccv = (s['type'] == 'CHG_CCCV'
+                         and _cv_cut_mA >= _CCCV_MIN_CUTOFF_MA)
         entry: dict = {
             'step': idx + 1,
-            'mode': 'CCCV' if s['type'] == 'CHG_CCCV' else 'CC',
+            'mode': 'CCCV' if _is_real_cccv else 'CC',
             'crate': round(cur_mA / capacity, 2) if capacity else 0,
             'current_mA': cur_mA,
             'voltage_cutoff': round(v_cutoff, 3),
         }
-        if s['type'] == 'CHG_CCCV' and 'cv_cutoff_mA' in s:
+        if _is_real_cccv:
             entry['current_cutoff_crate'] = (
-                round(s['cv_cutoff_mA'] / capacity, 2) if capacity else 0
+                round(_cv_cut_mA / capacity, 2) if capacity else 0
             )
-            entry['current_cutoff_mA'] = s['cv_cutoff_mA']
+            entry['current_cutoff_mA'] = _cv_cut_mA
         charge_result.append(entry)
 
     discharge_result = []
