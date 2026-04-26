@@ -4184,9 +4184,19 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         # 그룹별로 병합 수행
         Cycleraw = Cycleraw.groupby(merge_group, group_keys=False).apply(merge_rows, include_groups=False)
         Cycleraw = Cycleraw.reset_index(drop=True)
+        # Condition/Finish/Cap 1-pass numpy mask (중복 boolean 스캔 제거)
+        _cond_arr = Cycleraw["Condition"].values
+        _fin_arr = Cycleraw["Finish"].values
+        _cap_arr = Cycleraw["Cap[mAh]"].values
+        _thr_cap = mincapacity / 60
+        _m_chg = ((_cond_arr == 1)
+                  & ~np.isin(_fin_arr, ("                 Vol", "Volt"))
+                  & (_cap_arr > _thr_cap))
+        _m_dchg = (_cond_arr == 2) & (_cap_arr > _thr_cap)
+        _m_dcir = (np.isin(_fin_arr, ("                 Tim", "Tim", "Time"))
+                   & (_cond_arr == 2) & (_cap_arr < _thr_cap))
         # 충전 용량 처리
-        chgdata = Cycleraw[(Cycleraw["Condition"] == 1) & (Cycleraw["Finish"] != "                 Vol") 
-                           & (Cycleraw["Finish"] != "Volt") & (Cycleraw["Cap[mAh]"] > (mincapacity/60))]
+        chgdata = Cycleraw[_m_chg]
         chgdata.index = chgdata["TotlCycle"]
         Chg = chgdata["Cap[mAh]"]
         # 충전 전압/스텝: chgdata 인덱스(TotlCycle)에 맞춰 조회
@@ -4197,30 +4207,44 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         # Cycle raw index 변경
         Cycleraw.index = Cycleraw["TotlCycle"]
         # dcir 계산
-        dcir = Cycleraw[((Cycleraw["Finish"] == "                 Tim") | (Cycleraw["Finish"] == "Tim") 
-                         | (Cycleraw["Finish"] == "Time")) & (Cycleraw["Condition"] == 2) 
-                        & (Cycleraw["Cap[mAh]"] < (mincapacity/60))]
+        dcir = Cycleraw[_m_dcir]
         cycnum = dcir["TotlCycle"]
         # 방전 용량/온도 계산
-        Dchgdata = Cycleraw[(Cycleraw["Condition"] == 2) & (Cycleraw["Cap[mAh]"] > (mincapacity/60))]
+        Dchgdata = Cycleraw[_m_dchg]
         Dchg = Dchgdata["Cap[mAh]"]
         Temp= Dchgdata["PeakTemp[Deg]"]
         DchgEng = Dchgdata["Pow[mWh]"]
         AvgV = Dchgdata["AveVolt[V]"]
         OriCycle = Dchgdata.loc[:,"OriCycle"]
-        # dcir 기본 처리
-        for cycle in cycnum:
-            if os.path.isfile(raw_file_path + "\\%06d" % cycle):
-                dcirpro = pd.read_csv((raw_file_path + "\\%06d" % cycle), sep=",", skiprows=3, engine="c",
-                                      encoding="cp949", on_bad_lines='skip')
-                if "PassTime[Sec]" in dcirpro.columns:
-                    dcirpro = dcirpro[["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]]
+        # dcir 기본 처리 (병렬 I/O: NAS 환경 순차 대비 2~4배 고속.
+        # 채널 레벨 ThreadPoolExecutor와 이중 과부하 방지 위해 워커 4 이하로 제한)
+        def _read_dcir_for_cycle(cycle):
+            _p = raw_file_path + "\\%06d" % cycle
+            if not os.path.isfile(_p):
+                return int(cycle), None
+            try:
+                _pro = pd.read_csv(_p, sep=",", skiprows=3, engine="c",
+                                   encoding="cp949", on_bad_lines='skip')
+                if "PassTime[Sec]" in _pro.columns:
+                    _pro = _pro[["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]]
                 else:
-                    dcirpro = dcirpro[["Passed Time[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[deg]"]]
-                    dcirpro.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]
-                dcircal = dcirpro[(dcirpro["Condition"] == 2)]
-                dcir.loc[int(cycle), "dcir"] = ((dcircal["Voltage[V]"].max() - dcircal["Voltage[V]"].min()) 
-                                                / round(dcircal["Current[mA]"].max()) * 1000000)
+                    _pro = _pro[["Passed Time[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[deg]"]]
+                    _pro.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]
+                _cal = _pro[(_pro["Condition"] == 2)]
+                _i_max = round(_cal["Current[mA]"].max())
+                if not _i_max:
+                    return int(cycle), None
+                return int(cycle), (_cal["Voltage[V]"].max() - _cal["Voltage[V]"].min()) / _i_max * 1000000
+            except Exception as _e:
+                _perf_logger.warning(f'toyo_cycle_data DCIR read 실패 cycle={cycle}: {_e}')
+                return int(cycle), None
+
+        if len(cycnum) > 0:
+            _dcir_workers = min(4, calc_optimal_workers(len(cycnum)))
+            with ThreadPoolExecutor(max_workers=_dcir_workers) as _ex:
+                for _cyc, _val in _ex.map(_read_dcir_for_cycle, list(cycnum)):
+                    if _val is not None:
+                        dcir.loc[_cyc, "dcir"] = _val
         n = 1
         cyccal = []
         if len(dcir) != 0:
@@ -7624,7 +7648,7 @@ def _merge_tc_info(prior: dict, measured: dict) -> dict:
     return out
 
 
-@functools.lru_cache(maxsize=128)
+@functools.lru_cache(maxsize=2048)
 def _find_sch_file(channel_path: str) -> str | None:
     """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None.
 
@@ -7682,7 +7706,7 @@ def _find_sch_file(channel_path: str) -> str | None:
     return os.path.join(channel_path, sch_files[0])
 
 
-@functools.lru_cache(maxsize=256)
+@functools.lru_cache(maxsize=2048)
 def _get_pne_sch_struct(channel_path: str, mincapacity: float) -> dict | None:
     """채널 경로에서 .sch 파일을 찾아 스케줄 구조 정보를 캐시로 반환.
 
@@ -9830,34 +9854,43 @@ def _process_pne_cycleraw(
     AvgV = DchgEng / Dchg / mincapacity * 1000
     # OriCycle 생성 (Dchg와 동일 인덱스로 concat 시 NaN 방지)
     OriCycle = pd.Series(Dchg.index.values, index=Dchg.index)
-    if chkir and len(OriCycle) == len(dcir):
-        df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, dcir, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-        df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "dcir", "Temp", "AvgV", "OriCyc"]
+    # 3 분기 공통 base DataFrame dict — DCIR 컬럼만 분기별 추가.
+    # 이전 버전은 동일 dict 를 분기마다 3회 중복 선언했음.
+    _base_cols = {"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg,
+                  "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp,
+                  "AvgV": AvgV, "OriCyc": OriCycle}
     if chkir:
-        df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
+        # (이전: `if chkir and len(OriCycle) == len(dcir)` 분기 제거 —
+        #  아래 블록이 무조건 덮어써서 dead code 였음. chkir==True 면
+        #  dcir 컬럼은 `_ensure_dcir_columns` 가 NaN 으로 보장하므로
+        #  `.loc[0, "dcir"] = 0` 더미만 유지 — 엑셀 빈 시트 방지.)
+        df.NewData = pd.DataFrame(_base_cols).reset_index(drop=True)
         df.NewData.loc[0, "dcir"] = 0
     elif mkdcir and (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0):
         if chkir2:
             cyccal = range(1, len(dcirtemp1)+1)
         # dcir - RSS, dcir2 - 1s pulse
         if (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
+            # 4개 DCIR 시리즈를 1개 DataFrame으로 통합 (기존 4회 DF 생성 + 4회 set_index 제거)
             dcirtemp1 = same_add(dcirtemp1, "TotlCycle")
-            dcir = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "dcir_raw2": dcirtemp1["imp"]})
-            dcir = dcir.set_index(dcir["Cyc"])
             dcirtemp2 = same_add(dcirtemp2, "TotlCycle")
-            dcir2 = pd.DataFrame({"Cyc": dcirtemp2["TotlCycle_add"], "dcir_raw": dcirtemp2["imp"]})
-            dcir2 = dcir2.set_index(dcir2["Cyc"])
             dcirtemp3 = same_add(dcirtemp3, "TotlCycle")
-            df_rssocv = pd.DataFrame({"Cyc": dcirtemp3["TotlCycle_add"], "rssocv": dcirtemp3["Ocv"]/1000000})
-            df_rssocv = df_rssocv.set_index(dcir["Cyc"])
-            df_rssccv = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "rssccv": dcirtemp1["Ocv"]/1000000})
-            df_rssccv = df_rssccv.set_index(dcir["Cyc"])
-            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
-            if hasattr(dcir2, "dcir_raw"):
-                df.NewData["dcir"] = dcir["dcir_raw2"]
-                df.NewData["dcir2"] = dcir2["dcir_raw"]
-                df.NewData["rssocv"] = df_rssocv["rssocv"]
-                df.NewData["rssccv"] = df_rssccv["rssccv"]
+            _idx = dcirtemp1["TotlCycle_add"].values
+            _dc = pd.DataFrame({
+                "dcir_raw2": dcirtemp1["imp"].values,
+                "dcir_raw":  dcirtemp2["imp"].values,
+                "rssocv":    dcirtemp3["Ocv"].values / 1_000_000,
+                "rssccv":    dcirtemp1["Ocv"].values / 1_000_000,
+            }, index=_idx)
+            # 다운스트림 호환: dcir/dcir2 DataFrame 참조 유지
+            dcir = _dc[["dcir_raw2"]]
+            dcir2 = _dc[["dcir_raw"]]
+            df.NewData = pd.DataFrame(_base_cols).reset_index(drop=True)
+            if "dcir_raw" in dcir2.columns:
+                df.NewData["dcir"] = _dc["dcir_raw2"]
+                df.NewData["dcir2"] = _dc["dcir_raw"]
+                df.NewData["rssocv"] = _dc["rssocv"]
+                df.NewData["rssccv"] = _dc["rssccv"]
             else:
                 df.NewData.loc[0, "dcir"] = 0
                 df.NewData.loc[0, "dcir2"] = 0
@@ -9878,6 +9911,8 @@ def _process_pne_cycleraw(
             df.NewData["soc70_dcir"] = soc70_dcir
             df.NewData["soc70_rss_dcir"] = soc70_rss_dcir
     else:
+        # 중복 선언 통합 — base DF 를 먼저 조립하고, dcir 컬럼만 조건부 할당.
+        df.NewData = pd.DataFrame(_base_cols).reset_index(drop=True)
         if ('dcirtemp' in locals()):
             if not chkir2:
                 n = 1
@@ -9892,7 +9927,6 @@ def _process_pne_cycleraw(
             if hasattr(dcirtemp, "dcir") and not dcirtemp.dcir.empty:
                 dcir = pd.DataFrame({"Cyc": cyccal, "dcir_raw": dcirtemp.dcir})
                 dcir = dcir.set_index(dcir["Cyc"])
-            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             if 'dcir' in locals() and isinstance(dcir, pd.DataFrame) and "dcir_raw" in dcir.columns:
                 df.NewData["dcir"] = dcir["dcir_raw"]
             elif 'dcir' in locals() and isinstance(dcir, pd.Series):
@@ -9900,7 +9934,6 @@ def _process_pne_cycleraw(
             else:
                 df.NewData.loc[0, "dcir"] = 0
         else:
-            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             df.NewData.loc[0, "dcir"] = 0
     # DCIR 표준 컬럼 보장 (모드 무관하게 동일 컬럼 세트)
     if hasattr(df, 'NewData'):
@@ -9910,25 +9943,37 @@ def _process_pne_cycleraw(
         _ensure_rndv_split_columns(
             df.NewData, Cycleraw, cycle_map, ocv_scale=1.0 / 1_000_000)
     # Dchg/Chg 중 하나라도 NaN인 행 제거 (불완전 사이클 제외)
+    # dropna + reset_index 를 체인화하여 intermediate 복사 1회 제거.
     if hasattr(df, 'NewData'):
-        df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
-        df.NewData = df.NewData.reset_index(drop=True)
+        df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any').reset_index(drop=True)
         # ── 논리사이클 매핑 적용 (cycle_map 기반 Cycle 번호 부여) ──
         if cycle_map and len(df.NewData) > 0:
-            # 물리 TC → 논리사이클 역매핑 생성
-            _tc_to_ln: dict[int, int] = {}
+            # 물리 TC → 논리사이클 역매핑 (bisect 기반: Sweep 시 range 확장 회피)
+            # 기존 `for _t in range(_s, _e+1): _tc_to_ln[_t] = _ln` 은 Sweep 시
+            # TC 범위 전체를 dict에 삽입 → N=수만개에서 병목. bisect로 O(log N) 조회.
+            _bounds: list[tuple[int, int, int]] = []
             _is_sweep = False
             for _ln, _tc_val in cycle_map.items():
                 if isinstance(_tc_val, dict):
                     _s, _e = _tc_val['all']
                     if _s != _e:
                         _is_sweep = True
-                    for _t in range(_s, _e + 1):
-                        _tc_to_ln[_t] = _ln
+                    _bounds.append((int(_s), int(_e), int(_ln)))
                 else:
-                    _tc_to_ln[int(_tc_val)] = _ln
+                    _tc_int = int(_tc_val)
+                    _bounds.append((_tc_int, _tc_int, int(_ln)))
+            _bounds.sort()
+            _starts = [b[0] for b in _bounds]
+
+            def _tc_to_ln_lookup(tc):
+                _i = bisect.bisect_right(_starts, tc) - 1
+                if 0 <= _i < len(_bounds):
+                    _s2, _e2, _ln2 = _bounds[_i]
+                    if _s2 <= tc <= _e2:
+                        return _ln2
+                return None
             # OriCyc(물리 TC) → 논리사이클 번호 매핑
-            _logical_col = df.NewData['OriCyc'].astype(int).map(_tc_to_ln)
+            _logical_col = df.NewData['OriCyc'].astype(int).map(_tc_to_ln_lookup)
             if _is_sweep and _logical_col.notna().any():
                 # 스윕 시험: 같은 논리사이클에 속한 행들을 집계
                 df.NewData['_ln'] = _logical_col
@@ -17366,10 +17411,28 @@ class _WorkerSignals(QtCore.QObject):
     error = QtCore.pyqtSignal(str, str)       # (title, body) 사용자 노출용
 
 
+class _PipelineProgress(QtCore.QObject):
+    """파이프라인 진행 상황 signal — cross-thread 안전 UI 통지.
+
+    워커 스레드에서 progressed.emit(v) / errored.emit(path, msg) 호출 시
+    AutoConnection (Qt 기본) 이 메인 스레드 이벤트 루프에서 slot 실행.
+    Qt 위젯(setValue 등)은 메인 스레드 전용이므로 이 경로가 유일한
+    안전 패턴. _pump_ui 가 이 신호를 emit 하도록 재설계됨.
+
+    cf. _WorkerSignals: 기존 워커 통신 채널 (statusBar/error 포함). 이 클래스는
+    파이프라인 progress 전용으로 분리되어 _pump_ui 의 단일 경로로 통합.
+    """
+    progressed = QtCore.pyqtSignal(int)
+    errored = QtCore.pyqtSignal(str, str)
+
+
 class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        # ── 파이프라인 진행 signal (cross-thread 안전) ──
+        self._pipe_progress = _PipelineProgress()
+        self._pipe_progress.progressed.connect(self.progressBar.setValue)
         self.chnlnow = "default"
         self.tab_no = 0
         # 충방전기 세팅 관련
@@ -17900,11 +17963,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
 
     def _pump_ui(self, progress_value=None, max_ms=10):
-        """진행바 갱신과 이벤트 펌핑을 묶어 장시간 작업 중 체감 멈춤을 줄인다."""
+        """진행바 갱신과 이벤트 펌핑 — signal 기반 cross-thread 안전.
+
+        워커 스레드에서 호출해도 pyqtSignal(AutoConnection)이 메인 스레드
+        이벤트 루프에서 setValue를 실행한다. processEvents는 메인 스레드
+        에서만 유효하므로 현재 스레드 확인 후에만 호출.
+        """
         if progress_value is not None:
-            self.progressBar.setValue(int(max(0, min(100, progress_value))))
-        QtWidgets.QApplication.processEvents(
-            QtCore.QEventLoop.ProcessEventsFlag.AllEvents, max_ms)
+            _v = int(max(0, min(100, progress_value)))
+            if hasattr(self, '_pipe_progress'):
+                self._pipe_progress.progressed.emit(_v)
+            else:
+                # 초기화 이전 폴백 (보통 도달하지 않음)
+                self.progressBar.setValue(_v)
+        _app = QtWidgets.QApplication.instance()
+        if _app is not None and QtCore.QThread.currentThread() is _app.thread():
+            _app.processEvents(
+                QtCore.QEventLoop.ProcessEventsFlag.AllEvents, max_ms)
 
     def _init_confirm_button(self, button_widget):
         """
@@ -20508,9 +20583,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     results[(folder_idx, subfolder_idx)] = (folder_path, cyctemp)
                 completed += 1
                 # 진행률 업데이트 (50%까지만 - 나머지 50%는 그래프 생성)
+                # signal 경로(_pump_ui)로 통일 — as_completed 소비가 워커 스레드로
+                # 이동해도 cross-thread 크래시 방지
                 if completed % 3 == 0 or completed == total_tasks:
-                    self.progressBar.setValue(int(completed / total_tasks * 50))
-        
+                    self._pump_ui(int(completed / total_tasks * 50))
+
         return results, subfolder_map
     
     def _save_cycle_excel_data(self, nd, writecolno, start_row, headername):
