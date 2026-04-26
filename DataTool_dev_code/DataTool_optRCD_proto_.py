@@ -11,14 +11,11 @@ import struct
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import pyodbc
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-from scipy.optimize import curve_fit, root_scalar
-from scipy.stats import linregress
 from datetime import datetime
 from tkinter import filedialog, Tk
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -26,39 +23,34 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from datetime import timezone
 import glob
-import xlwings as xw
 from pathlib import Path
+
+# 무거운 의존성 lazy 로드 (Python 3.7+ 모듈 __getattr__).
+# 모듈 import 시점이 아닌, 실제 사용 시점에 한 번만 import 한 뒤 globals 캐시.
+# `pyodbc`/`xw`/`curve_fit`/`root_scalar`/`linregress` 는 일부 탭에서만 쓰이므로
+# 일반 사용자의 콜드 스타트 비용을 약 0.5~1.5초 회수한다.
+_BDT_LAZY = {
+    'pyodbc':      lambda: __import__('pyodbc'),
+    'xw':          lambda: __import__('xlwings'),
+    'curve_fit':   lambda: __import__('scipy.optimize', fromlist=['curve_fit']).curve_fit,
+    'root_scalar': lambda: __import__('scipy.optimize', fromlist=['root_scalar']).root_scalar,
+    'linregress':  lambda: __import__('scipy.stats', fromlist=['linregress']).linregress,
+}
+
+
+def __getattr__(name):
+    loader = _BDT_LAZY.get(name)
+    if loader is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    obj = loader()
+    globals()[name] = obj
+    return obj
 
 HAS_SCH_PARSER = True  # 내장 .sch 파서 사용 (외부 모듈 불필요)
 
-# PyInstaller exe 실행 시 필요 Pybamm casadi DLL 경로 등록
-# 원인: _casadi.pyd와 DLL이 다른 폴더에 배치
-if getattr(sys, 'frozen', False):
-    _base = sys._MEIPASS
-    _casadi_dir = os.path.join(_base, 'casadi')
-    if os.path.isdir(_casadi_dir):
-        os.add_dll_directory(_casadi_dir)
-        os.add_dll_directory(_base)
-        os.environ['PATH'] = _casadi_dir + os.pathsep + _base + os.pathsep + os.environ.get('PATH', '')
-        # 핵심 MinGW 런타임 DLL 강제 선로드
-        import ctypes
-        for _dll_name in [
-            'libwinpthread-1.dll', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll',
-            'libgfortran-5.dll', 'libquadmath-0.dll', 'libgomp-1.dll',
-            'libcasadi.dll', 'libcasadi-tp-openblas.dll',
-        ]:
-            _dll_path = os.path.join(_casadi_dir, _dll_name)
-            if os.path.isfile(_dll_path):
-                try:
-                    ctypes.CDLL(_dll_path)
-                except OSError:
-                    pass
-
-try:
-    import pybamm
-    HAS_PYBAMM = True
-except ImportError:
-    HAS_PYBAMM = False
+# PyBaMM 시뮬레이션 코어 (lazy). 실제 `import pybamm` 과 casadi DLL 선로드는
+# 사용자가 PyBaMM 탭을 켤 때까지 발생하지 않는다.
+import bdt_pybamm
 
 
 # pip 추가 항목: xlsxwriter
@@ -6814,10 +6806,16 @@ def _fmt_crate(val: float) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 # .sch 타입 코드 → 문자열 매핑
+# 2026-04-26 Ref CSV ground truth 검증 후 충전 type swap 정정.
+# 이전: 0x0101=CHG_CC, 0x0201=CHG_CCCV (잘못된 매핑)
+# 검증 (Q8 .sch vs `data/pattern/Ref_Gen5+B 2335 mAh 2C Si Hybrid 상온.csv`):
+#   - .sch idx10/11 (0x0201) ↔ CSV step12/13 (CC, "V > 4.14"/"V > 4.16")
+#   - .sch idx12/13 (0x0101) ↔ CSV step14/15 (CC/CV, "I < 2.32"/"I < 0.234")
+# 방전 (0x0102/0x0202)은 검증된 케이스(0x0202=DCHG_CC)에서 swap 불필요로 그대로 유지.
 _SCH_TYPE_MAP: dict[int, str] = {
-    0x0101: 'CHG_CC',
-    0x0102: 'DCHG_CCCV',
-    0x0201: 'CHG_CCCV',
+    0x0101: 'CHG_CCCV',     # was CHG_CC (충전 swap)
+    0x0102: 'DCHG_CCCV',    # 검증 데이터 없음 — 대칭 가정 유지
+    0x0201: 'CHG_CC',       # was CHG_CCCV (충전 swap)
     0x0202: 'DCHG_CC',
     0x0209: 'CHG_CP',
     0xFF03: 'REST',
@@ -6916,42 +6914,55 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
             'type_code': type_code,
         }
 
+        # 충/방전 step 의 offset 의미 (2026-04-26 Ref CSV 검증 후 정정):
+        #   +12 (CHG) / +16 (DCHG): 사용자 입력 voltage (CTSEditor "Charge(V)"/"Discharge(V)" 컬럼)
+        #     - CC 충/방전: safety/표시용 (실제 cutoff 와 무관)
+        #     - CCCV 충전: CV 단계 target voltage (= 실제 voltage cutoff)
+        #   +20: current_mA (IRef, 정확)
+        #   +24: time_limit_s (CCCV 의 timeout, "t > 2:00:00" 등)
+        #   +28: end_condition voltage (CC: V cutoff. CHG=V>x, DCHG=V<x. CCCV: 0)
+        #   +32: end_condition current (CCCV: I < x cutoff. CC: 0)
+        # 호환을 위해 cv_voltage_mV/cv_cutoff_mA 키도 CCCV 일 때 alias 유지.
         if type_name in ('CHG_CC', 'CHG_CCCV', 'CHG_CP'):
-            # 충전 스텝 공통 필드 (값은 IEEE 754 float로 저장됨)
             voltage_mV = struct.unpack_from('<f', blk, 12)[0]
             current_mA = struct.unpack_from('<f', blk, 20)[0]
             time_limit = struct.unpack_from('<f', blk, 24)[0]
+            end_voltage_mV = struct.unpack_from('<f', blk, 28)[0]
+            end_current_mA = struct.unpack_from('<f', blk, 32)[0]
             cap_limit = struct.unpack_from('<f', blk, 104)[0]
             step_info.update({
                 'voltage_mV': voltage_mV,
                 'current_mA': current_mA,
                 'time_limit_s': time_limit,
                 'capacity_limit_mAh': cap_limit,
+                'end_voltage_mV': end_voltage_mV,
+                'end_current_mA': end_current_mA,
             })
             if type_name == 'CHG_CCCV':
-                cv_voltage = struct.unpack_from('<f', blk, 28)[0]
-                cv_cutoff = struct.unpack_from('<f', blk, 32)[0]
-                step_info['cv_voltage_mV'] = cv_voltage
-                step_info['cv_cutoff_mA'] = cv_cutoff
+                # 호환 alias — voltage_mV(+12) = CV target V, end_current_mA(+32) = CV I cutoff
+                step_info['cv_voltage_mV'] = voltage_mV
+                step_info['cv_cutoff_mA'] = end_current_mA
             charge_steps.append(step_info)
 
         elif type_name in ('DCHG_CC', 'DCHG_CCCV'):
-            # 방전 스텝: 전압 오프셋이 +16 (CHG와 다름, float)
+            # 방전: voltage 입력은 +16, 실제 V cutoff (V<x) 는 +28
             voltage_mV = struct.unpack_from('<f', blk, 16)[0]
             current_mA = struct.unpack_from('<f', blk, 20)[0]
             time_limit = struct.unpack_from('<f', blk, 24)[0]
+            end_voltage_mV = struct.unpack_from('<f', blk, 28)[0]
+            end_current_mA = struct.unpack_from('<f', blk, 32)[0]
             cap_limit = struct.unpack_from('<f', blk, 104)[0]
             step_info.update({
                 'voltage_mV': voltage_mV,
                 'current_mA': current_mA,
                 'time_limit_s': time_limit,
                 'capacity_limit_mAh': cap_limit,
+                'end_voltage_mV': end_voltage_mV,
+                'end_current_mA': end_current_mA,
             })
             if type_name == 'DCHG_CCCV':
-                cv_voltage = struct.unpack_from('<f', blk, 28)[0]
-                cv_cutoff = struct.unpack_from('<f', blk, 32)[0]
-                step_info['cv_voltage_mV'] = cv_voltage
-                step_info['cv_cutoff_mA'] = cv_cutoff
+                step_info['cv_voltage_mV'] = voltage_mV
+                step_info['cv_cutoff_mA'] = end_current_mA
             discharge_steps.append(step_info)
 
         elif type_name == 'LOOP':
@@ -7084,36 +7095,50 @@ def extract_accel_pattern_from_sch(
     if not chg_steps and not dchg_steps:
         return None
 
-    # 반환 형식: _analyze_accel_pattern_pne() 호환
-    # CCCV 판정 임계값: cv_cutoff_mA 가 이 값 미만이면 CV 단계 미사용 → CC 로 표기
-    # (PNE 시험에서 type_code=CHG_CCCV 여도 cv_cutoff=0 입력 = 전압 도달 즉시
-    #  다음 step 으로 전환 = 실질 CC 모드. 다단 충전 빠른 전환 phase 에 흔함)
-    _CCCV_MIN_CUTOFF_MA = 1.0
+    # 반환 형식: _analyze_accel_pattern_pne() 호환.
+    # 2026-04-26 Ref CSV 검증 후 voltage/current cutoff 의미 정정:
+    #   - CC 충전: voltage_cutoff = end_voltage_mV(+28). 예: "V > 4.14V" → 4.14V
+    #   - CCCV 충전: voltage_cutoff = voltage_mV(+12, CV target V),
+    #                current_cutoff = end_current_mA(+32). 예: "I < 2.32A" → 2.32A
+    #   - 방전: voltage_cutoff = end_voltage_mV(+28). 예: "V < 3.0V" → 3.0V
+    # 직전 196fc4d 휴리스틱(cv_cut < 1mA → CC) 은 type_code swap 미수행이 진짜 원인.
+    # swap 후 type 만으로 mode 결정.
     charge_result = []
     for idx, s in enumerate(chg_steps):
         cur_mA = s.get('current_mA', 0)
-        v_cutoff = s.get('voltage_mV', 0) / 1000  # mV → V
-        _cv_cut_mA = s.get('cv_cutoff_mA', 0)
-        _is_real_cccv = (s['type'] == 'CHG_CCCV'
-                         and _cv_cut_mA >= _CCCV_MIN_CUTOFF_MA)
+        is_cccv = (s['type'] == 'CHG_CCCV')
+        if is_cccv:
+            # CCCV: voltage_mV(+12) = CV target V (사용자 입력 Charge(V))
+            # end_current_mA(+32) = CV 종료 전류 ("I < x")
+            v_cutoff = s.get('voltage_mV', 0) / 1000
+            i_cutoff_mA = s.get('end_current_mA', 0)
+            # CCCV 호환 alias 사용 (cv_cutoff_mA 만 있는 경우)
+            if not i_cutoff_mA:
+                i_cutoff_mA = s.get('cv_cutoff_mA', 0)
+        else:
+            # CC: end_voltage_mV(+28) = V cutoff ("V > x")
+            v_cutoff = s.get('end_voltage_mV', 0) / 1000
+            i_cutoff_mA = 0
         entry: dict = {
             'step': idx + 1,
-            'mode': 'CCCV' if _is_real_cccv else 'CC',
+            'mode': 'CCCV' if is_cccv else 'CC',
             'crate': round(cur_mA / capacity, 2) if capacity else 0,
             'current_mA': cur_mA,
             'voltage_cutoff': round(v_cutoff, 3),
         }
-        if _is_real_cccv:
+        if is_cccv and i_cutoff_mA > 0:
             entry['current_cutoff_crate'] = (
-                round(_cv_cut_mA / capacity, 2) if capacity else 0
+                round(i_cutoff_mA / capacity, 2) if capacity else 0
             )
-            entry['current_cutoff_mA'] = _cv_cut_mA
+            entry['current_cutoff_mA'] = i_cutoff_mA
         charge_result.append(entry)
 
     discharge_result = []
     for idx, s in enumerate(dchg_steps):
         cur_mA = s.get('current_mA', 0)
-        v_cutoff = s.get('voltage_mV', 0) / 1000  # mV → V
+        # 방전: end_voltage_mV(+28) = V cutoff ("V < x")
+        # voltage_mV(+16) 은 사용자 입력 Discharge(V) (안전 마진/표시용)
+        v_cutoff = s.get('end_voltage_mV', 0) / 1000
         discharge_result.append({
             'step': idx + 1,
             'mode': 'CC',
@@ -10744,202 +10769,10 @@ def set_battery_status_log_Profile(rawdatafile, mincapacity, selectcyc, setcond)
             df.ChgProfile.SOC2 = df.ChgProfile.delCap.cumsum() * 100
     return df
 
-# ===== PyBaMM 시뮬레이션 엔진 =====
+# ===== PyBaMM 시뮬레이션 엔진 (lazy 위임) =====
 def run_pybamm_simulation(model_name, params_dict, experiment_config):
-    """PyBaMM 전기화학 시뮬레이션 실행
-
-    Parameters
-    ----------
-    model_name : str
-        "SPM", "SPMe", "DFN" 중 하나
-    params_dict : dict
-        테이블에서 읽은 파라미터 값 (키: 한글 파라미터명, 값: float/str)
-    experiment_config : dict
-        mode: "ccv" | "custom" | "gitt"
-        ccv 모드 → chg_crate, dchg_crate, v_max, v_min, cv_cutoff, cycles
-        custom 모드 → steps (list[str])
-        gitt 모드 → pattern_type, pulse_current, pulse_time, rest_time, repeats, v_min
-
-    Returns
-    -------
-    pybamm.Solution
-    """
-    # 1) 모델 생성 — 리튬 석출(plating) 서브모델 포함
-    model_map = {
-        "SPM": pybamm.lithium_ion.SPM,
-        "SPMe": pybamm.lithium_ion.SPMe,
-        "DFN": pybamm.lithium_ion.DFN,
-    }
-    if model_name not in model_map:
-        raise ValueError(f"지원하지 않는 모델: {model_name}")
-    model = model_map[model_name]({
-        "lithium plating": "irreversible",
-        "thermal": "lumped",
-    })
-
-    # 2) 파라미터 적용 — OKane2022 기본 (plating 파라미터 포함)
-    param = pybamm.ParameterValues("OKane2022")
-    # 테이블 값 → PyBaMM 파라미터 매핑
-    _key_map = {
-        # ── Geometry ──
-        "양극 두께":              ("Positive electrode thickness [m]", 1e-6),
-        "양극 입자 반경":          ("Positive particle radius [m]", 1e-6),
-        "양극 활물질 비율":        ("Positive electrode active material volume fraction", 1),
-        "양극 기공률":            ("Positive electrode porosity", 1),
-        "음극 두께":              ("Negative electrode thickness [m]", 1e-6),
-        "음극 입자 반경":          ("Negative particle radius [m]", 1e-6),
-        "음극 활물질 비율":        ("Negative electrode active material volume fraction", 1),
-        "음극 기공률":            ("Negative electrode porosity", 1),
-        "분리막 두께":             ("Separator thickness [m]", 1e-6),
-        "분리막 기공률":           ("Separator porosity", 1),
-        "전극 면적(폭)":          ("Electrode width [m]", 1),
-        "전극 높이":              ("Electrode height [m]", 1),
-        "적층 수":                ("Number of electrodes connected in parallel to make a cell", 1),
-        "셀 용량":                ("Nominal cell capacity [A.h]", 1),
-        # ── Transport ──
-        "양극 고상확산계수":       ("Positive electrode diffusivity [m2.s-1]", 1),
-        "음극 고상확산계수":       ("Negative electrode diffusivity [m2.s-1]", 1),
-        "전해질 확산계수":         ("Electrolyte diffusivity [m2.s-1]", 1),
-        "전해질 이온전도도":       ("Electrolyte conductivity [S.m-1]", 1),
-        "양극 전자전도도":         ("Positive electrode conductivity [S.m-1]", 1),
-        "음극 전자전도도":         ("Negative electrode conductivity [S.m-1]", 1),
-        "전해질 농도":             ("Initial concentration in electrolyte [mol.m-3]", 1),
-        "양극 Bruggeman":         ("Positive electrode Bruggeman coefficient (electrolyte)", 1),
-        "음극 Bruggeman":         ("Negative electrode Bruggeman coefficient (electrolyte)", 1),
-        "분리막 Bruggeman":       ("Separator Bruggeman coefficient (electrolyte)", 1),
-        # ── Kinetics ──
-        "양극 교환전류밀도":       ("Positive electrode exchange-current density [A.m-2]", 1),
-        "음극 교환전류밀도":       ("Negative electrode exchange-current density [A.m-2]", 1),
-        "양극 최대농도":           ("Maximum concentration in positive electrode [mol.m-3]", 1),
-        "음극 최대농도":           ("Maximum concentration in negative electrode [mol.m-3]", 1),
-        "Plating 속도상수":       ("Lithium plating kinetic rate constant [m.s-1]", 1),
-        "Plating 전달계수":       ("Lithium plating transfer coefficient", 1),
-        # ── Thermodynamics ──
-        "양극 OCP":               ("Positive electrode OCP [V]", 1),
-        "음극 OCP":               ("Negative electrode OCP [V]", 1),
-        "온도":                   ("Ambient temperature [K]", 1),  # 별도 변환
-        "열전달 계수":             ("Total heat transfer coefficient [W.m-2.K-1]", 1),
-        "상한 전압":              ("Upper voltage cut-off [V]", 1),
-        "하한 전압":              ("Lower voltage cut-off [V]", 1),
-    }
-    for kr_name, val_str in params_dict.items():
-        if kr_name in _key_map:
-            pybamm_key, scale = _key_map[kr_name]
-            # 함수형 파라미터 유지: "f(...)" 또는 "auto" → 건너뜀
-            _stripped = val_str.strip()
-            if _stripped.lower() == "auto" or _stripped.startswith("f("):
-                continue
-            try:
-                val = float(_stripped)
-            except ValueError:
-                continue  # 파싱 불가 → 건너뜀
-            if kr_name == "온도":
-                val = val + 273.15  # °C → K
-            else:
-                val = val * scale
-            # 상수값만 덮어씀 (함수형 파라미터는 건너뜀)
-            try:
-                param[pybamm_key] = val
-                # 온도: Initial temperature도 동기화
-                if kr_name == "온도":
-                    param["Initial temperature [K]"] = val
-            except Exception:
-                pass
-
-    # 초기 SOC 설정 (셀 레벨, 0=방전 1=만충)
-    # 충전 모드 → 낮은 SOC에서 시작, 방전 모드 → 높은 SOC에서 시작
-    mode = experiment_config.get("mode", "ccv")
-    _user_soc = experiment_config.get("init_soc", "auto")
-    if _user_soc and _user_soc != "auto":
-        try:
-            init_soc = float(_user_soc)
-        except ValueError:
-            init_soc = None
-    else:
-        init_soc = None
-
-    if init_soc is None:
-        if mode in ("charge",):
-            init_soc = 0.0   # 충전: 완전 방전 상태에서 시작
-        elif mode in ("discharge", "gitt"):
-            init_soc = 1.0   # 방전/GITT: 만충 상태에서 시작
-        elif mode == "ccv":
-            init_soc = 0.0   # CC-CV 풀사이클: 빈 상태에서 시작
-        else:
-            init_soc = 0.5   # 커스텀: 중간값
-
-    if mode == "ccv":
-        chg_c = experiment_config.get("chg_crate", 1.0)
-        dchg_c = experiment_config.get("dchg_crate", 1.0)
-        v_max = experiment_config.get("v_max", 4.2)
-        v_min = experiment_config.get("v_min", 2.5)
-        cv_cutoff = experiment_config.get("cv_cutoff", 0.05)
-        cycles = int(experiment_config.get("cycles", 1))
-        exp_steps = [
-            f"Charge at {chg_c}C until {v_max}V",
-            f"Hold at {v_max}V until {cv_cutoff}C",
-            f"Discharge at {dchg_c}C until {v_min}V",
-        ]
-        experiment = pybamm.Experiment(exp_steps * cycles)
-
-    elif mode in ("charge", "discharge"):
-        steps = experiment_config.get("steps", [])
-        if not steps:
-            raise ValueError("충방전 스텝이 비어있습니다. 스텝을 추가해주세요.")
-        cycles = int(experiment_config.get("cycles", 1))
-        experiment = pybamm.Experiment(steps * cycles)
-
-    elif mode == "custom":
-        steps = experiment_config.get("steps", [])
-        if not steps:
-            raise ValueError("커스텀 모드: 실험 단계가 비어있습니다.")
-        experiment = pybamm.Experiment(steps)
-
-    elif mode == "gitt":
-        pattern_type = experiment_config.get("pattern_type", "GITT")
-        pulse_c = experiment_config.get("pulse_current", 0.5)
-        pulse_t = experiment_config.get("pulse_time", 600)
-        rest_t = experiment_config.get("rest_time", 3600)
-        repeats = int(experiment_config.get("repeats", 20))
-        v_min = experiment_config.get("v_min", 2.5)
-
-        if pattern_type == "GITT":
-            step_pair = [
-                f"Discharge at {pulse_c}C for {pulse_t}s or until {v_min}V",
-                f"Rest for {rest_t}s",
-            ]
-        else:  # HPPC
-            step_pair = [
-                f"Discharge at {pulse_c}C for {pulse_t}s or until {v_min}V",
-                f"Rest for {rest_t}s",
-                f"Charge at {pulse_c}C for {pulse_t}s or until 4.2V",
-                f"Rest for {rest_t}s",
-            ]
-        experiment = pybamm.Experiment(step_pair * repeats)
-    else:
-        raise ValueError(f"지원하지 않는 모드: {mode}")
-
-    # period(출력 간격) 적용
-    _period_str = experiment_config.get("period", "auto")
-    if _period_str and _period_str != "auto":
-        try:
-            _period_sec = float(_period_str)
-            if _period_sec > 0:
-                _new_steps = []
-                for _step in experiment.steps:
-                    _raw = str(_step)
-                    # 이미 period가 포함되어 있으면 건너뜀
-                    if "period" not in _raw.lower():
-                        _raw += f" ({_period_sec:g} second period)"
-                    _new_steps.append(_raw)
-                experiment = pybamm.Experiment(_new_steps)
-        except (ValueError, TypeError):
-            pass  # 잘못된 입력은 무시 → 기본 period 사용
-
-    # 4) 시뮬레이션 실행
-    sim = pybamm.Simulation(model, experiment=experiment, parameter_values=param)
-    solution = sim.solve(initial_soc=init_soc)
-    return solution, param
+    """`bdt_pybamm.run_simulation` 위임. pybamm import 는 첫 호출 시점에만 발생."""
+    return bdt_pybamm.run_simulation(model_name, params_dict, experiment_config)
 
 
 class BorderDelegate(QtWidgets.QStyledItemDelegate):
@@ -17521,6 +17354,18 @@ class Ui_sitool(object):
         self.ect_saveok.setText(_translate("sitool", "ECT용 데이터 저장"))
         self.figsaveok.setText(_translate("sitool", "그림 저장"))
 
+
+class _WorkerSignals(QtCore.QObject):
+    """ThreadPoolExecutor / QRunnable 워커 → GUI 스레드 통신 채널.
+
+    Qt 위젯은 GUI 스레드 전용이다. 워커는 emit() 만 호출하고 실제 위젯 갱신은
+    connect 된 슬롯이 메인 스레드에서 수행한다.
+    """
+    progress = QtCore.pyqtSignal(int)         # 0..100
+    message = QtCore.pyqtSignal(str)          # statusBar 임시 메시지
+    error = QtCore.pyqtSignal(str, str)       # (title, body) 사용자 노출용
+
+
 class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def __init__(self):
         super().__init__()
@@ -17772,8 +17617,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.pybamm_dchg_step_type.currentTextChanged.connect(
             lambda t: self._pybamm_update_step_fields(
                 t, self.pybamm_dchg_crate, self.pybamm_dchg_vcut, self.pybamm_dchg_cutoff, "dchg"))
-        # PyBaMM 미설치 시 탭 비활성화
-        if not HAS_PYBAMM:
+        # PyBaMM 미설치 시 탭 비활성화 — find_spec 만 사용해 콜드 스타트에 import 트리거 안 함
+        if not bdt_pybamm.is_installed():
             self.pybamm_run_btn.setDisabled(True)
             self.pybamm_run_btn.setText("PyBaMM 미설치")
             _pybamm_warn = QtWidgets.QLabel("\u26a0 PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치 후 재시작하세요.")
@@ -17844,6 +17689,209 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             disconnect_change(self.mount_pne_5)
         # 초기 ECT 열 상태 설정 (chk_ectpath 기본값 = 체크 안 됨 → 비활성)
         self._update_ect_columns_state()
+        self._bdt_setup_signals()
+
+
+    # ── 묶음 B/D 인프라 (워커 시그널 · QSettings · 드래그앤드롭 · 메뉴/단축키) ──
+    _BDT_GEOM_KEY = "window/geometry"
+    _BDT_STATE_KEY = "window/state"
+    _BDT_RECENT_KEY = "window/recent_folders"
+    _BDT_RECENT_MAX = 5
+
+    def _bdt_setup_signals(self):
+        """워커 → GUI 통신 채널 + 상태바 + 사용성 인프라 초기화."""
+        self._sig = _WorkerSignals()
+        self._sig.progress.connect(self.progressBar.setValue)
+        self._sig.message.connect(lambda s: self.statusBar().showMessage(s, 5000))
+        self._sig.error.connect(self._bdt_show_error)
+        self.statusBar().showMessage("준비됨 — 폴더를 드래그하거나 Ctrl+O 로 열기")
+
+        self._bdt_setup_dnd()
+        self._bdt_setup_menu()
+        self._bdt_restore_window_state()
+
+    def _bdt_show_error(self, title: str, body: str) -> None:
+        """워커가 emit 한 사용자 노출용 에러를 모달 + 로그."""
+        logging.warning("worker error: %s — %s", title, body)
+        QtWidgets.QMessageBox.warning(self, title, body)
+
+    # --- QSettings 기반 영속화 -----------------------------------------
+    def _bdt_settings(self) -> "QtCore.QSettings":
+        return QtCore.QSettings(self._CYCLE_SETTINGS_ORG, self._CYCLE_SETTINGS_APP)
+
+    def _bdt_restore_window_state(self) -> None:
+        s = self._bdt_settings()
+        geom = s.value(self._BDT_GEOM_KEY)
+        if geom is not None:
+            try:
+                self.restoreGeometry(geom)
+            except Exception:
+                pass
+        state = s.value(self._BDT_STATE_KEY)
+        if state is not None:
+            try:
+                self.restoreState(state)
+            except Exception:
+                pass
+        self._bdt_refresh_recent_menu()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt 표준 시그니처
+        try:
+            s = self._bdt_settings()
+            s.setValue(self._BDT_GEOM_KEY, self.saveGeometry())
+            s.setValue(self._BDT_STATE_KEY, self.saveState())
+        except Exception:
+            logging.exception("창 상태 저장 실패 — 무시하고 종료")
+        super().closeEvent(event)
+
+    def _bdt_recent_folders(self) -> list:
+        s = self._bdt_settings()
+        raw = s.value(self._BDT_RECENT_KEY, [])
+        if isinstance(raw, str):
+            raw = [raw]
+        return [p for p in (raw or []) if isinstance(p, str) and p]
+
+    def _bdt_add_recent(self, path: str) -> None:
+        path = os.path.normpath(path)
+        recent = [p for p in self._bdt_recent_folders() if os.path.normpath(p) != path]
+        recent.insert(0, path)
+        recent = recent[: self._BDT_RECENT_MAX]
+        self._bdt_settings().setValue(self._BDT_RECENT_KEY, recent)
+        self._bdt_refresh_recent_menu()
+
+    def _bdt_refresh_recent_menu(self) -> None:
+        menu = getattr(self, "_bdt_recent_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        for path in self._bdt_recent_folders():
+            act = menu.addAction(path)
+            act.triggered.connect(lambda _checked=False, p=path: self._bdt_open_folder(p))
+        if not menu.actions():
+            empty = menu.addAction("(없음)")
+            empty.setEnabled(False)
+
+    # --- 드래그앤드롭 --------------------------------------------------
+    def _bdt_setup_dnd(self) -> None:
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        urls = event.mimeData().urls() if event.mimeData() else []
+        added = 0
+        for url in urls:
+            path = url.toLocalFile()
+            if path and os.path.isdir(path):
+                self._bdt_open_folder(path)
+                added += 1
+        if added:
+            event.acceptProposedAction()
+
+    def _bdt_open_folder(self, path: str) -> None:
+        """드롭/메뉴/단축키 공통 폴더 진입점.
+
+        - cycle_path_table 첫 빈 행에 경로 입력 (있으면)
+        - 최근 폴더 목록에 추가
+        - 상태바 안내. 실제 마운트는 사용자가 마운트 버튼으로 진행.
+        """
+        if not path or not os.path.isdir(path):
+            self._bdt_show_error("폴더 열기 실패", f"올바른 폴더가 아닙니다:\n{path}")
+            return
+        try:
+            tbl = getattr(self, "cycle_path_table", None)
+            if tbl is not None:
+                placed = False
+                for r in range(tbl.rowCount()):
+                    it = tbl.item(r, 0)
+                    txt = it.text() if it else ""
+                    if not txt.strip():
+                        tbl.setItem(r, 0, QtWidgets.QTableWidgetItem(path))
+                        placed = True
+                        break
+                if not placed:
+                    r = tbl.rowCount()
+                    tbl.insertRow(r)
+                    tbl.setItem(r, 0, QtWidgets.QTableWidgetItem(path))
+        except Exception:
+            logging.exception("cycle_path_table 채우기 실패 — 무시")
+        self._bdt_add_recent(path)
+        self.statusBar().showMessage(f"폴더 추가: {path} — 사이클 탭에서 마운트하세요", 6000)
+
+    # --- 메뉴바 + 글로벌 단축키 ----------------------------------------
+    def _bdt_setup_menu(self) -> None:
+        mb = self.menuBar()
+        # File
+        m_file = mb.addMenu("&File")
+        act_open = m_file.addAction("폴더 열기…")
+        act_open.setShortcut(QtGui.QKeySequence.StandardKey.Open)
+        act_open.triggered.connect(self._bdt_action_open_folder)
+        self._bdt_recent_menu = m_file.addMenu("최근 폴더")
+        m_file.addSeparator()
+        act_quit = m_file.addAction("종료")
+        act_quit.setShortcut(QtGui.QKeySequence.StandardKey.Quit)
+        act_quit.triggered.connect(self.close)
+
+        # View
+        m_view = mb.addMenu("&View")
+        act_refresh = m_view.addAction("새로고침")
+        act_refresh.setShortcut(QtGui.QKeySequence("F5"))
+        act_refresh.triggered.connect(self._bdt_action_refresh)
+
+        # Help
+        m_help = mb.addMenu("&Help")
+        act_log = m_help.addAction("로그 폴더 열기")
+        act_log.triggered.connect(self._bdt_action_open_log_dir)
+        act_about = m_help.addAction("BDT 정보…")
+        act_about.triggered.connect(self._bdt_action_about)
+
+        self._bdt_refresh_recent_menu()
+
+    def _bdt_action_open_folder(self) -> None:
+        recent = self._bdt_recent_folders()
+        start = recent[0] if recent else ""
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "BDT — 폴더 열기", start)
+        if path:
+            self._bdt_open_folder(path)
+
+    def _bdt_action_refresh(self) -> None:
+        # 사이클 탭 캐시를 비우고 다음 마운트에서 재읽기. 무거운 자동 재로드는 피한다.
+        try:
+            global _channel_meta_store
+            _channel_meta_store = {}
+        except Exception:
+            pass
+        try:
+            check_cycler.cache_clear()
+        except Exception:
+            pass
+        try:
+            is_pne_folder.cache_clear()
+        except Exception:
+            pass
+        self.statusBar().showMessage("캐시 비움 — 다음 마운트에서 재로딩", 4000)
+
+    def _bdt_action_open_log_dir(self) -> None:
+        log_dir = os.path.dirname(_bdt_log_path())
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except OSError:
+            pass
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(log_dir))
+
+    def _bdt_action_about(self) -> None:
+        msg = (
+            "BatteryDataTool (BDT)\n"
+            "버전: v260426 (proto)\n"
+            f"빌드 일자: {datetime.now():%Y-%m-%d}\n\n"
+            f"로그 위치: {os.path.dirname(_bdt_log_path())}\n"
+            "문제 제보 시 위 폴더의 최신 .log 파일을 첨부해 주세요."
+        )
+        QtWidgets.QMessageBox.about(self, "BDT 정보", msg)
 
 
     def _pump_ui(self, progress_value=None, max_ms=10):
@@ -20375,7 +20423,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 enrich_newdata_with_meta(cyctemp[1].NewData, folder_path)
             return (folder_idx, subfolder_idx, folder_path, cyctemp)
         except Exception as e:
-            print(f"[병렬 로딩 오류] {folder_path}: {e}")
+            sig = getattr(self, "_sig", None)
+            if sig is not None:
+                sig.error.emit("배터리 데이터 로딩 실패", f"{folder_path}\n{e}")
+            else:
+                logging.warning("[병렬 로딩 오류] %s: %s", folder_path, e)
             return (folder_idx, subfolder_idx, folder_path, None)
     
     @log_perf
@@ -31647,7 +31699,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     # ===== PyBaMM 시뮬레이션 탭 핸들러 =====
     def pybamm_run_button(self):
         """시뮬레이션 실행 버튼 핸들러"""
-        if not HAS_PYBAMM:
+        if not bdt_pybamm.is_available():
             QtWidgets.QMessageBox.warning(self, "PyBaMM", "PyBaMM이 설치되지 않았습니다.\npip install pybamm 으로 설치해주세요.")
             return
         self.progressBar.setValue(0)
@@ -31713,7 +31765,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(60)
 
         # EmptySolution 체크
-        if isinstance(sol, pybamm.EmptySolution) or not hasattr(sol, "__getitem__"):
+        if bdt_pybamm.is_empty_solution(sol):
             self.progressBar.setValue(0)
             self.pybamm_run_btn.setDisabled(False)
             QtWidgets.QMessageBox.warning(self, "시뮬레이션 결과 없음",
@@ -32588,10 +32640,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         Returns: {한글키: "f(인자) ≈ 대표값"} — 함수 유지 + 참고값 표시
         """
-        if not HAS_PYBAMM:
+        if not bdt_pybamm.is_available():
             return {}
         try:
-            p = pybamm.ParameterValues("OKane2022")
+            p = bdt_pybamm.okane2022_param_values()
         except Exception:
             return {}
 
@@ -32744,27 +32796,71 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.pybamm_init_soc.setText("auto")
             self.pybamm_period.setText("10")
 
+# ── 로컬 로그 경로 (외부 전송 없음) ───────────────────────────────────
+def _bdt_log_path() -> str:
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    log_dir = os.path.join(base, "BDT", "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except OSError:
+        log_dir = os.path.expanduser("~")
+    return os.path.join(log_dir, f"BDT_{datetime.now():%Y%m%d}.log")
+
+
+def _splash_text(msg: str) -> None:
+    """PyInstaller `--splash` 가 켜진 frozen 빌드에서만 동작."""
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+        pyi_splash.update_text(msg)
+    except Exception:
+        pass
+
+
+def _splash_close() -> None:
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
 # UI 실행
 if __name__ == "__main__":
-    # 슬롯 내부 예외를 콘솔에 출력
-    def _exception_hook(exctype, value, traceback):
-        sys.__excepthook__(exctype, value, traceback)
+    import traceback as _tb_mod
+
+    _log_path = _bdt_log_path()
+    logging.basicConfig(
+        filename=_log_path,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        encoding="utf-8",
+    )
+
+    _splash_text("UI 초기화…")
+    app = QtWidgets.QApplication(sys.argv)
+    app.setFont(QtGui.QFont("Malgun gothic"))
+
+    def _exception_hook(exctype, value, tb):
+        msg = "".join(_tb_mod.format_exception(exctype, value, tb))
+        logging.error("UNHANDLED: %s", msg)
+        try:
+            QtWidgets.QMessageBox.critical(
+                None,
+                "BDT 오류",
+                f"{exctype.__name__}: {value}\n\n로그: {_log_path}",
+            )
+        except Exception:
+            sys.__excepthook__(exctype, value, tb)
     sys.excepthook = _exception_hook
 
-    # HiDPI 스케일링을 명시적으로 비활성화합니다.
-    # os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '0'
-    # os.environ['QT_SCALE_FACTOR'] = '1.0'
-    app = QtWidgets.QApplication(sys.argv)
-    # 개인 글꼴 폰트 적용
-    app.setFont(QtGui.QFont("Malgun gothic"))
-    # app.setStyleSheet("background-color: #FFFFFF;")
+    _splash_text("메인 윈도우 구성…")
     myWindow = WindowClass()
-    # 화면 영역 내에 창 배치 (좌상단 기준)
     screen = app.primaryScreen().availableGeometry()
     win_w = min(myWindow.width(), screen.width())
     win_h = min(myWindow.height(), screen.height())
     myWindow.resize(win_w, win_h)
     myWindow.move(screen.x(), screen.y())
+
+    _splash_close()
     myWindow.show()
-    # app.exec_()
     sys.exit(app.exec())
