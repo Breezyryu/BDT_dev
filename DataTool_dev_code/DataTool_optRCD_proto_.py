@@ -22055,12 +22055,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._row_last_path.pop(row, None)
 
     def _autofill_all_rows(self):
-        """버튼 트리거: 유효 경로가 있는 모든 행에 메타 자동 채우기."""
-        for row in range(self.cycle_path_table.rowCount()):
-            path = self._get_table_cell(row, 1)
-            if path:
-                self._autofill_row(row)
-                self._highlight_path_cell(row)
+        """버튼 트리거: 유효 경로가 있는 모든 행에 메타 자동 채우기 (full).
+
+        `_autofill_table_empty_cells(mode='full')` 의 thin wrapper.
+        - 연결처리 체크 시 그룹별 link_info 빌드 → **그룹 첫 행만** col0/col2/col3 채움
+          (이전 동작은 link_info=None 호출로 모든 행 col0 채워지던 버그였음)
+        - 후처리 (강조, mismatch 검사, _row_last_path 동기화) 모두 포함
+        - statusBar 진행률 + processEvents 로 UI 응답 확보 (네트워크 드라이브 대응)
+        """
+        if not self._has_table_data():
+            return
+        try:
+            _status = self.statusBar()
+        except Exception:
+            _status = None
+
+        def _autofill_progress(done: int, total: int) -> None:
+            if _status is not None and total > 0:
+                _status.showMessage(f"채우기 중... ({done}/{total})")
+            QtWidgets.QApplication.processEvents()
+
+        self._autofill_table_empty_cells(
+            mode='full', progress_cb=_autofill_progress)
+        if _status is not None:
+            _status.showMessage("완료", 2000)
 
     # ── 테이블 ↔ 데이터 유틸리티 ──
 
