@@ -3331,7 +3331,8 @@ def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
                         max_nbins: int = 6,
                         ymin_floor: float | None = None,
                         ymax_cap: float | None = None,
-                        outlier_filter: str | None = None) -> bool:
+                        outlier_filter: str | None = None,
+                        min_range: float | None = None) -> bool:
     """단일 ax 의 scatter 데이터 기반 ylim·yticks 자동 fit (확장+축소).
 
     데이터에 맞춰 ylim 을 좁히고, yticks 는 matplotlib MaxNLocator 로
@@ -3353,6 +3354,10 @@ def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
     outlier_filter : str | None
         'iqr' 이면 Tukey IQR(1.5·IQR) 기반 outlier 제거 후 fit.
         None 이면 모든 데이터 사용.
+    min_range : float | None
+        ylim 최소 범위. fit 결과 (new_high - new_low) 가 이 값보다 작으면
+        데이터 중심 기준으로 ymin = center - min_range/2, ymax = center +
+        min_range/2 로 확장. 예: Temperature variation 비교를 위해 15.0.
 
     Returns
     -------
@@ -3394,6 +3399,13 @@ def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
     if ymax_cap is not None:
         # 데이터+padding 이 cap 을 넘으면 cap 으로 잘라냄
         new_high = min(new_high, ymax_cap)
+    # 최소 표시 범위 보장 — variation 비교 위해 데이터 중심 기준 확장
+    if min_range is not None:
+        actual_range = new_high - new_low
+        if actual_range < min_range:
+            center = (new_low + new_high) / 2
+            new_low = center - min_range / 2
+            new_high = center + min_range / 2
     if new_high <= new_low:
         return False
     ax.set_ylim(new_low, new_high)
@@ -3507,7 +3519,9 @@ def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
     # 데이터 범위 (Temp 22~25, RndV 3.0~3.7) 대비 넓어 빈공간이 큼.
     # 데이터 기반 fit 으로 가시성 향상. ax2/ax5 (Eff) 는 좁은 범위가
     # 도메인적으로 의미 있어 그대로 유지. ax1 은 사용자 입력 ylim 적용.
-    _fit_ax_y_from_data(ax3, padding=0.10, max_nbins=6)
+    # ax3 Temperature: 데이터 variation 비교 위해 min_range=15℃ 보장
+    # (예: 데이터 22.2~22.8℃ 라도 ylim 은 15℃ 보여줌 → variation 명확)
+    _fit_ax_y_from_data(ax3, padding=0.10, max_nbins=6, min_range=15.0)
     # ax6 Rest End V (방전 후 OCV) 는 4.0 V 이상이 의미 없으므로 cap
     _fit_ax_y_from_data(ax6, padding=0.05, max_nbins=6, ymax_cap=4.0)
 
@@ -19136,7 +19150,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 inner.addTab(_sn, _t)
             inner.setCurrentIndex(0)   # 기본 "요약"
             tab_layout.addWidget(inner, 1)  # inner 가 세로 공간 전부 차지
-            # extra figs tight_layout
+            # 요약(fig) + 상세(extra_figs) 모두 동일 tight_layout 적용.
+            # 이전: fig 의 tight_layout 은 활성 figure 의존 (plt.tight_layout)
+            # → fig2 만 명시 호출되어 plot 크기 차이 발생 → 정정.
+            try:
+                fig.tight_layout(pad=1, w_pad=1, h_pad=1)
+            except Exception:
+                pass
             for _ef in extra_figs:
                 try:
                     _ef.tight_layout(pad=1, w_pad=1, h_pad=1)
