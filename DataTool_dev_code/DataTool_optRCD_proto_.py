@@ -18320,7 +18320,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             art.set_linewidth(val)
                         elif hasattr(art, 'set_linewidths'):
                             art.set_linewidths([val])
-                canvas.draw_idle()
+                _redraw_all_canvases()
         ch_list.customContextMenuRequested.connect(_on_ch_context_menu)
         
         # 하이라이트 상태 추적 (다중 선택)
@@ -18397,7 +18397,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 for lbl, info in channel_map.items():
                     for art in info['artists']:
                         _dim_artist(art)
-                canvas.draw_idle()
+                _redraw_all_canvases()
                 return
             for lbl, info in channel_map.items():
                 if lbl in selected:
@@ -18406,7 +18406,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 else:
                     for art in info['artists']:
                         _dim_artist(art)
-            canvas.draw_idle()
+            _redraw_all_canvases()
         
         def _highlight_channel(selected_label):
             """채널 토글: 전체 하이라이트 ON이면 해제 후 클릭 채널만 dim"""
@@ -18426,7 +18426,41 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         def _strip_numbering(text):
             """'1. label' → 'label' (넘버링 접두사 제거)"""
             return _re.sub(r'^\d+\.\s*', '', text)
-        
+
+        def _redraw_all_canvases():
+            """채널 토글 후 영향 받는 모든 figure 의 canvas 재드로우.
+
+            사이클 분석은 요약(fig1) + 상세(fig2) 등 multi-figure 구조이므로
+            channel_map 의 artists 가 여러 figure 에 분포. 각 artist 의 figure
+            을 추적해 unique canvas 만 한 번씩 draw_idle 호출.
+            """
+            seen_ids = set()
+            # 메인 canvas (요약 탭) — 변수 통해 호출하여 헬퍼 자기 자신과 패턴 차별화
+            _primary_c = canvas
+            if _primary_c is not None:
+                try:
+                    _primary_c.draw_idle()
+                    seen_ids.add(id(_primary_c))
+                except Exception:
+                    pass
+            # channel_map / sub*_channel_map 의 artist 가 속한 모든 figure 의 canvas
+            for _src in (channel_map, sub_channel_map, sub2_channel_map):
+                if not _src:
+                    continue
+                for _info in _src.values():
+                    for _art in _info.get('artists', []):
+                        _f = getattr(_art, 'figure', None)
+                        if _f is None:
+                            continue
+                        _c = getattr(_f, 'canvas', None)
+                        if _c is None or id(_c) in seen_ids:
+                            continue
+                        seen_ids.add(id(_c))
+                        try:
+                            _c.draw_idle()
+                        except Exception:
+                            pass
+
         def on_item_clicked(item):
             """개별 채널 하이라이트 토글"""
             orig_key = item.data(Qt.ItemDataRole.UserRole)
@@ -18471,7 +18505,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     art.set_visible(visible)
             _update_ch_count()
             _rebuild_legend()
-            canvas.draw_idle()
+            _redraw_all_canvases()
         
         ch_list.itemClicked.connect(on_item_clicked)
         ch_list.itemChanged.connect(on_item_changed)
@@ -18509,7 +18543,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             ch_list.blockSignals(False)
             _update_ch_count()
             _rebuild_legend()
-            canvas.draw_idle()
+            _redraw_all_canvases()
             _chk_guard['updating'] = False
         
         def _on_hl_all(state):
@@ -18518,7 +18552,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if checked:
                 # 체크 ON: 모든 채널 원래 색상 복원
                 _restore_all()
-                canvas.draw_idle()
+                _redraw_all_canvases()
             else:
                 # 체크 OFF: 모든 채널 회색(dim), 클릭으로 개별 선택
                 highlight_state['active'] = set()
@@ -18527,7 +18561,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     for art in info['artists']:
                         _dim_artist(art)
                         art.set_zorder(1)
-                canvas.draw_idle()
+                _redraw_all_canvases()
         
         chk_show_all.stateChanged.connect(_on_show_all)
         chk_hl_all.stateChanged.connect(_on_hl_all)
@@ -18542,7 +18576,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 legend = ax.get_legend()
                 if legend:
                     legend.set_visible(state == Qt.CheckState.Checked.value)
-            canvas.draw_idle()
+            _redraw_all_canvases()
         
         legend_checkbox.stateChanged.connect(toggle_legend)
         
@@ -18625,7 +18659,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if legend:
                     for txt in legend.get_texts():
                         txt.set_fontsize(val)
-            canvas.draw_idle()
+            _redraw_all_canvases()
         font_slider.valueChanged.connect(_on_font_size)
         ctrl_col.addWidget(_font_lbl)
         ctrl_col.addWidget(font_slider)
@@ -18855,7 +18889,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 art.set_visible(style['checked'][key])
                 ch_list.blockSignals(False)
                 _update_ch_count()
-            canvas.draw_idle()
+            _redraw_all_canvases()
         
         _btn_style = (
             f"QPushButton {{ font-size: 10px; padding: 0 4px; "
@@ -18898,6 +18932,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 item.setCheckState(Qt.CheckState.Checked)
                 item.setForeground(QColor(sub_channel_map[label]['color']))
                 item.setToolTip(label)
+                # 원본 sub_channel_map 키를 UserRole 에 보관 (lookup 안전)
+                # 표시 텍스트("01. CH032") 를 _strip_numbering 으로 추출 시
+                # "CH032" 가 되어 키("032")와 불일치 → 핸들러 no-op 버그였음
+                item.setData(Qt.ItemDataRole.UserRole, label)
                 sub_list.addItem(item)
             
             # ── 채널 그룹 → 서브 채널 연동 (표시/숨김) ──
@@ -18908,8 +18946,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 result = []
                 for i in range(sub_list.count()):
                     sub_item = sub_list.item(i)
-                    sub_label = _strip_numbering(sub_item.text())
-                    if sub_label in sub_channel_map:
+                    # UserRole 의 원본 키 사용 (표시 텍스트 "01. CH032" 의 "CH"
+                    # 접두사로 인한 lookup fail 방지)
+                    sub_label = sub_item.data(Qt.ItemDataRole.UserRole)
+                    if sub_label and sub_label in sub_channel_map:
                         if sub_channel_map[sub_label].get('parent') == group_label:
                             result.append((sub_item, sub_label))
                 return result
@@ -18934,7 +18974,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                     _sub_chk_guard['updating'] = False
                 _rebuild_legend()
-                canvas.draw_idle()
+                _redraw_all_canvases()
             
             ch_list.itemChanged.connect(on_item_changed_linked)
             
@@ -18958,8 +18998,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     highlight_state['active'] = set(channel_map.keys())
                     _apply_highlight()
                     # 클릭한 서브 채널만 dim 처리
-                label = _strip_numbering(item.text())
-                if label not in sub_channel_map:
+                # UserRole 의 원본 키 사용
+                label = item.data(Qt.ItemDataRole.UserRole)
+                if not label or label not in sub_channel_map:
                     return
                 info = sub_channel_map[label]
                 active = highlight_state['active']
@@ -18978,18 +19019,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 하이라이트 처리
                     for art in artists:
                         _highlight_artist(art)
-                canvas.draw_idle()
-            
+                _redraw_all_canvases()
+
             def on_sub_item_changed(item):
                 """서브 채널 개별 표시/숨김"""
                 if _sub_chk_guard['updating']:
                     return
-                label = _strip_numbering(item.text())
+                # UserRole 의 원본 키 사용
+                label = item.data(Qt.ItemDataRole.UserRole)
                 visible = item.checkState() == Qt.CheckState.Checked
-                if label in sub_channel_map:
+                if label and label in sub_channel_map:
                     for art in sub_channel_map[label]['artists']:
                         art.set_visible(visible)
-                canvas.draw_idle()
+                _redraw_all_canvases()
             
             sub_list.itemClicked.connect(on_sub_item_clicked)
             sub_list.itemChanged.connect(on_sub_item_changed)
@@ -19021,6 +19063,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 item.setCheckState(Qt.CheckState.Checked)
                 item.setForeground(QColor(sub2_channel_map[label]['color']))
                 item.setToolTip(label)
+                # 원본 sub2_channel_map 키를 UserRole 에 보관 (lookup 안전)
+                item.setData(Qt.ItemDataRole.UserRole, label)
                 sub2_list.addItem(item)
             
             _sub2_chk_guard = {'updating': False}
@@ -19030,12 +19074,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 result = []
                 for i in range(sub2_list.count()):
                     s2_item = sub2_list.item(i)
-                    s2_label = _strip_numbering(s2_item.text())
-                    if s2_label in sub2_channel_map:
+                    s2_label = s2_item.data(Qt.ItemDataRole.UserRole)
+                    if s2_label and s2_label in sub2_channel_map:
                         if sub2_channel_map[s2_label].get('parent') == parent_label:
                             result.append((s2_item, s2_label))
                 return result
-            
+
             def _get_sub2_items_for_group(group_label):
                 """채널 그룹에 속한 모든 서브2 항목 반환 (서브 경유 또는 직접)"""
                 if sub_channel_map and len(sub_channel_map) > 1:
@@ -19044,8 +19088,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     result = []
                     for i in range(sub2_list.count()):
                         s2_item = sub2_list.item(i)
-                        s2_label = _strip_numbering(s2_item.text())
-                        if s2_label in sub2_channel_map:
+                        s2_label = s2_item.data(Qt.ItemDataRole.UserRole)
+                        if s2_label and s2_label in sub2_channel_map:
                             if sub2_channel_map[s2_label].get('parent') in sub_labels:
                                 result.append((s2_item, s2_label))
                     return result
@@ -19082,7 +19126,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                         _sub2_chk_guard['updating'] = False
                     _rebuild_legend()
-                    canvas.draw_idle()
+                    _redraw_all_canvases()
                 
                 ch_list.itemChanged.connect(on_item_changed_3level)
                 
@@ -19093,9 +19137,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     """서브 채널 표시/숨김 → 하위 서브2도 동기화"""
                     if _sub_chk_guard['updating']:
                         return
-                    label = _strip_numbering(item.text())
+                    label = item.data(Qt.ItemDataRole.UserRole)
                     visible = item.checkState() == Qt.CheckState.Checked
-                    if label in sub_channel_map:
+                    if label and label in sub_channel_map:
                         for art in sub_channel_map[label]['artists']:
                             art.set_visible(visible)
                     if not _sub2_chk_guard['updating']:
@@ -19104,7 +19148,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             s2_item.setCheckState(
                                 Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                         _sub2_chk_guard['updating'] = False
-                    canvas.draw_idle()
+                    _redraw_all_canvases()
                 
                 sub_list.itemChanged.connect(on_sub_item_changed_linked)
             else:
@@ -19127,7 +19171,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 Qt.CheckState.Checked if visible else Qt.CheckState.Unchecked)
                         _sub2_chk_guard['updating'] = False
                     _rebuild_legend()
-                    canvas.draw_idle()
+                    _redraw_all_canvases()
                 
                 ch_list.itemChanged.connect(on_item_changed_with_sub2)
             
@@ -19138,8 +19182,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     chk_hl_all.setChecked(False)
                     highlight_state['active'] = set(channel_map.keys())
                     _apply_highlight()
-                label = _strip_numbering(item.text())
-                if label not in sub2_channel_map:
+                label = item.data(Qt.ItemDataRole.UserRole)
+                if not label or label not in sub2_channel_map:
                     return
                 info = sub2_channel_map[label]
                 artists = info['artists']
@@ -19150,18 +19194,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 else:
                     for art in artists:
                         _highlight_artist(art)
-                canvas.draw_idle()
-            
+                _redraw_all_canvases()
+
             def on_sub2_item_changed(item):
                 """서브2 채널 개별 표시/숨김"""
                 if _sub2_chk_guard['updating']:
                     return
-                label = _strip_numbering(item.text())
+                label = item.data(Qt.ItemDataRole.UserRole)
                 visible = item.checkState() == Qt.CheckState.Checked
-                if label in sub2_channel_map:
+                if label and label in sub2_channel_map:
                     for art in sub2_channel_map[label]['artists']:
                         art.set_visible(visible)
-                canvas.draw_idle()
+                _redraw_all_canvases()
             
             sub2_list.itemClicked.connect(on_sub2_item_clicked)
             sub2_list.itemChanged.connect(on_sub2_item_changed)
