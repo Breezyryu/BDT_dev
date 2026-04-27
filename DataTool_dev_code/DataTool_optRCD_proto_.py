@@ -19059,12 +19059,181 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         
         return overlay
     
+    def _accumulate_cycle_sheets(self, sheets_per_channel: dict,
+                                 nd, ch_label: str) -> None:
+        """graph_output_cycle 호출 직후 nd 를 sheets dict 에 누적.
+
+        nd (df.NewData) 의 각 시트 컬럼을 OriCyc 인덱스 Series 로 변환하여
+        sheets_per_channel[sheet_name][ch_label] 에 저장. `_cycle_sheet_specs`
+        와 동일 시트 목록 사용 → 엑셀 출력과 일관성 보장.
+
+        Parameters
+        ----------
+        sheets_per_channel : dict
+            { sheet_name: { ch_label: pd.Series(index=OriCyc) } }
+            (in-place 누적, 호출자가 초기화)
+        nd : pd.DataFrame
+            df.NewData. 'OriCyc' 컬럼 필수.
+        ch_label : str
+            channel_map 의 채널 라벨.
+        """
+        if nd is None or len(nd) == 0 or 'OriCyc' not in nd.columns:
+            return
+        try:
+            specs = self._cycle_sheet_specs(nd)
+        except Exception:
+            return
+        for sheet_name, value_col, _custom_header in specs:
+            if value_col not in nd.columns:
+                continue
+            try:
+                sub = nd[['OriCyc', value_col]].dropna(subset=[value_col])
+                if sub.empty:
+                    continue
+                series = pd.Series(
+                    sub[value_col].values,
+                    index=sub['OriCyc'].astype(int).values,
+                    name=ch_label,
+                )
+                sheets_per_channel.setdefault(sheet_name, {})[ch_label] = series
+            except Exception:
+                continue
+
+    def _create_cycle_data_subtab(self, sheets_per_channel: dict,
+                                  channel_map: dict):
+        """엑셀 시트 형태 데이터 서브탭 위젯 생성 (read-only).
+
+        구조:
+            QWidget (root)
+            └─ QTabWidget (지표별 inner-inner 탭)
+                 └─ QTableWidget (행=OriCyc, 열=채널, read-only)
+
+        Parameters
+        ----------
+        sheets_per_channel : dict[str, dict[str, pd.Series]]
+            { sheet_name: { channel_label: pd.Series(index=OriCyc, values=값) } }
+            `_cycle_sheet_specs` 와 호출자에서 빌드.
+        channel_map : dict[str, dict]
+            { channel_label: {'color': '#hex', 'artists': [...]} }
+            헤더 폰트 색상 = 그래프 색상.
+
+        Returns
+        -------
+        QWidget | None
+            sheets_per_channel 비어있으면 None.
+        """
+        from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget,
+                                     QTableWidget, QTableWidgetItem,
+                                     QHeaderView)
+        from PyQt6.QtGui import QColor, QFont, QBrush
+        from PyQt6.QtCore import Qt
+        if not sheets_per_channel:
+            return None
+        # 시트별 소수점 자릿수 (지표 의미별)
+        _DECIMALS = {
+            "방전용량": 4, "충전용량": 4,
+            "충방효율": 4, "방충효율": 4,
+            "평균 전압": 3, "Rest End": 3, "Rest End Chg": 3,
+            "충전전압": 3, "방전전압": 3,
+            "방전Energy": 3,
+            "DCIR": 1, "RSS": 1, "RSS_OCV": 3, "RSS_CCV": 3,
+            "SOC70_DCIR": 1, "SOC70_RSS": 1,
+        }
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(2, 2, 2, 2)
+        root_layout.setSpacing(2)
+        sheet_tabs = QTabWidget()
+        sheet_tabs.setStyleSheet(
+            "QTabBar::tab { font-size: 10px; padding: 3px 8px; }"
+        )
+        # 셀 폰트 (monospace, 우측 정렬)
+        _cell_font = QFont("Consolas")
+        _cell_font.setPointSize(9)
+        for sheet_name, ch_series in sheets_per_channel.items():
+            if not ch_series:
+                continue
+            # 모든 채널의 OriCyc 합집합 → 정렬된 행 인덱스
+            all_oricyc = set()
+            for s in ch_series.values():
+                if s is not None and len(s) > 0:
+                    all_oricyc.update(int(c) for c in s.index)
+            if not all_oricyc:
+                continue
+            row_idx = sorted(all_oricyc)
+            col_labels = list(ch_series.keys())
+            n_rows = len(row_idx)
+            n_cols = 1 + len(col_labels)  # OriCyc + 채널들
+            tbl = QTableWidget(n_rows, n_cols)
+            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            tbl.setSelectionBehavior(
+                QTableWidget.SelectionBehavior.SelectItems)
+            tbl.setAlternatingRowColors(True)
+            tbl.setStyleSheet(
+                "QTableWidget { font-size: 9px; }"
+                "QHeaderView::section { font-size: 9px; padding: 2px 4px; }"
+            )
+            # 헤더 — OriCyc + 채널 라벨
+            headers = ["OriCyc"] + col_labels
+            tbl.setHorizontalHeaderLabels(headers)
+            tbl.verticalHeader().setVisible(False)
+            tbl.horizontalHeader().setSectionResizeMode(
+                QHeaderView.ResizeMode.ResizeToContents)
+            # 채널 헤더 색상 적용
+            for ci, ch_label in enumerate(col_labels):
+                _info = channel_map.get(ch_label) or {}
+                _color = _info.get('color')
+                if _color:
+                    _hi = tbl.horizontalHeaderItem(ci + 1)
+                    if _hi is not None:
+                        _hi.setForeground(QBrush(QColor(_color)))
+            # 셀 채우기
+            _decimals = _DECIMALS.get(sheet_name, 3)
+            _fmt = f"{{:.{_decimals}f}}"
+            for ri, oricyc in enumerate(row_idx):
+                # OriCyc 컬럼
+                _it = QTableWidgetItem(str(int(oricyc)))
+                _it.setFont(_cell_font)
+                _it.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight
+                    | Qt.AlignmentFlag.AlignVCenter)
+                _it.setFlags(Qt.ItemFlag.ItemIsSelectable
+                             | Qt.ItemFlag.ItemIsEnabled)
+                tbl.setItem(ri, 0, _it)
+                # 채널별 값
+                for ci, ch_label in enumerate(col_labels):
+                    s = ch_series.get(ch_label)
+                    if s is None or oricyc not in s.index:
+                        continue
+                    _v = s.loc[oricyc]
+                    if _v is None or pd.isna(_v):
+                        _txt = ""
+                    else:
+                        try:
+                            _txt = _fmt.format(float(_v))
+                        except (TypeError, ValueError):
+                            _txt = str(_v)
+                    _it = QTableWidgetItem(_txt)
+                    _it.setFont(_cell_font)
+                    _it.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight
+                        | Qt.AlignmentFlag.AlignVCenter)
+                    _it.setFlags(Qt.ItemFlag.ItemIsSelectable
+                                 | Qt.ItemFlag.ItemIsEnabled)
+                    tbl.setItem(ri, ci + 1, _it)
+            sheet_tabs.addTab(tbl, sheet_name)
+        if sheet_tabs.count() == 0:
+            return None
+        root_layout.addWidget(sheet_tabs, 1)
+        return root
+
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
                             channel_map, fig, axes_list, sub_channel_map=None,
                             classify_info=None, classify_by_group=None,
                             save_context=None, voltage_condition_text=None,
                             group_names=None,
-                            extra_figs=None, subtab_titles=None):
+                            extra_figs=None, subtab_titles=None,
+                            data_subtab_widget=None):
         """
         채널 제어 위젯 포함 (오버레이 방식)
         classify_info: list[dict] — 경로별 분류 결과 (없으면 표시 안 함)
@@ -19076,7 +19245,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             None 이면 기존 단일 canvas 경로 (하위 호환). 있으면 외부 탭 내부에
             QTabWidget 중첩으로 "요약"/"상세" 등 서브탭을 구성한다.
         subtab_titles: list[str] | None — 서브탭 라벨 (첫 원소=기본 canvas, 이후 extra_figs 순).
-            예: ["요약", "상세"]. None 이면 기본값 사용.
+            예: ["요약", "상세", "데이터"]. None 이면 기본값 사용.
+        data_subtab_widget: QWidget | None
+            제공 시 inner QTabWidget 끝에 '데이터' 서브탭으로 추가.
+            엑셀 시트 형태로 df.NewData 를 표시. None 이면 추가하지 않음.
+            `_create_cycle_data_subtab` 으로 생성된 위젯 권장.
         """
         from PyQt6.QtWidgets import QHBoxLayout, QLabel
         # save_context에 classify_info 포함
@@ -19156,6 +19329,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _t = (titles[_i + 1] if len(titles) > _i + 1
                       else f"상세{_i + 1}")
                 inner.addTab(_sn, _t)
+            # 데이터 서브탭 (엑셀 시트 형태) — 제공 시 끝에 추가
+            if data_subtab_widget is not None:
+                _data_idx = 1 + len(extra_figs)  # canvas + extra_figs 뒤
+                _data_title = (titles[_data_idx]
+                               if len(titles) > _data_idx else "데이터")
+                inner.addTab(data_subtab_widget, _data_title)
             inner.setCurrentIndex(0)   # 기본 "요약"
             tab_layout.addWidget(inner, 1)  # inner 가 세로 공간 전부 차지
             # 요약(fig) + 상세(extra_figs) 모두 동일 tight_layout 적용.
@@ -20488,6 +20667,57 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         return results, subfolder_map
     
+    def _cycle_sheet_specs(self, nd):
+        """엑셀 시트·데이터 탭 공통 spec 리스트.
+
+        `_save_cycle_excel_data` 의 시트 구성과 동일 순서·이름.
+        `_create_cycle_data_subtab` 에서 데이터 탭 inner-tab 구성에 사용.
+
+        Parameters
+        ----------
+        nd : pd.DataFrame
+            df.NewData. mkdcir·옵셔널 컬럼 존재 여부에 따라 시트 목록이 달라짐.
+
+        Returns
+        -------
+        list[tuple[str, str, list[str] | None]]
+            [(sheet_name, value_col_name, custom_header_or_None), ...]
+            value_col_name: nd 에서 추출할 컬럼명
+            custom_header: 컬럼 헤더 라벨 (None 이면 채널 headername 사용)
+        """
+        specs = []
+        specs.append(("방전용량", "Dchg", None))
+        specs.append(("Rest End", "RndV", None))
+        if ("RndV_chg_rest" in nd.columns
+                and not nd["RndV_chg_rest"].dropna().empty):
+            specs.append(("Rest End Chg", "RndV_chg_rest", None))
+        specs.append(("평균 전압", "AvgV", None))
+        specs.append(("충방효율", "Eff", None))
+        specs.append(("충전용량", "Chg", None))
+        specs.append(("방충효율", "Eff2", None))
+        specs.append(("방전Energy", "DchgEng", None))
+        # DCIR — mkdcir 모드 분기 (RSS / DCIR / RSS_OCV / RSS_CCV / SOC70 등)
+        _has_mkdcir = (self.mkdcir.isChecked()
+                       and "dcir2" in nd.columns
+                       and not nd["dcir2"].dropna().empty)
+        if _has_mkdcir:
+            if ("soc70_dcir" in nd.columns
+                    and not nd["soc70_dcir"].dropna().empty):
+                specs.append(("SOC70_DCIR", "soc70_dcir", None))
+                specs.append(("SOC70_RSS", "soc70_rss_dcir", None))
+            specs.append(("RSS", "dcir", None))
+            specs.append(("DCIR", "dcir2", None))
+            specs.append(("RSS_OCV", "rssocv", None))
+            specs.append(("RSS_CCV", "rssccv", None))
+        else:
+            specs.append(("DCIR", "dcir", None))
+        # 충전/방전 종료 전압 (컬럼 존재 시)
+        if "ChgVolt" in nd.columns:
+            specs.append(("충전전압", "ChgVolt", ["ChgVolt(V)"]))
+        if "DchgVolt" in nd.columns:
+            specs.append(("방전전압", "DchgVolt", ["DchgVolt(V)"]))
+        return specs
+
     def _save_cycle_excel_data(self, nd, writecolno, start_row, headername):
         """사이클 데이터 엑셀 저장 공통 로직 (toyo/pne, 개별/통합/연결 모두 동일 결과)"""
         cyc_head = ["Cycle"]
@@ -21270,6 +21500,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 toolbar = None
                 channel_map = {}
                 sub_channel_map = {}
+                # 데이터 서브탭용 시트 dict (PR #C: 엑셀 시트 형태 view)
+                # { sheet_name: { ch_label: pd.Series(index=OriCyc) } }
+                sheets_per_channel: dict = {}
                 _seen_ch_labels = set()
                 has_valid_data = False
                 colorno = 0
@@ -21429,6 +21662,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[_ch] = {'artists': _all_artists, 'color': _color}
                             sub_channel_map[sub_label] = {
                                 'artists': list(_all_artists), 'color': _color, 'parent': _ch}
+                            # 데이터 서브탭용 시트 누적 (연결 모드: sub_label 단위)
+                            self._accumulate_cycle_sheets(
+                                sheets_per_channel, merged_df, sub_label)
 
                         # 개별: sub 수만큼 증가 / 통합: 그룹 1개분만 증가
                         if is_individual:
@@ -21527,6 +21763,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         _sub_sfx += 1
                                     sub_channel_map[sub_label] = {
                                         'artists': list(_all_artists), 'color': _color, 'parent': ch_label}
+                                    # 데이터 서브탭용 시트 누적 (비연결: sub_label 단위)
+                                    self._accumulate_cycle_sheets(
+                                        sheets_per_channel,
+                                        cyctemp[1].NewData, sub_label)
 
                                     if is_individual:
                                         colorno += 1
@@ -21887,6 +22127,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
                     # 그룹 이름 리스트 (패턴 라벨용)
                     _group_names = [folder_groups[gi].name for gi in group_indices]
+                    # 데이터 서브탭 위젯 생성 (엑셀 시트 형태 view, read-only)
+                    try:
+                        _data_widget = self._create_cycle_data_subtab(
+                            sheets_per_channel, channel_map)
+                    except Exception as _data_err:
+                        logger.warning('데이터 서브탭 생성 실패 — 그래프만 표시: %s',
+                                       _data_err)
+                        _data_widget = None
                     try:
                         self._finalize_cycle_tab(tab, tab_layout, canvas, toolbar, tab_no,
                                                  channel_map, fig, axes_list, sub_channel_map,
@@ -21896,7 +22144,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                                  voltage_condition_text=_vc_text,
                                                  group_names=_group_names,
                                                  extra_figs=[fig2],
-                                                 subtab_titles=["요약", "상세"])
+                                                 subtab_titles=["요약", "상세", "데이터"],
+                                                 data_subtab_widget=_data_widget)
                         tab_no += 1
                         if suptitle_name:
                             output_fig(self.figsaveok, suptitle_name)
