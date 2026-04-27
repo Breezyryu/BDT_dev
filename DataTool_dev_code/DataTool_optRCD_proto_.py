@@ -3177,7 +3177,7 @@ def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
                     "Cycle", "Average Discharge Voltage (V)",
                     temp_lgnd, xscale, color))
         # 2-4 Discharge Energy Ratio = E / (Q_nom × V_nom)
-        # V_nom 은 사용자가 경로 테이블 col 6 ("정격V") 에 입력. 빈 값이면 default 3.7V.
+        # V_nom 은 사용자가 경로 테이블 col 6 ("정격V") 에 입력. 빈 값이면 default 3.9V.
         # 정격 에너지 E_nom = mincapacity (mAh) × v_nom / 1000 (Wh).
         # 결과: unitless ratio — capacity ratio 와 동일 스케일 (0~1) 로 비교 가능.
         if 'DchgEng' in nd.columns and mincapacity and v_nom:
@@ -3185,7 +3185,7 @@ def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
             _eng_ratio = nd.DchgEng / _E_nom
             artists.append(graph_cycle(_x, _eng_ratio, ax4, 0.65, 1.05, 0.05,
                     "Cycle",
-                    f"Discharge Energy Ratio (E / E_nom, V_nom={v_nom:.2f}V)",
+                    "Discharge Energy Ratio",
                     temp_lgnd, xscale, color))
         # 2-5 Charge Rest End Voltage (RndV_chg_rest — Step 1 에서 생성한 파생)
         if ('RndV_chg_rest' in nd.columns
@@ -5727,13 +5727,13 @@ def _parse_capacity_value(text: str) -> float:
         return 0.0
 
 
-_DEFAULT_V_NOM = 3.7   # 정격 V default (Li-ion NMC/LCO 일반)
+_DEFAULT_V_NOM = 3.9   # 정격 V default (Li-ion NMC/LCO 일반)
 
 
 def _parse_v_nom_value(text: str, default: float = _DEFAULT_V_NOM) -> float:
     """정격 V (V_nom) 문자열 파싱.
 
-    빈 문자열·잘못된 형식은 default (3.7V) 반환.
+    빈 문자열·잘못된 형식은 default (3.9V) 반환.
     Energy Wh ratio 계산에서 capacity normalize 와 평행하게 사용.
     """
     if not text or not str(text).strip():
