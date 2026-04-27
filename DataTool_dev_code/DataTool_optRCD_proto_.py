@@ -3174,12 +3174,15 @@ def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
             artists.append(graph_cycle(_x, nd.AvgV, ax3, 3.00, 4.00, 0.1,
                     "Cycle", "Average Discharge Voltage (V)",
                     temp_lgnd, xscale, color))
-        # 2-4 Discharge Energy / mincapacity (셀 용량 normalize)
-        # 단위: Wh / mAh — 평균 방전 전압의 1/1000 (3.0~4.0V 대응 0.003~0.004)
+        # 2-4 Discharge Energy Ratio = E / (Q_nom × V_nom)
+        # V_nom = 3.7V 고정. 정격 에너지 E_nom = mincapacity (mAh) × 3.7 / 1000 (Wh).
+        # 결과: unitless ratio — capacity ratio 와 동일 스케일 (0~1) 로 비교 가능.
+        # 셀 용량이 다른 그룹들 (1689/2369/2485/4500 mAh) 의 에너지 변화를 통합 비교.
         if 'DchgEng' in nd.columns and mincapacity:
-            _eng_ratio = nd.DchgEng / mincapacity
-            artists.append(graph_cycle(_x, _eng_ratio, ax4, 0.0028, 0.0042, 0.0002,
-                    "Cycle", "Discharge Energy / Capacity (Wh/mAh)",
+            _E_nom = mincapacity * 3.7 / 1000   # Wh (V_nom=3.7V 고정)
+            _eng_ratio = nd.DchgEng / _E_nom
+            artists.append(graph_cycle(_x, _eng_ratio, ax4, 0.65, 1.05, 0.05,
+                    "Cycle", "Discharge Energy Ratio (E / E_nom, V_nom=3.7V)",
                     temp_lgnd, xscale, color))
         # 2-5 Charge Rest End Voltage (RndV_chg_rest — Step 1 에서 생성한 파생)
         if ('RndV_chg_rest' in nd.columns
