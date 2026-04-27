@@ -3128,8 +3128,8 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
         return artists, color
 
 
-def graph_output_cycle_tab2(df, xscale, ylimitlow, ylimithigh, temp_lgnd,
-                            colorno, graphcolor,
+def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
+                            temp_lgnd, colorno, graphcolor,
                             ax1, ax2, ax3, ax4, ax5, ax6):
     """탭2(상세) 2×3 그래프 — 용량/전압/에너지 중심.
 
@@ -3174,10 +3174,12 @@ def graph_output_cycle_tab2(df, xscale, ylimitlow, ylimithigh, temp_lgnd,
             artists.append(graph_cycle(_x, nd.AvgV, ax3, 3.00, 4.00, 0.1,
                     "Cycle", "Average Discharge Voltage (V)",
                     temp_lgnd, xscale, color))
-        # 2-4 Discharge Energy
-        if 'DchgEng' in nd.columns:
-            artists.append(graph_cycle(_x, nd.DchgEng, ax4, 0, 15, 1,
-                    "Cycle", "Discharge Energy (Wh)",
+        # 2-4 Discharge Energy / mincapacity (셀 용량 normalize)
+        # 단위: Wh / mAh — 평균 방전 전압의 1/1000 (3.0~4.0V 대응 0.003~0.004)
+        if 'DchgEng' in nd.columns and mincapacity:
+            _eng_ratio = nd.DchgEng / mincapacity
+            artists.append(graph_cycle(_x, _eng_ratio, ax4, 0.0028, 0.0042, 0.0002,
+                    "Cycle", "Discharge Energy / Capacity (Wh/mAh)",
                     temp_lgnd, xscale, color))
         # 2-5 Charge Rest End Voltage (RndV_chg_rest — Step 1 에서 생성한 파생)
         if ('RndV_chg_rest' in nd.columns
@@ -21403,8 +21405,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             )
                             # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
                             # 2-1 Discharge Capacity Ratio 도 1-1 과 동일 ylim
+                            # 2-4 Discharge Energy 는 mincapacity 로 normalize
                             _artists_b, _ = graph_output_cycle_tab2(
-                                _wrapper, xscale, ylimitlow, ylimithigh, lgnd,
+                                _wrapper, cyctemp[0], xscale,
+                                ylimitlow, ylimithigh, lgnd,
                                 _plot_colorno, graphcolor,
                                 ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
                             )
@@ -21494,8 +21498,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     )
                                     # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
                                     # 2-1 Discharge Capacity Ratio 도 1-1 과 동일 ylim
+                                    # 2-4 Discharge Energy 는 mincapacity 로 normalize
                                     _artists_b, _ = graph_output_cycle_tab2(
-                                        cyctemp[1], xscale, ylimitlow, ylimithigh, lgnd,
+                                        cyctemp[1], cyctemp[0], xscale,
+                                        ylimitlow, ylimithigh, lgnd,
                                         colorno, graphcolor,
                                         ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
                                     )
