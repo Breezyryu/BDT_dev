@@ -4184,9 +4184,19 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         # 그룹별로 병합 수행
         Cycleraw = Cycleraw.groupby(merge_group, group_keys=False).apply(merge_rows, include_groups=False)
         Cycleraw = Cycleraw.reset_index(drop=True)
+        # Condition/Finish/Cap 1-pass numpy mask (중복 boolean 스캔 제거)
+        _cond_arr = Cycleraw["Condition"].values
+        _fin_arr = Cycleraw["Finish"].values
+        _cap_arr = Cycleraw["Cap[mAh]"].values
+        _thr_cap = mincapacity / 60
+        _m_chg = ((_cond_arr == 1)
+                  & ~np.isin(_fin_arr, ("                 Vol", "Volt"))
+                  & (_cap_arr > _thr_cap))
+        _m_dchg = (_cond_arr == 2) & (_cap_arr > _thr_cap)
+        _m_dcir = (np.isin(_fin_arr, ("                 Tim", "Tim", "Time"))
+                   & (_cond_arr == 2) & (_cap_arr < _thr_cap))
         # 충전 용량 처리
-        chgdata = Cycleraw[(Cycleraw["Condition"] == 1) & (Cycleraw["Finish"] != "                 Vol") 
-                           & (Cycleraw["Finish"] != "Volt") & (Cycleraw["Cap[mAh]"] > (mincapacity/60))]
+        chgdata = Cycleraw[_m_chg]
         chgdata.index = chgdata["TotlCycle"]
         Chg = chgdata["Cap[mAh]"]
         # 충전 전압/스텝: chgdata 인덱스(TotlCycle)에 맞춰 조회
@@ -4197,30 +4207,44 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         # Cycle raw index 변경
         Cycleraw.index = Cycleraw["TotlCycle"]
         # dcir 계산
-        dcir = Cycleraw[((Cycleraw["Finish"] == "                 Tim") | (Cycleraw["Finish"] == "Tim") 
-                         | (Cycleraw["Finish"] == "Time")) & (Cycleraw["Condition"] == 2) 
-                        & (Cycleraw["Cap[mAh]"] < (mincapacity/60))]
+        dcir = Cycleraw[_m_dcir]
         cycnum = dcir["TotlCycle"]
         # 방전 용량/온도 계산
-        Dchgdata = Cycleraw[(Cycleraw["Condition"] == 2) & (Cycleraw["Cap[mAh]"] > (mincapacity/60))]
+        Dchgdata = Cycleraw[_m_dchg]
         Dchg = Dchgdata["Cap[mAh]"]
         Temp= Dchgdata["PeakTemp[Deg]"]
         DchgEng = Dchgdata["Pow[mWh]"]
         AvgV = Dchgdata["AveVolt[V]"]
         OriCycle = Dchgdata.loc[:,"OriCycle"]
-        # dcir 기본 처리
-        for cycle in cycnum:
-            if os.path.isfile(raw_file_path + "\\%06d" % cycle):
-                dcirpro = pd.read_csv((raw_file_path + "\\%06d" % cycle), sep=",", skiprows=3, engine="c",
-                                      encoding="cp949", on_bad_lines='skip')
-                if "PassTime[Sec]" in dcirpro.columns:
-                    dcirpro = dcirpro[["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]]
+        # dcir 기본 처리 (병렬 I/O: NAS 환경 순차 대비 2~4배 고속.
+        # 채널 레벨 ThreadPoolExecutor와 이중 과부하 방지 위해 워커 4 이하로 제한)
+        def _read_dcir_for_cycle(cycle):
+            _p = raw_file_path + "\\%06d" % cycle
+            if not os.path.isfile(_p):
+                return int(cycle), None
+            try:
+                _pro = pd.read_csv(_p, sep=",", skiprows=3, engine="c",
+                                   encoding="cp949", on_bad_lines='skip')
+                if "PassTime[Sec]" in _pro.columns:
+                    _pro = _pro[["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]]
                 else:
-                    dcirpro = dcirpro[["Passed Time[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[deg]"]]
-                    dcirpro.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]
-                dcircal = dcirpro[(dcirpro["Condition"] == 2)]
-                dcir.loc[int(cycle), "dcir"] = ((dcircal["Voltage[V]"].max() - dcircal["Voltage[V]"].min()) 
-                                                / round(dcircal["Current[mA]"].max()) * 1000000)
+                    _pro = _pro[["Passed Time[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[deg]"]]
+                    _pro.columns = ["PassTime[Sec]", "Voltage[V]", "Current[mA]", "Condition", "Temp1[Deg]"]
+                _cal = _pro[(_pro["Condition"] == 2)]
+                _i_max = round(_cal["Current[mA]"].max())
+                if not _i_max:
+                    return int(cycle), None
+                return int(cycle), (_cal["Voltage[V]"].max() - _cal["Voltage[V]"].min()) / _i_max * 1000000
+            except Exception as _e:
+                _perf_logger.warning(f'toyo_cycle_data DCIR read 실패 cycle={cycle}: {_e}')
+                return int(cycle), None
+
+        if len(cycnum) > 0:
+            _dcir_workers = min(4, calc_optimal_workers(len(cycnum)))
+            with ThreadPoolExecutor(max_workers=_dcir_workers) as _ex:
+                for _cyc, _val in _ex.map(_read_dcir_for_cycle, list(cycnum)):
+                    if _val is not None:
+                        dcir.loc[_cyc, "dcir"] = _val
         n = 1
         cyccal = []
         if len(dcir) != 0:
@@ -7624,7 +7648,7 @@ def _merge_tc_info(prior: dict, measured: dict) -> dict:
     return out
 
 
-@functools.lru_cache(maxsize=128)
+@functools.lru_cache(maxsize=2048)
 def _find_sch_file(channel_path: str) -> str | None:
     """채널 폴더에서 .sch 파일 경로를 반환. 없으면 None.
 
@@ -7682,7 +7706,7 @@ def _find_sch_file(channel_path: str) -> str | None:
     return os.path.join(channel_path, sch_files[0])
 
 
-@functools.lru_cache(maxsize=256)
+@functools.lru_cache(maxsize=2048)
 def _get_pne_sch_struct(channel_path: str, mincapacity: float) -> dict | None:
     """채널 경로에서 .sch 파일을 찾아 스케줄 구조 정보를 캐시로 반환.
 
@@ -9830,34 +9854,43 @@ def _process_pne_cycleraw(
     AvgV = DchgEng / Dchg / mincapacity * 1000
     # OriCycle 생성 (Dchg와 동일 인덱스로 concat 시 NaN 방지)
     OriCycle = pd.Series(Dchg.index.values, index=Dchg.index)
-    if chkir and len(OriCycle) == len(dcir):
-        df.NewData = pd.concat([Dchg, Ocv, Eff, Chg, DchgEng, Eff2, dcir, Temp, AvgV, OriCycle], axis=1).reset_index(drop=True)
-        df.NewData.columns = ["Dchg", "RndV", "Eff", "Chg", "DchgEng", "Eff2", "dcir", "Temp", "AvgV", "OriCyc"]
+    # 3 분기 공통 base DataFrame dict — DCIR 컬럼만 분기별 추가.
+    # 이전 버전은 동일 dict 를 분기마다 3회 중복 선언했음.
+    _base_cols = {"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg,
+                  "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp,
+                  "AvgV": AvgV, "OriCyc": OriCycle}
     if chkir:
-        df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
+        # (이전: `if chkir and len(OriCycle) == len(dcir)` 분기 제거 —
+        #  아래 블록이 무조건 덮어써서 dead code 였음. chkir==True 면
+        #  dcir 컬럼은 `_ensure_dcir_columns` 가 NaN 으로 보장하므로
+        #  `.loc[0, "dcir"] = 0` 더미만 유지 — 엑셀 빈 시트 방지.)
+        df.NewData = pd.DataFrame(_base_cols).reset_index(drop=True)
         df.NewData.loc[0, "dcir"] = 0
     elif mkdcir and (len(dcirtemp3) != 0) and (len(dcirtemp1) != 0):
         if chkir2:
             cyccal = range(1, len(dcirtemp1)+1)
         # dcir - RSS, dcir2 - 1s pulse
         if (len(dcirtemp1) != 0) and (len(dcirtemp2) != 0):
+            # 4개 DCIR 시리즈를 1개 DataFrame으로 통합 (기존 4회 DF 생성 + 4회 set_index 제거)
             dcirtemp1 = same_add(dcirtemp1, "TotlCycle")
-            dcir = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "dcir_raw2": dcirtemp1["imp"]})
-            dcir = dcir.set_index(dcir["Cyc"])
             dcirtemp2 = same_add(dcirtemp2, "TotlCycle")
-            dcir2 = pd.DataFrame({"Cyc": dcirtemp2["TotlCycle_add"], "dcir_raw": dcirtemp2["imp"]})
-            dcir2 = dcir2.set_index(dcir2["Cyc"])
             dcirtemp3 = same_add(dcirtemp3, "TotlCycle")
-            df_rssocv = pd.DataFrame({"Cyc": dcirtemp3["TotlCycle_add"], "rssocv": dcirtemp3["Ocv"]/1000000})
-            df_rssocv = df_rssocv.set_index(dcir["Cyc"])
-            df_rssccv = pd.DataFrame({"Cyc": dcirtemp1["TotlCycle_add"], "rssccv": dcirtemp1["Ocv"]/1000000})
-            df_rssccv = df_rssccv.set_index(dcir["Cyc"])
-            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
-            if hasattr(dcir2, "dcir_raw"):
-                df.NewData["dcir"] = dcir["dcir_raw2"]
-                df.NewData["dcir2"] = dcir2["dcir_raw"]
-                df.NewData["rssocv"] = df_rssocv["rssocv"]
-                df.NewData["rssccv"] = df_rssccv["rssccv"]
+            _idx = dcirtemp1["TotlCycle_add"].values
+            _dc = pd.DataFrame({
+                "dcir_raw2": dcirtemp1["imp"].values,
+                "dcir_raw":  dcirtemp2["imp"].values,
+                "rssocv":    dcirtemp3["Ocv"].values / 1_000_000,
+                "rssccv":    dcirtemp1["Ocv"].values / 1_000_000,
+            }, index=_idx)
+            # 다운스트림 호환: dcir/dcir2 DataFrame 참조 유지
+            dcir = _dc[["dcir_raw2"]]
+            dcir2 = _dc[["dcir_raw"]]
+            df.NewData = pd.DataFrame(_base_cols).reset_index(drop=True)
+            if "dcir_raw" in dcir2.columns:
+                df.NewData["dcir"] = _dc["dcir_raw2"]
+                df.NewData["dcir2"] = _dc["dcir_raw"]
+                df.NewData["rssocv"] = _dc["rssocv"]
+                df.NewData["rssccv"] = _dc["rssccv"]
             else:
                 df.NewData.loc[0, "dcir"] = 0
                 df.NewData.loc[0, "dcir2"] = 0
@@ -9878,6 +9911,8 @@ def _process_pne_cycleraw(
             df.NewData["soc70_dcir"] = soc70_dcir
             df.NewData["soc70_rss_dcir"] = soc70_rss_dcir
     else:
+        # 중복 선언 통합 — base DF 를 먼저 조립하고, dcir 컬럼만 조건부 할당.
+        df.NewData = pd.DataFrame(_base_cols).reset_index(drop=True)
         if ('dcirtemp' in locals()):
             if not chkir2:
                 n = 1
@@ -9892,7 +9927,6 @@ def _process_pne_cycleraw(
             if hasattr(dcirtemp, "dcir") and not dcirtemp.dcir.empty:
                 dcir = pd.DataFrame({"Cyc": cyccal, "dcir_raw": dcirtemp.dcir})
                 dcir = dcir.set_index(dcir["Cyc"])
-            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             if 'dcir' in locals() and isinstance(dcir, pd.DataFrame) and "dcir_raw" in dcir.columns:
                 df.NewData["dcir"] = dcir["dcir_raw"]
             elif 'dcir' in locals() and isinstance(dcir, pd.Series):
@@ -9900,7 +9934,6 @@ def _process_pne_cycleraw(
             else:
                 df.NewData.loc[0, "dcir"] = 0
         else:
-            df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng, "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle}).reset_index(drop=True)
             df.NewData.loc[0, "dcir"] = 0
     # DCIR 표준 컬럼 보장 (모드 무관하게 동일 컬럼 세트)
     if hasattr(df, 'NewData'):
@@ -9910,25 +9943,37 @@ def _process_pne_cycleraw(
         _ensure_rndv_split_columns(
             df.NewData, Cycleraw, cycle_map, ocv_scale=1.0 / 1_000_000)
     # Dchg/Chg 중 하나라도 NaN인 행 제거 (불완전 사이클 제외)
+    # dropna + reset_index 를 체인화하여 intermediate 복사 1회 제거.
     if hasattr(df, 'NewData'):
-        df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
-        df.NewData = df.NewData.reset_index(drop=True)
+        df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any').reset_index(drop=True)
         # ── 논리사이클 매핑 적용 (cycle_map 기반 Cycle 번호 부여) ──
         if cycle_map and len(df.NewData) > 0:
-            # 물리 TC → 논리사이클 역매핑 생성
-            _tc_to_ln: dict[int, int] = {}
+            # 물리 TC → 논리사이클 역매핑 (bisect 기반: Sweep 시 range 확장 회피)
+            # 기존 `for _t in range(_s, _e+1): _tc_to_ln[_t] = _ln` 은 Sweep 시
+            # TC 범위 전체를 dict에 삽입 → N=수만개에서 병목. bisect로 O(log N) 조회.
+            _bounds: list[tuple[int, int, int]] = []
             _is_sweep = False
             for _ln, _tc_val in cycle_map.items():
                 if isinstance(_tc_val, dict):
                     _s, _e = _tc_val['all']
                     if _s != _e:
                         _is_sweep = True
-                    for _t in range(_s, _e + 1):
-                        _tc_to_ln[_t] = _ln
+                    _bounds.append((int(_s), int(_e), int(_ln)))
                 else:
-                    _tc_to_ln[int(_tc_val)] = _ln
+                    _tc_int = int(_tc_val)
+                    _bounds.append((_tc_int, _tc_int, int(_ln)))
+            _bounds.sort()
+            _starts = [b[0] for b in _bounds]
+
+            def _tc_to_ln_lookup(tc):
+                _i = bisect.bisect_right(_starts, tc) - 1
+                if 0 <= _i < len(_bounds):
+                    _s2, _e2, _ln2 = _bounds[_i]
+                    if _s2 <= tc <= _e2:
+                        return _ln2
+                return None
             # OriCyc(물리 TC) → 논리사이클 번호 매핑
-            _logical_col = df.NewData['OriCyc'].astype(int).map(_tc_to_ln)
+            _logical_col = df.NewData['OriCyc'].astype(int).map(_tc_to_ln_lookup)
             if _is_sweep and _logical_col.notna().any():
                 # 스윕 시험: 같은 논리사이클에 속한 행들을 집계
                 df.NewData['_ln'] = _logical_col
@@ -17366,10 +17411,28 @@ class _WorkerSignals(QtCore.QObject):
     error = QtCore.pyqtSignal(str, str)       # (title, body) 사용자 노출용
 
 
+class _PipelineProgress(QtCore.QObject):
+    """파이프라인 진행 상황 signal — cross-thread 안전 UI 통지.
+
+    워커 스레드에서 progressed.emit(v) / errored.emit(path, msg) 호출 시
+    AutoConnection (Qt 기본) 이 메인 스레드 이벤트 루프에서 slot 실행.
+    Qt 위젯(setValue 등)은 메인 스레드 전용이므로 이 경로가 유일한
+    안전 패턴. _pump_ui 가 이 신호를 emit 하도록 재설계됨.
+
+    cf. _WorkerSignals: 기존 워커 통신 채널 (statusBar/error 포함). 이 클래스는
+    파이프라인 progress 전용으로 분리되어 _pump_ui 의 단일 경로로 통합.
+    """
+    progressed = QtCore.pyqtSignal(int)
+    errored = QtCore.pyqtSignal(str, str)
+
+
 class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        # ── 파이프라인 진행 signal (cross-thread 안전) ──
+        self._pipe_progress = _PipelineProgress()
+        self._pipe_progress.progressed.connect(self.progressBar.setValue)
         self.chnlnow = "default"
         self.tab_no = 0
         # 충방전기 세팅 관련
@@ -17429,6 +17492,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.AllchnlData = []
         self.ptn_df_select = []
         self.pne_ptn_merged_df = []
+        # 현황 탭 파싱 캐시: key=normcase(abspath(path)), value=(mtime, size, parsed_obj)
+        # 대상 파일 수 ≤ 약 65개 (Toyo 5×2 + PNE 30×2) 로 LRU 불필요
+        self._status_cache: dict = {}
+        self._status_cache_enabled = True   # False → 캐시 우회 (회귀 비교용)
+        self._vectorize_split = True        # False → split_value0/1/2 apply 경로 유지
         # 각 버튼에 각각 명령어 할당
         # Combobox set up
         self.tb_info.currentIndexChanged.connect(self.tb_info_combobox)
@@ -17895,11 +17963,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
 
     def _pump_ui(self, progress_value=None, max_ms=10):
-        """진행바 갱신과 이벤트 펌핑을 묶어 장시간 작업 중 체감 멈춤을 줄인다."""
+        """진행바 갱신과 이벤트 펌핑 — signal 기반 cross-thread 안전.
+
+        워커 스레드에서 호출해도 pyqtSignal(AutoConnection)이 메인 스레드
+        이벤트 루프에서 setValue를 실행한다. processEvents는 메인 스레드
+        에서만 유효하므로 현재 스레드 확인 후에만 호출.
+        """
         if progress_value is not None:
-            self.progressBar.setValue(int(max(0, min(100, progress_value))))
-        QtWidgets.QApplication.processEvents(
-            QtCore.QEventLoop.ProcessEventsFlag.AllEvents, max_ms)
+            _v = int(max(0, min(100, progress_value)))
+            if hasattr(self, '_pipe_progress'):
+                self._pipe_progress.progressed.emit(_v)
+            else:
+                # 초기화 이전 폴백 (보통 도달하지 않음)
+                self.progressBar.setValue(_v)
+        _app = QtWidgets.QApplication.instance()
+        if _app is not None and QtCore.QThread.currentThread() is _app.thread():
+            _app.processEvents(
+                QtCore.QEventLoop.ProcessEventsFlag.AllEvents, max_ms)
 
     def _init_confirm_button(self, button_widget):
         """
@@ -20503,9 +20583,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     results[(folder_idx, subfolder_idx)] = (folder_path, cyctemp)
                 completed += 1
                 # 진행률 업데이트 (50%까지만 - 나머지 50%는 그래프 생성)
+                # signal 경로(_pump_ui)로 통일 — as_completed 소비가 워커 스레드로
+                # 이동해도 cross-thread 크래시 방지
                 if completed % 3 == 0 or completed == total_tasks:
-                    self.progressBar.setValue(int(completed / total_tasks * 50))
-        
+                    self._pump_ui(int(completed / total_tasks * 50))
+
         return results, subfolder_map
     
     def _save_cycle_excel_data(self, nd, writecolno, start_row, headername):
@@ -26170,25 +26252,153 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             else:
                 return part[0]
 
+    # ── 현황 탭 성능 개선 헬퍼 (260423) ────────────────────────────────────
+    def _status_load(self, path, parser):
+        """현황 탭 원본 파일 캐시 로더. parser ∈ {"toyo_cfg","csv","json"}.
+        mtime+size 동일하면 캐시 재사용. OSError/파싱 실패 시 None 반환."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        key = os.path.normcase(os.path.abspath(path))
+        if self._status_cache_enabled:
+            hit = self._status_cache.get(key)
+            if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
+                return hit[2]
+        try:
+            if parser == "toyo_cfg":
+                obj = remove_end_comma(path)
+            elif parser == "csv":
+                obj = pd.read_csv(path, sep=",", engine="c", encoding="CP949",
+                                  on_bad_lines="skip")
+            elif parser == "json":
+                with open(path, encoding="cp949", errors="ignore") as f:
+                    obj = json.loads(f.read())
+            else:
+                return None
+        except Exception:
+            return None
+        if self._status_cache_enabled:
+            self._status_cache[key] = (st.st_mtime, st.st_size, obj)
+        return obj
+
+    def _vector_split_testname(self, s):
+        """testname Series → (day, part, name). split_value0/1/2 와 동일 결과를
+        pandas.str + numpy.where 벡터 연산으로 구현. dropna() 이후 호출할 것."""
+        s = s.astype(str)
+        has_us = s.str.contains('_', regex=False).to_numpy()
+        u = s.str.split('_', expand=True).reindex(columns=range(4))
+        w = s.str.split(' ', expand=True).reindex(columns=range(3))
+        u0, u2, u3 = u[0], u[2], u[3]
+        w0, w1, w2 = w[0], w[1], w[2]
+        day = np.where(has_us, u0, w0)
+        # split_value1: '_' 분기 시 len>2 → (part[2]=='00' ? '선행랩' : part[2]+' 파트'), else part[0]
+        u2_is_00 = u2.eq('00')
+        u2_str = u2.astype(str) + " 파트"
+        part_us = np.where(u2.notna(),
+                           np.where(u2_is_00, "선행랩", u2_str),
+                           u0)
+        # split_value1: ' ' 분기 시 len>1 → part[1], else part[0]
+        part_sp = np.where(w1.notna(), w1, w0)
+        part = np.where(has_us, part_us, part_sp)
+        # split_value2: '_' 분기 시 len>3 → part[3], else part[0]
+        name_us = np.where(u3.notna(), u3, u0)
+        # split_value2: ' ' 분기 시 len>2 → part[2], else part[0]
+        name_sp = np.where(w2.notna(), w2, w0)
+        name = np.where(has_us, name_us, name_sp)
+        return (pd.Series(day, index=s.index),
+                pd.Series(part, index=s.index),
+                pd.Series(name, index=s.index))
+
+    def _apply_split_testname(self, df):
+        """df['testname'] → df['day'/'part'/'name'] 채움. 롤백 스위치 반영."""
+        if self._vectorize_split:
+            day, part, name = self._vector_split_testname(df['testname'])
+            df['day'] = day
+            df['part'] = part
+            df['name'] = name
+        else:
+            df['day'] = df['testname'].apply(self.split_value0)
+            df['part'] = df['testname'].apply(self.split_value1)
+            df['name'] = df['testname'].apply(self.split_value2)
+        return df
+
+    def _pne_load_channel_info(self, pne_num):
+        """PNE Module_{1,2}_channel_info.json → (df_raw, js1).
+        경로/파일 없으면 (None, None). Module_2 가 있으면 concat."""
+        if not os.path.isdir(self.pne_work_path_list[pne_num]):
+            return None, None
+        p1 = self.pne_work_path_list[pne_num] + "\\Module_1_channel_info.json"
+        p2 = self.pne_work_path_list[pne_num] + "\\Module_2_channel_info.json"
+        js1 = self._status_load(p1, "json")
+        if js1 is None:
+            return None, None
+        if os.path.isfile(p2):
+            js2 = self._status_load(p2, "json")
+            if js2 is not None:
+                df_raw = pd.concat([pd.DataFrame(js1['Channel']),
+                                    pd.DataFrame(js2['Channel'])])
+            else:
+                df_raw = pd.DataFrame(js1['Channel'])
+        else:
+            df_raw = pd.DataFrame(js1['Channel'])
+        return df_raw, js1
+
+    def _pne_postprocess(self, df_raw, blkname, pne_num):
+        """PNE concat DF → 현황 탭용 완성 DF (self.df 에 쓰지 않음).
+        호출자가 self.df = self._pne_postprocess(...) 로 할당할 것."""
+        df = df_raw.copy()
+        temp_data = df[["Temperature"]]
+        temp_data = temp_data.astype('float') * 1000
+        temp_data = temp_data.astype('int')
+        _pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
+                     "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+                     "Voltage", "Result_Path"]
+        for _extra in ("Code", "Code_Desc", "Type"):
+            if _extra not in df.columns:
+                df[_extra] = ""
+        _pne_cols += ["Code", "Code_Desc", "Type"]
+        df = df[_pne_cols]
+        df.columns = (self.toyo_column_list[0:4]
+                      + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
+                         "Voltage", "Result_Path", "Code", "Code_Desc", "Type"])
+        df = df.dropna()
+        df.index = df["chno"].astype('int')
+        temp_data.index = df["chno"].astype('int')
+        self._apply_split_testname(df)
+        df["temp"] = temp_data
+        df["Current_Cycle_Num"] = df["Current_Cycle_Num"].apply(lambda x: (" " * (4 - len(x))) + x)
+        df["Step_No"] = df["Step_No"].apply(lambda x: (" " * (4 - len(x))) + x)
+        df["Total_Cycle_Num"] = df["Total_Cycle_Num"].apply(lambda x: (" " * (4 - len(x))) + x)
+        df["cyc"] = df["Step_No"] + " / " + df["Current_Cycle_Num"] + " / " + df["Total_Cycle_Num"]
+        df["vol"] = df["Voltage"].where(df["Voltage"].astype('float') > 0.04, "-")
+        df["cyclername"] = blkname
+        df["chno"] = df.index
+        df = self.change_drive(df, self.pne_data_path_list[pne_num])
+        return df
+
     def toyo_base_data_make(self, toyo_num, blkname):
         # 경로 확인
         toyoworkpath = "z:\\Working\\"+self.toyo_blk_list[toyo_num]+"\\Chpatrn.cfg"
         if os.path.isfile(toyoworkpath):
-            toyo_data = remove_end_comma(toyoworkpath)
+            toyo_cfg = self._status_load(toyoworkpath, "toyo_cfg")
+            if toyo_cfg is None:
+                return [pd.DataFrame(columns=self.toyo_column_list[0:4]), 0]
+            toyo_data = toyo_cfg.copy()
             toyo_data = toyo_data[[7, 1, 5, 9]]
             toyo_data.columns = self.toyo_column_list[0:4]
             toyo_data.index = toyo_data.index + 1
             if toyo_num != 3:
                 toyoworkpath2 = "z:\\Working\\"+self.toyo_blk_list[toyo_num]+"\\ExperimentStatusReport.dat"
-                toyo_data2 = pd.read_csv(toyoworkpath2, sep=",", engine="c", encoding="CP949", on_bad_lines='skip')
-                toyo_data2 = toyo_data2.iloc[:, [0, 8, 5, 21, 15, 6, 7, 9, 3]]
+                toyo_csv = self._status_load(toyoworkpath2, "csv")
+                if toyo_csv is None:
+                    return [pd.DataFrame(columns=self.toyo_column_list[0:4]), 0]
+                toyo_data2 = toyo_csv.iloc[:, [0, 8, 5, 21, 15, 6, 7, 9, 3]].copy()
                 toyo_data2.index = toyo_data2.index + 1
                 toyo_data2.columns = ['chno', 'use', 'testname', 'folder', 'temp', 'cyc1', 'cyc2', 'cyc3', 'vol']
             toyo_data["chno"] = toyo_data["chno"].astype(int)
             toyo_data["use"] = toyo_data["use"].astype(int)
-            toyo_data["day"] = toyo_data['testname'].apply(self.split_value0)
-            toyo_data["part"] = toyo_data['testname'].apply(self.split_value1)
-            toyo_data["name"] = toyo_data['testname'].apply(self.split_value2)
+            self._apply_split_testname(toyo_data)
             toyo_data["path"] = toyo_data['testname']
             if toyo_num != 3:
                 toyo_data["folder"] = toyo_data2["folder"]
@@ -26231,60 +26441,68 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.tb_modified_time.setText("")
         self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - toyo_data[1])))
         self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(toyo_data[1])))
-        for i in range(1, num_i + 1):
-            for j in range(1, num_j + 1):
-                # 첫번째 선택은 채널 번호
-                chnl_name = i + (j - 1) * num_i
-                column_name = self.toyo_column_list[self.tb_info.currentIndex() + 1]
-                self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
-                    self.df.loc[i + (j - 1) * num_i, str(column_name)])))
-                self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
-                # 상태별 배경색 결정
-                bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음
-                use_val = self.df.loc[i + (j - 1) * num_i, "use"]
-                vol_val = self.df.loc[i + (j - 1) * num_i, "vol"]
-                self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
-                if use_val == "작업정지" or use_val == "완료":
-                    if toyo_num != 3 and vol_val == "-":
+        # 렌더 루프: Qt 배치 업데이트 (setUpdatesEnabled/blockSignals) 로 감쌈
+        self.tb_channel.setUpdatesEnabled(False)
+        self.tb_channel.blockSignals(True)
+        try:
+            for i in range(1, num_i + 1):
+                for j in range(1, num_j + 1):
+                    # 첫번째 선택은 채널 번호
+                    chnl_name = i + (j - 1) * num_i
+                    column_name = self.toyo_column_list[self.tb_info.currentIndex() + 1]
+                    self.tb_channel.setItem(j - 1, i - 1, QtWidgets.QTableWidgetItem(str(chnl_name).zfill(3) + "| " + str(
+                        self.df.loc[i + (j - 1) * num_i, str(column_name)])))
+                    self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 9))
+                    # 상태별 배경색 결정
+                    bg_level = 0  # 0=기본, 1=셀없음, 2=셀있음
+                    use_val = self.df.loc[i + (j - 1) * num_i, "use"]
+                    vol_val = self.df.loc[i + (j - 1) * num_i, "vol"]
+                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(246,246,243))
+                    if use_val == "작업정지" or use_val == "완료":
+                        if toyo_num != 3 and vol_val == "-":
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
+                            bg_level = 1
+                        else:
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
+                            bg_level = 2
+                    elif use_val != "작업중" and toyo_num != 3 and vol_val == "-":
                         self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
                         bg_level = 1
+                    # 코인셀 구분
+                    if (toyo_num == 0 and (i + (j - 1) * num_i) < 17) or ((toyo_num == 0 or toyo_num == 1) and
+                                                                          ((i + (j - 1) * num_i) > 64) and ((i + (j - 1) * num_i) < 81)):
+                        self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
+                    # 강조 문자 필터
+                    if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
+                            # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
+                            # 45도 계열: Toyo1,3 ch>64
+                            fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
+                            fg_15 = [(0,73,245), (0,55,190), (0,55,190)][bg_level]
+                            fg_normal = [(18,21,23), (10,12,14), (10,12,14)][bg_level]
+                            if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
+                            elif (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15))
+                            elif (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
+                            else:
+                                self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal))
+                            if str(self.FindText.text()).strip():
+                                self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(0, 0, 0))
+                            else:
+                                self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
                     else:
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(234,239,230))
-                        bg_level = 2
-                elif use_val != "작업중" and toyo_num != 3 and vol_val == "-":
-                    self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(176,203,176))
-                    bg_level = 1
-                # 코인셀 구분
-                if (toyo_num == 0 and (i + (j - 1) * num_i) < 17) or ((toyo_num == 0 or toyo_num == 1) and
-                                                                      ((i + (j - 1) * num_i) > 64) and ((i + (j - 1) * num_i) < 81)):
-                    self.tb_channel.item(j - 1, i - 1).setFont(QtGui.QFont("Malgun gothic", 8))
-                # 강조 문자 필터
-                if self.match_highlight_text(str(self.FindText.text()), str(self.df.loc[i + (j - 1) * num_i,"testname"])):
-                        # 충방전기별 폰트색 (배경 레벨에 따라 그라데이션)
-                        # 45도 계열: Toyo1,3 ch>64
-                        fg_45 = [(208,0,0), (165,0,0), (165,0,0)][bg_level]
-                        fg_15 = [(0,73,245), (0,55,190), (0,55,190)][bg_level]
-                        fg_normal = [(18,21,23), (10,12,14), (10,12,14)][bg_level]
-                        if (toyo_num == 0 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
-                        elif (toyo_num == 1 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_15))
-                        elif (toyo_num == 2 and (i + (j - 1) * num_i) > 64):
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_45))
-                        else:
-                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(*fg_normal))
                         if str(self.FindText.text()).strip():
-                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, QtGui.QColor(0, 0, 0))
+                            # 검색 활성 시 비매칭 셀 흰색 배경 + 회색 글자
+                            self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255, 255, 255))
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189))
                         else:
-                            self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
-                else:
-                    if str(self.FindText.text()).strip():
-                        # 검색 활성 시 비매칭 셀 흰색 배경 + 회색 글자
-                        self.tb_channel.item(j - 1, i - 1).setBackground(QtGui.QColor(255, 255, 255))
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173, 181, 189))
-                    else:
-                        self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
-                    self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+                            self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
+                        self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
+        finally:
+            self.tb_channel.blockSignals(False)
+            self.tb_channel.setUpdatesEnabled(True)
+            self.tb_channel.viewport().update()
         if self.saveok.isChecked():
             save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
             if save_file_name:
@@ -26295,120 +26513,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 self.progressBar.setValue(100)
 
     def pne_data_make(self, pne_num, blkname):
-        # 경로 확인
-        if os.path.isdir(self.pne_work_path_list[pne_num]):
-            pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
-            pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
-        if os.path.isfile(pneworkpath2):
-            with open(pneworkpath) as f1:
-                js1 = json.loads(f1.read())
-            with open(pneworkpath2) as f2:
-                js2 = json.loads(f2.read())
-            df1 = pd.DataFrame(js1['Channel'])
-            df2 = pd.DataFrame(js2['Channel'])
-            self.df = pd.concat([df1, df2])
-        else:
-            with open(pneworkpath) as f1:
-                js1 = json.loads(f1.read())
-            self.df = pd.DataFrame(js1['Channel'])
+        # 캐시 경유 + 공통 전처리. 작업멈춤 세분류는 호출자가 필요 시 수행
+        # - pne_table_make: 전체 채널 대상 (전수)
+        # - filter_all_channels: 검색 매칭된 채널만 대상 (선별)
+        df_raw, js1 = self._pne_load_channel_info(pne_num)
+        if df_raw is None:
+            return None
         self._pne_last_sync_time = self._pne_sync_time(js1)
-        # 데이터 처리
-        if os.path.isfile(pneworkpath):
-            temp_data = self.df[["Temperature"]]
-            temp_data = temp_data.astype('float') * 1000
-            temp_data = temp_data.astype('int')
-            _pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
-                        "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
-                        "Voltage", "Result_Path"]
-            # Code, Code_Desc, Type: 없으면 빈 문자열로 보충
-            for _extra in ("Code", "Code_Desc", "Type"):
-                if _extra not in self.df.columns:
-                    self.df[_extra] = ""
-            _pne_cols += ["Code", "Code_Desc", "Type"]
-            self.df = self.df[_pne_cols]
-            self.df.columns = (self.toyo_column_list[0:4]
-                               + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
-                                  "Voltage", "Result_Path", "Code", "Code_Desc", "Type"])
-            self.df = self.df.dropna()
-            self.df.index = self.df["chno"].astype('int')
-            temp_data.index = self.df["chno"].astype('int')
-            self.df["day"] = self.df['testname'].apply(self.split_value0)
-            self.df["part"] = self.df['testname'].apply(self.split_value1)
-            self.df["name"] = self.df['testname'].apply(self.split_value2)
-            self.df["temp"] = temp_data
-            self.df["Current_Cycle_Num"] = self.df["Current_Cycle_Num"].apply(lambda x: (" " * (4 - len(x))) + x)
-            self.df["Step_No"] = self.df["Step_No"].apply(lambda x: (" " * (4 - len(x))) + x)
-            self.df["Total_Cycle_Num"] = self.df["Total_Cycle_Num"].apply(lambda x: (" " * (4 - len(x))) + x)
-            self.df["cyc"] = self.df["Step_No"] + " / " + self.df["Current_Cycle_Num"] + " / " +  self.df["Total_Cycle_Num"]
-            self.df["vol"] = self.df["Voltage"].where(self.df["Voltage"].astype('float') > 0.04, "-")
-            self.df["cyclername"] = blkname
-            self.df["chno"] = self.df.index
-            # 데이터 경로 변경
-            self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
-            # 작업멈춤 세분류는 호출자가 필요 시 수행
-            # - pne_table_make: 전체 채널 대상 (전수)
-            # - filter_all_channels: 검색 매칭된 채널만 대상 (선별)
-            return self.df
+        self.df = self._pne_postprocess(df_raw, blkname, pne_num)
+        return self.df
 
     def pne_table_make(self, num_i, num_j, pne_num, blkname):
-        # 경로 확인
-        if os.path.isdir(self.pne_work_path_list[pne_num]):
-            pneworkpath = self.pne_work_path_list[pne_num]+"\\Module_1_channel_info.json"
-            pneworkpath2 = self.pne_work_path_list[pne_num]+"\\Module_2_channel_info.json"
-            if os.path.isfile(pneworkpath2):
-                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
-                    js1 = json.loads(f1.read())
-                with open(pneworkpath2, encoding='cp949', errors='ignore') as f2:
-                    js2 = json.loads(f2.read())
-                df1 = pd.DataFrame(js1['Channel'])
-                df2 = pd.DataFrame(js2['Channel'])
-                self.df = pd.concat([df1, df2])
-            else:
-                with open(pneworkpath, encoding='cp949', errors='ignore') as f1:
-                    try:
-                        js1 = json.loads(f1.read())
-                    except json.JSONDecodeError as e:
-                        print(f"JSON 오류: {e} 라인 {e.line} 수정 필요")
-                self.df = pd.DataFrame(js1['Channel'])
-            # 최종 동기화 시간 표시 (JSON Sync_Time 기반)
-            sync_str = self._pne_sync_time(js1)
-            if sync_str:
-                self.tb_modified_time.setText(f"최종 수정: {sync_str}")
-        # 데이터 처리
-            temp_data = self.df[["Temperature"]]
-            temp_data = temp_data.astype('float') * 1000
-            temp_data = temp_data.astype('int')
-            _pne_cols = ["Ch_No", "State", "Test_Name", "Schedule_Name",
-                        "Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
-                        "Voltage", "Result_Path"]
-            for _extra in ("Code", "Code_Desc", "Type"):
-                if _extra not in self.df.columns:
-                    self.df[_extra] = ""
-            _pne_cols += ["Code", "Code_Desc", "Type"]
-            self.df = self.df[_pne_cols]
-            self.df.columns = (self.toyo_column_list[0:4]
-                               + ["Current_Cycle_Num", "Step_No", "Total_Cycle_Num",
-                                  "Voltage", "Result_Path", "Code", "Code_Desc", "Type"])
-            self.df = self.df.dropna()
-            self.df.index = self.df["chno"].astype('int')
-            temp_data.index = self.df["chno"].astype('int')
-            self.df["day"] = self.df['testname'].apply(self.split_value0)
-            self.df["part"] = self.df['testname'].apply(self.split_value1)
-            self.df["name"] = self.df['testname'].apply(self.split_value2)
-            self.df["temp"] = temp_data
-            self.df["Current_Cycle_Num"] = self.df["Current_Cycle_Num"].apply(lambda x: (" " * (4 - len(x))) + x)
-            self.df["Step_No"] = self.df["Step_No"].apply(lambda x: (" " * (4 - len(x))) + x)
-            self.df["Total_Cycle_Num"] = self.df["Total_Cycle_Num"].apply(lambda x: (" " * (4 - len(x))) + x)
-            self.df["cyc"] = self.df["Step_No"] + " / " + self.df["Current_Cycle_Num"] + " / " +  self.df["Total_Cycle_Num"]
-            self.df["vol"] = self.df["Voltage"].where(self.df["Voltage"].astype('float') > 0.04, "-")
-            self.df["cyclername"] = blkname
-            self.df["chno"] = self.df.index
-            # 데이터 경로 변경
-            self.df = self.change_drive(self.df, self.pne_data_path_list[pne_num])
-            # 작업멈춤 세분류는 필터링 버튼에서만 수행
-            usedchnlno = len(self.df[(self.df.use =="완료") | (self.df.use == "대기") | (self.df.use == "준비")])
-            self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(usedchnlno)))
-            self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - usedchnlno)))
+        # 캐시 경유 + 공통 전처리 사용
+        df_raw, js1 = self._pne_load_channel_info(pne_num)
+        if df_raw is None:
+            return
+        # 최종 동기화 시간 표시 (JSON Sync_Time 기반)
+        sync_str = self._pne_sync_time(js1)
+        if sync_str:
+            self.tb_modified_time.setText(f"최종 수정: {sync_str}")
+        self.df = self._pne_postprocess(df_raw, blkname, pne_num)
+        # 작업멈춤 세분류는 필터링 버튼에서만 수행
+        usedchnlno = len(self.df[(self.df.use =="완료") | (self.df.use == "대기") | (self.df.use == "준비")])
+        self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem(str(usedchnlno)))
+        self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem(str(num_i * num_j - usedchnlno)))
+        # 렌더 루프: Qt 배치 업데이트 (setUpdatesEnabled/blockSignals) 로 감쌈
+        self.tb_channel.setUpdatesEnabled(False)
+        self.tb_channel.blockSignals(True)
+        try:
             for i in range(1, num_i + 1):
                 for j in range(1, num_j + 1):
                     chnl_name = i + (j - 1) * num_i
@@ -26468,14 +26600,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         else:
                             self.tb_channel.item(j - 1, i - 1).setForeground(QtGui.QColor(173,181,189))
                         self.tb_channel.item(j - 1, i - 1).setData(BorderDelegate.BORDER_ROLE, None)
-            if self.saveok.isChecked():
-                save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
-                if save_file_name:
-                    self.progressBar.setValue(0)
-                    writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
-                    self.df.to_excel(writer, index=False)
-                    writer.close()
-                    self.progressBar.setValue(100)
+        finally:
+            self.tb_channel.blockSignals(False)
+            self.tb_channel.setUpdatesEnabled(True)
+            self.tb_channel.viewport().update()
+        if self.saveok.isChecked():
+            save_file_name = filedialog.asksaveasfilename(initialdir="D://", title="Save File Name", defaultextension=".xlsx")
+            if save_file_name:
+                self.progressBar.setValue(0)
+                writer = pd.ExcelWriter(save_file_name, engine="xlsxwriter")
+                self.df.to_excel(writer, index=False)
+                writer.close()
+                self.progressBar.setValue(100)
 
     def table_reset(self):
         self.tb_channel.clear()
