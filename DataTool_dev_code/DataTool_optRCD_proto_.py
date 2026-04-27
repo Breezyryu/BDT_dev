@@ -3320,30 +3320,64 @@ def place_dcir_labels(ax4):
     if dcir_median is not None:
         ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
 
-def _auto_adjust_axes_y_from_data(axes):
-    """각 ax 의 scatter 데이터 기반 ylim 확장 (각 축 독립).
+def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
+                        max_nbins: int = 6) -> bool:
+    """단일 ax 의 scatter 데이터 기반 ylim·yticks 자동 fit (확장+축소).
 
-    graph_cycle 에서 설정된 초기 ylim 을 존중하되, 데이터가 범위 밖이면 확장.
-    탭2(상세) 등 축별 지표가 다양한 경우에도 데이터 가시성 보장.
+    데이터에 맞춰 ylim 을 좁히고, yticks 는 matplotlib MaxNLocator 로
+    자동 결정 (max_nbins 내). graph_cycle 의 hardcoded ylim/yticks 가
+    데이터 범위보다 너무 넓을 때 빈공간을 줄여줌.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    padding : float
+        데이터 범위 위·아래에 추가할 padding 비율 (기본 5%).
+    max_nbins : int
+        yticks 최대 개수 (matplotlib MaxNLocator 의 nbins).
+
+    Returns
+    -------
+    bool
+        True if applied, False if 데이터 없어 변경 안 함.
+    """
+    ys = []
+    for coll in ax.collections:
+        offs = coll.get_offsets()
+        if len(offs) > 0:
+            y = np.array(offs[:, 1], dtype=float)
+            valid = y[~np.isnan(y)]
+            if len(valid) > 0:
+                ys.extend(valid.tolist())
+    if not ys:
+        return False
+    y_min, y_max = min(ys), max(ys)
+    y_range = y_max - y_min
+    if y_range <= 0:
+        # 단일 값 — 작은 padding
+        _pad = max(abs(y_min) * 0.05, 0.01)
+    else:
+        _pad = y_range * padding
+    new_low = y_min - _pad
+    new_high = y_max + _pad
+    if new_high <= new_low:
+        return False
+    ax.set_ylim(new_low, new_high)
+    # hardcoded yticks 무효화 + matplotlib 자동 tick (1·2·5 nice number)
+    ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=max_nbins, prune='both',
+                                               steps=[1, 2, 2.5, 5, 10]))
+    return True
+
+
+def _auto_adjust_axes_y_from_data(axes):
+    """각 ax 의 scatter 데이터 기반 ylim·yticks 자동 fit (각 축 독립).
+
+    `_fit_ax_y_from_data` 를 모든 axes 에 적용. 상세 탭(탭2) 처럼 사용자
+    지정 ylim 이 없는 경우 사용. graph_cycle 의 hardcoded ylim 이 데이터
+    범위보다 넓을 때 빈공간을 줄여 가시성 향상.
     """
     for ax in axes:
-        ys = []
-        for coll in ax.collections:
-            offs = coll.get_offsets()
-            if len(offs) > 0:
-                y = np.array(offs[:, 1], dtype=float)
-                valid = y[~np.isnan(y)]
-                if len(valid) > 0:
-                    ys.extend(valid.tolist())
-        if not ys:
-            continue
-        y_min, y_max = min(ys), max(ys)
-        cur_low, cur_high = ax.get_ylim()
-        _pad = (y_max - y_min) * 0.05 if y_max > y_min else 0.01
-        new_low = min(cur_low, y_min - _pad)
-        new_high = max(cur_high, y_max + _pad)
-        if new_low < new_high:
-            ax.set_ylim(new_low, new_high)
+        _fit_ax_y_from_data(ax)
 
 
 def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
@@ -3424,6 +3458,14 @@ def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
         gap = max(int(np.ceil(cap / 6 / 20) * 20), 20)
         ax4.set_ylim(0, cap)
         ax4.set_yticks(np.arange(0, cap + gap, gap))
+
+    # ── ax3 (Temperature) / ax6 (Rest End Voltage) 데이터 fit ──
+    # graph_output_cycle 의 hardcoded ylim (Temp 0~50, RndV 3.0~4.0) 이
+    # 데이터 범위 (Temp 22~25, RndV 3.0~3.7) 대비 넓어 빈공간이 큼.
+    # 데이터 기반 fit 으로 가시성 향상. ax2/ax5 (Eff) 는 좁은 범위가
+    # 도메인적으로 의미 있어 그대로 유지. ax1 은 사용자 입력 ylim 적용.
+    _fit_ax_y_from_data(ax3, padding=0.10, max_nbins=6)
+    _fit_ax_y_from_data(ax6, padding=0.05, max_nbins=6)
 
 
 # Step charge Profile 그래프 그리기
