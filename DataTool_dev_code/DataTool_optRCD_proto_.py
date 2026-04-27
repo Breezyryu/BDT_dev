@@ -783,8 +783,6 @@ def _reset_all_caches():
     _get_pne_cycle_map.cache_clear()
     _get_toyo_cycle_map.cache_clear()
     _get_pne_sch_struct.cache_clear()
-    _get_pne_sch_parsed.cache_clear()
-    _sch_total_seconds.cache_clear()
     _find_sch_file.cache_clear()
     # 경로 단위 IO 캐시 (Step 1 패치)
     check_cycler.cache_clear()
@@ -7732,213 +7730,6 @@ def _get_pne_sch_struct(channel_path: str, mincapacity: float) -> dict | None:
         return extract_schedule_structure_from_sch(sch_file, mincapacity)
     except Exception:
         return None
-
-
-# ── ETA (시험 남은 시간 예측) 유틸리티 ───────────────────────────
-# 핵심 원칙:
-#   * 서버 동기화 주기(1h)로 인해 .log/.cyc/.csv mtime 은 실경과 반영 안 됨
-#     → mtime 기반 elapsed 완전 배제.
-#   * JSON 의 Current_Cycle_Num/Step_No 가 유일한 진행 위치 정보.
-#   * .sch 이론 시간(loop body × loop_count 누적)만으로 남은 시간 산출.
-#   * 2가지 타깃 동시 계산: (A) 중단 예약 지점, (B) 시험 종료.
-@functools.lru_cache(maxsize=256)
-def _get_pne_sch_parsed(channel_path: str) -> dict | None:
-    """_parse_pne_sch() 결과 전체 (steps 등) 를 캐시로 반환."""
-    sch_file = _find_sch_file(channel_path)
-    if not sch_file:
-        return None
-    try:
-        return _parse_pne_sch(sch_file)
-    except Exception:
-        return None
-
-
-def _estimate_step_seconds(step: dict, mincapacity: float) -> float:
-    """.sch 스텝 1개의 이론 소요시간(초).
-
-    Rules
-    -----
-    CC  (CHG_CC/DCHG_CC/CHG_CP): time_limit_s 우선, 없으면
-        cap_limit/current × 3600 (mAh ÷ mA), 둘 다 없으면 0.
-    CCCV (CHG_CCCV/DCHG_CCCV): cc_time + cv_tail.
-        cc_time = cap_limit/current × 3600 또는 time_limit_s.
-        cv_tail = cc_time × 0.25 (상한 540s = 0.15h).
-    REST/REST_SAFE: time_limit_s, 없으면 60s.
-    LOOP/GOTO/GITT_*/UNKNOWN: 0 (제어/펄스 스텝).
-    """
-    stype = step.get('type', '')
-    t_limit = float(step.get('time_limit_s') or 0)
-    cap_limit = float(step.get('capacity_limit_mAh') or 0)
-    current = float(step.get('current_mA') or 0)
-
-    def _cc_time() -> float:
-        if t_limit > 0:
-            return t_limit
-        if cap_limit > 0 and current > 0:
-            return cap_limit / current * 3600.0
-        return 0.0
-
-    if stype in ('CHG_CC', 'DCHG_CC', 'CHG_CP'):
-        return _cc_time()
-    if stype in ('CHG_CCCV', 'DCHG_CCCV'):
-        cc_t = _cc_time()
-        cv_tail = min(cc_t * 0.25, 540.0) if cc_t > 0 else 0.0
-        return cc_t + cv_tail
-    if stype in ('REST', 'REST_SAFE'):
-        return t_limit if t_limit > 0 else 60.0
-    return 0.0  # LOOP/GOTO/GITT_*/UNKNOWN
-
-
-def _sch_seconds_at(
-    steps: list[dict], target_tc: int, target_step: int | None,
-    mincapacity: float,
-) -> float:
-    """스케줄 시작부터 (target_tc, target_step) 직전까지의 누적 이론 시간(초).
-
-    target_tc 는 1-based TC 번호. target_step 은 1-based .sch step_no
-    (None 이면 해당 TC 의 body 전체가 완료된 시점까지 계산).
-
-    Loop 구조를 따라가며:
-      - 그룹 tc_end 이전: body × loop_count 전체 누적
-      - 그룹 내부에 target 위치: body × (target_tc - tc_start) + 현재 반복
-        의 target_step 이전 body 스텝 시간 합산
-      - target 이전 그룹까지만 누적 후 중단
-    """
-    if target_tc < 1 or not steps:
-        return 0.0
-    try:
-        groups = _decompose_loop_groups(steps)
-    except Exception:
-        return 0.0
-    cumulative = 0.0
-    tc_counter = 1
-    for g in groups:
-        n = max(int(g.get('loop_count', 1) or 1), 1)
-        tc_start = tc_counter
-        tc_end = tc_counter + n - 1
-        body = g.get('body', [])
-        body_sec = sum(_estimate_step_seconds(s, mincapacity) for s in body)
-        if target_tc > tc_end:
-            # 이 그룹 전체가 target 이전에 완료
-            cumulative += body_sec * n
-            tc_counter = tc_end + 1
-            continue
-        if target_tc < tc_start:
-            break  # 이 그룹은 target 이후
-        # target 이 이 그룹 안에 있음
-        reps_before = target_tc - tc_start   # 완료된 반복 수
-        cumulative += body_sec * reps_before
-        if target_step is None or target_step <= 0:
-            # 현재 반복 body 전체 완료 시점까지
-            cumulative += body_sec
-        else:
-            for s in body:
-                snum = int(s.get('step', 0))
-                if snum >= target_step:
-                    break
-                cumulative += _estimate_step_seconds(s, mincapacity)
-        break
-    return cumulative
-
-
-@functools.lru_cache(maxsize=256)
-def _sch_total_seconds(
-    channel_path: str, mincapacity: float,
-) -> tuple[float, int] | None:
-    """(전체 이론 시간 초, 전체 TC 수) — 스케줄 끝까지 모두 완료할 때."""
-    parsed = _get_pne_sch_parsed(channel_path)
-    if not parsed or not parsed.get('steps'):
-        return None
-    try:
-        groups = _decompose_loop_groups(parsed['steps'])
-    except Exception:
-        return None
-    if not groups:
-        return None
-    total_s = 0.0
-    total_tc = 0
-    for g in groups:
-        n = max(int(g.get('loop_count', 1) or 1), 1)
-        body_sec = sum(
-            _estimate_step_seconds(s, mincapacity) for s in g.get('body', []))
-        total_s += body_sec * n
-        total_tc += n
-    if total_s <= 0 or total_tc <= 0:
-        return None
-    return (total_s, total_tc)
-
-
-def _estimate_eta(
-    channel_path: str,
-    current_cycle: int,
-    current_step: int,
-    total_cycle: int,
-    reserve_cycle: int | None,
-    reserve_step: int | None,
-    mincapacity: float,
-) -> tuple[float | None, float | None]:
-    """(remain_to_reserve_s, remain_to_end_s) 반환. 각각 None = 산출 불가.
-
-    - remain_to_reserve: Reserve (rc, rs) 까지 남은 초. Reserve 없거나 이미
-      지났으면 None.
-    - remain_to_end: 시험 종료(Total_Cycle_Num 또는 .sch max_tc)까지 남은 초.
-
-    mtime 은 일체 사용하지 않음 — 오직 .sch 이론 시간 기반.
-    """
-    if current_cycle is None or current_cycle < 1:
-        return (None, None)
-    parsed = _get_pne_sch_parsed(channel_path)
-    if not parsed or not parsed.get('steps'):
-        return (None, None)
-    steps = parsed['steps']
-
-    tot_result = _sch_total_seconds(channel_path, mincapacity)
-    if tot_result is None:
-        return (None, None)
-    total_s, sch_max_tc = tot_result
-    end_tc = total_cycle if (total_cycle and total_cycle >= current_cycle) else sch_max_tc
-    if end_tc <= 0:
-        return (None, None)
-
-    current_s = _sch_seconds_at(steps, current_cycle, current_step, mincapacity)
-
-    # (B) 종료까지: end_tc 마지막 body 완료 시점 = _sch_seconds_at(end_tc+1, None)
-    end_s = _sch_seconds_at(steps, end_tc + 1, None, mincapacity)
-    if end_s <= 0:
-        end_s = total_s  # 전체 스케줄 완주
-    remain_to_end = max(0.0, end_s - current_s) if end_s > current_s else None
-
-    # (A) 예약까지: Reserve 가 현재 위치보다 뒤에 있을 때만
-    remain_to_reserve: float | None = None
-    if (reserve_cycle is not None and reserve_cycle > 0
-            and reserve_step is not None and reserve_step > 0):
-        # Reserve 가 현재보다 뒤인지 확인
-        if (reserve_cycle > current_cycle
-                or (reserve_cycle == current_cycle
-                    and reserve_step > (current_step or 0))):
-            reserve_s = _sch_seconds_at(
-                steps, reserve_cycle, reserve_step, mincapacity)
-            if reserve_s > current_s:
-                remain_to_reserve = reserve_s - current_s
-
-    return (remain_to_reserve, remain_to_end)
-
-
-def _format_remain_str(seconds: float | None) -> str:
-    """남은 시간(초) → "3d 5h" / "2h" / "45m" / "" (음수/None)."""
-    if seconds is None or seconds <= 0:
-        return ""
-    total_min = int(seconds / 60)
-    if total_min < 60:
-        return f"{total_min}m"
-    hours = total_min // 60
-    if hours < 24:
-        return f"{hours}h"
-    days = hours // 24
-    rem_h = hours % 24
-    if rem_h > 0:
-        return f"{days}d {rem_h}h"
-    return f"{days}d"
 
 
 @functools.lru_cache(maxsize=256)
@@ -27494,9 +27285,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     elapsed_str = self._elapsed_from_log(ch_path)
                                     if not elapsed_str:
                                         elapsed_str = self._crosscheck_elapsed(ch_path)
-                            # (C) 작업중/충전/방전/진행/휴지 → Reserve 예약 정보 부가
-                            #     + .sch 기반 남은 시간 예측 (ETA) — 2-타깃
-                            #     작업중 채널에선 경과시간 미표시 (서버 동기화 주기로 mtime 무의미)
+                            # (C) 작업중/충전/방전/진행/휴지 → Reserve 예약 정보만 부가
+                            #     서버 동기화 주기로 mtime 무의미 → 경과시간 미표시
                             elif status in ("작업중", "충전", "방전", "진행", "휴지"):
                                 ch_path = self._build_channel_path(
                                     df, ch_idx, has_rpath, has_path)
@@ -27504,48 +27294,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     reserve = self._parse_reserve_info(ch_path)
                                     if reserve:
                                         status = f"{status} ({reserve})"
-                                    # JSON 현재 진행 위치 추출
-                                    try:
-                                        _cur = int(str(df.loc[
-                                            ch_idx, "Current_Cycle_Num"
-                                        ]).strip())
-                                        _tot = int(str(df.loc[
-                                            ch_idx, "Total_Cycle_Num"
-                                        ]).strip())
-                                        _stp = int(str(df.loc[
-                                            ch_idx, "Step_No"
-                                        ]).strip())
-                                    except (ValueError, KeyError, TypeError):
-                                        _cur = _tot = _stp = 0
-                                    # Reserve (S, C) 파싱: "→S80/C98" 형태
-                                    _rs = _rc = None
-                                    if reserve:
-                                        _rm = re.search(
-                                            r'S(\d+)\s*/\s*C(\d+)', reserve)
-                                        if _rm:
-                                            _rs = int(_rm.group(1))
-                                            _rc = int(_rm.group(2))
-                                    _mincap = 0.0
-                                    try:
-                                        _mincap = float(
-                                            pne_min_cap(ch_path, 0, 1.0) or 0)
-                                    except Exception:
-                                        _mincap = 0.0
-                                    _rem_rsv, _rem_end = _estimate_eta(
-                                        ch_path, _cur, _stp, _tot,
-                                        _rc, _rs, _mincap)
-                                    _rsv_str = _format_remain_str(_rem_rsv)
-                                    _end_str = _format_remain_str(_rem_end)
-                                    _parts = []
-                                    if _rsv_str:
-                                        _parts.append(f"예약 +{_rsv_str}")
-                                    if _end_str:
-                                        _parts.append(f"종료 +{_end_str}")
-                                    if _parts:
-                                        elapsed_str = " / ".join(_parts)
-                            # (D) 완료/시험완료 → .log + CSV 교차검증 경과 시간
+                            # (D) 완료/시험완료 → 셀있음(vol!="-") 일 때만 경과시간 표시
+                            #     셀없음(vol=="-") 은 회수 완료 상태 → 시간 표시 의미 없음
                             _sb_tmp = status.split(" (")[0] if " (" in status else status
-                            if status == "완료" or _sb_tmp == "시험완료":
+                            if (status == "완료" or _sb_tmp == "시험완료") and vol != "-":
                                 ch_path = self._build_channel_path(
                                     df, ch_idx, has_rpath, has_path)
                                 if ch_path:
@@ -27855,18 +27607,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     item = tb.item(r, c)
                     cells.append(item.clone() if item else None)
                 sort_key = tb.item(r, col_idx)
-                # 경과 컬럼의 ETA 확장("3d 5h → +2d 1h") 은 → 앞만 정렬 키로 사용
-                _txt = sort_key.text() if sort_key else ""
-                _key = _txt.split("→")[0].strip()
-                row_data.append((_key, _txt, cells))
+                row_data.append((sort_key.text() if sort_key else "", cells))
             # 숫자 우선 정렬 시도
             try:
                 row_data.sort(key=lambda x: float(x[0].replace(" ", "")),
                               reverse=not ascending)
             except (ValueError, AttributeError):
-                row_data.sort(key=lambda x: x[1], reverse=not ascending)
+                row_data.sort(key=lambda x: x[0], reverse=not ascending)
             # 정렬된 순서로 재배치
-            for i, (_, _txt_ignored, cells) in enumerate(row_data):
+            for i, (_, cells) in enumerate(row_data):
                 r = rows[i]
                 for c in range(num_cols):
                     if cells[c]:
