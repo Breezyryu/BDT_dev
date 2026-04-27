@@ -980,7 +980,14 @@ def _ensure_rndv_split_columns(
                          .groupby('TotlCycle')['Ocv'].last() * ocv_scale)
 
     if not _chg_volt.empty:
-        nd['RndV_chg_rest'] = nd['OriCyc'].map(_chg_volt)
+        # 호출자가 미리 RndV_chg_rest 를 채워둔 경우 (예: Toyo 의
+        # Dchgdata["Ocv"]) 보존. NaN 인 행만 폴백 결과로 채움.
+        _new = nd['OriCyc'].map(_chg_volt)
+        if 'RndV_chg_rest' in nd.columns:
+            _na_mask = nd['RndV_chg_rest'].isna()
+            nd.loc[_na_mask, 'RndV_chg_rest'] = _new.loc[_na_mask]
+        else:
+            nd['RndV_chg_rest'] = _new
 
     # 진단: 결과 전부 NaN 이면 원인 추적 로그
     if nd['RndV_chg_rest'].dropna().empty:
@@ -3321,12 +3328,14 @@ def place_dcir_labels(ax4):
         ax4.annotate("DCIR1s@SOC70%", xy=(tx, dcir_median), **_kw)
 
 def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
-                        max_nbins: int = 6) -> bool:
+                        max_nbins: int = 6,
+                        ymin_floor: float | None = None,
+                        ymax_cap: float | None = None,
+                        outlier_filter: str | None = None) -> bool:
     """단일 ax 의 scatter 데이터 기반 ylim·yticks 자동 fit (확장+축소).
 
     데이터에 맞춰 ylim 을 좁히고, yticks 는 matplotlib MaxNLocator 로
-    자동 결정 (max_nbins 내). graph_cycle 의 hardcoded ylim/yticks 가
-    데이터 범위보다 너무 넓을 때 빈공간을 줄여줌.
+    자동 결정 (max_nbins 내).
 
     Parameters
     ----------
@@ -3335,6 +3344,15 @@ def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
         데이터 범위 위·아래에 추가할 padding 비율 (기본 5%).
     max_nbins : int
         yticks 최대 개수 (matplotlib MaxNLocator 의 nbins).
+    ymin_floor : float | None
+        선호 ylim 최솟값. 데이터 min 이 이 값보다 크면 ylim_low = ymin_floor.
+        예: 용량 ratio 의 ymin_floor=0.6 → 데이터 0.7-1.0 이면 ylim 0.6-1.0.
+    ymax_cap : float | None
+        ylim 최댓값 cap. 데이터 max 가 이 값보다 작아도 강제로 cap 하지 않음
+        (데이터+padding 이 ymax_cap 를 넘으면 cap). 예: Voltage ymax_cap=4.0.
+    outlier_filter : str | None
+        'iqr' 이면 Tukey IQR(1.5·IQR) 기반 outlier 제거 후 fit.
+        None 이면 모든 데이터 사용.
 
     Returns
     -------
@@ -3351,15 +3369,31 @@ def _fit_ax_y_from_data(ax, *, padding: float = 0.05,
                 ys.extend(valid.tolist())
     if not ys:
         return False
-    y_min, y_max = min(ys), max(ys)
+    ys_arr = np.asarray(ys)
+    # outlier filter (IQR)
+    if outlier_filter == 'iqr' and len(ys_arr) >= 5:
+        q1, q3 = np.percentile(ys_arr, [25, 75])
+        iqr = q3 - q1
+        if iqr > 0:
+            mask = (ys_arr >= q1 - 1.5 * iqr) & (ys_arr <= q3 + 1.5 * iqr)
+            if mask.any():
+                ys_arr = ys_arr[mask]
+    y_min = float(ys_arr.min())
+    y_max = float(ys_arr.max())
     y_range = y_max - y_min
     if y_range <= 0:
-        # 단일 값 — 작은 padding
         _pad = max(abs(y_min) * 0.05, 0.01)
     else:
         _pad = y_range * padding
     new_low = y_min - _pad
     new_high = y_max + _pad
+    # 사용자 정의 floor/cap 적용
+    if ymin_floor is not None:
+        # 데이터가 floor 보다 높으면 floor 까지 보여주기, 낮으면 데이터 우선
+        new_low = min(new_low, ymin_floor)
+    if ymax_cap is not None:
+        # 데이터+padding 이 cap 을 넘으면 cap 으로 잘라냄
+        new_high = min(new_high, ymax_cap)
     if new_high <= new_low:
         return False
     ax.set_ylim(new_low, new_high)
@@ -3418,8 +3452,17 @@ def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
             if len(valid) > 0:
                 cap_ys.extend(valid.tolist())
     if cap_ys:
-        ymin_data = min(cap_ys)
-        ymax_data = max(cap_ys)
+        # outlier 제거 (IQR 1.5) — 한 점만 0.4 같은 이상치로 ylim 이 늘어나는 것 방지
+        cap_arr = np.asarray(cap_ys)
+        if len(cap_arr) >= 5:
+            q1, q3 = np.percentile(cap_arr, [25, 75])
+            _iqr = q3 - q1
+            if _iqr > 0:
+                _mask = (cap_arr >= q1 - 1.5 * _iqr) & (cap_arr <= q3 + 1.5 * _iqr)
+                if _mask.any():
+                    cap_arr = cap_arr[_mask]
+        ymin_data = float(cap_arr.min())
+        ymax_data = float(cap_arr.max())
         step = 0.05
         new_low = ylimitlow
         new_high = ylimithigh
@@ -3465,7 +3508,8 @@ def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
     # 데이터 기반 fit 으로 가시성 향상. ax2/ax5 (Eff) 는 좁은 범위가
     # 도메인적으로 의미 있어 그대로 유지. ax1 은 사용자 입력 ylim 적용.
     _fit_ax_y_from_data(ax3, padding=0.10, max_nbins=6)
-    _fit_ax_y_from_data(ax6, padding=0.05, max_nbins=6)
+    # ax6 Rest End V (방전 후 OCV) 는 4.0 V 이상이 의미 없으므로 cap
+    _fit_ax_y_from_data(ax6, padding=0.05, max_nbins=6, ymax_cap=4.0)
 
 
 # Step charge Profile 그래프 그리기
@@ -4253,8 +4297,12 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         Dchgdata = Cycleraw[_m_dchg]
         Dchg = Dchgdata["Cap[mAh]"]
         Temp= Dchgdata["PeakTemp[Deg]"]
-        DchgEng = Dchgdata["Pow[mWh]"]
+        # Toyo capacity.log 의 Pow 컬럼은 mWh 단위 → Wh 변환 (단위 통일)
+        DchgEng = Dchgdata["Pow[mWh]"] / 1000
         AvgV = Dchgdata["AveVolt[V]"]
+        # 방전 step 의 Ocv = 방전 직전 V = 충전 후 OCV (Charge Rest End V).
+        # chgdata["Ocv"] (= RndV) 가 충전 직전 V (= 방전 후 OCV) 인 것과 대비.
+        DchgOcv = Dchgdata["Ocv"]
         OriCycle = Dchgdata.loc[:,"OriCycle"]
         # dcir 기본 처리 (병렬 I/O: NAS 환경 순차 대비 2~4배 고속.
         # 채널 레벨 ThreadPoolExecutor와 이중 과부하 방지 위해 워커 4 이하로 제한)
@@ -4314,6 +4362,7 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
                 Temp = Temp.iloc[1:]
                 DchgEng = DchgEng.iloc[1:]
                 AvgV = AvgV.iloc[1:]
+                DchgOcv = DchgOcv.iloc[1:]
                 OriCycle = OriCycle.iloc[1:]
             # Chg/Ocv/ChgVolt/ChgSteps를 Dchg 인덱스에 위치 기반 재정렬
             _nmin = min(len(Chg), len(Dchg))
@@ -4325,6 +4374,7 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
             Temp = Temp.iloc[:_nmin]
             DchgEng = DchgEng.iloc[:_nmin]
             AvgV = AvgV.iloc[:_nmin]
+            DchgOcv = DchgOcv.iloc[:_nmin]
             OriCycle = OriCycle.iloc[:_nmin]
         Chg2 = Chg.shift(periods=-1)
         Eff = Dchg / Chg
@@ -4333,7 +4383,10 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         Dchg = Dchg/mincapacity
         Chg = Chg/mincapacity
         # 전체 Data 취합
-        df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng,
+        # RndV          = chgdata["Ocv"]   = 충전 직전 V = 방전 후 OCV (≈ 3.0V)
+        # RndV_chg_rest = Dchgdata["Ocv"]  = 방전 직전 V = 충전 후 OCV (≈ 4.2V)
+        df.NewData = pd.DataFrame({"Dchg": Dchg, "RndV": Ocv, "RndV_chg_rest": DchgOcv,
+                                   "Eff": Eff, "Chg": Chg, "DchgEng": DchgEng,
                                    "Eff2": Eff2, "Temp": Temp, "AvgV": AvgV, "OriCyc": OriCycle})
         # Dchg 또는 Chg 중 하나라도 NaN이면 제거 (불완전 사이클)
         df.NewData = df.NewData.dropna(subset=['Dchg', 'Chg'], how='any')
@@ -4345,12 +4398,11 @@ def toyo_cycle_data(raw_file_path, mincapacity, inirate, chkir):
         df.NewData = df.NewData.drop("TotlCycle", axis=1)
         # DCIR 표준 컬럼 보장 (모드 무관하게 동일 컬럼 세트)
         _ensure_dcir_columns(df.NewData)
-        # Rest End Voltage 분리 컬럼 (충전 후/방전 후)
-        # Toyo 는 기존 RndV(= chgdata.Ocv) 가 이미 충전 직후 OCV → 그대로 chg_rest 로 복사
-        # dchg_rest 는 Cycleraw 에서 Condition==rest 직전 방전 전이로 추출 (Toyo 는 Ocv 이미 V 단위)
-        # cycle_map 은 이 시점에 아직 없으므로 폴백(전이) 경로를 타게 됨
-        if 'RndV' in df.NewData.columns:
-            df.NewData['RndV_chg_rest'] = df.NewData['RndV']
+        # Rest End Voltage 분리 컬럼은 위 DataFrame 생성 시 정확히 채워짐:
+        #   RndV          = chgdata["Ocv"]   (충전 직전 V = 방전 후 OCV)
+        #   RndV_chg_rest = Dchgdata["Ocv"]  (방전 직전 V = 충전 후 OCV)
+        # 기존 단순 복사 (RndV_chg_rest = RndV) 는 잘못된 매핑이었음.
+        # _ensure_rndv_split_columns 호출 — RndV_chg_rest 누락 시 폴백 보강용
         _ensure_rndv_split_columns(
             df.NewData, Cycleraw, cycle_map=None, ocv_scale=1.0)
         # ── .ptn 구조 분석 → 논리사이클 힌트 ──
@@ -19209,14 +19261,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         header_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse)
 
+        # CH 채널 제어 토글 버튼과 동일한 스타일 (dark/light 자동 감지)
+        from PyQt6.QtWidgets import QApplication
+        _palette = QApplication.instance().palette()
+        _bg = _palette.color(_palette.ColorRole.Window)
+        _is_dark = _bg.lightness() < 128
+        _btn_bg = "#3c3c3c" if _is_dark else "#f5f5f5"
+        _btn_hover = "#505050" if _is_dark else "#e0e0e0"
+        _btn_border = "#666" if _is_dark else "#ccc"
+
         toggle_btn = QPushButton("▶ 상세")
-        toggle_btn.setFixedSize(60, 20)
+        toggle_btn.setFixedSize(50, 22)
         toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.setStyleSheet(
-            "QPushButton { font-size: 10px; font-weight: bold; "
-            "border: 1px solid #D0D8E0; border-radius: 3px; "
-            "background: #F0F4F8; color: #3C5488; padding: 2px 4px; }"
-            "QPushButton:hover { background: #E0E8F0; }")
+            f"QPushButton {{ font-size: 10px; font-weight: bold; "
+            f"border: 1px solid {_btn_border}; border-radius: 3px; "
+            f"background: {_btn_bg}; padding: 2px 4px; }}"
+            f"QPushButton:hover {{ background: {_btn_hover}; }}"
+        )
 
         h_layout.addWidget(header_label, stretch=1)
         h_layout.addWidget(toggle_btn, stretch=0)
@@ -19227,9 +19289,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint)
         popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        # CH 채널 제어 dialog 와 동일한 dark/light 동적 색상 적용
         popup.setStyleSheet(
-            'QFrame { background: #F0F4F8; '
-            'border: 1px solid #B0B8C0; border-radius: 5px; }')
+            f'QFrame {{ background: {_btn_bg}; '
+            f'border: 1px solid {_btn_border}; border-radius: 5px; }}')
         popup_layout = QVBoxLayout(popup)
         popup_layout.setContentsMargins(8, 4, 8, 4)
         popup_layout.setSpacing(1)
@@ -21456,8 +21519,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 suptitle_name = base
                             break
                 if suptitle_name:
-                    plt.suptitle(suptitle_name, fontsize=THEME['SUPTITLE_SIZE'],
+                    # 요약(fig) + 상세(fig2) 두 figure 모두 동일 suptitle.
+                    # plt.suptitle 은 활성 figure 한쪽에만 적용되어 두 탭 grid
+                    # 위치가 어긋났던 문제 정정.
+                    fig.suptitle(suptitle_name, fontsize=THEME['SUPTITLE_SIZE'],
                                  fontweight=THEME['SUPTITLE_WEIGHT'])
+                    if fig2 is not None:
+                        fig2.suptitle(suptitle_name,
+                                      fontsize=THEME['SUPTITLE_SIZE'],
+                                      fontweight=THEME['SUPTITLE_WEIGHT'])
 
                 # 범례 설정
                 # 축 범위 자동 조정 (xlim 동기화, ylim 확장, DCIR 상한 제한)
@@ -21469,7 +21539,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     for _ax_b in axes_list_b:
                         _ax_b.set_xlim(_x1_lim)
                         _ax_b.set_xticks(_x1_ticks)
-                    _auto_adjust_axes_y_from_data(axes_list_b)
+                    # 상세 탭 ax 별 옵션 (사용자 요청 정정):
+                    #   2-1/2-2 용량 ratio: ymin_floor=0.6 + IQR outlier 필터
+                    #   2-3 AvgV: ymax_cap=4.0
+                    #   2-4 DchgEng: 단순 fit (특수 옵션 없음)
+                    #   2-5 Charge Rest End V: 그대로 (4.0~4.5 자연 범위)
+                    #   2-6 Discharge Rest End V: ymax_cap=4.0
+                    _ax1b, _ax2b, _ax3b, _ax4b, _ax5b, _ax6b = axes_list_b
+                    _fit_ax_y_from_data(_ax1b, ymin_floor=0.6,
+                                        outlier_filter='iqr')
+                    _fit_ax_y_from_data(_ax2b, ymin_floor=0.6,
+                                        outlier_filter='iqr')
+                    _fit_ax_y_from_data(_ax3b, ymax_cap=4.0)
+                    _fit_ax_y_from_data(_ax4b)
+                    _fit_ax_y_from_data(_ax5b)
+                    _fit_ax_y_from_data(_ax6b, ymax_cap=4.0)
 
                 if has_valid_data:
                     n_legend = len(channel_map)
