@@ -17558,15 +17558,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     _BDT_RECENT_MAX = 5
 
     def _bdt_setup_signals(self):
-        """워커 → GUI 통신 채널 + 상태바 + 사용성 인프라 초기화."""
+        """워커 → GUI 통신 채널 + 사용성 인프라 초기화. (메뉴/상태바 안내 미사용)"""
         self._sig = _WorkerSignals()
         self._sig.progress.connect(self.progressBar.setValue)
         self._sig.message.connect(lambda s: self.statusBar().showMessage(s, 5000))
         self._sig.error.connect(self._bdt_show_error)
-        self.statusBar().showMessage("준비됨 — 폴더를 드래그하거나 Ctrl+O 로 열기")
 
         self._bdt_setup_dnd()
-        self._bdt_setup_menu()
         self._bdt_restore_window_state()
 
     def _bdt_show_error(self, title: str, body: str) -> None:
@@ -17681,77 +17679,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._bdt_add_recent(path)
         self.statusBar().showMessage(f"폴더 추가: {path} — 사이클 탭에서 마운트하세요", 6000)
 
-    # --- 메뉴바 + 글로벌 단축키 ----------------------------------------
-    def _bdt_setup_menu(self) -> None:
-        mb = self.menuBar()
-        # File
-        m_file = mb.addMenu("&File")
-        act_open = m_file.addAction("폴더 열기…")
-        act_open.setShortcut(QtGui.QKeySequence.StandardKey.Open)
-        act_open.triggered.connect(self._bdt_action_open_folder)
-        self._bdt_recent_menu = m_file.addMenu("최근 폴더")
-        m_file.addSeparator()
-        act_quit = m_file.addAction("종료")
-        act_quit.setShortcut(QtGui.QKeySequence.StandardKey.Quit)
-        act_quit.triggered.connect(self.close)
-
-        # View
-        m_view = mb.addMenu("&View")
-        act_refresh = m_view.addAction("새로고침")
-        act_refresh.setShortcut(QtGui.QKeySequence("F5"))
-        act_refresh.triggered.connect(self._bdt_action_refresh)
-
-        # Help
-        m_help = mb.addMenu("&Help")
-        act_log = m_help.addAction("로그 폴더 열기")
-        act_log.triggered.connect(self._bdt_action_open_log_dir)
-        act_about = m_help.addAction("BDT 정보…")
-        act_about.triggered.connect(self._bdt_action_about)
-
-        self._bdt_refresh_recent_menu()
-
-    def _bdt_action_open_folder(self) -> None:
-        recent = self._bdt_recent_folders()
-        start = recent[0] if recent else ""
-        path = QtWidgets.QFileDialog.getExistingDirectory(self, "BDT — 폴더 열기", start)
-        if path:
-            self._bdt_open_folder(path)
-
-    def _bdt_action_refresh(self) -> None:
-        # 사이클 탭 캐시를 비우고 다음 마운트에서 재읽기. 무거운 자동 재로드는 피한다.
-        try:
-            global _channel_meta_store
-            _channel_meta_store = {}
-        except Exception:
-            pass
-        try:
-            check_cycler.cache_clear()
-        except Exception:
-            pass
-        try:
-            is_pne_folder.cache_clear()
-        except Exception:
-            pass
-        self.statusBar().showMessage("캐시 비움 — 다음 마운트에서 재로딩", 4000)
-
-    def _bdt_action_open_log_dir(self) -> None:
-        log_dir = os.path.dirname(_bdt_log_path())
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-        except OSError:
-            pass
-        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(log_dir))
-
-    def _bdt_action_about(self) -> None:
-        msg = (
-            "BatteryDataTool (BDT)\n"
-            "버전: v260426 (proto)\n"
-            f"빌드 일자: {datetime.now():%Y-%m-%d}\n\n"
-            f"로그 위치: {os.path.dirname(_bdt_log_path())}\n"
-            "문제 제보 시 위 폴더의 최신 .log 파일을 첨부해 주세요."
-        )
-        QtWidgets.QMessageBox.about(self, "BDT 정보", msg)
-
+    # 메뉴바 / 메뉴 액션 / 상태바 안내 메시지는 사용자 요청으로 제거됨 (260427).
+    # _bdt_recent_folders / _bdt_add_recent / _bdt_refresh_recent_menu 는
+    # 폴더 추가 워크플로 (drag-drop 등) 에서 여전히 호출되므로 유지한다.
 
     def _pump_ui(self, progress_value=None, max_ms=10):
         """진행바 갱신과 이벤트 펌핑 — signal 기반 cross-thread 안전.
