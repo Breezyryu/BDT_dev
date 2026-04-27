@@ -3128,7 +3128,8 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
         return artists, color
 
 
-def graph_output_cycle_tab2(df, xscale, temp_lgnd, colorno, graphcolor,
+def graph_output_cycle_tab2(df, xscale, ylimitlow, ylimithigh, temp_lgnd,
+                            colorno, graphcolor,
                             ax1, ax2, ax3, ax4, ax5, ax6):
     """탭2(상세) 2×3 그래프 — 용량/전압/에너지 중심.
 
@@ -3157,8 +3158,10 @@ def graph_output_cycle_tab2(df, xscale, temp_lgnd, colorno, graphcolor,
         else:
             _x = df.NewData.index.values
         nd = df.NewData
-        # 2-1 Dchg (ratio) — 탭1 ax1 과 동일 데이터, 참조용
-        artists.append(graph_cycle(_x, nd.Dchg, ax1, 0.70, 1.02, 0.05,
+        # 2-1 Dchg (ratio) — 탭1 ax1 과 동일 설정 (사용자 입력 ylim).
+        # _finalize_cycle_tab 에서 _auto_adjust_cycle_axes 적용 후
+        # ax1b 의 ylim/yticks 를 ax1 의 결과로 동기화 → 두 plot 완전 일치.
+        artists.append(graph_cycle(_x, nd.Dchg, ax1, ylimitlow, ylimithigh, 0.05,
                     "Cycle", "Discharge Capacity Ratio",
                     temp_lgnd, xscale, color))
         # 2-2 Chg (ratio)
@@ -21399,8 +21402,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 ax1, ax2, ax3, ax4, ax5, ax6
                             )
                             # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
+                            # 2-1 Discharge Capacity Ratio 도 1-1 과 동일 ylim
                             _artists_b, _ = graph_output_cycle_tab2(
-                                _wrapper, xscale, lgnd,
+                                _wrapper, xscale, ylimitlow, ylimithigh, lgnd,
                                 _plot_colorno, graphcolor,
                                 ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
                             )
@@ -21489,8 +21493,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         ax1, ax2, ax3, ax4, ax5, ax6
                                     )
                                     # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
+                                    # 2-1 Discharge Capacity Ratio 도 1-1 과 동일 ylim
                                     _artists_b, _ = graph_output_cycle_tab2(
-                                        cyctemp[1], xscale, lgnd,
+                                        cyctemp[1], xscale, ylimitlow, ylimithigh, lgnd,
                                         colorno, graphcolor,
                                         ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
                                     )
@@ -21560,14 +21565,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _ax_b.set_xlim(_x1_lim)
                         _ax_b.set_xticks(_x1_ticks)
                     # 상세 탭 ax 별 옵션 (사용자 요청 정정):
-                    #   2-1/2-2 용량 ratio: ymin_floor=0.6 + IQR outlier 필터
+                    #   2-1 Dchg Cap Ratio: 1-1 과 완전 동일 (ylim/yticks 동기화)
+                    #   2-2 Chg Cap Ratio: ymin_floor=0.6 + IQR outlier 필터
                     #   2-3 AvgV: ymax_cap=4.0
                     #   2-4 DchgEng: 단순 fit (특수 옵션 없음)
                     #   2-5 Charge Rest End V: 그대로 (4.0~4.5 자연 범위)
                     #   2-6 Discharge Rest End V: ymax_cap=4.0
                     _ax1b, _ax2b, _ax3b, _ax4b, _ax5b, _ax6b = axes_list_b
-                    _fit_ax_y_from_data(_ax1b, ymin_floor=0.6,
-                                        outlier_filter='iqr')
+                    # 2-1 ↔ 1-1 완전 동일: _auto_adjust_cycle_axes 결과를 그대로
+                    # 복사하여 ylim·yticks 일치 보장 (사용자 요청)
+                    _ax1b.set_ylim(*ax1.get_ylim())
+                    _ax1b.set_yticks(ax1.get_yticks())
                     _fit_ax_y_from_data(_ax2b, ymin_floor=0.6,
                                         outlier_filter='iqr')
                     _fit_ax_y_from_data(_ax3b, ymax_cap=4.0)
