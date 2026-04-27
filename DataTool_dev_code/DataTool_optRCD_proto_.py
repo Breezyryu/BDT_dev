@@ -275,6 +275,7 @@ class CycleGroup:
     per_path_channels: list = field(default_factory=list)  # [[ch1],[ch2]] path별 채널 필터 (빈=전체)
     channel_link_map: dict = field(default_factory=dict)  # {norm_ch: unified_sub} 위치 기반 채널 병합 매핑
     per_path_capacities: list = field(default_factory=list)  # [float, ...] path별 테이블 입력 용량 (빈=[])
+    per_path_v_nom: list = field(default_factory=list)  # [float, ...] path별 정격 V (빈=[], default 3.7V 적용)
 
 
 @dataclass
@@ -3130,7 +3131,8 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
 
 def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
                             temp_lgnd, colorno, graphcolor,
-                            ax1, ax2, ax3, ax4, ax5, ax6):
+                            ax1, ax2, ax3, ax4, ax5, ax6,
+                            v_nom: float = _DEFAULT_V_NOM):
     """탭2(상세) 2×3 그래프 — 용량/전압/에너지 중심.
 
     축 매핑:
@@ -3175,14 +3177,15 @@ def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
                     "Cycle", "Average Discharge Voltage (V)",
                     temp_lgnd, xscale, color))
         # 2-4 Discharge Energy Ratio = E / (Q_nom × V_nom)
-        # V_nom = 3.7V 고정. 정격 에너지 E_nom = mincapacity (mAh) × 3.7 / 1000 (Wh).
+        # V_nom 은 사용자가 경로 테이블 col 6 ("정격V") 에 입력. 빈 값이면 default 3.7V.
+        # 정격 에너지 E_nom = mincapacity (mAh) × v_nom / 1000 (Wh).
         # 결과: unitless ratio — capacity ratio 와 동일 스케일 (0~1) 로 비교 가능.
-        # 셀 용량이 다른 그룹들 (1689/2369/2485/4500 mAh) 의 에너지 변화를 통합 비교.
-        if 'DchgEng' in nd.columns and mincapacity:
-            _E_nom = mincapacity * 3.7 / 1000   # Wh (V_nom=3.7V 고정)
+        if 'DchgEng' in nd.columns and mincapacity and v_nom:
+            _E_nom = mincapacity * v_nom / 1000   # Wh
             _eng_ratio = nd.DchgEng / _E_nom
             artists.append(graph_cycle(_x, _eng_ratio, ax4, 0.65, 1.05, 0.05,
-                    "Cycle", "Discharge Energy Ratio (E / E_nom, V_nom=3.7V)",
+                    "Cycle",
+                    f"Discharge Energy Ratio (E / E_nom, V_nom={v_nom:.2f}V)",
                     temp_lgnd, xscale, color))
         # 2-5 Charge Rest End Voltage (RndV_chg_rest — Step 1 에서 생성한 파생)
         if ('RndV_chg_rest' in nd.columns
@@ -5722,6 +5725,24 @@ def _parse_capacity_value(text: str) -> float:
         return float(s)
     except ValueError:
         return 0.0
+
+
+_DEFAULT_V_NOM = 3.7   # 정격 V default (Li-ion NMC/LCO 일반)
+
+
+def _parse_v_nom_value(text: str, default: float = _DEFAULT_V_NOM) -> float:
+    """정격 V (V_nom) 문자열 파싱.
+
+    빈 문자열·잘못된 형식은 default (3.7V) 반환.
+    Energy Wh ratio 계산에서 capacity normalize 와 평행하게 사용.
+    """
+    if not text or not str(text).strip():
+        return default
+    try:
+        v = float(str(text).strip())
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
 
 
 def _extract_capacity_from_path(path: str) -> float:
@@ -11253,9 +11274,11 @@ class Ui_sitool(object):
         self.horizontalLayout_119 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_119.setSpacing(4)
         self.horizontalLayout_119.setObjectName("horizontalLayout_119")
-        # ── 경로 테이블 (엑셀 시트형) ──
-        self.cycle_path_table = QtWidgets.QTableWidget(5, 6, parent=self._path_groupbox)
-        self.cycle_path_table.setHorizontalHeaderLabels(["시험명", "경로(필수입력)", "채널", "용량", "TC", "모드"])
+        # ── 경로 테이블 (엑셀 시트형, col 6=정격V 추가) ──
+        # col 0=시험명, 1=경로, 2=채널, 3=용량, 4=TC, 5=모드, 6=정격V(default 3.7V)
+        self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
+        self.cycle_path_table.setHorizontalHeaderLabels(
+            ["시험명", "경로(필수입력)", "채널", "용량", "TC", "모드", "정격V"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -11264,11 +11287,13 @@ class Ui_sitool(object):
         _hdr.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
         _hdr.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        _hdr.setSectionResizeMode(6, QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.cycle_path_table.setColumnWidth(0, 55)
         self.cycle_path_table.setColumnWidth(2, 70)
         self.cycle_path_table.setColumnWidth(3, 55)
         self.cycle_path_table.setColumnWidth(4, 55)
         self.cycle_path_table.setColumnWidth(5, 50)
+        self.cycle_path_table.setColumnWidth(6, 50)
         self.cycle_path_table.verticalHeader().setDefaultSectionSize(22)
         self.cycle_path_table.setItemDelegateForColumn(1, PathElideDelegate(self.cycle_path_table))
         _table_font = QtGui.QFont()
@@ -20943,6 +20968,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _caps.append(float(x.get('capacity', '') or 0))
                 except ValueError:
                     _caps.append(0.0)
+            # 정격 V — txt 파일에 컬럼 없으면 default (_DEFAULT_V_NOM=3.7V)
+            _vnoms = [_parse_v_nom_value(x.get('v_nom', '')) for x in _fg]
             _has_chs = any(c for c in _chs)
             if _has_chs:
                 _max_pos = max((len(c) for c in _chs), default=0)
@@ -20964,6 +20991,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     per_path_channels=_clean,
                     channel_link_map=_lmap,
                     per_path_capacities=_caps,
+                    per_path_v_nom=_vnoms,
                 ))
             else:
                 result.append(CycleGroup(
@@ -20971,6 +20999,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     is_link=len(_cpaths) > 1, data_type='folder',
                     file_idx=file_idx, source_file=txt_path,
                     per_path_capacities=_caps,
+                    per_path_v_nom=_vnoms,
                 ))
         return result
 
@@ -21067,11 +21096,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _ep = _er['path']
                         _cap = _parse_capacity_value(_er.get('capacity', ''))
                         _caps = [_cap] if _cap > 0 else []
+                        _vnoms = [_parse_v_nom_value(_er.get('v_nom', ''))]
                         groups.append(CycleGroup(
                             name=_er['name'] or os.path.splitext(os.path.basename(_ep))[0],
                             paths=[_ep], path_names=[_er['name']],
                             data_type='excel', file_idx=_next_file_idx, source_file=_ep,
                             per_path_capacities=_caps,
+                            per_path_v_nom=_vnoms,
                         ))
                         _next_file_idx += 1
 
@@ -21085,6 +21116,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         all_caps = []
                         for r in _folder_rows:
                             all_caps.append(_parse_capacity_value(r.get('capacity', '')))
+                        # 정격 V (사용자 입력 또는 default 3.7V)
+                        all_vnoms = [_parse_v_nom_value(r.get('v_nom', ''))
+                                     for r in _folder_rows]
                         has_channels = any(chs for chs in all_channels)
                         _src = ''
                         for r in _folder_rows:
@@ -21115,6 +21149,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 per_path_channels=clean_channels,
                                 channel_link_map=link_map,
                                 per_path_capacities=all_caps,
+                                per_path_v_nom=all_vnoms,
                             ))
                         else:
                             groups.append(CycleGroup(
@@ -21123,6 +21158,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 is_link=len(all_paths) > 1, data_type='folder',
                                 file_idx=file_idx, source_file=_src,
                                 per_path_capacities=all_caps,
+                                per_path_v_nom=all_vnoms,
                             ))
             else:
                 # 개별 모드: 빈 행 무시, 각 행 = 개별 그룹
@@ -21138,6 +21174,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     valid_chs = [ch for ch in channels if ch != '-']
                     _cap = _parse_capacity_value(row.get('capacity', ''))
                     _caps = [_cap] if _cap > 0 else []
+                    _vnoms = [_parse_v_nom_value(row.get('v_nom', ''))]
 
                     if ext in ('.xlsx', '.xls'):
                         groups.append(CycleGroup(
@@ -21145,6 +21182,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             paths=[path], path_names=[row['name']],
                             data_type='excel', file_idx=_next_file_idx, source_file=path,
                             per_path_capacities=_caps,
+                            per_path_v_nom=_vnoms,
                         ))
                         _next_file_idx += 1
                     elif ext in ('.txt', '.csv') and os.path.isfile(path):
@@ -21160,6 +21198,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             data_type='folder', file_idx=_next_file_idx, source_file='',
                             per_path_channels=[valid_chs] if valid_chs else [],
                             per_path_capacities=_caps,
+                            per_path_v_nom=_vnoms,
                         ))
                         _next_file_idx += 1
 
@@ -21641,12 +21680,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             )
                             # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
                             # 2-1 Discharge Capacity Ratio 도 1-1 과 동일 ylim
-                            # 2-4 Discharge Energy 는 mincapacity 로 normalize
+                            # 2-4 Discharge Energy 는 mincapacity × v_nom 으로 normalize
+                            # (연결 모드: group 의 첫 path v_nom 사용 — 같은 셀 가정)
+                            _v_nom = (group.per_path_v_nom[0]
+                                      if group.per_path_v_nom
+                                      else _DEFAULT_V_NOM)
                             _artists_b, _ = graph_output_cycle_tab2(
                                 _wrapper, cyctemp[0], xscale,
                                 ylimitlow, ylimithigh, lgnd,
                                 _plot_colorno, graphcolor,
-                                ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
+                                ax1b, ax2b, ax3b, ax4b, ax5b, ax6b,
+                                v_nom=_v_nom,
                             )
                             _all_artists = _artists + _artists_b
 
@@ -21737,12 +21781,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     )
                                     # 탭2(상세) 그래프 병행 호출 — 같은 colorno → 색상 일치
                                     # 2-1 Discharge Capacity Ratio 도 1-1 과 동일 ylim
-                                    # 2-4 Discharge Energy 는 mincapacity 로 normalize
+                                    # 2-4 Discharge Energy 는 mincapacity × v_nom 으로 normalize
+                                    # (비연결: 해당 path 의 v_nom, 빈 값이면 default 3.7V)
+                                    _v_nom = (group.per_path_v_nom[path_idx]
+                                              if (group.per_path_v_nom
+                                                  and path_idx < len(group.per_path_v_nom))
+                                              else _DEFAULT_V_NOM)
                                     _artists_b, _ = graph_output_cycle_tab2(
                                         cyctemp[1], cyctemp[0], xscale,
                                         ylimitlow, ylimithigh, lgnd,
                                         colorno, graphcolor,
-                                        ax1b, ax2b, ax3b, ax4b, ax5b, ax6b
+                                        ax1b, ax2b, ax3b, ax4b, ax5b, ax6b,
+                                        v_nom=_v_nom,
                                     )
                                     _all_artists = _artists + _artists_b
 
@@ -22414,6 +22464,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'capacity': self._get_table_cell(r, 3),
                 'cycle': self._get_table_cell(r, 4),
                 'mode': self._get_table_cell(r, 5),
+                'v_nom': self._get_table_cell(r, 6),
             })
         return rows
 
@@ -22445,6 +22496,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 'capacity': self._get_table_cell(r, 3),
                 'cycle': self._get_table_cell(r, 4),
                 'mode': self._get_table_cell(r, 5),
+                'v_nom': self._get_table_cell(r, 6),
             })
         if current_group:
             groups.append(current_group)
@@ -22466,6 +22518,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             capacity = self._get_table_cell(r, 3)
             cycle = self._get_table_cell(r, 4)
             mode = self._get_table_cell(r, 5)
+            v_nom = self._get_table_cell(r, 6)
             # forward-fill: 빈 경로/경로명은 직전 유효값 사용
             if path:
                 last_path = path
@@ -22480,7 +22533,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             rows.append({
                 'name': name, 'path': path,
                 'channel': channel, 'capacity': capacity,
-                'cycle': cycle, 'mode': mode,
+                'cycle': cycle, 'mode': mode, 'v_nom': v_nom,
             })
         return rows
 
@@ -22501,6 +22554,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             capacity = self._get_table_cell(r, 3)
             cycle = self._get_table_cell(r, 4)
             mode = self._get_table_cell(r, 5)
+            v_nom = self._get_table_cell(r, 6)
             # forward-fill: 빈 경로/경로명은 직전 유효값 사용
             if path:
                 last_path = path
@@ -22520,7 +22574,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             current_group.append({
                 'name': name, 'path': path,
                 'channel': channel, 'capacity': capacity,
-                'cycle': cycle, 'mode': mode,
+                'cycle': cycle, 'mode': mode, 'v_nom': v_nom,
             })
         if current_group:
             groups.append(current_group)
@@ -22976,7 +23030,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def _clear_table(self):
         """테이블 내용 초기화"""
         self.cycle_path_table.setRowCount(5)
-        self.cycle_path_table.setColumnCount(6)
+        self.cycle_path_table.setColumnCount(7)
         self.cycle_path_table.clearContents()
         self._path_meta_cache.clear()
         self._path_meta_cache_light.clear()
