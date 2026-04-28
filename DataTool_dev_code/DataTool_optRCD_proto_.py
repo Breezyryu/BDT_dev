@@ -20336,11 +20336,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 and isinstance(CycNo, int)):
                             _next_cyc = CycNo + 1
                             _next_temp = loaded_data.get((i, j, _next_cyc))
+                            _from_fallback = False
                             if _next_temp is None:
                                 try:
                                     _next_temp = fallback_fn(FolderBase, _next_cyc, is_pne)
+                                    _from_fallback = True
                                 except Exception:
                                     _next_temp = None
+                            # fallback 으로 fetch 시 _apply_hysteresis_soc_offsets 가 적용
+                            # 안 됨 — 동일 offset 을 수동 적용하여 절대 SOC 보장.
+                            # (loaded_data 에서 가져왔으면 이미 적용됨)
+                            if (_from_fallback and _next_temp
+                                    and getattr(self, '_hyst_soc_offset_maps', None)):
+                                _ofs_map = self._hyst_soc_offset_maps.get(i, {})
+                                _ofs = _ofs_map.get(_next_cyc)
+                                if _ofs is not None and _next_temp[1] is not None:
+                                    _next_df = getattr(_next_temp[1], data_attr, None)
+                                    if (_next_df is not None and len(_next_df) > 0
+                                            and 'SOC' in _next_df.columns):
+                                        _start = _next_df['SOC'].iloc[0]
+                                        _next_df['SOC'] = (_next_df['SOC']
+                                                           - _start + _ofs)
                             hyst_pair_state['next_temp'] = _next_temp
                         elif hyst_pair_state is not None:
                             hyst_pair_state['next_temp'] = None
@@ -20709,6 +20725,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             ci = _line_cyc_map.get(id(line), 0)
                             _is_first = (ci == 0)
                             _is_last = (ci == _n_cycles_detected - 1)
+                            # Option B dim 마커 — minor cycle 의 DCHG segment alpha 보존
+                            _dim_alpha_override = getattr(
+                                line, '_minor_dim_alpha_tag', None)
                             _c, _lw, _a = _get_profile_color(
                                 color_mode, ci, _n_cycles_detected,
                                 condition=_cond,
@@ -20717,7 +20736,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             )
                             line.set_color(_c)
                             line.set_linewidth(_lw)
-                            line.set_alpha(_a)
+                            # Option B: dim 마커 있으면 alpha override (minor DCHG)
+                            line.set_alpha(_dim_alpha_override
+                                           if _dim_alpha_override is not None
+                                           else _a)
                 # 통합 범례 전략 적용
                 _apply_legend_strategy(
                     fig, _n_lines, color_mode,
@@ -25628,6 +25650,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             result_obj._hyst_type = 'major' if soc_range >= 0.98 else 'minor'
 
         _perf_logger.info(f'  [hysteresis] SOC 보정 적용: {_hyst_applied}개 사이클')
+        # offset map 저장 — _profile_render_loop 의 pair fetch (TC N+1 fallback)
+        # 시 동일 offset 적용을 위해 재사용.
+        self._hyst_soc_offset_maps = _offset_maps
 
     def _refresh_timeline_detail(self) -> None:
         """패널 열려있으면 갱신."""
@@ -26566,14 +26591,31 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             # 페어링 비활성 — 기존 동작 (현재 TC 의 양 phase)
                             _segments = [(1, p), (2, p)]
 
+                        # Option B: minor cycle (depth < 100) 의 primary phase
+                        # (현재 TC segment) 는 alpha 를 dim — DCHG envelope 가
+                        # Dchg 100% reference 곡선으로 부각되도록.
+                        # depth_pct 는 _hyst_labels 에서 가져옴.
+                        _is_minor = False
+                        if _pair_enabled and _hyst_labels and CycNo in _hyst_labels:
+                            _depth = _hyst_labels[CycNo].get('depth_pct', 100)
+                            _is_minor = (_depth < 100)
+                        _MINOR_DIM_ALPHA = 0.3
+
                         _first_seg = True
-                        for _cond, _seg_df in _segments:
+                        for _seg_idx, (_cond, _seg_df) in enumerate(_segments):
                             _seg = _seg_df[_seg_df['Condition'] == _cond]
                             if len(_seg) < 2:
                                 continue
                             _color, _lw, _alpha = _get_profile_color(
                                 'chg_dchg', _cyc_idx, _n_cyc,
                                 condition=_cond, is_major=False)
+                            # Primary phase = 현재 TC 의 segment (idx 0). minor cycle
+                            # 이면 dim alpha 적용. recharge phase (idx 1, next TC) 는
+                            # 정상 alpha 유지 → fan 형태 시각 강조.
+                            _dim_marker = None
+                            if _is_minor and _seg_idx == 0:
+                                _alpha = min(_alpha, _MINOR_DIM_ALPHA)
+                                _dim_marker = _MINOR_DIM_ALPHA
                             # 사이클당 범례 1개 — 첫 세그먼트만 라벨 표시
                             _seg_lbl = _new_lgnd if _first_seg else '_nolegend_'
                             _first_seg = False
@@ -26583,6 +26625,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                             _a1._cond_tag = _cond
                             _a1._cycle_id_tag = _cyc_idx
+                            if _dim_marker is not None:
+                                _a1._minor_dim_alpha_tag = _dim_marker
                             _artists.append(_a1)
                             _a3 = graph_profile(_seg.SOC, _seg.Vol, ax3,
                                 _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
@@ -26590,6 +26634,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
                             _a3._cond_tag = _cond
                             _a3._cycle_id_tag = _cyc_idx
+                            if _dim_marker is not None:
+                                _a3._minor_dim_alpha_tag = _dim_marker
                             _artists.append(_a3)
                     else:
                         _color, _lw, _alpha = _get_profile_color(
