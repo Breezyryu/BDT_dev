@@ -19177,7 +19177,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         sheet_tabs.setStyleSheet(
             "QTabBar::tab { font-size: 10px; padding: 3px 8px; }"
         )
-        # 셀 폰트 (monospace, 우측 정렬)
+        # 셀 폰트 — 숫자 자리수 정렬 위해 monospace (Consolas).
+        # 헤더/탭 라벨은 앱 기본 폰트 (Malgun Gothic) 유지.
         _cell_font = QFont("Consolas")
         _cell_font.setPointSize(9)
         for sheet_name, ch_series in sheets_per_channel.items():
@@ -19255,6 +19256,144 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if sheet_tabs.count() == 0:
             return None
         root_layout.addWidget(sheet_tabs, 1)
+        return root
+
+    def _accumulate_profile_data(self, profile_data_per_combo, df,
+                                 ch_label, cyc_label):
+        """프로파일 데이터 탭용 (channel, cycle) 별 DataFrame 누적.
+
+        Parameters
+        ----------
+        profile_data_per_combo : dict[tuple[str, str], pd.DataFrame]
+            { (ch_label, cyc_label): df.copy() }
+        df : pd.DataFrame
+            UnifiedProfileResult.df (mode 별 columns 다름)
+        ch_label : str
+            채널 라벨 ("Q7M_030" 등)
+        cyc_label : str
+            사이클 라벨 ("0001", "0010-0010" 등)
+
+        Notes
+        -----
+        - 입력 df 가 None / 빈 DF 면 무시.
+        - 동일 키 중복 호출 시 덮어씀 (마지막 호출 기준).
+        - df.copy() 로 독립 사본 보관 → 후속 fig 정리에 영향 없음.
+        """
+        if df is None or len(df) == 0:
+            return
+        try:
+            profile_data_per_combo[(ch_label, cyc_label)] = df.copy()
+        except Exception:
+            # 사본 생성 실패 (메모리 부족 등) — skip
+            pass
+
+    def _create_profile_data_subtab(self, profile_data_per_combo: dict,
+                                    channel_map: dict):
+        """프로파일 데이터 서브탭 위젯 생성 (read-only).
+
+        구조:
+            QWidget (root)
+            └─ QTabWidget (조합별 inner-inner 탭: "Q7M_030 cy0001", ...)
+                 └─ QTableWidget (행=샘플 인덱스, 열=DataFrame columns)
+
+        Parameters
+        ----------
+        profile_data_per_combo : dict[tuple[str, str], pd.DataFrame]
+            { (ch_label, cyc_label): df } — `_accumulate_profile_data` 누적 결과.
+        channel_map : dict[str, dict]
+            { channel_label: {'color': '#hex', 'artists': [...]} }
+            탭 라벨 색상 = 그래프 채널 색상.
+
+        Returns
+        -------
+        QWidget | None
+            profile_data_per_combo 비어있으면 None.
+
+        Notes
+        -----
+        - 셀 폰트: Consolas 9pt (사이클 데이터 탭과 일치, 숫자 자리수 정렬용)
+        - 헤더 폰트: 앱 기본 (Malgun Gothic) — CSS font-family 미지정
+        - 셀 우측 정렬, AlternatingRowColors, read-only
+        - Ctrl+C 복사 = QTableWidget 기본 동작 (별도 구현 X)
+        """
+        from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget,
+                                     QTableWidget, QTableWidgetItem,
+                                     QHeaderView)
+        from PyQt6.QtGui import QColor, QFont
+        from PyQt6.QtCore import Qt
+        if not profile_data_per_combo:
+            return None
+        # 컬럼명 → 소수점 자리수 (지표 의미별)
+        _DECIMALS = {
+            "Vol": 4, "Voltage": 4, "SOC": 4, "DOD": 4,
+            "Crate": 3, "dQdV": 3, "dVdQ": 3, "Temp": 1,
+            "Energy": 3, "TimeMin": 3, "Time(min)": 3,
+        }
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(2, 2, 2, 2)
+        root_layout.setSpacing(2)
+        combo_tabs = QTabWidget()
+        combo_tabs.setStyleSheet(
+            "QTabBar::tab { font-size: 10px; padding: 3px 8px; }"
+        )
+        combo_tabs.setUsesScrollButtons(True)  # 다수 탭 대응
+        # 셀 폰트 — 숫자 자리수 정렬 위해 monospace (Consolas).
+        # 헤더/탭 라벨은 앱 기본 폰트 (Malgun Gothic) 유지.
+        _cell_font = QFont("Consolas")
+        _cell_font.setPointSize(9)
+        # (ch_label, cyc_label) 정렬: 채널순 → 사이클순
+        sorted_keys = sorted(profile_data_per_combo.keys())
+        for (ch_label, cyc_label) in sorted_keys:
+            df = profile_data_per_combo[(ch_label, cyc_label)]
+            if df is None or len(df) == 0:
+                continue
+            n_rows, n_cols = len(df), len(df.columns)
+            tbl = QTableWidget(n_rows, n_cols)
+            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            tbl.setSelectionBehavior(
+                QTableWidget.SelectionBehavior.SelectItems)
+            tbl.setAlternatingRowColors(True)
+            tbl.setStyleSheet(
+                "QTableWidget { font-size: 9px; }"
+                "QHeaderView::section { font-size: 9px; padding: 2px 4px; }"
+            )
+            tbl.setHorizontalHeaderLabels([str(c) for c in df.columns])
+            tbl.verticalHeader().setVisible(False)
+            tbl.horizontalHeader().setSectionResizeMode(
+                QHeaderView.ResizeMode.ResizeToContents)
+            for ri in range(n_rows):
+                for ci, col in enumerate(df.columns):
+                    _v = df.iat[ri, ci]
+                    if _v is None or pd.isna(_v):
+                        _txt = ""
+                    else:
+                        _decimals = _DECIMALS.get(str(col), 3)
+                        try:
+                            _txt = f"{float(_v):.{_decimals}f}"
+                        except (TypeError, ValueError):
+                            _txt = str(_v)
+                    _it = QTableWidgetItem(_txt)
+                    _it.setFont(_cell_font)
+                    _it.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight
+                        | Qt.AlignmentFlag.AlignVCenter)
+                    _it.setFlags(Qt.ItemFlag.ItemIsSelectable
+                                 | Qt.ItemFlag.ItemIsEnabled)
+                    tbl.setItem(ri, ci, _it)
+            tab_label = f"{ch_label} cy{cyc_label}"
+            idx = combo_tabs.addTab(tbl, tab_label)
+            # 탭 라벨 색상 (channel_map 의 채널 색상 반영)
+            _info = channel_map.get(ch_label) or {}
+            _color = _info.get('color')
+            if _color:
+                try:
+                    combo_tabs.tabBar().setTabTextColor(idx, QColor(_color))
+                except Exception:
+                    pass
+        if combo_tabs.count() == 0:
+            return None
+        root_layout.addWidget(combo_tabs, 1)
         return root
 
     def _finalize_cycle_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
@@ -19615,7 +19754,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _finalize_plot_tab(self, tab, tab_layout, canvas, toolbar, tab_no,
                            channel_map=None, fig=None, axes_list=None,
-                           sub_channel_map=None, sub2_channel_map=None):
+                           sub_channel_map=None, sub2_channel_map=None,
+                           data_subtab_widget=None, subtab_titles=None):
+        """프로파일 결과 탭 마무리.
+
+        Parameters
+        ----------
+        data_subtab_widget : QWidget | None
+            제공 시 inner QTabWidget ('결과 / 데이터') 으로 구성.
+            None 이면 기존 동작 (canvas 직접 layout 추가) — 회귀 0.
+            `_create_profile_data_subtab` 으로 생성된 위젯 권장.
+        subtab_titles : list[str] | None
+            서브탭 라벨 (첫 원소=canvas, 둘째=데이터 위젯).
+            예: ["결과", "데이터"]. None 이면 기본값 사용.
+        """
         if channel_map:
             from PyQt6.QtWidgets import QHBoxLayout
             toggle_btn = self._create_cycle_channel_control(
@@ -19629,7 +19781,29 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab_layout.addLayout(toolbar_row)
         else:
             tab_layout.addWidget(toolbar)
-        tab_layout.addWidget(canvas)
+        # ── canvas 영역 — 데이터 위젯 유무에 따라 분기 ──
+        if data_subtab_widget is not None:
+            # 신규: inner QTabWidget 으로 결과/데이터 2탭 구성
+            from PyQt6.QtWidgets import QTabWidget, QVBoxLayout
+            from PyQt6.QtWidgets import QWidget as _QW
+            inner = QTabWidget()
+            titles = (list(subtab_titles)
+                      if subtab_titles else ["결과", "데이터"])
+            # 결과 서브탭: 기존 canvas
+            _s1 = _QW()
+            _l1 = QVBoxLayout(_s1)
+            _l1.setContentsMargins(0, 0, 0, 0)
+            _l1.setSpacing(0)
+            _l1.addWidget(canvas, 1)
+            inner.addTab(_s1, titles[0] if len(titles) > 0 else "결과")
+            # 데이터 서브탭
+            inner.addTab(data_subtab_widget,
+                         titles[1] if len(titles) > 1 else "데이터")
+            inner.setCurrentIndex(0)
+            tab_layout.addWidget(inner, 1)
+        else:
+            # 기존: canvas 직접 추가 (하위 호환)
+            tab_layout.addWidget(canvas)
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
@@ -19838,6 +20012,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tab, tab_layout, canvas, toolbar = self._create_plot_tab(fig, tab_no)
             last_namelist = None
             all_ch_map, all_sub_map, all_sub2_map = {}, {}, {}
+            # 데이터 서브탭용 (channel, cycle) 별 DataFrame 누적 dict
+            all_profile_data_per_combo: dict = {}
 
         # ── 논리사이클→TC 변환 헬퍼 ──
         # TC 1원화: CycleNo가 이미 TC이므로 변환 불필요
@@ -19870,6 +20046,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     channel_map, sub2_channel_map = {}, {}
                     has_data = False  # 데이터 플롯 여부 추적
                     error_reasons = []
+                    # 데이터 서브탭용 (channel, cycle) 별 DataFrame 누적
+                    profile_data_per_combo: dict = {}
                     for CycNo in CycleNo:
                         cyccountmax = len(CycleNo)
                         cyccount += 1
@@ -19928,6 +20106,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                             sub2_channel_map[cyc_label] = {
                                 'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                            # 데이터 서브탭용 누적
+                            self._accumulate_profile_data(
+                                profile_data_per_combo, _plot_df,
+                                ch_label, cyc_label)
                         else:
                             error_reasons.append(str(_meta.get('error', '데이터 없음')))
                     # 채널 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
@@ -19942,11 +20124,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         title = f"{namelist[-2]}={namelist[-1]}"
                         plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
                                      fontweight=THEME['SUPTITLE_WEIGHT'])
+                    # 데이터 서브탭 위젯 생성 (실패 시 그래프만 표시)
+                    try:
+                        _data_widget = self._create_profile_data_subtab(
+                            profile_data_per_combo, channel_map)
+                    except Exception as _e:
+                        logger.warning('프로파일 데이터 서브탭 생성 실패 (CycProfile): %s', _e)
+                        _data_widget = None
                     self._finalize_plot_tab(
                         tab, tab_layout, canvas, toolbar, tab_no,
                         channel_map=channel_map, fig=fig,
                         axes_list=[axes[k] for k in axes_order],
-                        sub2_channel_map=sub2_channel_map)
+                        sub2_channel_map=sub2_channel_map,
+                        data_subtab_widget=_data_widget,
+                        subtab_titles=["결과", "데이터"])
                     tab_no += 1
                     output_fig(self.figsaveok,
                                f"{namelist[-2]}={namelist[-1]}" if namelist else "")
@@ -20019,6 +20210,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             sub2_key = sub_key + " " + cyc_label
                             all_sub2_map[sub2_key] = {
                                 'artists': list(_artists), 'color': _color, 'parent': sub_key}
+                            # 데이터 서브탭용 누적 (sub_key 사용 — 폴더+채널 명시)
+                            self._accumulate_profile_data(
+                                all_profile_data_per_combo, _plot_df,
+                                sub_key, cyc_label)
                         elif _meta.get('error'):
                             _perf_logger.warning(
                                 f"[ProfileRender] {FolderBase} cyc={CycNo} - {_meta.get('error')}"
@@ -20037,6 +20232,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     channel_map, sub_channel_map = {}, {}
                     has_data = False  # 데이터 플롯 여부 추적
                     error_reasons = []
+                    # 데이터 서브탭용 (channel, cycle) 별 DataFrame 누적
+                    profile_data_per_combo: dict = {}
                     for j, FolderBase in enumerate(subfolder):
                         if "Pattern" in FolderBase:
                             continue
@@ -20094,6 +20291,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[ch_label] = {'artists': list(_artists), 'color': _color}
                             sub_channel_map[sub_label] = {
                                 'artists': list(_artists), 'color': _color, 'parent': ch_label}
+                            # 데이터 서브탭용 누적
+                            _cyc_label = (
+                                f"{CycNo[0]:04d}-{CycNo[1]:04d}"
+                                if isinstance(CycNo, tuple) else "%04d" % CycNo)
+                            self._accumulate_profile_data(
+                                profile_data_per_combo, _plot_df,
+                                ch_label, _cyc_label)
                         else:
                             error_reasons.append(str(_meta.get('error', '데이터 없음')))
                     # 사이클 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
@@ -20108,11 +20312,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         title = f"{namelist[-2]}=%04d" % CycNo
                         plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
                                      fontweight=THEME['SUPTITLE_WEIGHT'])
+                    # 데이터 서브탭 위젯 생성 (실패 시 그래프만 표시)
+                    try:
+                        _data_widget = self._create_profile_data_subtab(
+                            profile_data_per_combo, channel_map)
+                    except Exception as _e:
+                        logger.warning('프로파일 데이터 서브탭 생성 실패 (CellProfile): %s', _e)
+                        _data_widget = None
                     self._finalize_plot_tab(
                         tab, tab_layout, canvas, toolbar, tab_no,
                         channel_map=channel_map, fig=fig,
                         axes_list=[axes[k] for k in axes_order],
-                        sub_channel_map=sub_channel_map)
+                        sub_channel_map=sub_channel_map,
+                        data_subtab_widget=_data_widget,
+                        subtab_titles=["결과", "데이터"])
                     tab_no += 1
                     output_fig(self.figsaveok,
                                f"{namelist[-2]}=%04d" % CycNo if namelist else "")
@@ -20123,10 +20336,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
                          fontweight=THEME['SUPTITLE_WEIGHT'])
             axes_list = [axes[k] for k in axes_order]
+            # 데이터 서브탭 위젯 생성 (실패 시 그래프만 표시)
+            # all_sub_map 의 sub_key (= ch_label + ' ' + sub_label) 가
+            # all_profile_data_per_combo 의 키이므로 색상 lookup 가능.
+            try:
+                _data_widget = self._create_profile_data_subtab(
+                    all_profile_data_per_combo, all_sub_map)
+            except Exception as _e:
+                logger.warning('프로파일 데이터 서브탭 생성 실패 (AllProfile): %s', _e)
+                _data_widget = None
             self._finalize_plot_tab(
                 tab, tab_layout, canvas, toolbar, tab_no,
                 channel_map=all_ch_map, fig=fig, axes_list=axes_list,
-                sub_channel_map=all_sub_map, sub2_channel_map=all_sub2_map)
+                sub_channel_map=all_sub_map, sub2_channel_map=all_sub2_map,
+                data_subtab_widget=_data_widget,
+                subtab_titles=["결과", "데이터"])
             tab_no += 1
             output_fig(self.figsaveok, title)
         elif all_profile and not has_any_data:
