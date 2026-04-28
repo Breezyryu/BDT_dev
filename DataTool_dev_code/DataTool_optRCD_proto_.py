@@ -26265,8 +26265,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         markersize=_ocv_ccv_ms, linestyle='none',
                         alpha=THEME['LINE_ALPHA'])
                     _artists.append(_l)
+                # 이어서 모드는 충/방전 모두 포함 — Crate y축 대칭 (방전=음수)
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
-                    0, 3.4, 0.2, "Time(min)", "C-rate", temp_lgnd))
+                    -3.2, 3.4, 0.4, "Time(min)", "C-rate", temp_lgnd))
                 _artists.append(graph_continue(p.TimeMin, p.SOC, ax3,
                     0, 1.2, 0.1, "Time(min)", "SOC", temp_lgnd))
                 # ax5: OCV/CCV vs SOC — scatter+line, 충/방전 분리
