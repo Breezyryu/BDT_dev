@@ -19602,10 +19602,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if not parts:
                     continue
                 # 각 cycle df 앞에 'Cycle' 컬럼 삽입 후 vertical concat
+                # 기존 'Cycle' 컬럼 (unified_profile_core 결과) 충돌 회피.
                 _frames = []
                 for cyc_label, _df in parts:
                     _aug = _df.copy()
-                    _aug.insert(0, 'Cycle', cyc_label)
+                    if 'Cycle' in _aug.columns:
+                        # 기존 Cycle 컬럼 덮어쓰기 (insert 대신 assign)
+                        _aug['Cycle'] = cyc_label
+                        # 첫 위치로 이동
+                        _cols = ['Cycle'] + [c for c in _aug.columns if c != 'Cycle']
+                        _aug = _aug[_cols]
+                    else:
+                        _aug.insert(0, 'Cycle', cyc_label)
                     _frames.append(_aug)
                 merged = pd.concat(_frames, axis=0, ignore_index=True, sort=False)
                 tbl = _build_table(merged)
@@ -25653,6 +25661,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # offset map 저장 — _profile_render_loop 의 pair fetch (TC N+1 fallback)
         # 시 동일 offset 적용을 위해 재사용.
         self._hyst_soc_offset_maps = _offset_maps
+        # 진단 로그 — folder 별 TC offset 목록 (사용자 SOC 정렬 어긋남 디버깅용)
+        for _fi, _ofs in _offset_maps.items():
+            _ofs_str = ', '.join(
+                f'TC{_t}={_v:+.3f}' for _t, _v in sorted(_ofs.items())[:25])
+            _perf_logger.info(f'  [hysteresis] folder={_fi} TC offsets: {_ofs_str}')
 
     def _refresh_timeline_detail(self) -> None:
         """패널 열려있으면 갱신."""
