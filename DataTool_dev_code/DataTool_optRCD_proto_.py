@@ -17617,6 +17617,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _tbl_selall.activated.connect(self.cycle_path_table.selectAll)
         # Enter 키로 마지막 행에서 새 행 자동 추가
         self.cycle_path_table.installEventFilter(self)
+        # Excel-style fill-drag — viewport 마우스 이벤트에서 셀 우하단 핸들 감지
+        self.cycle_path_table.viewport().installEventFilter(self)
+        # Fill-drag 상태
+        self._fill_drag_active = False
+        self._fill_drag_source: tuple[int, int, str] | None = None  # (row, col, value)
+        self._fill_drag_last_target: tuple[int, int] | None = None
         # 우클릭 컨텍스트 메뉴
         self.cycle_path_table.customContextMenuRequested.connect(self._cycle_table_context_menu)
         # 연결처리 토글 시 그룹 구분선 + TC 누적 hint 즉시 갱신 (Step 6)
@@ -23865,6 +23871,47 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         sel = tbl.selectedRanges()
         start_row = sel[0].topRow() if sel else 0
         start_col = sel[0].leftColumn() if sel else 0
+
+        # ── Broadcast paste: 클립보드 1×1 + 선택 영역 N×M → 전체 채우기 ──
+        # 사용자가 값 하나만 복사 후 여러 셀을 선택하고 Ctrl+V 하면 모든 선택
+        # 셀에 같은 값을 채워준다 (Excel 표준 동작).
+        is_single_value = (len(rows) == 1 and len(rows[0]) == 1)
+        if is_single_value and sel:
+            single_val = rows[0][0].strip().strip('"').strip("'")
+            r_lo, r_hi = sel[0].topRow(), sel[0].bottomRow()
+            c_lo, c_hi = sel[0].leftColumn(), sel[0].rightColumn()
+            n_target = (r_hi - r_lo + 1) * (c_hi - c_lo + 1)
+            if n_target > 1:
+                tbl.blockSignals(True)
+                try:
+                    for r in range(r_lo, r_hi + 1):
+                        for c in range(c_lo, c_hi + 1):
+                            item = tbl.item(r, c)
+                            if item is None:
+                                item = QtWidgets.QTableWidgetItem(single_val)
+                                tbl.setItem(r, c, item)
+                            else:
+                                if not (item.flags()
+                                        & QtCore.Qt.ItemFlag.ItemIsEditable):
+                                    continue
+                                item.setText(single_val)
+                            if c in (4, 5):
+                                item.setForeground(QtGui.QColor(0, 0, 0))
+                finally:
+                    tbl.blockSignals(False)
+                # cellChanged 시그널 수동 발생 (col 4 등 의존 갱신)
+                for r in range(r_lo, r_hi + 1):
+                    for c in range(c_lo, c_hi + 1):
+                        item = tbl.item(r, c)
+                        if item and (item.flags()
+                                     & QtCore.Qt.ItemFlag.ItemIsEditable):
+                            tbl.cellChanged.emit(r, c)
+                self._highlight_all_paths()
+                if 1 in range(c_lo, c_hi + 1):
+                    self._update_group_separators()
+                    self._autofill_table_empty_cells(mode='light')
+                return
+
         need_rows = start_row + len(rows)
         if need_rows > tbl.rowCount():
             tbl.setRowCount(need_rows)
@@ -24606,30 +24653,41 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             tbl.blockSignals(False)
 
     def _update_ect_columns_state(self):
-        """chk_ectpath 체크 여부에 따라 사이클 입력 경로를 상호배타로 토글.
+        """chk_ectpath 체크 여부에 따라 col 5(모드) 편집 가능 여부 + stepnum 토글.
 
-        ECT 체크됨 → 테이블 col4-6 편집 가능, stepnum 비활성
-        ECT 체크 안 됨 → 테이블 col4-6 읽기 전용, stepnum 활성
+        col 4(TC) 는 ECT 무관하게 **항상 편집 가능** — 사용자가 직접 TC 범위
+        입력 가능. col 5(모드) 는 ECT 모드에서만 의미 있으므로 ECT 체크 시에만
+        편집 가능. stepnum 은 비-ECT 일 때만 활성 (ECT 일 땐 테이블에서 입력).
+
+        - ECT 체크됨 → col5 편집 가능, stepnum 비활성
+        - ECT 체크 안 됨 → col5 읽기 전용, stepnum 활성
         """
         tbl = self.cycle_path_table
         ect_on = self.chk_ectpath.isChecked()
         disabled_bg = QtGui.QColor('#D5D8DC')   # 회색 — 비활성 시각적 표시
         clear_bg = QtGui.QBrush()               # 기본 배경
 
-        # ── 테이블 col4-5 토글 ──
+        # ── col 5 (모드) 만 토글 — col 4 (TC) 는 항상 편집 가능 ──
         tbl.blockSignals(True)
         for r in range(tbl.rowCount()):
-            for c in (4, 5):
-                item = tbl.item(r, c)
-                if item is None:
-                    item = QtWidgets.QTableWidgetItem('')
-                    tbl.setItem(r, c, item)
-                if ect_on:
-                    item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-                    item.setBackground(clear_bg)
-                else:
-                    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-                    item.setBackground(disabled_bg)
+            # col 4 (TC) — 항상 편집 가능 보장
+            item4 = tbl.item(r, 4)
+            if item4 is None:
+                item4 = QtWidgets.QTableWidgetItem('')
+                tbl.setItem(r, 4, item4)
+            item4.setFlags(item4.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            item4.setBackground(clear_bg)
+            # col 5 (모드) — ECT 체크 시에만 편집 가능
+            item5 = tbl.item(r, 5)
+            if item5 is None:
+                item5 = QtWidgets.QTableWidgetItem('')
+                tbl.setItem(r, 5, item5)
+            if ect_on:
+                item5.setFlags(item5.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                item5.setBackground(clear_bg)
+            else:
+                item5.setFlags(item5.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+                item5.setBackground(disabled_bg)
         tbl.blockSignals(False)
 
         # ── stepnum 상호배타 토글 ──
@@ -24772,7 +24830,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         - Ctrl+Z: 테이블 Undo
         - Delete: 선택 셀 삭제
         - Enter: 마지막 행에서 자동 확장
+        - Fill-drag: viewport 의 셀 우하단 핸들에서 마우스 드래그 → 인접 셀 채우기
         """
+        # ── Fill-drag (viewport 마우스 이벤트) ──
+        if obj is self.cycle_path_table.viewport():
+            etype = event.type()
+            if etype == QtCore.QEvent.Type.MouseButtonPress:
+                if (event.button() == QtCore.Qt.MouseButton.LeftButton
+                        and self._is_fill_handle_click(event.position().toPoint())):
+                    self._start_fill_drag(event.position().toPoint())
+                    return True
+            elif etype == QtCore.QEvent.Type.MouseMove:
+                if self._fill_drag_active:
+                    self._update_fill_drag(event.position().toPoint())
+                    return True
+                # 핸들 호버 시 cross cursor 표시 — UX 힌트
+                if self._is_fill_handle_click(event.position().toPoint()):
+                    self.cycle_path_table.viewport().setCursor(
+                        QtCore.Qt.CursorShape.CrossCursor)
+                else:
+                    self.cycle_path_table.viewport().unsetCursor()
+            elif etype == QtCore.QEvent.Type.MouseButtonRelease and self._fill_drag_active:
+                self._finish_fill_drag()
+                return True
+
         if obj is self.cycle_path_table:
             etype = event.type()
             # ── 드래그앤드롭 처리 ──
@@ -24822,6 +24903,108 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self._push_table_undo()
                     self.cycle_path_table.setRowCount(row + 2)
         return super().eventFilter(obj, event)
+
+    # ── Excel-style fill-drag 헬퍼 ────────────────────────────────────
+    _FILL_HANDLE_SIZE = 6  # 우하단 핸들 hot zone (픽셀)
+
+    def _is_fill_handle_click(self, viewport_pos: QtCore.QPoint) -> bool:
+        """viewport 좌표가 currentItem 의 우하단 fill 핸들 영역(6x6) 인지.
+
+        편집 중 (persistent editor 열림) 이거나 currentItem 이 없으면 False.
+        """
+        tbl = self.cycle_path_table
+        item = tbl.currentItem()
+        if item is None:
+            return False
+        rect = tbl.visualItemRect(item)
+        # 우하단 6x6 hot zone
+        size = self._FILL_HANDLE_SIZE
+        hot = QtCore.QRect(
+            rect.right() - size, rect.bottom() - size, size, size)
+        return hot.contains(viewport_pos)
+
+    def _start_fill_drag(self, viewport_pos: QtCore.QPoint) -> None:
+        """Fill-drag 시작 — 소스 셀 정보 캡처."""
+        tbl = self.cycle_path_table
+        item = tbl.currentItem()
+        if item is None:
+            return
+        row, col = item.row(), item.column()
+        value = item.text() or ''
+        self._fill_drag_active = True
+        self._fill_drag_source = (row, col, value)
+        self._fill_drag_last_target = (row, col)
+
+    def _update_fill_drag(self, viewport_pos: QtCore.QPoint) -> None:
+        """Fill-drag 진행 중 — 마우스 위치의 셀까지 선택 영역 시각화."""
+        if not self._fill_drag_active or self._fill_drag_source is None:
+            return
+        tbl = self.cycle_path_table
+        target_row = tbl.rowAt(viewport_pos.y())
+        target_col = tbl.columnAt(viewport_pos.x())
+        if target_row < 0 or target_col < 0:
+            return
+        src_row, src_col, _ = self._fill_drag_source
+        # 선택 표시 — 소스 셀에서 target 까지 직사각형 (시각 피드백)
+        tbl.setRangeSelected(
+            QtWidgets.QTableWidgetSelectionRange(
+                min(src_row, target_row), min(src_col, target_col),
+                max(src_row, target_row), max(src_col, target_col),
+            ),
+            True,
+        )
+        self._fill_drag_last_target = (target_row, target_col)
+
+    def _finish_fill_drag(self) -> None:
+        """Fill-drag 완료 — 선택 영역 전체에 소스 값 채우기."""
+        if not self._fill_drag_active or self._fill_drag_source is None:
+            self._fill_drag_active = False
+            return
+        tbl = self.cycle_path_table
+        src_row, src_col, value = self._fill_drag_source
+        target = self._fill_drag_last_target or (src_row, src_col)
+        target_row, target_col = target
+        r_lo, r_hi = sorted((src_row, target_row))
+        c_lo, c_hi = sorted((src_col, target_col))
+        # 단일 셀 = 자기 자신만 → no-op
+        if r_lo == r_hi and c_lo == c_hi:
+            self._fill_drag_active = False
+            self._fill_drag_source = None
+            self._fill_drag_last_target = None
+            self.cycle_path_table.viewport().unsetCursor()
+            return
+        self._push_table_undo()
+        tbl.blockSignals(True)
+        try:
+            for r in range(r_lo, r_hi + 1):
+                for c in range(c_lo, c_hi + 1):
+                    if r == src_row and c == src_col:
+                        continue  # 소스는 그대로
+                    item = tbl.item(r, c)
+                    if item is None:
+                        item = QtWidgets.QTableWidgetItem(value)
+                        tbl.setItem(r, c, item)
+                    else:
+                        # 편집 가능 여부 체크 — 읽기 전용 셀은 건너뛰기
+                        if not (item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable):
+                            continue
+                        item.setText(value)
+                    # 사용자 입력으로 간주 — 검정 폰트
+                    item.setForeground(QtGui.QColor(0, 0, 0))
+        finally:
+            tbl.blockSignals(False)
+        # cellChanged 시그널 수동 발생 (col 4 동기화 등)
+        for r in range(r_lo, r_hi + 1):
+            for c in range(c_lo, c_hi + 1):
+                if r == src_row and c == src_col:
+                    continue
+                item = tbl.item(r, c)
+                if item and (item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable):
+                    tbl.cellChanged.emit(r, c)
+        self._fill_drag_active = False
+        self._fill_drag_source = None
+        self._fill_drag_last_target = None
+        self.cycle_path_table.viewport().unsetCursor()
 
     def _drop_paths_to_table(self, paths: list[str]):
         """드래그앤드롭된 파일/폴더 경로를 cycle_path_table col1에 삽입.
