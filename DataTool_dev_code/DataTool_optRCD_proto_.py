@@ -866,10 +866,16 @@ def _compute_tc_soc_offsets(
     히스테리시스 플롯에서 각 TC의 프로파일을 절대 SOC 위치에 배치하기 위해 사용.
     TC 내 충전/방전 net 용량을 누적하여 각 TC 시작 시점의 SOC를 계산한다.
 
+    누적은 0에서 시작하므로 셀이 SOC=0(empty) 에서 시험을 시작한다고 가정한다.
+    만충에서 시작하는 프로토콜(예: SDI Gen5+ MP1 0.2C-10min volt hysteresis)은
+    누적이 음수로 떨어져 SOC 플롯이 음수 영역에 표시되는 문제가 있어, min<0
+    감지 시 자동으로 anchor 를 위로 평행이동(min(offset)≈0) 한다.
+
     Returns
     -------
     dict[int, float]
-        {TC번호: 시작SOC(0~1 범위)}. SOC = 누적(ChgCap - DchgCap) / capacity.
+        {TC번호: 시작SOC(0~1 범위)}. SOC = 누적(ChgCap - DchgCap) / capacity,
+        음수 발생 시 +shift 적용.
     """
     save_end = get_channel_save_end_data(channel_path)
     if save_end is None or save_end.empty:
@@ -890,6 +896,21 @@ def _compute_tc_soc_offsets(
         chg = tc_rows.loc[tc_rows['Cond'] == 1, 'ChgCap'].sum()
         dchg = tc_rows.loc[tc_rows['Cond'] == 2, 'DchgCap'].sum()
         cumul_net += (chg - dchg)
+
+    # ── anchor 자동 보정: 누적 음수 감지 시 위로 평행이동 ──
+    # 만충 시작 가정: 시험 초반에 방전이 누적되면 offset 이 -값으로 떨어진다.
+    # 노이즈 마진(0.05) 초과 음수를 감지하면 모든 offset 에 -min 을 더해
+    # SOC 플롯이 [0, max_excursion] 범위에 들어오도록 한다. 정상 케이스
+    # (충전 위주 프로토콜) 는 min ≥ 0 이므로 변경 없음.
+    if result:
+        _min = min(result.values())
+        if _min < -0.05:
+            shift = -_min
+            result = {tc: v + shift for tc, v in result.items()}
+            _perf_logger.info(
+                f'[soc_offset] anchor shift +{shift:.3f} '
+                f'(initial state assumed SOC≈1.0): {channel_path}'
+            )
     return result
 
 
@@ -11725,15 +11746,19 @@ class Ui_sitool(object):
         self.profile_cv_chk.setObjectName("profile_cv_chk")
         self._profile_opt_row2.addWidget(self.profile_cv_chk)
 
-        self._profile_opt_row2.addSpacing(14)
+        self._profile_opt_row2.addStretch()
+        _ds_layout.addLayout(self._profile_opt_row2)
 
-        # 프리셋: 자주 쓰는 옵션 조합 일괄 적용
+        # 행 3: 프리셋 — Row 1/2 의 버튼·체크박스와 가로폭 경쟁 회피
+        self._profile_opt_row3 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row3.setObjectName("_profile_opt_row3")
+
         self.profile_preset_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
         _pf_font_bold = QtGui.QFont(_pf_font)
         _pf_font_bold.setBold(True)
         self.profile_preset_label.setFont(_pf_font_bold)
         self.profile_preset_label.setObjectName("profile_preset_label")
-        self._profile_opt_row2.addWidget(self.profile_preset_label)
+        self._profile_opt_row3.addWidget(self.profile_preset_label)
 
         self.profile_preset_combo = QtWidgets.QComboBox(parent=self._data_scope_groupbox)
         self.profile_preset_combo.setFont(_pf_font)
@@ -11749,10 +11774,10 @@ class Ui_sitool(object):
         ])
         self.profile_preset_combo.setToolTip(
             "프리셋: 자주 쓰는 옵션 조합 일괄 적용")
-        self._profile_opt_row2.addWidget(self.profile_preset_combo)
+        self._profile_opt_row3.addWidget(self.profile_preset_combo)
 
-        self._profile_opt_row2.addStretch()
-        _ds_layout.addLayout(self._profile_opt_row2)
+        self._profile_opt_row3.addStretch()
+        _ds_layout.addLayout(self._profile_opt_row3)
 
         self.verticalLayout_4.addWidget(self._data_scope_groupbox)
         # 하위 호환
@@ -19288,13 +19313,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             pass
 
     def _create_profile_data_subtab(self, profile_data_per_combo: dict,
-                                    channel_map: dict):
+                                    channel_map: dict,
+                                    overlap_mode: str = 'continuous'):
         """프로파일 데이터 서브탭 위젯 생성 (read-only).
 
-        구조:
-            QWidget (root)
-            └─ QTabWidget (조합별 inner-inner 탭: "Q7M_030 cy0001", ...)
-                 └─ QTableWidget (행=샘플 인덱스, 열=DataFrame columns)
+        구조 (overlap_mode 별):
+            - 'continuous' (이어서) : (ch, cyc) 조합당 1탭 (기존 동작)
+            - 'split' (분리) / 'connected' (연결) :
+                채널당 1탭 + 사이클을 세로로 누적. 첫 컬럼에 'Cycle'
+                추가하여 사이클 경계 식별.
 
         Parameters
         ----------
@@ -19303,6 +19330,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         channel_map : dict[str, dict]
             { channel_label: {'color': '#hex', 'artists': [...]} }
             탭 라벨 색상 = 그래프 채널 색상.
+        overlap_mode : str
+            'continuous' | 'split' | 'connected'. split/connected 시 채널당
+            1탭으로 통합하고 사이클을 세로 누적.
 
         Returns
         -------
@@ -19328,6 +19358,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "Vol": 4, "Voltage": 4, "SOC": 4, "DOD": 4,
             "Crate": 3, "dQdV": 3, "dVdQ": 3, "Temp": 1,
             "Energy": 3, "TimeMin": 3, "Time(min)": 3,
+            "Cycle": 0,
         }
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -19342,12 +19373,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 헤더/탭 라벨은 앱 기본 폰트 (Malgun Gothic) 유지.
         _cell_font = QFont("Consolas")
         _cell_font.setPointSize(9)
-        # (ch_label, cyc_label) 정렬: 채널순 → 사이클순
-        sorted_keys = sorted(profile_data_per_combo.keys())
-        for (ch_label, cyc_label) in sorted_keys:
-            df = profile_data_per_combo[(ch_label, cyc_label)]
-            if df is None or len(df) == 0:
-                continue
+
+        def _build_table(df) -> QTableWidget:
             n_rows, n_cols = len(df), len(df.columns)
             tbl = QTableWidget(n_rows, n_cols)
             tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -19381,16 +19408,53 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _it.setFlags(Qt.ItemFlag.ItemIsSelectable
                                  | Qt.ItemFlag.ItemIsEnabled)
                     tbl.setItem(ri, ci, _it)
-            tab_label = f"{ch_label} cy{cyc_label}"
-            idx = combo_tabs.addTab(tbl, tab_label)
-            # 탭 라벨 색상 (channel_map 의 채널 색상 반영)
-            _info = channel_map.get(ch_label) or {}
-            _color = _info.get('color')
-            if _color:
-                try:
-                    combo_tabs.tabBar().setTabTextColor(idx, QColor(_color))
-                except Exception:
-                    pass
+            return tbl
+
+        # 분리/연결: 채널당 1탭 + 사이클 세로 누적 (Cycle 컬럼 prepend)
+        if overlap_mode in ('split', 'connected'):
+            from collections import defaultdict
+            by_channel: dict[str, list[tuple[str, 'pd.DataFrame']]] = defaultdict(list)
+            for (ch_label, cyc_label) in sorted(profile_data_per_combo.keys()):
+                df = profile_data_per_combo[(ch_label, cyc_label)]
+                if df is None or len(df) == 0:
+                    continue
+                by_channel[ch_label].append((cyc_label, df))
+            for ch_label, parts in by_channel.items():
+                if not parts:
+                    continue
+                # 각 cycle df 앞에 'Cycle' 컬럼 삽입 후 vertical concat
+                _frames = []
+                for cyc_label, _df in parts:
+                    _aug = _df.copy()
+                    _aug.insert(0, 'Cycle', cyc_label)
+                    _frames.append(_aug)
+                merged = pd.concat(_frames, axis=0, ignore_index=True, sort=False)
+                tbl = _build_table(merged)
+                idx = combo_tabs.addTab(tbl, ch_label)
+                _info = channel_map.get(ch_label) or {}
+                _color = _info.get('color')
+                if _color:
+                    try:
+                        combo_tabs.tabBar().setTabTextColor(idx, QColor(_color))
+                    except Exception:
+                        pass
+        else:
+            # 이어서 (continuous): 기존 동작 — (ch, cyc) 조합당 1탭
+            sorted_keys = sorted(profile_data_per_combo.keys())
+            for (ch_label, cyc_label) in sorted_keys:
+                df = profile_data_per_combo[(ch_label, cyc_label)]
+                if df is None or len(df) == 0:
+                    continue
+                tbl = _build_table(df)
+                tab_label = f"{ch_label} cy{cyc_label}"
+                idx = combo_tabs.addTab(tbl, tab_label)
+                _info = channel_map.get(ch_label) or {}
+                _color = _info.get('color')
+                if _color:
+                    try:
+                        combo_tabs.tabBar().setTabTextColor(idx, QColor(_color))
+                    except Exception:
+                        pass
         if combo_tabs.count() == 0:
             return None
         root_layout.addWidget(combo_tabs, 1)
@@ -19900,6 +19964,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         view_mode: str = 'cyc',
         n_channels_total: int = 1,
         n_folders_total: int = 1,
+        overlap_mode: str = 'continuous',
     ) -> None:
         """프로필 분석 공통 렌더링 루프 — AllProfile/CycProfile/CellProfile 3모드 통합
 
@@ -20127,7 +20192,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 데이터 서브탭 위젯 생성 (실패 시 그래프만 표시)
                     try:
                         _data_widget = self._create_profile_data_subtab(
-                            profile_data_per_combo, channel_map)
+                            profile_data_per_combo, channel_map,
+                            overlap_mode=overlap_mode)
                     except Exception as _e:
                         logger.warning('프로파일 데이터 서브탭 생성 실패 (CycProfile): %s', _e)
                         _data_widget = None
@@ -20315,7 +20381,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     # 데이터 서브탭 위젯 생성 (실패 시 그래프만 표시)
                     try:
                         _data_widget = self._create_profile_data_subtab(
-                            profile_data_per_combo, channel_map)
+                            profile_data_per_combo, channel_map,
+                            overlap_mode=overlap_mode)
                     except Exception as _e:
                         logger.warning('프로파일 데이터 서브탭 생성 실패 (CellProfile): %s', _e)
                         _data_widget = None
@@ -20341,7 +20408,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # all_profile_data_per_combo 의 키이므로 색상 lookup 가능.
             try:
                 _data_widget = self._create_profile_data_subtab(
-                    all_profile_data_per_combo, all_sub_map)
+                    all_profile_data_per_combo, all_sub_map,
+                    overlap_mode=overlap_mode)
             except Exception as _e:
                 logger.warning('프로파일 데이터 서브탭 생성 실패 (AllProfile): %s', _e)
                 _data_widget = None
@@ -25850,27 +25918,39 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
                 p = temp[1].df
                 _artists = []
-                _artists.append(graph_profile(p.SOC, p.Vol, ax1,
+                _a = graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "SOC", "Voltage(V)", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.Vol, ax3,
+                    "SOC", "Voltage(V)", temp_lgnd)
+                _a._cond_tag = 1
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.Vol, ax3,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "SOC", "Voltage(V)", temp_lgnd))
+                    "SOC", "Voltage(V)", temp_lgnd)
+                _a._cond_tag = 1
+                _artists.append(_a)
                 if self.chk_dqdv.isChecked():
-                    _artists.append(graph_profile(p.Vol, p.dQdV, ax2,
+                    _a = graph_profile(p.Vol, p.dQdV, ax2,
                         self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                        0, 5.5 * dqscale, 0.5 * dqscale, "Voltage(V)", "dQdV", temp_lgnd))
+                        0, 5.5 * dqscale, 0.5 * dqscale, "Voltage(V)", "dQdV", temp_lgnd)
                 else:
-                    _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
+                    _a = graph_profile(p.dQdV, p.Vol, ax2,
                         0, 5.5 * dqscale, 0.5 * dqscale,
                         self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                        "dQdV", "Voltage(V)", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.Crate, ax5,
-                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
-                    -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.Temp, ax6,
-                    -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                        "dQdV", "Voltage(V)", temp_lgnd)
+                _a._cond_tag = 1
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.Crate, ax5,
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                _a._cond_tag = 1
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.dVdQ, ax4,
+                    -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                _a._cond_tag = 1
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.Temp, ax6,
+                    -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                _a._cond_tag = 1
+                _artists.append(_a)
                 if self.saveok.isChecked() and save_file_name:
                     _sc = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
                     _sd = p[[c for c in _sc if c in p.columns]]
@@ -25909,23 +25989,35 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
                 p = temp[1].df
                 _artists = []
-                _artists.append(graph_profile(p.SOC, p.Vol, ax1,
+                _a = graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "DOD", "Voltage(V)", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.Vol, ax3,
+                    "DOD", "Voltage(V)", temp_lgnd)
+                _a._cond_tag = 2
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.Vol, ax3,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "DOD", "Voltage(V)", temp_lgnd))
-                _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
+                    "DOD", "Voltage(V)", temp_lgnd)
+                _a._cond_tag = 2
+                _artists.append(_a)
+                _a = graph_profile(p.dQdV, p.Vol, ax2,
                     -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale,
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "dQdV", "Voltage(V)", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.Crate, ax5,
-                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
+                    "dQdV", "Voltage(V)", temp_lgnd)
+                _a._cond_tag = 2
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.Crate, ax5,
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                _a._cond_tag = 2
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.dVdQ, ax4,
                     -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                    "DOD", "dVdQ", temp_lgnd))
-                _artists.append(graph_profile(p.SOC, p.Temp, ax6,
-                    -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd))
+                    "DOD", "dVdQ", temp_lgnd)
+                _a._cond_tag = 2
+                _artists.append(_a)
+                _a = graph_profile(p.SOC, p.Temp, ax6,
+                    -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                _a._cond_tag = 2
+                _artists.append(_a)
                 if self.saveok.isChecked() and save_file_name:
                     _sc = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
                     _sd = p[[c for c in _sc if c in p.columns]]
@@ -25993,11 +26085,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 _axis_label, "Voltage(V)", temp_lgnd)
                             _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
+                            _a1._cond_tag = _cond
                             _artists.append(_a1)
                             _a3 = graph_profile(_seg.SOC, _seg.Vol, ax3,
                                 _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 _axis_label, "Voltage(V)", '_nolegend_')
                             _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
+                            _a3._cond_tag = _cond
                             _artists.append(_a3)
                     else:
                         _color, _lw, _alpha = _get_profile_color(
@@ -26006,11 +26100,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                             _axis_label, "Voltage(V)", temp_lgnd)
                         _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
+                        _a1._cond_tag = 1
                         _artists.append(_a1)
                         _a3 = graph_profile(p.SOC, p.Vol, ax3,
                             _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                             _axis_label, "Voltage(V)", '_nolegend_')
                         _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
+                        _a3._cond_tag = 1
                         _artists.append(_a3)
 
                     _sub_color, _sub_lw, _sub_alpha = _get_profile_color(
@@ -26021,20 +26117,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                             "dQdV", "Voltage(V)", temp_lgnd)
                         _a2.set_color(_sub_color); _a2.set_linewidth(_sub_lw); _a2.set_alpha(_sub_alpha)
+                        _a2._cond_tag = 1
                         _artists.append(_a2)
                     _a5 = graph_profile(p.SOC, p.Crate, ax5,
                         _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", temp_lgnd)
                     _a5.set_color(_sub_color); _a5.set_linewidth(_sub_lw); _a5.set_alpha(_sub_alpha)
+                    _a5._cond_tag = 1
                     _artists.append(_a5)
                     if 'dVdQ' in p.columns:
                         _a4 = graph_profile(p.SOC, p.dVdQ, ax4,
                             _x_lo, _x_hi, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
                             _axis_label, "dVdQ", temp_lgnd)
                         _a4.set_color(_sub_color); _a4.set_linewidth(_sub_lw); _a4.set_alpha(_sub_alpha)
+                        _a4._cond_tag = 1
                         _artists.append(_a4)
                     _a6 = graph_profile(p.SOC, p.Temp, ax6,
                         _x_lo, _x_hi, 0.1, -15, 60, 5, _axis_label, "Temp.", lgnd)
                     _a6.set_color(_sub_color); _a6.set_linewidth(_sub_lw); _a6.set_alpha(_sub_alpha)
+                    _a6._cond_tag = 1
                     _artists.append(_a6)
                 else:
                     # 비히스테리시스: Condition 기반 충방전 분리 착색
@@ -26305,6 +26405,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             view_mode=_view_mode,
             n_channels_total=_n_channels,
             n_folders_total=_n_folders,
+            overlap_mode=options.get('overlap', 'continuous'),
         )
         self.ProfileConfirm.setEnabled(True)
         self._pump_ui()
