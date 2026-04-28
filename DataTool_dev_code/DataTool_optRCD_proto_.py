@@ -914,6 +914,94 @@ def _compute_tc_soc_offsets(
     return result
 
 
+def _compute_tc_hysteresis_labels(
+    channel_path: str,
+    capacity_mah: float,
+) -> dict[int, dict]:
+    """SaveEndData 에서 TC 별 히스테리시스 라벨·깊이 산출.
+
+    히스테리시스 사이클은 충·방전이 거의 균형 (예: SOC100→SOC10→SOC100) 이므로
+    ChgCap vs DchgCap 비교로는 phase 판별이 불안정. 대신 **TC 시작 SOC 위치**
+    로 phase 결정: 시작 SOC > 0.5 → 'Dchg' phase (만충 시작, 방전 hysteresis),
+    ≤ 0.5 → 'Chg' phase (방전 시작, 충전 hysteresis). 깊이는 ChgCap·DchgCap
+    중 큰 값을 정격용량 대비 % 로 환산 후 10% 단위 라운딩.
+
+    Parameters
+    ----------
+    channel_path : str
+        PNE 채널 폴더 경로.
+    capacity_mah : float
+        정격용량 (mAh). 0 이하이면 빈 dict 반환.
+
+    Returns
+    -------
+    dict[int, dict]
+        {tc: {'direction': 'Dchg'|'Chg', 'depth_pct': int, 'depth_raw': float}}
+        depth_pct 는 [10, 100] 범위 10% 단위. depth_raw 는 라운딩 전 실수값.
+    """
+    save_end = get_channel_save_end_data(channel_path)
+    if save_end is None or save_end.empty:
+        return {}
+    cap_uah = capacity_mah * 1000
+    if cap_uah <= 0:
+        return {}
+    # TC 시작 SOC 오프셋 — phase 판별용 (Dchg=시작 SOC 높음, Chg=시작 SOC 낮음)
+    soc_offsets = _compute_tc_soc_offsets(channel_path, capacity_mah)
+
+    cr = save_end[[27, 2, 10, 11]].copy()
+    cr.columns = ['TC', 'Cond', 'ChgCap', 'DchgCap']
+    result: dict[int, dict] = {}
+    for tc in sorted(cr['TC'].unique()):
+        tc_rows = cr[cr['TC'] == tc]
+        chg = tc_rows.loc[tc_rows['Cond'] == 1, 'ChgCap'].sum()
+        dchg = tc_rows.loc[tc_rows['Cond'] == 2, 'DchgCap'].sum()
+        chg_pct = (chg / cap_uah) * 100
+        dchg_pct = (dchg / cap_uah) * 100
+        # Phase 판별: 시작 SOC 위치 우선, 없으면 ChgCap vs DchgCap fallback
+        start_soc = soc_offsets.get(int(tc))
+        if start_soc is not None:
+            direction = 'Dchg' if start_soc > 0.5 else 'Chg'
+        elif dchg_pct >= chg_pct:
+            direction = 'Dchg'
+        else:
+            direction = 'Chg'
+        # 깊이 = phase 와 일치하는 쪽의 큰 값 (균형 사이클이면 max 가 거의 동일)
+        depth_raw = max(chg_pct, dchg_pct)
+        # 10% 단위 라운딩 후 [10, 100] 클램프
+        depth_pct = int(round(depth_raw / 10.0)) * 10
+        depth_pct = max(10, min(100, depth_pct))
+        result[int(tc)] = {
+            'direction': direction,
+            'depth_pct': depth_pct,
+            'depth_raw': float(depth_raw),
+        }
+    return result
+
+
+def _build_depth_rank_map(labels: dict[int, dict]) -> dict[int, int]:
+    """깊이 내림차순으로 rank 부여 — 큰 사이클이 rank 0 (검정 stop).
+
+    rank 0 = 가장 깊은 사이클 (예: Dchg 100% — 가장 큰 envelope).
+    rank N-1 = 가장 얕은 사이클 (예: Dchg 10% — 가장 작은 loop).
+    동일 깊이 시 TC 작은 쪽이 우선 (안정적 정렬).
+
+    Parameters
+    ----------
+    labels : dict[int, dict]
+        `_compute_tc_hysteresis_labels` 결과.
+
+    Returns
+    -------
+    dict[int, int]
+        {tc: rank}. rank 0 = deepest, rank N-1 = shallowest.
+    """
+    sorted_tcs = sorted(
+        labels.keys(),
+        key=lambda tc: (-labels[tc]['depth_pct'], tc),
+    )
+    return {tc: rank for rank, tc in enumerate(sorted_tcs)}
+
+
 def _ensure_dcir_columns(nd: 'pd.DataFrame') -> 'pd.DataFrame':
     """df.NewData에 DCIR 표준 컬럼 존재를 보장.
 
@@ -25891,6 +25979,40 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._apply_hysteresis_soc_offsets(
                 _compat_data, all_data_folder, mincapacity, data_attr)
 
+        # ── 3-c. 히스테리시스 라벨·깊이 rank 사전 산출 ──
+        # 각 TC 의 ChgCap/DchgCap 합계로 방향(Dchg/Chg) 자동 판별 + 깊이 % 산출.
+        # 라벨 폼: "Dchg 90%", "Chg 30%" 등. 깊이 내림차순 rank → rainbow 색상 매핑.
+        # 첫 폴더의 max-TC 채널 기준 (다채널 동일 프로토콜 가정).
+        # PNE SaveEndData 의존 — Toyo 또는 데이터 부족 시 빈 dict 로 폴백 (chronological).
+        _hyst_labels: dict[int, dict] = {}
+        _hyst_ranks: dict[int, int] = {}
+        if options.get('overlap') == 'connected' and all_data_folder:
+            try:
+                _first_folder = str(all_data_folder[0])
+                if os.path.isdir(_first_folder):
+                    _hyst_chs = sorted([
+                        f.path for f in os.scandir(_first_folder)
+                        if f.is_dir() and _is_channel_folder(f.name)
+                    ])
+                    if _hyst_chs:
+                        _best_ch = _hyst_chs[0]
+                        _best_lc = 0
+                        for _ch in _hyst_chs:
+                            _m = get_channel_meta(_ch)
+                            if _m and (_m.max_tc or 0) > _best_lc:
+                                _best_lc = _m.max_tc or 0
+                                _best_ch = _ch
+                        _meta = get_channel_meta(_best_ch)
+                        _cap = (_meta.min_capacity if _meta and _meta.min_capacity
+                                else mincapacity)
+                        _hyst_labels = _compute_tc_hysteresis_labels(_best_ch, _cap)
+                        _hyst_ranks = _build_depth_rank_map(_hyst_labels)
+            except Exception as _e:
+                logger.warning(
+                    '히스테리시스 라벨 산출 실패, chronological fallback: %s', _e)
+                _hyst_labels = {}
+                _hyst_ranks = {}
+
         # ── 4. 플롯 콜백 선택 ──
         if legacy_mode == "step":
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
@@ -26069,8 +26191,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if _is_hysteresis:
                     _htype = getattr(temp[1], '_hyst_type', 'minor')
                     _is_major = (_htype == 'major')
-                    _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
-                    _n_cyc = len(CycleNo)
+                    # 깊이 기반 라벨·rank 가용 시 사용, 아니면 chronological fallback
+                    if _hyst_labels and CycNo in _hyst_labels:
+                        _info = _hyst_labels[CycNo]
+                        _new_lgnd = f"{_info['direction']} {_info['depth_pct']}%"
+                        _cyc_idx = _hyst_ranks.get(CycNo, 0)
+                        _n_cyc = len(_hyst_ranks) or len(CycleNo)
+                    else:
+                        _new_lgnd = temp_lgnd
+                        _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
+                        _n_cyc = len(CycleNo)
 
                     # 충전/방전 세그먼트별 색상 분기 (V-x 플롯)
                     if 'Condition' in p.columns and not _is_major:
@@ -26081,9 +26211,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _color, _lw, _alpha = _get_profile_color(
                                 'chg_dchg', _cyc_idx, _n_cyc,
                                 condition=_cond, is_major=False)
+                            # cond 1 (충전) 라인에만 라벨 부착, cond 2 는 _nolegend_ 처리
+                            # → 한 사이클당 범례 1개 (Dchg X% 또는 Chg X%)
+                            _seg_lbl = _new_lgnd if _cond == 1 else '_nolegend_'
                             _a1 = graph_profile(_seg.SOC, _seg.Vol, ax1,
                                 _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                _axis_label, "Voltage(V)", temp_lgnd)
+                                _axis_label, "Voltage(V)", _seg_lbl)
                             _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                             _a1._cond_tag = _cond
                             _artists.append(_a1)
@@ -26098,7 +26231,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             'chg_dchg', _cyc_idx, _n_cyc, is_major=_is_major)
                         _a1 = graph_profile(p.SOC, p.Vol, ax1,
                             _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            _axis_label, "Voltage(V)", temp_lgnd)
+                            _axis_label, "Voltage(V)", _new_lgnd)
                         _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                         _a1._cond_tag = 1
                         _artists.append(_a1)
@@ -26115,19 +26248,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _a2 = graph_profile(p.dQdV, p.Vol, ax2,
                             -5 * dqscale, 5.5 * dqscale, 0.5 * dqscale,
                             self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "dQdV", "Voltage(V)", temp_lgnd)
+                            "dQdV", "Voltage(V)", _new_lgnd)
                         _a2.set_color(_sub_color); _a2.set_linewidth(_sub_lw); _a2.set_alpha(_sub_alpha)
                         _a2._cond_tag = 1
                         _artists.append(_a2)
                     _a5 = graph_profile(p.SOC, p.Crate, ax5,
-                        _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", temp_lgnd)
+                        _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", _new_lgnd)
                     _a5.set_color(_sub_color); _a5.set_linewidth(_sub_lw); _a5.set_alpha(_sub_alpha)
                     _a5._cond_tag = 1
                     _artists.append(_a5)
                     if 'dVdQ' in p.columns:
                         _a4 = graph_profile(p.SOC, p.dVdQ, ax4,
                             _x_lo, _x_hi, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
-                            _axis_label, "dVdQ", temp_lgnd)
+                            _axis_label, "dVdQ", _new_lgnd)
                         _a4.set_color(_sub_color); _a4.set_linewidth(_sub_lw); _a4.set_alpha(_sub_alpha)
                         _a4._cond_tag = 1
                         _artists.append(_a4)
