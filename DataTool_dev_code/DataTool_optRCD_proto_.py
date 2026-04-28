@@ -26,15 +26,11 @@ import glob
 from pathlib import Path
 
 # 무거운 의존성 lazy 로드 (Python 3.7+ 모듈 __getattr__).
-# 모듈 import 시점이 아닌, 실제 사용 시점에 한 번만 import 한 뒤 globals 캐시.
-# `pyodbc`/`xw`/`curve_fit`/`root_scalar`/`linregress` 는 일부 탭에서만 쓰이므로
-# 일반 사용자의 콜드 스타트 비용을 약 0.5~1.5초 회수한다.
+# pyodbc/xlwings 만 lazy — DB/엑셀 연동 시에만 사용. scipy 함수들은 모듈 내
+# 직접 사용 (NameError 회피) 위해 eager import.
 _BDT_LAZY = {
     'pyodbc':      lambda: __import__('pyodbc'),
     'xw':          lambda: __import__('xlwings'),
-    'curve_fit':   lambda: __import__('scipy.optimize', fromlist=['curve_fit']).curve_fit,
-    'root_scalar': lambda: __import__('scipy.optimize', fromlist=['root_scalar']).root_scalar,
-    'linregress':  lambda: __import__('scipy.stats', fromlist=['linregress']).linregress,
 }
 
 
@@ -45,6 +41,12 @@ def __getattr__(name):
     obj = loader()
     globals()[name] = obj
     return obj
+
+
+# scipy 함수들은 모듈 내부 함수에서 직접 사용되므로 eager import.
+# (lazy __getattr__ 은 외부 attr 접근에만 trigger — 모듈 자체 코드에서는 NameError)
+from scipy.optimize import curve_fit, root_scalar
+from scipy.stats import linregress
 
 HAS_SCH_PARSER = True  # 내장 .sch 파서 사용 (외부 모듈 불필요)
 
@@ -10526,11 +10528,14 @@ def pne_dcir_Profile_data(raw_file_path, inicycle, endcycle, mincapacity, inirat
     '''0:Index 1:Stepmode(1:CC-CV, 2:CC, 3:CV, 4:OCV) 2:StepType(1:충전,2:방전,3:휴지,4: OCV, 5: Impedance, 6: End, 8:loop)
     3:ChgDchg 4:State 5:Loop(Loop:1)
     6:Code(66:충전,65:방전,64:휴지,64:loop) 7:StepNo 8:Voltage(uV) 9:Current(uA) 10:Chg Capacity(uAh)
-    11:Dchg Capacity(uAh) 12:Chg Power(uW) 13:Dchg Power(uW) 14:Chg WattHour(Wh) 15:Dchg WattHour(Wh) 
-    16: 17:StepTime(/100s) 18:TotTime(day) 19:TotTime(/100s) 20:imp 
-    21:Temp1 22:Temp2 23:Temp3 24:Temperature(°C) 25: 26: 27:Total Cycle 28:CurrCycle 29:Average voltage(mV) 30:Average current(A) 
-    31: 32: 33:date 34:time 35: 36: 37: 38: 39: 40: 
+    11:Dchg Capacity(uAh) 12:Chg Power(uW) 13:Dchg Power(uW) 14:Chg WattHour(Wh) 15:Dchg WattHour(Wh)
+    16: 17:StepTime(/100s) 18:TotTime(day) 19:TotTime(/100s) 20:imp
+    21:Temp1 22:Temp2 23:Temp3 24:Temperature(°C) 25: 26: 27:Total Cycle 28:CurrCycle 29:Average voltage(mV) 30:Average current(A)
+    31: 32: 33:date 34:time 35: 36: 37: 38: 39: 40:
     41: 42: 43: 44:누적step(Loop, 완료 제외) 45:voltage max 46: '''
+    # linregress 는 모듈 레벨 lazy 등록 (외부 attr 접근 시만 trigger) — 모듈 내
+    # 함수에서 직접 사용 시 NameError. 함수 내 명시 import.
+    from scipy.stats import linregress
     df = pd.DataFrame()
     if (raw_file_path[-4:-1]) != "ter":
         # PNE 채널, 용량 산정
