@@ -26169,7 +26169,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # PNE SaveEndData 의존 — Toyo 또는 데이터 부족 시 빈 dict 로 폴백 (chronological).
         _hyst_labels: dict[int, dict] = {}
         _hyst_ranks: dict[int, int] = {}
-        if options.get('overlap') == 'connected' and all_data_folder:
+        # all_data_folder 가 numpy array 일 수 있어 len() 으로 체크 (truthiness 회피)
+        if options.get('overlap') == 'connected' and len(all_data_folder) > 0:
             try:
                 _first_folder = str(all_data_folder[0])
                 if os.path.isdir(_first_folder):
