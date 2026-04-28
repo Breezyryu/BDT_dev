@@ -917,14 +917,21 @@ def _compute_tc_soc_offsets(
 def _compute_tc_hysteresis_labels(
     channel_path: str,
     capacity_mah: float,
+    classified: list[dict] | None = None,
 ) -> dict[int, dict]:
     """SaveEndData 에서 TC 별 히스테리시스 라벨·깊이 산출.
 
-    히스테리시스 사이클은 충·방전이 거의 균형 (예: SOC100→SOC10→SOC100) 이므로
-    ChgCap vs DchgCap 비교로는 phase 판별이 불안정. 대신 **TC 시작 SOC 위치**
-    로 phase 결정: 시작 SOC > 0.5 → 'Dchg' phase (만충 시작, 방전 hysteresis),
-    ≤ 0.5 → 'Chg' phase (방전 시작, 충전 hysteresis). 깊이는 ChgCap·DchgCap
-    중 큰 값을 정격용량 대비 % 로 환산 후 10% 단위 라운딩.
+    `classified` (meta.classified) 가 제공되면 category = '히스테리시스(방전)'
+    또는 '히스테리시스(충전)' 인 TC 만 결과에 포함. RPT / GITT / 사이클 등은
+    제외하여 rank 매핑이 hysteresis TC 들 사이에서만 이루어지게 함 (off-by-one
+    방지). category 가 direction 결정에 사용되어 SOC anchor 휴리스틱 의존도
+    감소.
+
+    classified 미제공 시 기존 동작 (시작 SOC 위치로 phase 판별).
+
+    깊이는 phase 와 일치하는 cap (Dchg → DchgCap, Chg → ChgCap) 을 정격용량
+    대비 % 로 환산 후 10% 단위 라운딩. 균형 사이클 (Dchg 후 같은 양 재충전)
+    에서도 정확한 phase 가 category 로 보장됨.
 
     Parameters
     ----------
@@ -932,12 +939,15 @@ def _compute_tc_hysteresis_labels(
         PNE 채널 폴더 경로.
     capacity_mah : float
         정격용량 (mAh). 0 이하이면 빈 dict 반환.
+    classified : list[dict] | None
+        meta.classified — 각 항목 `{'cycle': int, 'category': str, ...}`.
+        제공 시 hysteresis TC 만 필터링.
 
     Returns
     -------
     dict[int, dict]
         {tc: {'direction': 'Dchg'|'Chg', 'depth_pct': int, 'depth_raw': float}}
-        depth_pct 는 [10, 100] 범위 10% 단위. depth_raw 는 라운딩 전 실수값.
+        classified 제공 시 hysteresis TC 만 포함.
     """
     save_end = get_channel_save_end_data(channel_path)
     if save_end is None or save_end.empty:
@@ -945,32 +955,90 @@ def _compute_tc_hysteresis_labels(
     cap_uah = capacity_mah * 1000
     if cap_uah <= 0:
         return {}
-    # TC 시작 SOC 오프셋 — phase 판별용 (Dchg=시작 SOC 높음, Chg=시작 SOC 낮음)
-    soc_offsets = _compute_tc_soc_offsets(channel_path, capacity_mah)
+
+    # classified 에서 TC → (direction, is_hysteresis) 매핑 사전 구축
+    tc_to_hyst_dir: dict[int, str] = {}
+    rpt_tcs: set[int] = set()
+    if classified:
+        for entry in classified:
+            tc = entry.get('cycle')
+            cat = str(entry.get('category', ''))
+            if tc is None:
+                continue
+            try:
+                tc_int = int(tc)
+            except (TypeError, ValueError):
+                continue
+            # category 예: '히스테리시스(방전)', '히스테리시스(충전)'
+            if '히스테리시스' in cat:
+                if '방전' in cat:
+                    tc_to_hyst_dir[tc_int] = 'Dchg'
+                elif '충전' in cat:
+                    tc_to_hyst_dir[tc_int] = 'Chg'
+            elif 'RPT' in cat:
+                rpt_tcs.add(tc_int)
+
+    # RPT 중 hysteresis 그룹에 인접 (직전 또는 직후) 한 것은 100% reference 로 포함
+    # 일반 protocol 예:
+    #   TC 2 = RPT (전체 사이클) → 방전 hyst 직전 → "Dchg 100%" 레퍼런스
+    #   TC 3-11 = 히스테리시스(방전) 9 cycles (깊이 10~90%)
+    #   TC 12 = RPT (전체 사이클) → 방전 hyst 직후 → "Dchg 100%" 레퍼런스
+    # 사용자가 TC 3-12 선택 시 TC 12 RPT 가 "Dchg 100%" 로 인식되어야 함.
+    if tc_to_hyst_dir and rpt_tcs:
+        dchg_tcs = sorted(tc for tc, d in tc_to_hyst_dir.items() if d == 'Dchg')
+        chg_tcs = sorted(tc for tc, d in tc_to_hyst_dir.items() if d == 'Chg')
+        for rpt_tc in rpt_tcs:
+            # 방전 hysteresis 인접 (시작 직전 또는 종료 직후) RPT → "Dchg 100%"
+            if dchg_tcs and (rpt_tc == dchg_tcs[0] - 1
+                             or rpt_tc == dchg_tcs[-1] + 1):
+                tc_to_hyst_dir[rpt_tc] = 'Dchg'
+            # 충전 hysteresis 인접 RPT → "Chg 100%"
+            elif chg_tcs and (rpt_tc == chg_tcs[0] - 1
+                              or rpt_tc == chg_tcs[-1] + 1):
+                tc_to_hyst_dir[rpt_tc] = 'Chg'
+
+    use_classified = bool(tc_to_hyst_dir)
+
+    # SOC anchor (classified 미제공 시 phase 판별용 fallback)
+    soc_offsets = (None if use_classified
+                   else _compute_tc_soc_offsets(channel_path, capacity_mah))
 
     cr = save_end[[27, 2, 10, 11]].copy()
     cr.columns = ['TC', 'Cond', 'ChgCap', 'DchgCap']
     result: dict[int, dict] = {}
     for tc in sorted(cr['TC'].unique()):
+        tc_int = int(tc)
+        # classified 사용 시 hysteresis TC 만 포함
+        if use_classified and tc_int not in tc_to_hyst_dir:
+            continue
+
         tc_rows = cr[cr['TC'] == tc]
         chg = tc_rows.loc[tc_rows['Cond'] == 1, 'ChgCap'].sum()
         dchg = tc_rows.loc[tc_rows['Cond'] == 2, 'DchgCap'].sum()
         chg_pct = (chg / cap_uah) * 100
         dchg_pct = (dchg / cap_uah) * 100
-        # Phase 판별: 시작 SOC 위치 우선, 없으면 ChgCap vs DchgCap fallback
-        start_soc = soc_offsets.get(int(tc))
-        if start_soc is not None:
-            direction = 'Dchg' if start_soc > 0.5 else 'Chg'
-        elif dchg_pct >= chg_pct:
-            direction = 'Dchg'
+
+        # Phase 판별 — classified 우선, 없으면 SOC anchor, 없으면 cap 비교
+        if use_classified:
+            direction = tc_to_hyst_dir[tc_int]
+        elif soc_offsets is not None:
+            start_soc = soc_offsets.get(tc_int)
+            if start_soc is not None:
+                direction = 'Dchg' if start_soc > 0.5 else 'Chg'
+            elif dchg_pct >= chg_pct:
+                direction = 'Dchg'
+            else:
+                direction = 'Chg'
         else:
-            direction = 'Chg'
-        # 깊이 = phase 와 일치하는 쪽의 큰 값 (균형 사이클이면 max 가 거의 동일)
-        depth_raw = max(chg_pct, dchg_pct)
+            direction = 'Dchg' if dchg_pct >= chg_pct else 'Chg'
+
+        # 깊이 = phase 와 일치하는 cap (Dchg → DchgCap, Chg → ChgCap)
+        # 균형 사이클이면 chg_pct ≈ dchg_pct 이므로 어느 쪽이든 비슷.
+        depth_raw = dchg_pct if direction == 'Dchg' else chg_pct
         # 10% 단위 라운딩 후 [10, 100] 클램프
         depth_pct = int(round(depth_raw / 10.0)) * 10
         depth_pct = max(10, min(100, depth_pct))
-        result[int(tc)] = {
+        result[tc_int] = {
             'direction': direction,
             'depth_pct': depth_pct,
             'depth_raw': float(depth_raw),
@@ -26189,7 +26257,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _meta = get_channel_meta(_best_ch)
                         _cap = (_meta.min_capacity if _meta and _meta.min_capacity
                                 else mincapacity)
-                        _hyst_labels = _compute_tc_hysteresis_labels(_best_ch, _cap)
+                        # classified 전달 — hysteresis TC 만 필터링하여 RPT/GITT 등이
+                        # rank 에 영향 주지 않도록 (off-by-one 방지)
+                        _classified = (_meta.classified if _meta
+                                       and getattr(_meta, 'classified', None)
+                                       else None)
+                        _hyst_labels = _compute_tc_hysteresis_labels(
+                            _best_ch, _cap, _classified)
                         _hyst_ranks = _build_depth_rank_map(_hyst_labels)
             except Exception as _e:
                 logger.warning(

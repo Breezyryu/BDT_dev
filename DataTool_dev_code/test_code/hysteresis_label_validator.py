@@ -32,6 +32,7 @@ _build_depth_rank_map = _mod._build_depth_rank_map
 get_channel_meta = _mod.get_channel_meta
 _is_channel_folder = _mod._is_channel_folder
 check_cycler = _mod.check_cycler
+_build_channel_meta = _mod._build_channel_meta
 
 ROOT = Path(r'C:\Users\Ryu\battery\python\BDT_dev\DataTool_dev_code\data\exp_data\성능_hysteresis')
 
@@ -91,9 +92,19 @@ def main():
             print(f'  [{ch.name}] Toyo — skipped (PNE only)')
             continue
 
-        labels = _compute_tc_hysteresis_labels(str(ch), cap)
+        # Phase 0 메타 빌드 (validator standalone 실행 — GUI 미경유)
+        meta = get_channel_meta(str(ch))
+        if meta is None:
+            try:
+                meta = _build_channel_meta(str(ch), capacity_override=cap)
+            except Exception as e:
+                print(f'  [{ch.name}] meta build 실패: {e}')
+
+        classified = (meta.classified if meta and getattr(meta, 'classified', None)
+                      else None)
+        labels = _compute_tc_hysteresis_labels(str(ch), cap, classified)
         if not labels:
-            print(f'  [{ch.name}] empty labels')
+            print(f'  [{ch.name}] empty labels (no hysteresis TCs in classified)')
             overall_fail += 1
             continue
         ranks = _build_depth_rank_map(labels)
