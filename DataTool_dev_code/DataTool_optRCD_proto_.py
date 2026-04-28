@@ -20127,6 +20127,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         n_channels_total: int = 1,
         n_folders_total: int = 1,
         overlap_mode: str = 'continuous',
+        hyst_pair_state: dict | None = None,
     ) -> None:
         """프로필 분석 공통 렌더링 루프 — AllProfile/CycProfile/CellProfile 3모드 통합
 
@@ -20312,6 +20313,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if temp is None or temp[1] is None:
                             error_reasons.append('로딩 결과 없음')
                             continue
+                        # 히스테리시스 페어링: 다음 TC 데이터 prefetch (closed loop 표시용)
+                        if (hyst_pair_state is not None
+                                and hyst_pair_state.get('enabled')
+                                and isinstance(CycNo, int)):
+                            _next_cyc = CycNo + 1
+                            _next_temp = loaded_data.get((i, j, _next_cyc))
+                            if _next_temp is None:
+                                try:
+                                    _next_temp = fallback_fn(FolderBase, _next_cyc, is_pne)
+                                except Exception:
+                                    _next_temp = None
+                            hyst_pair_state['next_temp'] = _next_temp
+                        elif hyst_pair_state is not None:
+                            hyst_pair_state['next_temp'] = None
                         _plot_df, _meta = _extract_profile_data(temp)
                         if _plot_df is not None and len(_plot_df) > 2:
                             try:
@@ -26271,6 +26286,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _hyst_labels = {}
                 _hyst_ranks = {}
 
+        # ── 히스테리시스 페어링 상태 (closure 변수) ──
+        # _profile_render_loop 가 cycle 마다 'next_temp' 를 갱신하고, _plot_one
+        # 이 이를 읽어 TC N+1 의 보완 segment 를 closed loop 로 plot.
+        # 1 hysteresis cycle = TC N (해당 phase) + TC N+1 (보완 phase) 결합.
+        # 예: Dchg 10% loop = TC 3 의 DCHG (100→90%) + TC 4 의 CHG (90→100%).
+        # _hyst_labels 가 있을 때만 enabled (즉 classified 가 hysteresis 인식한 경우만).
+        _hyst_pair_state: dict = {
+            'enabled': bool(_hyst_labels),
+            'next_temp': None,
+        }
+
         # ── 4. 플롯 콜백 선택 ──
         if legacy_mode == "step":
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
@@ -26455,23 +26481,56 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _new_lgnd = f"{_info['direction']} {_info['depth_pct']}%"
                         _cyc_idx = _hyst_ranks.get(CycNo, 0)
                         _n_cyc = len(_hyst_ranks) or len(CycleNo)
+                        _direction = _info['direction']
                     else:
                         _new_lgnd = temp_lgnd
                         _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                         _n_cyc = len(CycleNo)
+                        _direction = None
+
+                    # ── TC 페어링: TC N 의 phase + TC N+1 의 보완 phase = closed loop ──
+                    # 예: Dchg 10% (TC 3) = TC 3 DCHG (100→90%) + TC 4 CHG (90→100%)
+                    # TC 3 의 초기 CHG (0→100%, RPT 직후 만충) 는 hysteresis 무관 → 제외
+                    _pair_enabled = (_hyst_pair_state.get('enabled', False)
+                                     if _hyst_pair_state else False)
+                    _pair_next_temp = (_hyst_pair_state.get('next_temp')
+                                       if _hyst_pair_state else None)
+                    _pair_p = None
+                    if _pair_enabled and _pair_next_temp is not None:
+                        try:
+                            _pair_p = _pair_next_temp[1].df
+                        except Exception:
+                            _pair_p = None
 
                     # 충전/방전 세그먼트별 색상 분기 (V-x 플롯)
                     if 'Condition' in p.columns and not _is_major:
-                        for _cond in [1, 2]:
-                            _seg = p[p['Condition'] == _cond]
+                        # 페어링 모드: 방향에 따라 현재/다음 TC 의 segment 선택
+                        # - Dchg cycle: 현재 TC 의 DCHG (Cond=2) + 다음 TC 의 CHG (Cond=1)
+                        # - Chg  cycle: 현재 TC 의 CHG (Cond=1) + 다음 TC 의 DCHG (Cond=2)
+                        # 페어링 비활성: 기존 동작 (양 phase 모두 plot)
+                        if _pair_enabled and _direction == 'Dchg':
+                            _segments = [(2, p)]  # 현재 TC 의 DCHG
+                            if _pair_p is not None and 'Condition' in _pair_p.columns:
+                                _segments.append((1, _pair_p))  # 다음 TC 의 CHG
+                        elif _pair_enabled and _direction == 'Chg':
+                            _segments = [(1, p)]  # 현재 TC 의 CHG
+                            if _pair_p is not None and 'Condition' in _pair_p.columns:
+                                _segments.append((2, _pair_p))  # 다음 TC 의 DCHG
+                        else:
+                            # 페어링 비활성 — 기존 동작 (현재 TC 의 양 phase)
+                            _segments = [(1, p), (2, p)]
+
+                        _first_seg = True
+                        for _cond, _seg_df in _segments:
+                            _seg = _seg_df[_seg_df['Condition'] == _cond]
                             if len(_seg) < 2:
                                 continue
                             _color, _lw, _alpha = _get_profile_color(
                                 'chg_dchg', _cyc_idx, _n_cyc,
                                 condition=_cond, is_major=False)
-                            # cond 1 (충전) 라인에만 라벨 부착, cond 2 는 _nolegend_ 처리
-                            # → 한 사이클당 범례 1개 (Dchg X% 또는 Chg X%)
-                            _seg_lbl = _new_lgnd if _cond == 1 else '_nolegend_'
+                            # 사이클당 범례 1개 — 첫 세그먼트만 라벨 표시
+                            _seg_lbl = _new_lgnd if _first_seg else '_nolegend_'
+                            _first_seg = False
                             _a1 = graph_profile(_seg.SOC, _seg.Vol, ax1,
                                 _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 _axis_label, "Voltage(V)", _seg_lbl)
@@ -26798,6 +26857,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             n_channels_total=_n_channels,
             n_folders_total=_n_folders,
             overlap_mode=options.get('overlap', 'continuous'),
+            hyst_pair_state=_hyst_pair_state,
         )
         self.ProfileConfirm.setEnabled(True)
         self._pump_ui()
