@@ -3132,7 +3132,12 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
 def graph_output_cycle_tab2(df, mincapacity, xscale, ylimitlow, ylimithigh,
                             temp_lgnd, colorno, graphcolor,
                             ax1, ax2, ax3, ax4, ax5, ax6,
-                            v_nom: float = _DEFAULT_V_NOM):
+                            v_nom: float | None = None):
+    # default V_nom — None 이면 모듈 상단 _DEFAULT_V_NOM (3.9V) 사용.
+    # 함수 정의 시점에는 _DEFAULT_V_NOM 가 아직 미정의 (L5728 에 정의)
+    # 이라 sentinel 패턴으로 처리.
+    if v_nom is None:
+        v_nom = _DEFAULT_V_NOM
     """탭2(상세) 2×3 그래프 — 용량/전압/에너지 중심.
 
     축 매핑:
