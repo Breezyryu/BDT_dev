@@ -26399,9 +26399,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if legacy_mode == "step":
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
-                return self._plot_and_save_step_data(
+                _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
+                _wc, _arts = self._plot_and_save_step_data(
                     axes, temp[1].df, temp[0], headername, lgnd, temp_lgnd,
                     writer, writecolno, save_file_name, CycNo, save_csv=True)
+                # 후처리 색상 정렬용 cycle index 명시 (detection 휴리스틱 우회)
+                for _a in _arts:
+                    _a._cycle_id_tag = _cyc_idx
+                return _wc, _arts
 
             def _fallback(FolderBase, CycNo, is_pne):
                 r = unified_profile_core(
@@ -26422,15 +26427,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
                 p = temp[1].df
                 _artists = []
+                # 색상 정렬: CycleNo 순서 = cycle_idx (chg 단일 방향 → cond=1 일관)
+                _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                 _a = graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "SOC", "Voltage(V)", temp_lgnd)
-                _a._cond_tag = 1
+                _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Vol, ax3,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "SOC", "Voltage(V)", temp_lgnd)
-                _a._cond_tag = 1
+                _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 if self.chk_dqdv.isChecked():
                     _a = graph_profile(p.Vol, p.dQdV, ax2,
@@ -26441,19 +26448,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         0, 5.5 * dqscale, 0.5 * dqscale,
                         self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                         "dQdV", "Voltage(V)", temp_lgnd)
-                _a._cond_tag = 1
+                _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Crate, ax5,
                     -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                _a._cond_tag = 1
+                _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.dVdQ, ax4,
                     -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
-                _a._cond_tag = 1
+                _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Temp, ax6,
                     -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
-                _a._cond_tag = 1
+                _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 if self.saveok.isChecked() and save_file_name:
                     _sc = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
@@ -26493,34 +26500,36 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
                 p = temp[1].df
                 _artists = []
+                # 색상 정렬: CycleNo 순서 = cycle_idx (dchg 단일 방향 → cond=2 일관)
+                _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                 _a = graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "DOD", "Voltage(V)", temp_lgnd)
-                _a._cond_tag = 2
+                _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Vol, ax3,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "DOD", "Voltage(V)", temp_lgnd)
-                _a._cond_tag = 2
+                _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.dQdV, p.Vol, ax2,
                     -5 * dqscale, 0.5 * dqscale, 0.5 * dqscale,
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "dQdV", "Voltage(V)", temp_lgnd)
-                _a._cond_tag = 2
+                _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Crate, ax5,
                     -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
-                _a._cond_tag = 2
+                _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.dVdQ, ax4,
                     -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
                     "DOD", "dVdQ", temp_lgnd)
-                _a._cond_tag = 2
+                _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Temp, ax6,
                     -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
-                _a._cond_tag = 2
+                _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 if self.saveok.isChecked() and save_file_name:
                     _sc = ["TimeMin", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp"]
@@ -26715,6 +26724,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _artists.append(_a6)
                 else:
                     # 비히스테리시스: Condition 기반 충방전 분리 착색
+                    # cycle_idx = CycleNo 순서 (사이클별 색상 정렬용)
+                    _nh_cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                     _has_cond = 'Condition' in p.columns
                     if _has_cond:
                         for _cond in [1, 2]:
@@ -26727,11 +26738,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 "SOC", "Voltage(V)", _seg_lbl)
                             _a1.set_color(_c_init); _a1._cond_tag = _cond
+                            _a1._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a1)
                             _a3 = graph_profile(_seg.SOC, _seg.Vol, ax3,
                                 -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 "SOC", "Voltage(V)", '_nolegend_')
                             _a3.set_color(_c_init); _a3._cond_tag = _cond
+                            _a3._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a3)
                             if 'dQdV' in _seg.columns:
                                 _a2 = graph_profile(_seg.dQdV, _seg.Vol, ax2,
@@ -26739,20 +26752,24 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                     "dQdV", "Voltage(V)", '_nolegend_')
                                 _a2.set_color(_c_init); _a2._cond_tag = _cond
+                                _a2._cycle_id_tag = _nh_cyc_idx
                                 _artists.append(_a2)
                             _a5 = graph_profile(_seg.SOC, _seg.Crate, ax5,
                                 -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", '_nolegend_')
                             _a5.set_color(_c_init); _a5._cond_tag = _cond
+                            _a5._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a5)
                             if 'dVdQ' in _seg.columns:
                                 _a4 = graph_profile(_seg.SOC, _seg.dVdQ, ax4,
                                     -0.1, 1.2, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
                                     "SOC", "dVdQ", '_nolegend_')
                                 _a4.set_color(_c_init); _a4._cond_tag = _cond
+                                _a4._cycle_id_tag = _nh_cyc_idx
                                 _artists.append(_a4)
                             _a6 = graph_profile(_seg.SOC, _seg.Temp, ax6,
                                 -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", '_nolegend_')
                             _a6.set_color(_c_init); _a6._cond_tag = _cond
+                            _a6._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a6)
                     else:
                         # Condition 없는 폴백: 단일 라인
@@ -26814,6 +26831,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 if p.empty or len(p) < 2:
                     return (writecolno, [])
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
+                # 색상 정렬: continue 모드 — 1 cycle = 1 시계열 단위 (cont 사이클은
+                # CycNo 가 (start, end) tuple 일 수 있으나 CycleNo 의 인덱스로 매핑).
+                _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                 has_ocv = "OCV" in p.columns and p["OCV"].notna().any()
                 has_ccv = "CCV" in p.columns and p["CCV"].notna().any()
                 cf_soc = getattr(temp[1], "cycfile_soc", None)
@@ -26920,6 +26940,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         cf_soc.to_excel(writer, sheet_name="OCV_CCV",
                             startcol=writecolno - len(_save_df.columns),
                             index=False, header=_cf_headers)
+                # 후처리 색상 정렬용 cycle index 일괄 부착
+                for _a in _artists:
+                    if not hasattr(_a, '_cycle_id_tag'):
+                        _a._cycle_id_tag = _cyc_idx
                 return (writecolno, _artists)
 
             def _fallback(FolderBase, CycNo, is_pne):
