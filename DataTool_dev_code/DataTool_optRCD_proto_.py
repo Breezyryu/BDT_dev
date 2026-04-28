@@ -11932,6 +11932,22 @@ class Ui_sitool(object):
             "프리셋: 자주 쓰는 옵션 조합 일괄 적용")
         self._profile_opt_row3.addWidget(self.profile_preset_combo)
 
+        self._profile_opt_row3.addSpacing(14)
+
+        # 히스테리시스 TC 페어링 체크박스
+        # ON: TC N 의 phase + TC N+1 의 보완 phase = 닫힌 hysteresis loop
+        # OFF: 현재 TC 의 양 phase 모두 plot (기존 동작)
+        self.profile_hyst_pair_chk = QtWidgets.QCheckBox(parent=self._data_scope_groupbox)
+        self.profile_hyst_pair_chk.setFont(_pf_font)
+        self.profile_hyst_pair_chk.setChecked(False)
+        self.profile_hyst_pair_chk.setObjectName("profile_hyst_pair_chk")
+        self.profile_hyst_pair_chk.setToolTip(
+            "히스테리시스 TC 페어링 — 한 사이클 = TC N + TC N+1 결합.\n"
+            "방전: TC N DCHG (100→(100-X)%) + TC N+1 CHG ((100-X)→100%)\n"
+            "충전: TC N CHG  (0→X%)         + TC N+1 DCHG (X→0%)\n"
+            "끄면 현재 TC 의 양 phase 모두 plot (기존 동작)")
+        self._profile_opt_row3.addWidget(self.profile_hyst_pair_chk)
+
         self._profile_opt_row3.addStretch()
         _ds_layout.addLayout(self._profile_opt_row3)
 
@@ -17214,6 +17230,7 @@ class Ui_sitool(object):
         self.profile_rest_chk.setText(_translate("sitool", "Rest"))
         self.profile_cv_chk.setText(_translate("sitool", "CV"))
         self.profile_preset_label.setText(_translate("sitool", "프리셋:"))
+        self.profile_hyst_pair_chk.setText(_translate("sitool", "TC 페어링"))
         # overlap 3단 버튼 툴팁
         self.profile_ovlp_continuous.setToolTip(
             "이어서: 실험 전체 타임라인 — 이상 이벤트·OCV relaxation·CV tail 진단")
@@ -25253,6 +25270,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.profile_rest_chk.setChecked(rest)
         self.profile_cv_chk.setChecked(cv)
         self.chk_dqdv.setChecked(dqdv)
+        # 히스테리시스 프리셋 (idx=3) → TC 페어링 자동 ON, 그 외 → OFF
+        self.profile_hyst_pair_chk.setChecked(idx == 3)
         # 콤보는 (선택)으로 복귀 — 재선택 허용
         self.profile_preset_combo.blockSignals(True)
         self.profile_preset_combo.setCurrentIndex(0)
@@ -26059,6 +26078,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # dQ/dV 는 SOC·DOD 좌표계에서만 의미 있음 (시간축에서는 스킵)
         calc_dqdv = (axis_mode in ("soc", "dod"))
         include_cv = self.profile_cv_chk.isChecked()
+        # 히스테리시스 TC 페어링 (체크박스) — connected 모드에서만 의미
+        hyst_pair = (self.profile_hyst_pair_chk.isChecked()
+                     and overlap == "connected")
 
         return {
             "data_scope": data_scope,
@@ -26067,6 +26089,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "include_rest": include_rest,
             "include_cv": include_cv,
             "calc_dqdv": calc_dqdv,
+            "hyst_pair": hyst_pair,
         }
 
     def _map_options_to_legacy_mode(self, options: dict) -> str:
@@ -26291,11 +26314,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 이 이를 읽어 TC N+1 의 보완 segment 를 closed loop 로 plot.
         # 1 hysteresis cycle = TC N (해당 phase) + TC N+1 (보완 phase) 결합.
         # 예: Dchg 10% loop = TC 3 의 DCHG (100→90%) + TC 4 의 CHG (90→100%).
-        # _hyst_labels 가 있을 때만 enabled (즉 classified 가 hysteresis 인식한 경우만).
+        # 사용자 체크박스 (TC 페어링) ON + classified 인식 가능 시 활성.
+        _pair_chk_on = bool(options.get('hyst_pair', False))
+        _pair_classified_ok = bool(_hyst_labels)
         _hyst_pair_state: dict = {
-            'enabled': bool(_hyst_labels),
+            'enabled': _pair_chk_on and _pair_classified_ok,
             'next_temp': None,
         }
+        # 페어링 상태 진단 로그 — 사용자가 체크박스 켰는데 동작 안 할 때 원인 파악용
+        if options.get('overlap') == 'connected':
+            logger.info(
+                '[hyst_pair] checkbox=%s, classified_labels=%d TCs, enabled=%s',
+                _pair_chk_on, len(_hyst_labels), _hyst_pair_state['enabled'])
 
         # ── 4. 플롯 콜백 선택 ──
         if legacy_mode == "step":
