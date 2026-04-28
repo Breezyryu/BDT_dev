@@ -20667,20 +20667,36 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _non_rest = [L for L in lines
                                          if getattr(L, '_cond_tag', None) is None]
                         _n_effective = len(_non_rest)
-                        # 사이클 인덱스 부여: 같은 Condition이 연속이면 같은 사이클
-                        # Condition 변화 패턴: 1→2 (같은 사이클), 2→1 (새 사이클)
-                        _cyc_idx = 0
-                        _prev_cond = None
+                        # 명시적 _cycle_id_tag 우선 사용 — plot 함수가 직접 cycle index 를
+                        # 부여한 경우 (예: 페어링 모드의 DCHG → CHG 순서) detection
+                        # 휴리스틱이 cycle 경계를 잘못 잡지 않도록 함.
+                        _explicit_ids = [getattr(L, '_cycle_id_tag', None)
+                                         for L in _non_rest]
+                        _has_explicit = any(x is not None for x in _explicit_ids)
                         _line_cyc_map = {}  # line_id → cycle_idx
-                        for line in _non_rest:
-                            _cond = getattr(line, '_cond_tag', None)
-                            if _prev_cond is not None:
-                                # 새 사이클 감지: 같은 cond 반복 또는 dchg→chg 전환
-                                if _cond == _prev_cond or (_prev_cond == 2 and _cond == 1):
-                                    _cyc_idx += 1
-                            _line_cyc_map[id(line)] = _cyc_idx
-                            _prev_cond = _cond
-                        _n_cycles_detected = _cyc_idx + 1
+                        if _has_explicit:
+                            _max_explicit = -1
+                            for line, eid in zip(_non_rest, _explicit_ids):
+                                if eid is None:
+                                    eid = 0
+                                _line_cyc_map[id(line)] = int(eid)
+                                if eid > _max_explicit:
+                                    _max_explicit = int(eid)
+                            _n_cycles_detected = max(_max_explicit + 1, 1)
+                        else:
+                            # 사이클 인덱스 부여: 같은 Condition이 연속이면 같은 사이클
+                            # Condition 변화 패턴: 1→2 (같은 사이클), 2→1 (새 사이클)
+                            _cyc_idx = 0
+                            _prev_cond = None
+                            for line in _non_rest:
+                                _cond = getattr(line, '_cond_tag', None)
+                                if _prev_cond is not None:
+                                    # 새 사이클 감지: 같은 cond 반복 또는 dchg→chg 전환
+                                    if _cond == _prev_cond or (_prev_cond == 2 and _cond == 1):
+                                        _cyc_idx += 1
+                                _line_cyc_map[id(line)] = _cyc_idx
+                                _prev_cond = _cond
+                            _n_cycles_detected = _cyc_idx + 1
 
                         for line in lines:
                             _cond = getattr(line, '_cond_tag', None)
@@ -26566,12 +26582,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _axis_label, "Voltage(V)", _seg_lbl)
                             _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                             _a1._cond_tag = _cond
+                            _a1._cycle_id_tag = _cyc_idx
                             _artists.append(_a1)
                             _a3 = graph_profile(_seg.SOC, _seg.Vol, ax3,
                                 _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 _axis_label, "Voltage(V)", '_nolegend_')
                             _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
                             _a3._cond_tag = _cond
+                            _a3._cycle_id_tag = _cyc_idx
                             _artists.append(_a3)
                     else:
                         _color, _lw, _alpha = _get_profile_color(
@@ -26581,12 +26599,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _axis_label, "Voltage(V)", _new_lgnd)
                         _a1.set_color(_color); _a1.set_linewidth(_lw); _a1.set_alpha(_alpha)
                         _a1._cond_tag = 1
+                        _a1._cycle_id_tag = _cyc_idx
                         _artists.append(_a1)
                         _a3 = graph_profile(p.SOC, p.Vol, ax3,
                             _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                             _axis_label, "Voltage(V)", '_nolegend_')
                         _a3.set_color(_color); _a3.set_linewidth(_lw); _a3.set_alpha(_alpha)
                         _a3._cond_tag = 1
+                        _a3._cycle_id_tag = _cyc_idx
                         _artists.append(_a3)
 
                     _sub_color, _sub_lw, _sub_alpha = _get_profile_color(
@@ -26598,11 +26618,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             "dQdV", "Voltage(V)", _new_lgnd)
                         _a2.set_color(_sub_color); _a2.set_linewidth(_sub_lw); _a2.set_alpha(_sub_alpha)
                         _a2._cond_tag = 1
+                        _a2._cycle_id_tag = _cyc_idx
                         _artists.append(_a2)
                     _a5 = graph_profile(p.SOC, p.Crate, ax5,
                         _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", _new_lgnd)
                     _a5.set_color(_sub_color); _a5.set_linewidth(_sub_lw); _a5.set_alpha(_sub_alpha)
                     _a5._cond_tag = 1
+                    _a5._cycle_id_tag = _cyc_idx
                     _artists.append(_a5)
                     if 'dVdQ' in p.columns:
                         _a4 = graph_profile(p.SOC, p.dVdQ, ax4,
@@ -26610,11 +26632,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _axis_label, "dVdQ", _new_lgnd)
                         _a4.set_color(_sub_color); _a4.set_linewidth(_sub_lw); _a4.set_alpha(_sub_alpha)
                         _a4._cond_tag = 1
+                        _a4._cycle_id_tag = _cyc_idx
                         _artists.append(_a4)
                     _a6 = graph_profile(p.SOC, p.Temp, ax6,
                         _x_lo, _x_hi, 0.1, -15, 60, 5, _axis_label, "Temp.", lgnd)
                     _a6.set_color(_sub_color); _a6.set_linewidth(_sub_lw); _a6.set_alpha(_sub_alpha)
                     _a6._cond_tag = 1
+                    _a6._cycle_id_tag = _cyc_idx
                     _artists.append(_a6)
                 else:
                     # 비히스테리시스: Condition 기반 충방전 분리 착색
