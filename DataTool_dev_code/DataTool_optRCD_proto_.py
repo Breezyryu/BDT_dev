@@ -25203,13 +25203,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         유효 조합:
           - 사이클 × {이어서(시간), 분리(SOC/시간), 연결(SOC)}
-          - 충전/방전 × {이어서(시간), 분리(SOC/시간)}
+          - 충전/방전 × {분리(SOC/시간)} 만
         무효 조합 시 해당 버튼 비활성화 + 유효 기본값으로 강제.
+
+        2026-04-28: 충전/방전 + 이어서 조합 제거 (사용자 요청). 충전·방전
+        단방향에서 시계열 연속(이어서) 은 분리 모드와 시각·해석상 차이가
+        없어 혼란만 가중 → 분리 단일 옵션으로 통일.
         """
         is_cycle = (self.profile_scope_group.checkedId() == 0)
 
         # 연결: 사이클 모드에서만 (충전/방전 단방향은 히스테리시스 불가)
         self.profile_ovlp_connected.setEnabled(is_cycle)
+        # 이어서: 사이클 모드에서만 (충전/방전 단방향은 분리만 의미 있음)
+        self.profile_ovlp_continuous.setEnabled(is_cycle)
 
         # 현재 overlap 선택이 비활성이면 split으로 강제
         cur_id = self.profile_overlap_group.checkedId()
@@ -26132,6 +26138,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if axis_mode in ("soc", "dod") and overlap == "continuous":
             overlap = "split"
         if data_scope != "cycle" and overlap == "connected":
+            overlap = "split"
+        # 충전/방전 + 이어서 조합 제거 (2026-04-28) — 단방향 시계열은 분리만 유효
+        if data_scope != "cycle" and overlap == "continuous":
             overlap = "split"
 
         # dQ/dV 는 SOC·DOD 좌표계에서만 의미 있음 (시간축에서는 스킵)
