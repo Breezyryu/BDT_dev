@@ -20384,6 +20384,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 logger.warning('프로파일 플롯 오류: %s cy%s — %s',
                                                os.path.basename(FolderBase), CycNo, e)
                                 continue
+                            # path_idx tag 일괄 부착 (group 색상 모드용 — 다중 경로 hue 구분)
+                            for _a in _artists:
+                                if not hasattr(_a, '_path_idx_tag'):
+                                    _a._path_idx_tag = i
                             has_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, _ = _make_channel_labels(namelist, all_data_name, i)
@@ -20481,6 +20485,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 logger.warning('AllProfile 플롯 오류: %s cy%s — %s',
                                                os.path.basename(FolderBase), CycNo, e)
                                 continue
+                            # path_idx tag 일괄 부착 (group 색상 모드용 — 다중 경로 hue 구분)
+                            for _a in _artists:
+                                if not hasattr(_a, '_path_idx_tag'):
+                                    _a._path_idx_tag = i
                             has_any_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, sub_label = _make_channel_labels(
@@ -20570,6 +20578,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 logger.warning('CellProfile 플롯 오류: %s cy%s — %s',
                                                os.path.basename(FolderBase), CycNo, e)
                                 continue
+                            # path_idx tag 일괄 부착 (group 색상 모드용 — 다중 경로 hue 구분)
+                            for _a in _artists:
+                                if not hasattr(_a, '_path_idx_tag'):
+                                    _a._path_idx_tag = i
                             has_data = True
                             _color = mcolors.to_hex(_artists[0].get_color())
                             ch_label, sub_label = _make_channel_labels(
@@ -20727,6 +20739,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _prev_cond = _cond
                             _n_cycles_detected = _cyc_idx + 1
 
+                        # ─ path 매핑 (group 모드용 — 다중 경로 hue 구분) ─
+                        # _path_idx_tag 는 _profile_render_loop() 의 폴더 루프에서
+                        # _plot_one() 호출 직후 일괄 부착됨 (Phase 2.5 G6).
+                        _line_path_map: dict[int, int] = {}
+                        if color_mode == 'group':
+                            for L in _non_rest:
+                                _pid = getattr(L, '_path_idx_tag', None)
+                                _line_path_map[id(L)] = (
+                                    int(_pid) if _pid is not None else 0)
+
                         for line in lines:
                             _cond = getattr(line, '_cond_tag', None)
                             # 휴지 라인: 회색 유지
@@ -20736,6 +20758,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 line.set_alpha(0.3)
                                 continue
                             ci = _line_cyc_map.get(id(line), 0)
+                            _pi = _line_path_map.get(id(line), 0)
                             _is_first = (ci == 0)
                             _is_last = (ci == _n_cycles_detected - 1)
                             # Option B dim 마커 — minor cycle 의 DCHG segment alpha 보존
@@ -20744,6 +20767,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _c, _lw, _a = _get_profile_color(
                                 color_mode, ci, _n_cycles_detected,
                                 condition=_cond,
+                                group_idx=_pi,
                                 is_first=_is_first,
                                 is_last=_is_last,
                             )

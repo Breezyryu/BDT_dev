@@ -3,14 +3,26 @@ title: "🧪 11 Profile Analysis — INDEX"
 aliases: [Profile INDEX, 11 INDEX]
 tags: [MOC, profile, unified-core, render-loop]
 type: index
-updated: 2026-04-21
+updated: 2026-04-28
 ---
 
 # 🧪 11 Profile Analysis — MOC
 
-> 5 프로파일 함수 → `unified_profile_core()` 6-stage · `_profile_render_loop()` Strategy Pattern · Ch Popup. (16 files)
+> 5 프로파일 함수 → `unified_profile_core()` 6-stage · `_profile_render_loop()` Strategy Pattern · Ch Popup. (16+ files)
 
 > 상위 → [[Wiki_Master_Index]] · 허브 → [[hub_unified_profile]]
+
+---
+
+## 📐 4종 분석 모델 Spec (2026-04-28, draft)
+
+- [[260428_profile_4modes_spec]] — 4종 분석 (방전/충전/전체/히스테리시스) 모델 명세 ⭐
+- [[260428_profile_view_color_spec]] — 그래프 구성(경로/채널/사이클) × 탭 구조 × 색상 체계
+- [[260428_profile_gap_current_vs_target]] — 현재 코드 vs target 격차 (G1~G6) + Phase 로드맵
+
+## 🛠️ Phase 2.5 — G6 적용 changelog (2026-04-28)
+
+- [[260428_changelog_g6_path_color]] — 전체통합+다중경로 plot 색상 path 차원 회복 ✅
 
 ---
 

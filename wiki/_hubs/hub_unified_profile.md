@@ -1,10 +1,10 @@
 ---
 title: "🧪 Hub — Unified Profile"
 aliases: [Unified Profile Hub, 통합 프로파일 허브]
-tags: [hub, profile-unified, refactor, strategy-pattern]
+tags: [hub, profile-unified, refactor, strategy-pattern, 4-modes]
 type: hub
 status: active
-updated: 2026-04-21
+updated: 2026-04-28
 ---
 
 # 🧪 Hub — Unified Profile (통합 프로파일)
@@ -31,6 +31,18 @@ Stage 4: CONTINUOUS   연속 시간 축 결합 (옵션: continuous)
 Stage 5: DQDV         dQ/dV 계산 (옵션: overlay='dQdV')
 Stage 6: RENDER       _profile_render_loop (3-mode: CycProfile/CellProfile/AllProfile)
 ```
+
+---
+
+## 📐 분석 모델 Spec (4종, 2026-04-28 draft)
+
+> 코드 아키텍처(unified_profile_core)는 옵션 조합 모델이지만, 사용자 mental model은 4종 분석(방전/충전/전체/히스테리시스). 본 spec 셋은 후자 관점에서 target을 정의하고 현재 코드와의 격차를 명시.
+
+| 문서 | 핵심 |
+|---|---|
+| [[260428_profile_4modes_spec]] | 4종 분석 모델 명세 — X축/Y축/페어링/좌표계 ⭐ |
+| [[260428_profile_view_color_spec]] | 그래프 구성·색상 체계 — 경로/채널/사이클 × 단일/다중탭 |
+| [[260428_profile_gap_current_vs_target]] | 격차 분석 G1~G5 + Phase 로드맵 |
 
 ---
 
