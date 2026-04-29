@@ -2488,6 +2488,8 @@ def _unified_calculate_axis(
 def _unified_calculate_dqdv(
     df: pd.DataFrame,
     smooth_degree: int = 0,
+    *,
+    origin_compat: bool = False,
 ) -> pd.DataFrame:
     """dQ/dV 및 dV/dQ 계산.
 
@@ -2497,6 +2499,10 @@ def _unified_calculate_dqdv(
         SOC, Voltage 컬럼 필요.
     smooth_degree : int
         미분 평활 간격. 0이면 자동 (len/30).
+    origin_compat : bool
+        True 시 origin (BatteryDataTool 260204.py) 동작 호환:
+        CV(|ΔV|<2mV) 마스킹 OFF — Excel 골든 레퍼런스 일치용.
+        히스테리시스 프리셋이 자동 활성화한다.
 
     Returns
     -------
@@ -2505,8 +2511,8 @@ def _unified_calculate_dqdv(
 
     Notes
     -----
-    휴지 구간(Condition==3)에서는 dQdV=NaN 처리.
-    ΔQ=0 또는 ΔV=0인 지점도 NaN.
+    기본: 휴지(Condition==3)에서 dQdV=NaN, |ΔV|<2mV 발산 영역 마스킹.
+    origin_compat=True: 마스킹 없음 — 분모 0 시 inf/NaN 자연 발생.
     """
     df = df.copy()
     df["dQdV"] = np.nan
@@ -2530,14 +2536,118 @@ def _unified_calculate_dqdv(
             dqdv = np.array((delcap / delvol).values, dtype=float)
             dvdq = np.array((delvol / delcap).values, dtype=float)
 
-        # CV 구간 마스킹: 전압 변화 < 2mV (rolling) → dQdV/dVdQ 발산 방지
-        _dv_abs = delvol.abs().rolling(5, min_periods=1).mean()
-        _cv_mask = (_dv_abs < 0.002).values
-        dqdv[_cv_mask] = np.nan
-        dvdq[_cv_mask] = np.nan
+        # CV 구간 마스킹 — origin_compat=True 시 SKIP (Excel 골든 일치)
+        if not origin_compat:
+            _dv_abs = delvol.abs().rolling(5, min_periods=1).mean()
+            _cv_mask = (_dv_abs < 0.002).values
+            dqdv[_cv_mask] = np.nan
+            dvdq[_cv_mask] = np.nan
 
         df.loc[mask, "dQdV"] = dqdv
         df.loc[mask, "dVdQ"] = dvdq
+
+    return df
+
+
+def _unified_apply_view(
+    df: pd.DataFrame,
+    data_scope: str,
+    axis_mode: str,
+    overlap: str,
+    *,
+    cutoff: float = 0.0,
+    include_rest: bool = False,
+) -> pd.DataFrame:
+    """레벨 2 단일 flow 의 view layer — row mask + 시간 정규화 + cutoff.
+
+    `unified_flow=True` 분기에서 사용. 입력 df 는 모든 Condition (1/2/3) 을
+    포함한 파생값 계산 완료 상태. 이 함수는 데이터 가공 없이 옵션별 표현만
+    적용한다.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        통합 처리된 프로필 (Cycle, Condition, Time_s, Voltage, ChgCap,
+        DchgCap, dQdV, dVdQ 등 포함).
+    data_scope : str
+        "charge" | "discharge" | "cycle" — row mask 결정.
+    axis_mode : str
+        "soc" | "dod" | "time" — _calc_soc 인자.
+    overlap : str
+        "continuous" | "split" | "sequential" | "connected" — 시간축 핸들러.
+    cutoff : float
+        Voltage 또는 Crate 하한 (data_scope/axis_mode 별 의미 분기).
+    include_rest : bool
+        True 시 경계 휴지 포함. cycle scope 에서는 휴지(Condition==3) 자체
+        포함 여부, charge/discharge scope 에서는 경계 휴지 포함 여부.
+
+    Returns
+    -------
+    pd.DataFrame
+        view 가 적용된 데이터프레임. TimeMin, SOC 컬럼 포함.
+    """
+    if df.empty:
+        return df.copy()
+    df = df.copy()
+
+    # === Step 1: data_scope row mask (charge/discharge 시 인터펄스 휴지 처리) ===
+    if data_scope in ("charge", "discharge"):
+        target_cond = 1 if data_scope == "charge" else 2
+        cond_arr = df["Condition"].values
+        if len(cond_arr) > 0:
+            run_change = np.concatenate(([True], cond_arr[1:] != cond_arr[:-1]))
+            run_ids = np.cumsum(run_change) - 1
+            n_runs = int(run_ids[-1]) + 1
+            run_conds = np.empty(n_runs, dtype=int)
+            for _i in range(n_runs):
+                run_conds[_i] = cond_arr[run_ids == _i][0]
+            interpulse_runs: set[int] = set()
+            for rid in range(n_runs):
+                if run_conds[rid] != 3:
+                    continue
+                prev_cond = None
+                for p in range(rid - 1, -1, -1):
+                    if run_conds[p] != 3:
+                        prev_cond = run_conds[p]
+                        break
+                next_cond = None
+                for nx in range(rid + 1, n_runs):
+                    if run_conds[nx] != 3:
+                        next_cond = run_conds[nx]
+                        break
+                if prev_cond == target_cond and next_cond == target_cond:
+                    interpulse_runs.add(rid)
+            keep_mask = (df["Condition"] == target_cond).values
+            for rid in interpulse_runs:
+                keep_mask = keep_mask | (run_ids == rid)
+            if include_rest:
+                keep_mask = keep_mask | (df["Condition"] == 3).values
+            df = df.loc[keep_mask].copy()
+    elif data_scope == "cycle":
+        if include_rest:
+            df = df.loc[df["Condition"].isin([1, 2, 3])].copy()
+        else:
+            df = df.loc[df["Condition"].isin([1, 2])].copy()
+
+    if df.empty:
+        return df
+
+    # === Step 2: 시간축 정규화 (overlap 핸들러 재사용) ===
+    handler = _OVERLAP_HANDLERS.get(overlap, _axis_split)
+    df = handler(df, data_scope)
+
+    # === Step 3: TimeMin + SOC/DOD 컬럼 (_calc_soc 재사용) ===
+    df["TimeMin"] = df["Time_s"] / 60.0
+    df["SOC"] = _calc_soc(df, data_scope, axis_mode, overlap)
+
+    # === Step 4: cutoff (기존 의미 유지) ===
+    if cutoff > 0:
+        if data_scope == "charge" and axis_mode == "soc":
+            df = df[df["Voltage"] >= cutoff]
+        elif data_scope == "charge":
+            df = df[df["Crate"] >= cutoff]
+        elif data_scope == "discharge":
+            df = df[df["Voltage"] >= cutoff]
 
     return df
 
@@ -2558,6 +2668,8 @@ def unified_profile_core(
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
     is_pne: bool | None = None,
+    unified_flow: bool = False,
+    origin_compat: bool = False,
 ) -> UnifiedProfileResult:
     """통합 프로필 파싱 엔진.
 
@@ -2594,6 +2706,15 @@ def unified_profile_core(
         None이면 자동 생성. "identity"이면 매핑 없이 물리번호 직접 사용.
         Toyo: {논리번호: (시작파일, 끝파일)}
         PNE: {논리번호: TotlCycle값}
+    unified_flow : bool
+        레벨 2 단일 flow 활성화. 파이프라인은 항상 cycle scope 으로 통합
+        처리되며 data_scope 분기는 마지막 _unified_apply_view 단계로 이동.
+        효과: 캐시키 통일 / 옵션 토글 시 raw 재로드 방지 / 충·방전 numerical
+        일관성. 히스테리시스 프리셋이 자동 활성화한다.
+    origin_compat : bool
+        dQdV 계산을 origin (BatteryDataTool 260204.py) 동작과 일치.
+        CV(|ΔV|<2mV) 마스킹 OFF — Excel 골든 레퍼런스 일치용.
+        히스테리시스 프리셋이 자동 활성화한다.
 
     Returns
     -------
@@ -2616,6 +2737,14 @@ def unified_profile_core(
         overlap = "split"
 
     cycle_start, cycle_end = cycle_range
+
+    # === 레벨 2 단일 flow 분기 ===
+    # unified_flow=True 시 파이프라인은 항상 cycle scope 으로 통합 처리되며,
+    # data_scope 별 분기는 마지막 _unified_apply_view 단계로 이동한다.
+    # 효과: 캐시키 통일 / 옵션 토글 시 raw 재로드 방지 / 충·방전 numerical 일관성.
+    # 호환성: unified_flow=False(default) 시 기존 동작 그대로.
+    _data_scope_pipe = "cycle" if unified_flow else data_scope
+    _include_rest_pipe = True if unified_flow else include_rest
 
     # === Stage 1: 사이클러 판별 및 cycle_map 확보 ===
     if is_pne is None:
@@ -2640,7 +2769,7 @@ def unified_profile_core(
         raw = _unified_pne_load_raw(
             raw_file_path, cycle_start, cycle_end,
             cycle_map=cycle_map,
-            data_scope=data_scope,
+            data_scope=_data_scope_pipe,
         )
     else:
         raw = _unified_toyo_load_raw(
@@ -2656,7 +2785,7 @@ def unified_profile_core(
 
     # Stage 3: Condition 필터링 (CC 재분류 + 휴지 분류 + 보충전 제외)
     filtered = _unified_filter_condition(
-        raw, data_scope, include_rest,
+        raw, _data_scope_pipe, _include_rest_pipe,
         is_sweep=_is_sweep, mincapacity=mincapacity, include_cv=include_cv)
 
     if filtered.empty:
@@ -2676,10 +2805,10 @@ def unified_profile_core(
 
     # Stage 5: 스텝 병합 (multi-TC일 때 용량 리셋 감지 + 누적)
     merged = _unified_merge_steps(
-        normalized, data_scope, multi_tc=_is_multi_tc)
+        normalized, _data_scope_pipe, multi_tc=_is_multi_tc)
 
     # Stage 5.5: Block 컬럼 할당 (스윕 + cycle + 비연속 모드 한정)
-    if _is_sweep and data_scope == "cycle" and overlap != "continuous":
+    if _is_sweep and _data_scope_pipe == "cycle" and overlap != "continuous":
         if "RawCycle" in merged.columns:
             block = np.zeros(len(merged), dtype=int)
             for ln in range(cycle_start, cycle_end + 1):
@@ -2696,29 +2825,40 @@ def unified_profile_core(
                     block[merged['RawCycle'].values == tc] = 2
             merged['Block'] = block
 
-    # Stage 6: X축 및 SOC 계산
-    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
+    if unified_flow:
+        # === 레벨 2 단일 flow: dQdV 우선 계산 (모든 Condition) → view 마지막 ===
+        if calc_dqdv:
+            merged = _unified_calculate_dqdv(
+                merged, smooth_degree, origin_compat=origin_compat)
+        with_axis = _unified_apply_view(
+            merged, data_scope, axis_mode, overlap,
+            cutoff=cutoff, include_rest=include_rest)
+    else:
+        # === 기존 흐름 ===
+        # Stage 6: X축 및 SOC 계산
+        with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
 
-    # === Cutoff 필터 ===
-    # 이전 버전 호환 (mode별 cutoff 의미):
-    #   - Step/Rate (charge + time): Crate 하한 (저율 제외, Current >= cutoff*cap과 동치)
-    #   - Chg Profile (charge + soc): Voltage 하한 (이전 chg_Profile_data 동작)
-    #   - Dchg Profile (discharge + *): Voltage 하한 (이전 dchg_Profile_data 동작)
-    #   - Cycle/Continue: 적용 안 함 (충방전 혼재, 의미 모호)
-    if cutoff > 0:
-        if data_scope == "charge" and axis_mode == "soc":
-            # 충전 프로파일 (SOC 축): 전압 하한
-            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
-        elif data_scope == "charge":
-            # Step/Rate (time 축): Crate 하한
-            with_axis = with_axis[with_axis["Crate"] >= cutoff]
-        elif data_scope == "discharge":
-            # 방전: 전압 하한
-            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+        # === Cutoff 필터 ===
+        # 이전 버전 호환 (mode별 cutoff 의미):
+        #   - Step/Rate (charge + time): Crate 하한 (저율 제외, Current >= cutoff*cap과 동치)
+        #   - Chg Profile (charge + soc): Voltage 하한 (이전 chg_Profile_data 동작)
+        #   - Dchg Profile (discharge + *): Voltage 하한 (이전 dchg_Profile_data 동작)
+        #   - Cycle/Continue: 적용 안 함 (충방전 혼재, 의미 모호)
+        if cutoff > 0:
+            if data_scope == "charge" and axis_mode == "soc":
+                # 충전 프로파일 (SOC 축): 전압 하한
+                with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+            elif data_scope == "charge":
+                # Step/Rate (time 축): Crate 하한
+                with_axis = with_axis[with_axis["Crate"] >= cutoff]
+            elif data_scope == "discharge":
+                # 방전: 전압 하한
+                with_axis = with_axis[with_axis["Voltage"] >= cutoff]
 
-    # === Stage 6: 파생값 계산 ===
-    if calc_dqdv:
-        with_axis = _unified_calculate_dqdv(with_axis, smooth_degree)
+        # === Stage 6: 파생값 계산 ===
+        if calc_dqdv:
+            with_axis = _unified_calculate_dqdv(
+                with_axis, smooth_degree, origin_compat=origin_compat)
 
     # === 최종 컬럼 구성 ===
     base_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]
@@ -2817,6 +2957,8 @@ def _unified_process_single_cycle_from_raw(
     smooth_degree: int = 0,
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
+    unified_flow: bool = False,
+    origin_compat: bool = False,
 ) -> UnifiedProfileResult:
     """이미 로드된 원시 데이터에서 단일 사이클 프로필을 파싱.
 
@@ -2863,8 +3005,13 @@ def _unified_process_single_cycle_from_raw(
         cycle_map
         and any(v['all'][0] != v['all'][1] for v in cycle_map.values() if isinstance(v, dict))
     )
+
+    # 레벨 2 단일 flow 분기 (unified_profile_core 와 동일 패턴)
+    _data_scope_pipe = "cycle" if unified_flow else data_scope
+    _include_rest_pipe = True if unified_flow else include_rest
+
     filtered = _unified_filter_condition(
-        raw_cycle, data_scope, include_rest,
+        raw_cycle, _data_scope_pipe, _include_rest_pipe,
         is_sweep=_is_sweep, mincapacity=mincapacity, include_cv=include_cv,
     )
     if filtered.empty:
@@ -2886,23 +3033,34 @@ def _unified_process_single_cycle_from_raw(
 
     # Stage 4: 스텝 병합
     merged = _unified_merge_steps(
-        normalized, data_scope, multi_tc=_is_multi_tc)
+        normalized, _data_scope_pipe, multi_tc=_is_multi_tc)
 
-    # Stage 5: X축 및 SOC 계산
-    with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
+    if unified_flow:
+        # === 레벨 2 단일 flow: dQdV 우선 계산 → view 마지막 ===
+        if calc_dqdv:
+            merged = _unified_calculate_dqdv(
+                merged, smooth_degree, origin_compat=origin_compat)
+        with_axis = _unified_apply_view(
+            merged, data_scope, axis_mode, overlap,
+            cutoff=cutoff, include_rest=include_rest)
+    else:
+        # === 기존 흐름 ===
+        # Stage 5: X축 및 SOC 계산
+        with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
 
-    # Cutoff 필터 (unified_profile_core와 동일 규칙)
-    if cutoff > 0:
-        if data_scope == "charge" and axis_mode == "soc":
-            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
-        elif data_scope == "charge":
-            with_axis = with_axis[with_axis["Crate"] >= cutoff]
-        elif data_scope == "discharge":
-            with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+        # Cutoff 필터 (unified_profile_core와 동일 규칙)
+        if cutoff > 0:
+            if data_scope == "charge" and axis_mode == "soc":
+                with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+            elif data_scope == "charge":
+                with_axis = with_axis[with_axis["Crate"] >= cutoff]
+            elif data_scope == "discharge":
+                with_axis = with_axis[with_axis["Voltage"] >= cutoff]
 
-    # Stage 6: 파생값 계산
-    if calc_dqdv:
-        with_axis = _unified_calculate_dqdv(with_axis, smooth_degree)
+        # Stage 6: 파생값 계산
+        if calc_dqdv:
+            with_axis = _unified_calculate_dqdv(
+                with_axis, smooth_degree, origin_compat=origin_compat)
 
     # 최종 컬럼 구성 (unified_profile_core와 동일 로직)
     base_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]
@@ -2966,6 +3124,8 @@ def unified_profile_batch(
     cutoff: float = 0.0,
     cycle_map: dict | None = None,
     is_pne: bool | None = None,
+    unified_flow: bool = False,
+    origin_compat: bool = False,
 ) -> dict:
     """통합 프로필 배치 로딩.
 
@@ -3035,6 +3195,7 @@ def unified_profile_batch(
             overlap=overlap, include_rest=include_rest, include_cv=include_cv,
             calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
             cutoff=cutoff, cycle_map=cycle_map,
+            unified_flow=unified_flow, origin_compat=origin_compat,
         )
         results[cycle_range] = [mincapacity, result]
         return results
@@ -3074,6 +3235,7 @@ def unified_profile_batch(
                     overlap=overlap, include_rest=include_rest, include_cv=include_cv,
                     calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
                     cutoff=cutoff, cycle_map=cycle_map,
+                    unified_flow=unified_flow, origin_compat=origin_compat,
                 )
                 results[cyc] = [mincapacity, result]
 
@@ -3088,6 +3250,7 @@ def unified_profile_batch(
                 overlap=overlap, include_rest=include_rest, include_cv=include_cv,
                 calc_dqdv=calc_dqdv, smooth_degree=smooth_degree,
                 cutoff=cutoff, cycle_map=cycle_map,
+                unified_flow=unified_flow, origin_compat=origin_compat,
             )
             results[cyc] = [mincapacity, result]
 
@@ -20060,6 +20223,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         else:
             # 기존: canvas 직접 추가 (하위 호환)
             tab_layout.addWidget(canvas)
+        # 색상 동기화용 참조 보관 — post-loop 의 `_apply_color_strategy` 후
+        # `_sync_channel_map_colors_post_repaint` 가 사용한다.
+        # channel_map / sub_channel_map / sub2_channel_map 의 'color' 가
+        # 초기 matplotlib 기본 cycle 색이라 group/dual/warm/cool 모드로
+        # 재도색 후 CH 컨트롤·데이터 탭 표시색이 stale 해지는 것을 방지.
+        tab._channel_maps_for_resync = (
+            channel_map, sub_channel_map, sub2_channel_map)
+        tab._data_subtab_for_resync = data_subtab_widget
         self.cycle_tab.addTab(tab, str(tab_no))
         self.cycle_tab.setCurrentWidget(tab)
         self.cycle_tab_reset.setEnabled(True)
@@ -20069,6 +20240,92 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._has_colorbar = False
         else:
             plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+
+    def _sync_channel_map_colors_post_repaint(self, channel_maps_tuple,
+                                              data_subtab_widget=None):
+        """후처리 색상 재도색 후 channel_map 의 'color' 를 실제 라인 색과 동기화.
+
+        `_profile_render_loop` 의 post-loop 색상 모드 적용 (group/warm/cool/
+        dual/chg_dchg) 으로 라인 색이 변경된 뒤, channel_map['color'] 는
+        여전히 초기 matplotlib 기본 cycle 색을 가리키고 있다. 이로 인해
+        CH 채널 제어 패널 (Lazy Init) 과 데이터 탭의 탭 라벨 색이 plot
+        라인 색과 어긋난다. 이 함수가 동기화를 담당.
+
+        Parameters
+        ----------
+        channel_maps_tuple : tuple[dict | None, dict | None, dict | None]
+            (channel_map, sub_channel_map, sub2_channel_map).
+            None 항목은 skip.
+        data_subtab_widget : QWidget | None
+            `_create_profile_data_subtab` 산출 위젯. inner QTabWidget 의
+            tab 라벨 색을 재도색 후 색상으로 업데이트.
+
+        Notes
+        -----
+        - 휴지(`_cond_tag == 3`) 라인은 회색 고정이라 대표 색으로 부적합 → skip.
+        - `_cond_tag == 1` (충전) 우선, 없으면 첫 non-rest 라인 사용.
+        - 'group' 모드에서 채널 그룹 (= 경로) 별로 동일 hue 가 부여되므로
+          첫 non-rest 라인 색이 곧 그룹 대표 색.
+        """
+        if not channel_maps_tuple:
+            return
+        for cm in channel_maps_tuple:
+            if not cm:
+                continue
+            for k, info in cm.items():
+                artists = info.get('artists') or []
+                # 충전 라인 우선 → 없으면 첫 non-rest
+                _rep_color = None
+                _chg_artists = [
+                    a for a in artists
+                    if getattr(a, '_cond_tag', None) == 1]
+                _candidates = _chg_artists or [
+                    a for a in artists
+                    if getattr(a, '_cond_tag', None) != 3]
+                for art in _candidates:
+                    try:
+                        _rep_color = mcolors.to_hex(art.get_color())
+                        break
+                    except Exception:
+                        continue
+                if _rep_color:
+                    info['color'] = _rep_color
+        # 데이터 탭의 inner QTabWidget tab 라벨 색 재도색
+        if data_subtab_widget is not None:
+            try:
+                from PyQt6.QtWidgets import QTabWidget
+                from PyQt6.QtGui import QColor
+                # data_subtab_widget 내부 첫 QTabWidget = combo_tabs
+                _combo = data_subtab_widget.findChild(QTabWidget)
+                if _combo is not None:
+                    # tab 라벨 → ch_label lookup
+                    # 라벨 형식:
+                    #   - "이어서": "{ch_label} cy{cyc_label}"
+                    #   - "분리/연결": "{ch_label}" (단독)
+                    # channel_map (= channel_maps_tuple[0]) 의 키와 매칭.
+                    _ch_map = channel_maps_tuple[0] if channel_maps_tuple else None
+                    if _ch_map:
+                        for _idx in range(_combo.count()):
+                            _label = _combo.tabText(_idx)
+                            _ch_key = None
+                            # split / connected: 라벨 == ch_label
+                            if _label in _ch_map:
+                                _ch_key = _label
+                            else:
+                                # continuous: " cy" 앞 부분이 ch_label
+                                _sep = _label.rfind(" cy")
+                                if _sep > 0:
+                                    _candidate = _label[:_sep]
+                                    if _candidate in _ch_map:
+                                        _ch_key = _candidate
+                            if _ch_key is None:
+                                continue
+                            _color = (_ch_map[_ch_key] or {}).get('color')
+                            if _color:
+                                _combo.tabBar().setTabTextColor(
+                                    _idx, QColor(_color))
+            except Exception:
+                pass
     
     def _setup_legend(self, axes_list, data_name, positions, fig=None):
         """
@@ -20679,6 +20936,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ── 공통 마무리 ──
         if self.saveok.isChecked() and save_file_name:
+            # 히스테리시스 프리셋 long-format 시트 자동 추가
+            _long = getattr(self, '_pending_hyst_long_df', None)
+            if _long is not None and not _long.empty:
+                try:
+                    _long.to_excel(
+                        writer, sheet_name="Hysteresis_Analysis", index=False)
+                    _perf_logger.info(
+                        f'  [hysteresis] Hysteresis_Analysis 시트 출력: '
+                        f'{len(_long)} 행')
+                except Exception as _e:
+                    _perf_logger.warning(f'  [hyst_long] 시트 출력 실패: {_e}')
+            self._pending_hyst_long_df = None
             writer.close()
         # ── 색상 모드 + 범례 전략 적용 (새로 생성된 탭만) ──
         _n_cyc = len(CycleNo)
@@ -20843,6 +21112,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     smooth_degree=options.get("smooth_degree", 0),
                     cutoff=options.get("cutoff", 0.0),
                     cycle_map=cycle_map,
+                    unified_flow=options.get("unified_flow", False),
+                    origin_compat=options.get("origin_compat", False),
                 )
             return (folder_idx, subfolder_idx, batch_results)
         except Exception as e:
@@ -25702,6 +25973,154 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 f'TC{_t}={_v:+.3f}' for _t, _v in sorted(_ofs.items())[:25])
             _perf_logger.info(f'  [hysteresis] folder={_fi} TC offsets: {_ofs_str}')
 
+    def _build_hysteresis_long_dataframe(
+        self,
+        loaded_data: dict,
+        all_data_folder: list,
+        all_data_name: list,
+        mincapacity: float,
+    ) -> pd.DataFrame:
+        """히스테리시스 long-format 통합 데이터프레임 생성.
+
+        `_apply_hysteresis_soc_offsets` 적용 후 호출. 모든
+        folder × subfolder × TC × 데이터포인트를 단일 long-format 표로 정리.
+        Excel txt 골든 레퍼런스 (10 시트 펼침)와 numerically 등가한 한 장
+        통합 출력. pivot/filter 로 6개 가공 시트 모두 재구성 가능.
+
+        Parameters
+        ----------
+        loaded_data : dict
+            {(folder_idx, subfolder_idx, cycle_key): [mincap, UnifiedProfileResult]}.
+            UnifiedProfileResult.df 는 SOC offset 이 이미 적용된 상태.
+        all_data_folder : list
+            폴더 경로 목록 (folder_idx 인덱싱).
+        all_data_name : list
+            폴더 표시명 목록.
+        mincapacity : float
+            정격용량 (라벨링 fallback 용).
+
+        Returns
+        -------
+        pd.DataFrame
+            컬럼 순서: folder_idx, folder_name, channel, TC, LogicalCycle,
+            direction, depth_pct, window_label, loop_type,
+            TimeMin, SOC_local, SOC_abs, DOD_abs, Voltage, Crate,
+            dQdV, dVdQ, Energy, Temp.
+        """
+        # folder_idx 별 hysteresis 라벨 사전 계산 (RPT 인접 100% 자동 인식 포함)
+        _label_maps: dict[int, dict[int, dict]] = {}
+        _offset_maps = getattr(self, '_hyst_soc_offset_maps', {}) or {}
+        for fi, folder in enumerate(all_data_folder):
+            try:
+                if not os.path.isdir(str(folder)):
+                    continue
+                channels = sorted([f.path for f in os.scandir(str(folder))
+                            if f.is_dir() and _is_channel_folder(f.name)])
+                if not channels:
+                    continue
+                best_ch = channels[0]
+                best_lc = 0
+                for ch in channels:
+                    m = get_channel_meta(ch)
+                    if m and (m.max_tc or 0) > best_lc:
+                        best_lc = m.max_tc or 0
+                        best_ch = ch
+                meta = get_channel_meta(best_ch)
+                cap = meta.min_capacity if meta else mincapacity
+                classified = meta.classified if meta else None
+                _label_maps[fi] = _compute_tc_hysteresis_labels(
+                    best_ch, cap, classified=classified)
+            except Exception as _e:
+                _perf_logger.debug(f'  [hyst_long] label 계산 실패 fi={fi}: {_e}')
+                _label_maps[fi] = {}
+
+        parts: list[pd.DataFrame] = []
+        for key, val in loaded_data.items():
+            if not isinstance(val, (list, tuple)) or len(val) < 2:
+                continue
+            result_obj = val[1]
+            df = getattr(result_obj, 'df', None)
+            if df is None or df.empty:
+                continue
+            if not isinstance(key, tuple) or len(key) < 3:
+                continue
+            folder_idx = key[0]
+            subfolder_idx = key[1]
+            cycle_key = key[2]
+
+            folder_name = (all_data_name[folder_idx]
+                           if folder_idx < len(all_data_name) else "")
+            channel = f"sub_{subfolder_idx}"
+
+            # TC 번호 결정
+            if isinstance(cycle_key, int):
+                tc = cycle_key
+                logical_cycle = cycle_key
+            elif isinstance(cycle_key, tuple) and len(cycle_key) == 2:
+                tc = cycle_key[0]
+                logical_cycle = cycle_key[0]
+            else:
+                tc = 0
+                logical_cycle = 0
+
+            # 라벨 (direction / depth_pct)
+            label = _label_maps.get(folder_idx, {}).get(int(tc), {})
+            direction = label.get('direction', '')
+            depth_pct = int(label.get('depth_pct', 0))
+            window_label = (f"{direction} {depth_pct}%"
+                            if direction else "")
+
+            # SOC offset (보정 전 SOC_local 복원용)
+            soc_offset = (_offset_maps.get(folder_idx, {})
+                          .get(int(tc), 0.0))
+
+            loop_type = getattr(result_obj, '_hyst_type', '')
+
+            d = df.copy()
+            n = len(d)
+            d['folder_idx'] = folder_idx
+            d['folder_name'] = folder_name
+            d['channel'] = channel
+            d['TC'] = int(tc)
+            d['LogicalCycle'] = int(logical_cycle)
+            d['direction'] = direction
+            d['depth_pct'] = depth_pct
+            d['window_label'] = window_label
+            d['loop_type'] = loop_type
+
+            # SOC_abs (이미 보정된 값) / SOC_local (보정 전 복원) / DOD_abs
+            if 'SOC' in d.columns:
+                d['SOC_abs'] = d['SOC'].astype(float)
+                d['SOC_local'] = d['SOC_abs'] - float(soc_offset)
+                d['DOD_abs'] = 1.0 - d['SOC_abs']
+            else:
+                d['SOC_abs'] = np.nan
+                d['SOC_local'] = np.nan
+                d['DOD_abs'] = np.nan
+
+            # Voltage 통일 (Vol/Voltage 둘 중 존재하는 것 사용)
+            if 'Voltage' not in d.columns and 'Vol' in d.columns:
+                d['Voltage'] = d['Vol']
+            for _c in ('Voltage', 'Crate', 'dQdV', 'dVdQ', 'Energy', 'Temp', 'TimeMin'):
+                if _c not in d.columns:
+                    d[_c] = np.nan
+
+            parts.append(d)
+
+        if not parts:
+            return pd.DataFrame()
+
+        long_df = pd.concat(parts, ignore_index=True)
+        cols_order = [
+            'folder_idx', 'folder_name', 'channel',
+            'TC', 'LogicalCycle',
+            'direction', 'depth_pct', 'window_label', 'loop_type',
+            'TimeMin', 'SOC_local', 'SOC_abs', 'DOD_abs',
+            'Voltage', 'Crate', 'dQdV', 'dVdQ', 'Energy', 'Temp',
+        ]
+        present = [c for c in cols_order if c in long_df.columns]
+        return long_df[present].reset_index(drop=True)
+
     def _refresh_timeline_detail(self) -> None:
         """패널 열려있으면 갱신."""
         if self._detail_panel.isVisible():
@@ -26174,6 +26593,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         hyst_pair = (self.profile_hyst_pair_chk.isChecked()
                      and overlap == "connected")
 
+        # ── 히스테리시스 프리셋 모드 자동 감지 ──
+        # connected + hyst_pair 동시 활성 = 히스테리시스 분석.
+        # 이 조합에서 단일 flow + origin_compat dQdV 자동 활성화 (Excel
+        # 골든 레퍼런스 일치). UI 토글 추가 없이 프리셋이 결정한다.
+        is_hysteresis_mode = (overlap == "connected" and hyst_pair)
+        unified_flow = is_hysteresis_mode
+        origin_compat = is_hysteresis_mode
+
         return {
             "data_scope": data_scope,
             "axis_mode": axis_mode,
@@ -26182,6 +26609,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "include_cv": include_cv,
             "calc_dqdv": calc_dqdv,
             "hyst_pair": hyst_pair,
+            "is_hysteresis_mode": is_hysteresis_mode,
+            "unified_flow": unified_flow,
+            "origin_compat": origin_compat,
         }
 
     def _map_options_to_legacy_mode(self, options: dict) -> str:
@@ -26359,6 +26789,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if options.get('overlap') == 'connected' and options.get('axis_mode') == 'soc':
             self._apply_hysteresis_soc_offsets(
                 _compat_data, all_data_folder, mincapacity, data_attr)
+
+        # ── 3-b'. 히스테리시스 프리셋 long-format 빌드 ──
+        # `_profile_render_loop` 의 writer.close() 직전에 'Hysteresis_Analysis'
+        # 시트로 출력. Excel txt 골든 레퍼런스(10 시트)의 long-format 등가물.
+        # 프리셋 모드(connected + hyst_pair) 에서만 활성.
+        self._pending_hyst_long_df = None
+        if options.get('is_hysteresis_mode'):
+            try:
+                self._pending_hyst_long_df = self._build_hysteresis_long_dataframe(
+                    _compat_data, all_data_folder, all_data_name, mincapacity)
+                _perf_logger.info(
+                    f'  [hysteresis] long-format 행 수: '
+                    f'{len(self._pending_hyst_long_df)}')
+            except Exception as _e:
+                _perf_logger.warning(f'  [hyst_long] 빌드 실패: {_e}')
+                self._pending_hyst_long_df = None
 
         # ── 3-c. 히스테리시스 라벨·깊이 rank 사전 산출 ──
         # 각 TC 의 ChgCap/DchgCap 합계로 방향(Dchg/Chg) 자동 판별 + 깊이 % 산출.
