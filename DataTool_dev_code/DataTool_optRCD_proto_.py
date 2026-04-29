@@ -18199,15 +18199,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     # ── 필터링 탭 (현황 탭과 분리된 별도 검색 결과 페이지) ──
     def _setup_filter_tab(self) -> None:
-        """현황 탭 옆에 '필터링' 탭을 동적 생성.
+        """현황 탭 *내부* 에 '채널 리스트 / 필터링' sub-tab 을 구성.
 
-        구성:
-        - 자체 검색 입력(self.FindText_filter): cycler 명도 검색 가능
-        - 필터 실행 버튼(self.btn_filter_run): 클릭/Enter 로 filter_all_channels
-        - 결과 테이블(self.tb_channel_filter): filter_all_channels 결과 표시
+        구조:
+            [현황] (top-level tab)
+              └── QTabWidget(status_subtabs)
+                    ├── 채널 리스트 (self.tab — 기존 그리드 콘텐츠)
+                    └── 필터링 (self.tab_filter — 검색·결과)
 
-        기존 현황 탭의 btn_filter 도 호환 유지 — 클릭 시 검색어를 동기화하고
-        필터링 탭으로 전환 후 filter_all_channels 실행 (`_btn_filter_to_tab`).
+        구성 요소:
+        - self.FindText_filter: 자체 검색 입력 (cycler 명도 검색 가능)
+        - self.btn_filter_run: 필터 실행 버튼 (클릭/Enter)
+        - self.tb_channel_filter: 결과 전용 QTableWidget
+
+        기존 현황 탭 btn_filter 호환 — 클릭 시 검색어 동기화 + 필터링
+        sub-tab 전환 + filter_all_channels 실행 (`_btn_filter_to_tab`).
         """
         self.tab_filter = QtWidgets.QWidget()
         self.tab_filter.setObjectName("tab_filter")
@@ -18282,25 +18288,47 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_channel_filter.cellClicked.connect(self._filter_toggle_section)
         _vlayout.addWidget(self.tb_channel_filter)
 
-        # 현황 탭 바로 다음 위치(index 1)에 삽입
-        try:
-            idx_status = self.tabWidget.indexOf(self.tab)
-        except Exception:
+        # ── 현황 탭(self.tab) 을 sub-tab 컨테이너로 감싸기 ──
+        # self.tab 의 현재 top-level 위치/이름 보존
+        idx_status = self.tabWidget.indexOf(self.tab)
+        text_status = self.tabWidget.tabText(idx_status) if idx_status >= 0 else "현황"
+        if idx_status < 0:
             idx_status = 0
-        self.tabWidget.insertTab(idx_status + 1, self.tab_filter, "필터링")
+        # tabWidget 에서 self.tab 분리 (위젯은 살아 있음)
+        if self.tabWidget.indexOf(self.tab) >= 0:
+            self.tabWidget.removeTab(self.tabWidget.indexOf(self.tab))
+        # sub-tab QTabWidget: '채널 리스트' (self.tab) + '필터링' (self.tab_filter)
+        self.status_subtabs = QtWidgets.QTabWidget()
+        self.status_subtabs.setObjectName("status_subtabs")
+        self.status_subtabs.setFont(QtGui.QFont("맑은 고딕", 10))
+        self.status_subtabs.addTab(self.tab, "채널 리스트")
+        self.status_subtabs.addTab(self.tab_filter, "필터링")
+        # 컨테이너 위젯 (sub-tabs 만 포함) → 원래 '현황' 위치에 다시 삽입
+        self.tab_status_container = QtWidgets.QWidget()
+        self.tab_status_container.setObjectName("tab_status_container")
+        _container_layout = QtWidgets.QVBoxLayout(self.tab_status_container)
+        _container_layout.setContentsMargins(0, 0, 0, 0)
+        _container_layout.setSpacing(0)
+        _container_layout.addWidget(self.status_subtabs)
+        self.tabWidget.insertTab(
+            idx_status, self.tab_status_container, text_status)
 
         # 시그널 연결
         self.btn_filter_run.clicked.connect(self.filter_all_channels)
         self.FindText_filter.returnPressed.connect(self.filter_all_channels)
 
     def _btn_filter_to_tab(self) -> None:
-        """현황 탭 btn_filter 호환 핸들러: 검색어 동기화 + 필터링 탭 전환 + 실행."""
+        """현황 탭 btn_filter 호환 핸들러: 검색어 동기화 + 필터링 sub-tab 전환 + 실행."""
         try:
             self.FindText_filter.setText(self.FindText.text())
         except Exception:
             pass
+        # 현황 컨테이너 → 필터링 sub-tab 으로 전환
         try:
-            self.tabWidget.setCurrentWidget(self.tab_filter)
+            if hasattr(self, 'tab_status_container'):
+                self.tabWidget.setCurrentWidget(self.tab_status_container)
+            if hasattr(self, 'status_subtabs') and hasattr(self, 'tab_filter'):
+                self.status_subtabs.setCurrentWidget(self.tab_filter)
         except Exception:
             pass
         self.filter_all_channels()
