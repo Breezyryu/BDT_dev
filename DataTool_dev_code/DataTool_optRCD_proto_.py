@@ -26861,9 +26861,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # ── 3-b'. 히스테리시스 프리셋 long-format 빌드 ──
         # `_profile_render_loop` 의 writer.close() 직전에 'Hysteresis_Analysis'
         # 시트로 출력. Excel txt 골든 레퍼런스(10 시트)의 long-format 등가물.
-        # 프리셋 모드(connected + hyst_pair) 에서만 활성.
+        # 프리셋 모드(connected + hyst_pair) + saveok ON 일 때만 빌드 (plot
+        # 만 보는 경우 비용 회피 — 큰 데이터셋에서 concat 비용 무시 못함).
         self._pending_hyst_long_df = None
-        if options.get('is_hysteresis_mode'):
+        if options.get('is_hysteresis_mode') and self.saveok.isChecked():
             try:
                 self._pending_hyst_long_df = self._build_hysteresis_long_dataframe(
                     _compat_data, all_data_folder, all_data_name, mincapacity)
