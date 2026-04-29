@@ -185,6 +185,15 @@
   },
   "active": "db7f76d57fc04a30",
   "lastOpenFiles": [
+    "40_work_log/260422_W17_biweekly_exec_report.md",
+    "22_experiments/Cell_Design_Specification_필드.md.tmp.16616.1776834121297",
+    "22_experiments/Gen5plus_ATL_문서별_설계파라미터_인덱스.md",
+    "30_modeling/260422_report_cell_design_vs_pybamm.md.tmp.16616.1776831687914",
+    "30_modeling/260422_analysis_pybamm_key_parameters.md.tmp.16616.1776831438599",
+    "30_modeling/260422_report_cell_design_vs_pybamm.md.tmp.16616.1776831078140",
+    "30_modeling/260422_report_cell_design_vs_pybamm.md",
+    "22_experiments/Cell_Design_Specification_필드.md",
+    "30_modeling/260422_analysis_pybamm_key_parameters.md",
     "changelog/origin_vs_optRCD_changelog.md",
     "changelog/fix_append_deprecated_260209.md",
     "changelog/changelog_BatteryDataTool_to_optRCD_proto.md",
@@ -207,19 +216,10 @@
     "changelog/260404_changelog_unified_profile_batch.md",
     "changelog/260404_changelog_unified_profile_core.md",
     "changelog/260327_cyc_validation_report.txt",
-    "changelog/260319_instruction_files_improvement.md",
-    "changelog/260318_fix_cycle_estimation_direct_path_input.md",
-    "changelog/260310_remove_battery_from_filenames.md",
-    "changelog/260310_foldable8_ut_application.md",
-    "changelog/260310_bg_color_c_level_change.md",
     "changelog",
     "analysis",
     "Wiki_Master_Index.md.tmp.12320.1776809949111",
     "Wiki_Master_Index.md.tmp.12320.1776809943882",
-    "10_cycle_data/260419_신분류기_Phase0_결과_v3.txt",
-    "10_cycle_data/260419_신분류기_Phase0_결과.txt",
-    "10_cycle_data/260419_sch_전수분류_raw.txt",
-    "19_bdt_history/260412_timeline_multirow_detail_mockup.html",
-    "19_bdt_history/260412_timeline_detail_popup_mockup.html"
+    "10_cycle_data/260419_신분류기_Phase0_결과_v3.txt"
   ]
 }

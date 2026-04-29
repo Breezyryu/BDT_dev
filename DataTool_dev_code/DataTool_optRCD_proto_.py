@@ -866,18 +866,28 @@ def _compute_tc_soc_offsets(
     """SaveEndData에서 TC별 시작 SOC(절대) 오프셋 계산.
 
     히스테리시스 플롯에서 각 TC의 프로파일을 절대 SOC 위치에 배치하기 위해 사용.
-    TC 내 충전/방전 net 용량을 누적하여 각 TC 시작 시점의 SOC를 계산한다.
+    각 TC 의 ChgCap / DchgCap 누적을 [0, 1] 범위 안에서 클립하며 진행하여
+    각 TC 시작 시점의 절대 SOC 를 산출한다.
 
-    누적은 0에서 시작하므로 셀이 SOC=0(empty) 에서 시험을 시작한다고 가정한다.
-    만충에서 시작하는 프로토콜(예: SDI Gen5+ MP1 0.2C-10min volt hysteresis)은
-    누적이 음수로 떨어져 SOC 플롯이 음수 영역에 표시되는 문제가 있어, min<0
-    감지 시 자동으로 anchor 를 위로 평행이동(min(offset)≈0) 한다.
+    초기 상태 추정 — 1차 패스에서 무클립 누적의 최저점이 −5% 보다 깊으면
+    셀이 만충 (SOC=1.0) 에서 시험을 시작한 것으로 간주한다 (히스테리시스
+    프로토콜 표준). 그렇지 않으면 SOC=0 에서 시작한다고 가정한다.
+
+    클립 누적 — CC-CV 충전은 100% 도달 후에도 CV 전류가 ChgCap 에 누적
+    되므로 raw ChgCap 합계가 (1.0 − prev_SOC) 를 초과할 수 있다. 이때
+    유효 chg 를 (1.0 − prev_SOC) 로 클립하여 SOC 가 1.0 을 넘지 않게
+    한다. 마찬가지로 dchg 도 가용 SOC (end_chg_SOC) 로 클립한다.
+
+    이전 버전의 "전역 anchor shift" (− min(offset))는 사용자가 선택한 TC
+    범위 밖의 사이클까지 포함해 shift 양을 결정하므로, 후속 RPT/추가
+    프로토콜이 더 깊은 음수를 만들면 hysteresis TC 들이 SOC=1.2 등 절대
+    좌표 밖으로 밀려 플롯이 깨지는 결함이 있었다. 클립 누적은 이 의존성을
+    제거하고 각 TC 의 시작 SOC 를 항상 [0, 1] 안에 둔다.
 
     Returns
     -------
     dict[int, float]
-        {TC번호: 시작SOC(0~1 범위)}. SOC = 누적(ChgCap - DchgCap) / capacity,
-        음수 발생 시 +shift 적용.
+        {TC번호: 시작SOC(0~1 범위)}.
     """
     save_end = get_channel_save_end_data(channel_path)
     if save_end is None or save_end.empty:
@@ -889,30 +899,39 @@ def _compute_tc_soc_offsets(
     cr = save_end[[27, 2, 10, 11]].copy()
     cr.columns = ['TC', 'Cond', 'ChgCap', 'DchgCap']
 
-    # TC별 net 용량 (충전 - 방전)
-    result = {}
-    cumul_net = 0.0
+    # 1차 패스: 무클립 누적의 최저점으로 초기 상태 추정
+    # 정상 hysteresis 프로토콜(만충 시작) 은 시험 초반 dchg 누적으로
+    # cumul 이 −값으로 떨어진다. SOC=0 시작 프로토콜은 cumul ≥ 0 유지.
+    cumul = 0.0
+    cumul_min = 0.0
+    tc_caps: list[tuple[int, float, float]] = []
     for tc in sorted(cr['TC'].unique()):
-        result[int(tc)] = cumul_net / cap_uah
-        tc_rows = cr[cr['TC'] == tc]
-        chg = tc_rows.loc[tc_rows['Cond'] == 1, 'ChgCap'].sum()
-        dchg = tc_rows.loc[tc_rows['Cond'] == 2, 'DchgCap'].sum()
-        cumul_net += (chg - dchg)
+        rows = cr[cr['TC'] == tc]
+        chg = rows.loc[rows['Cond'] == 1, 'ChgCap'].sum() / cap_uah
+        dchg = rows.loc[rows['Cond'] == 2, 'DchgCap'].sum() / cap_uah
+        tc_caps.append((int(tc), chg, dchg))
+        cumul += (chg - dchg)
+        cumul_min = min(cumul_min, cumul)
+    initial_full = (cumul_min < -0.05)
 
-    # ── anchor 자동 보정: 누적 음수 감지 시 위로 평행이동 ──
-    # 만충 시작 가정: 시험 초반에 방전이 누적되면 offset 이 -값으로 떨어진다.
-    # 노이즈 마진(0.05) 초과 음수를 감지하면 모든 offset 에 -min 을 더해
-    # SOC 플롯이 [0, max_excursion] 범위에 들어오도록 한다. 정상 케이스
-    # (충전 위주 프로토콜) 는 min ≥ 0 이므로 변경 없음.
-    if result:
-        _min = min(result.values())
-        if _min < -0.05:
-            shift = -_min
-            result = {tc: v + shift for tc, v in result.items()}
-            _perf_logger.info(
-                f'[soc_offset] anchor shift +{shift:.3f} '
-                f'(initial state assumed SOC≈1.0): {channel_path}'
-            )
+    # 2차 패스: 클립 누적으로 절대 SOC 추적
+    # chg 는 (1.0 − prev_SOC) 이내, dchg 는 end_chg 이내로 클립.
+    # CC-CV 의 CV 구간 누적이나 일부 사이클러의 전류 노이즈가 SOC 추정을
+    # 1.0 위 또는 0.0 아래로 밀지 않도록 방어한다.
+    prev_SOC = 1.0 if initial_full else 0.0
+    result: dict[int, float] = {}
+    for tc, chg, dchg in tc_caps:
+        result[tc] = prev_SOC
+        eff_chg = max(0.0, min(chg, 1.0 - prev_SOC))
+        end_chg = prev_SOC + eff_chg
+        eff_dchg = max(0.0, min(dchg, end_chg))
+        prev_SOC = end_chg - eff_dchg
+
+    if initial_full:
+        _perf_logger.info(
+            f'[soc_offset] initial SOC=1.0 assumed (cumul_min={cumul_min:+.3f}): '
+            f'{channel_path}'
+        )
     return result
 
 
@@ -2536,6 +2555,29 @@ def _unified_calculate_dqdv(
     df["dQdV"] = np.nan
     df["dVdQ"] = np.nan
 
+    # SOC 컬럼 가용성 — unified_flow 경로에서는 _unified_apply_view 가
+    # 적용되기 전에 호출되므로 SOC 가 아직 없을 수 있다. 이때는 Condition
+    # 별 ChgCap / DchgCap 을 SOC 대용으로 사용 (dQdV 의 분자 dCap 의미는
+    # 동일). SOC 이미 존재하면 그대로 사용 (legacy 경로).
+    _has_soc = "SOC" in df.columns
+    if not _has_soc and {"ChgCap", "DchgCap", "Condition"}.issubset(df.columns):
+        _cap_proxy = pd.Series(np.nan, index=df.index, dtype=float)
+        _chg = df["Condition"] == 1
+        _dch = df["Condition"] == 2
+        if _chg.any():
+            _cap_proxy.loc[_chg] = df.loc[_chg, "ChgCap"]
+        if _dch.any():
+            # 방전 SOC 는 (peak − DchgCap) 형태 — 하지만 dQdV 는 diff 만 사용
+            # 하므로 부호만 맞으면 된다. dchg 진행 = SOC 감소 → −DchgCap 사용.
+            _cap_proxy.loc[_dch] = -df.loc[_dch, "DchgCap"]
+        df["_dqdv_cap_proxy"] = _cap_proxy
+        _cap_col = "_dqdv_cap_proxy"
+    elif _has_soc:
+        _cap_col = "SOC"
+    else:
+        # SOC 도 ChgCap/DchgCap 도 없으면 dQdV 계산 불가
+        return df
+
     # Condition별 분리 계산 (충전/방전 경계에서 비물리적 diff 방지)
     if "Condition" in df.columns:
         cond_groups = [(df["Condition"] == c) for c in (1, 2)
@@ -2549,7 +2591,7 @@ def _unified_calculate_dqdv(
             continue
         sd = smooth_degree if smooth_degree > 0 else max(1, int(len(sub) / 30))
         delvol = sub["Voltage"].diff(periods=sd)
-        delcap = sub["SOC"].diff(periods=sd)
+        delcap = sub[_cap_col].diff(periods=sd)
         with np.errstate(divide='ignore', invalid='ignore'):
             dqdv = np.array((delcap / delvol).values, dtype=float)
             dvdq = np.array((delvol / delcap).values, dtype=float)
@@ -2564,6 +2606,9 @@ def _unified_calculate_dqdv(
         df.loc[mask, "dQdV"] = dqdv
         df.loc[mask, "dVdQ"] = dvdq
 
+    # 임시 proxy 컬럼 정리 — 외부 사용자에게 노출되면 혼란
+    if "_dqdv_cap_proxy" in df.columns:
+        df = df.drop(columns=["_dqdv_cap_proxy"])
     return df
 
 

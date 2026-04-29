@@ -24,12 +24,10 @@ updated: 2026-04-21
 - [[PyBaMM_정리]] — 프레임워크 개요 + Expression Tree + 패키지 구조 (통합)
 - [[PyBaMM_Solve]] — 수치 해석 및 Solver
 - [[SUNDIALS]] — 수치해석 솔버 (IDA, CVODES)
-- [[PyBaMM_Variables_PPT]] — Input ~70 + Output 510~517 전수 리스트
-- [[260422_analysis_pybamm_key_parameters]] — Rate × 셀 개발 이중 관점 Key 14 + 단순화 가정 A1~A9
-- [[Cell_Design_Specification_필드]] — Cell Design Spec 7대 분류 × 63 필드 스키마
-- [[260422_report_cell_design_vs_pybamm]] — 개발 설계변수 × 모델링 파라미터 정리 보고서
-- [[Gen5plus_ATL_문서별_설계파라미터_인덱스]] — raw/g5p_at/ 46 파일 × 설계 파라미터 매트릭스
-- [[시뮬레이션_용어사전]] — 배터리그룹 용어사전 시뮬 파트 (P2D / 구조 / 열 ECM)
+- [[PyBaMM_Variables_PPT]] — Input ~70 + Output 510~517 전수 리스트 (Tier 1/2/3)
+- [[260422_analysis_pybamm_key_parameters]] — Rate-determining × 셀 개발 이중 관점 Key 14 + 단순화 가정 A1~A8
+- [[Cell_Design_Specification_필드]] — Cell Design Spec 7대 분류 × 63 필드 스키마 + PyBaMM 커버리지 27/32/41%
+- **[[260422_report_cell_design_vs_pybamm]]** — 🧾 개발 설계변수 × 모델링 파라미터 정리 **보고서** (단일 참조 문서)
 
 ### PINN (Physics-Informed Neural Networks)
 - [[PINN_기초]] — PINN 기본 개념

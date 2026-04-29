@@ -1,0 +1,2628 @@
+=== 173 시험 폴더 .sch 분류 결과 ===
+
+[           GITT] [  SWEEP] cap=  422 mAh
+  240821 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450V-GITT-15도
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 2~4 (×3) chg=  0.8C dchg=  0.5C
+    [       GITT_PULSE] TC 5~109 (×105) chg=  0.1C dchg=     -
+    [       GITT_PULSE] TC 110~214 (×105) chg=     - dchg=  0.1C
+
+[           가속수명] [GENERAL] cap=  422 mAh
+  240919 선행랩 류성택 Gen4pGr mini-ATL-WD-Proto-422mAh-20C-450V-SOC별DCIR-15도
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 2~4 (×3) chg=  0.8C dchg=  0.5C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 6~6 (×1) chg=  0.2C dchg=     -
+    [         SOC_DCIR] TC 7~11 (×5) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 12~26 (×15) chg=  0.5C dchg=  0.2C
+    [            ACCEL] TC 27~51 (×25) chg=  0.5C dchg=  0.2C
+    [            ACCEL] TC 52~71 (×20) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 72~86 (×15) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 87~96 (×10) chg=  0.5C dchg=  0.5C
+
+[             기타] [      ?] cap= 4900 mAh
+  250314_250705_05_나무늬_4900mAh_Gen5 SDI Pre-MP Si5% Floating+9D
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 3~3 (×1) chg=  0.8C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2610 mAh
+  250513_250526_05_나무늬_2610mAh_Gen5+B SDI MP1 DoE SBR 0.7 DCIR
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 2~4 (×3) chg=  0.8C dchg=  0.5C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 6~25 (×20) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 26~40 (×15) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 41~50 (×10) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 51~55 (×5) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 56~70 (×15) chg=  0.5C dchg=  0.5C
+    [            ACCEL] TC 71~95 (×25) chg=  0.5C dchg=  0.5C
+
+[           가속수명] [GENERAL] cap= 2610 mAh
+  250513_250526_05_나무늬_2610mAh_Gen5+B SDI MP1 Main SBR 0.9 DCIR
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 2~4 (×3) chg=  0.8C dchg=  0.5C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 6~25 (×20) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 26~40 (×15) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 41~50 (×10) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 51~55 (×5) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 56~70 (×15) chg=  0.5C dchg=  0.5C
+    [            ACCEL] TC 71~95 (×25) chg=  0.5C dchg=  0.5C
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter1
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 43~43 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 45~45 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 46~46 (×1) chg=     - dchg=     -
+    [              RPT] TC 47~47 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 48~48 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 49~49 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 50~50 (×1) chg=  0.2C dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter2
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  0.5C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  2.0C dchg=  0.2C
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 38~38 (×1) chg=  0.2C dchg=  0.5C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  2.0C dchg=  0.2C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 43~43 (×1) chg=  0.2C dchg=  0.5C
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 45~45 (×1) chg=  0.1C dchg=  0.2C
+    [        REST_LONG] TC 46~46 (×1) chg=     - dchg=     -
+    [              RPT] TC 47~47 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 48~48 (×1) chg=  0.2C dchg=  0.5C
+    [              RPT] TC 49~49 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 50~50 (×1) chg=  2.0C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter3
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 33~33 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 38~38 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 40~40 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 43~43 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 45~45 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 46~46 (×1) chg=     - dchg=     -
+    [              RPT] TC 47~47 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 48~48 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 49~49 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 50~50 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter4
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 33~33 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 38~38 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 40~40 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 43~43 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 45~45 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 46~46 (×1) chg=     - dchg=     -
+    [              RPT] TC 47~47 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 48~48 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 49~49 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 50~50 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter5
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  0.5C dchg=  0.2C
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  0.5C dchg=  0.2C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 43~43 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 45~45 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 46~46 (×1) chg=     - dchg=     -
+    [              RPT] TC 47~47 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 48~48 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 49~49 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 50~50 (×1) chg=  0.5C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter6
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  0.1C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 38~38 (×1) chg=  2.0C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  1.0C dchg=  0.2C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 43~43 (×1) chg=  1.4C dchg=  0.2C
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 45~45 (×1) chg=  1.8C dchg=  0.2C
+    [         DCHG_SET] TC 46~46 (×1) chg=     - dchg=  0.2C
+    [            ACCEL] TC 47~76 (×30) chg=  2.0C dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter7
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 33~33 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  0.3C dchg=  0.2C
+    [        REST_LONG] TC 36~36 (×1) chg=     - dchg=     -
+    [              RPT] TC 37~37 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 38~38 (×1) chg=  0.8C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  1.2C dchg=  0.2C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 43~43 (×1) chg=  1.6C dchg=  0.2C
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [        FORMATION] TC 45~51 (×7) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 4755 mAh
+  250827_251028_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter8
+    [            ACCEL] TC 1~30 (×30) chg=  2.0C dchg=  0.5C
+    [       GITT_PULSE] TC 31~150 (×120) chg=  0.2C dchg=  0.2C
+
+[           GITT] [  SWEEP] cap=  187 mAh
+  250905_250915_00_류성택_4-187mAh_M2-SDI-open-ca-half-14pi-GITT-0.1C-T23
+    [       CHARGE_SET] TC 1~1 (×1) chg=     - dchg=     -
+    [       GITT_PULSE] TC 2~121 (×120) chg=     - dchg=     -
+    [         DCHG_SET] TC 122~122 (×1) chg=     - dchg=     -
+    [       GITT_PULSE] TC 123~242 (×120) chg=     - dchg=     -
+
+[           GITT] [  SWEEP] cap=  376 mAh
+  250905_250915_00_류성택_4-376mAh_M2-SDI-open-an-half-14pi-GITT-0.1C-T23
+    [             INIT] TC 1~1 (×1) chg=     - dchg=     -
+    [       GITT_PULSE] TC 2~121 (×120) chg=     - dchg=     -
+    [       CHARGE_SET] TC 122~122 (×1) chg=     - dchg=     -
+    [       GITT_PULSE] TC 123~242 (×120) chg=     - dchg=     -
+
+[             기타] [      ?] cap= 4755 mAh
+  250915_250925_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter1 45재측정
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  1.0C
+
+[             기타] [      ?] cap= 4755 mAh
+  250915_250925_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter2 45재측정
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.5C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 5~5 (×1) chg=  2.0C dchg=  0.2C
+
+[             기타] [      ?] cap= 4755 mAh
+  250915_250925_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter3 45재측정
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 3~3 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 5~5 (×1) chg=  0.2C dchg=     -
+
+[             기타] [      ?] cap= 4755 mAh
+  250915_250925_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter4 45재측정
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 3~3 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 5~5 (×1) chg=  0.2C dchg=     -
+
+[             기타] [      ?] cap= 4755 mAh
+  250915_250925_06_이성일_4755mAh_PA2-SDI-447V-275V-ECT-parameter5 45재측정
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 5~5 (×1) chg=  0.5C dchg=  0.2C
+
+[             기타] [      ?] cap=   19 mAh
+  251002_251010_00_박민희_4-19mAh_RatedCh half ca 4.19mAh SDI
+    [       REST_SHORT] TC 1~1 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 2~2 (×1) chg=     - dchg= 0.04C
+    [         CHG_DCHG] TC 3~3 (×1) chg= 0.18C dchg= 0.04C
+    [         CHG_DCHG] TC 4~4 (×1) chg= 0.22C dchg= 0.04C
+    [         CHG_DCHG] TC 5~5 (×1) chg= 0.31C dchg= 0.04C
+    [         CHG_DCHG] TC 6~6 (×1) chg= 0.36C dchg= 0.04C
+
+[             기타] [      ?] cap= 6490 mAh
+  251209_251213_05_현혜정_6490mAh_LWN Si25P SPL 율별방전Profile
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  1.0C
+    [         CHG_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg= 0.05C
+
+[             기타] [      ?] cap=   45 mAh
+  251218_251230_00_박민희_3-45mAh_M1 ATL Cathode Half T23
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [       REST_SHORT] TC 2~2 (×1) chg=     - dchg=     -
+    [        FORMATION] TC 3~5 (×3) chg= 0.01C dchg= 0.01C
+
+[             기타] [      ?] cap=    4 mAh
+  251218_251230_00_박민희_4-04mAh_M1 ATL Anode Half T23
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [       REST_SHORT] TC 2~2 (×1) chg=     - dchg=     -
+    [        FORMATION] TC 3~5 (×3) chg=  0.1C dchg=  0.1C
+
+[           GITT] [  SWEEP] cap=   45 mAh
+  251224_260110_00_박민희_3-45mAh_M1 ATL Cathode Half T23 GITT 0.1C
+    [       REST_SHORT] TC 1~1 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 2~2 (×1) chg=     - dchg=     -
+    [       GITT_PULSE] TC 3~12 (×10) chg= 0.01C dchg=     -
+    [       GITT_PULSE] TC 13~112 (×100) chg= 0.01C dchg=     -
+    [       CHARGE_SET] TC 113~113 (×1) chg=     - dchg=     -
+    [       GITT_PULSE] TC 114~213 (×100) chg=     - dchg= 0.01C
+    [       GITT_PULSE] TC 214~223 (×10) chg=     - dchg= 0.01C
+
+[           GITT] [  SWEEP] cap=    4 mAh
+  251224_260110_00_박민희_4-04mAh_M1 ATL Anode Half T23 GITT 0.05C 3.0V
+    [       REST_SHORT] TC 1~1 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 2~2 (×1) chg=     - dchg= 0.01C
+    [       GITT_PULSE] TC 3~87 (×85) chg= 0.05C dchg=     -
+    [       GITT_PULSE] TC 88~127 (×40) chg= 0.05C dchg=     -
+    [       CHARGE_SET] TC 128~128 (×1) chg= 0.01C dchg=     -
+    [       GITT_PULSE] TC 129~168 (×40) chg=     - dchg= 0.05C
+    [       GITT_PULSE] TC 169~253 (×85) chg=     - dchg= 0.05C
+
+[           GITT] [  SWEEP] cap=    4 mAh
+  251224_260110_00_박민희_4-04mAh_M1 ATL Anode Half T23 GITT 0.1C
+    [       REST_SHORT] TC 1~1 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 2~2 (×1) chg=     - dchg= 0.01C
+    [       GITT_PULSE] TC 3~72 (×70) chg=  0.1C dchg=     -
+    [       GITT_PULSE] TC 73~107 (×35) chg=  0.1C dchg=     -
+    [       CHARGE_SET] TC 108~108 (×1) chg= 0.01C dchg=     -
+    [       GITT_PULSE] TC 109~128 (×20) chg=     - dchg=  0.1C
+    [       GITT_PULSE] TC 129~223 (×95) chg=     - dchg=  0.1C
+
+[             기타] [      ?] cap= 5000 mAh
+  260109_260112_05_이근준_5000mAh_Gen5P Si5 ATL T2 3M 보관 용량 측정 4cycle SOC 30 setting ch7 to 12
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [        FORMATION] TC 2~5 (×4) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 6~6 (×1) chg=  0.2C dchg=     -
+
+[             기타] [      ?] cap= 2688 mAh
+  260112_260312_03_나무늬_2688mAh_Gen5+B SDI MP2 2.0C EPF HT Floating + 120D
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.8C dchg=     -
+
+[             기타] [      ?] cap= 5075 mAh
+  260202_260226_05_문현규_5075mAh_Cosmx 25Si 율별용량+Hybrid ch54
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  0.2C dchg= 0.05C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  1.0C
+    [        FORMATION] TC 8~10 (×3) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.2C dchg= 0.05C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 14~14 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 15~15 (×1) chg=  0.2C dchg=  1.0C
+    [         CHG_DCHG] TC 16~16 (×1) chg=  2.0C dchg= 0.84C
+    [         CHG_DCHG] TC 17~17 (×1) chg=  2.0C dchg=  0.5C
+    [         CHG_DCHG] TC 18~18 (×1) chg=  2.0C dchg=  1.0C
+    [         CHG_DCHG] TC 19~19 (×1) chg=  2.0C dchg=  1.0C
+    [         CHG_DCHG] TC 20~20 (×1) chg=  2.0C dchg=  1.0C
+    [         CHG_DCHG] TC 21~21 (×1) chg=  2.0C dchg=  1.0C
+    [         CHG_DCHG] TC 22~22 (×1) chg=  2.0C dchg=  1.0C
+    [         CHG_DCHG] TC 23~23 (×1) chg=  2.0C dchg=  1.0C
+
+[             기타] [      ?] cap= 4900 mAh
+  260204_260226_05_문현규_4900mAh_Cosmx gen5 율별용량 ch61
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  0.2C dchg= 0.05C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  1.0C
+    [        FORMATION] TC 8~10 (×3) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.2C dchg= 0.05C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 14~14 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 15~15 (×1) chg=  0.2C dchg=  1.0C
+
+[             기타] [      ?] cap= 5070 mAh
+  260204_260226_05_문현규_5070mAh_Cosmx Gen5P 율별용량
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  0.2C dchg= 0.05C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  1.0C
+    [        FORMATION] TC 8~10 (×3) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.1C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.2C dchg= 0.05C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 14~14 (×1) chg=  0.2C dchg=  0.5C
+    [         CHG_DCHG] TC 15~15 (×1) chg=  0.2C dchg=  1.0C
+
+[     PULSE_DCIR] [GENERAL] cap= 3885 mAh
+  260211_260310_05_문현규_3885mAh_POR 40C pulse PA1 ATL
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 3~3 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 5~13 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 14~23 (×10) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 24~24 (×1) chg=     - dchg=  0.2C
+    [         CHG_DCHG] TC 25~25 (×1) chg=  1.3C dchg=  3.5C
+    [              RPT] TC 26~26 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 27~27 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 28~28 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 29~37 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 38~47 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 48~48 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 3885 mAh
+  260211_260310_05_문현규_3885mAh_POR 40C pulse PA1 SDI
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 3~3 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 5~13 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 14~23 (×10) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 24~24 (×1) chg=     - dchg=  0.2C
+    [         CHG_DCHG] TC 25~25 (×1) chg=  1.3C dchg=  3.5C
+    [              RPT] TC 26~26 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 27~27 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 28~28 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 29~37 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 38~47 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 48~48 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 4855 mAh
+  260211_260310_05_문현규_4855mAh_POR 40C pulse PA3 ATL
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 3~3 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 5~13 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 14~23 (×10) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 24~24 (×1) chg=     - dchg=  0.2C
+    [         CHG_DCHG] TC 25~25 (×1) chg=  2.0C dchg=  3.5C
+    [              RPT] TC 26~26 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 27~27 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 28~28 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 29~37 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 38~47 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 48~48 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 4855 mAh
+  260211_260310_05_문현규_4855mAh_POR 40C pulse PA3 SDI
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 3~3 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 5~13 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 14~23 (×10) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 24~24 (×1) chg=     - dchg=  0.2C
+    [         CHG_DCHG] TC 25~25 (×1) chg=  2.0C dchg=  3.5C
+    [              RPT] TC 26~26 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 27~27 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 28~28 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 29~37 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 38~47 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 48~48 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 5432 mAh
+  260212_260215_05_한지영_5432mAh_SDI Phase2 MP2 Fresh DCIR SOC10
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [        FORMATION] TC 2~4 (×3) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 5~5 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 6~6 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 7~15 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 16~25 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 26~26 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 5432 mAh
+  260212_260215_05_한지영_5432mAh_SDI Phase2 MP2 고온수명후 DCIR SOC10
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 2~2 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 3~11 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 12~21 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 22~22 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 3876 mAh
+  260226_260228_05_문현규_3876mAh_PS 연속저장 DCIR
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 3~3 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 5~13 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 14~23 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 24~24 (×1) chg=     - dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 3885 mAh
+  260226_260228_05_문현규_3885mAh_PA1 연속저장 DCIR
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [    DISCHARGE_SET] TC 3~3 (×1) chg=     - dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [       PULSE_DCIR] TC 5~13 (×9) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 14~23 (×10) chg=  0.2C dchg=  0.2C
+    [      TERMINATION] TC 24~24 (×1) chg=     - dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 6330 mAh
+  260306_260318_05_현혜정_6330mAh_LWN 25P(after LT100cy) SOC별 DCIR 신규
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 2~4 (×3) chg=  0.8C dchg=  0.5C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 7~7 (×1) chg=  0.2C dchg=     -
+    [         SOC_DCIR] TC 8~25 (×18) chg=  0.5C dchg=  0.5C
+    [            ACCEL] TC 26~45 (×20) chg=  0.5C dchg=  0.5C
+    [       PULSE_DCIR] TC 46~46 (×1) chg=  0.5C dchg=  0.5C
+    [            ACCEL] TC 47~66 (×20) chg=  0.5C dchg=  0.5C
+    [         SOC_DCIR] TC 67~84 (×18) chg=  0.5C dchg=  0.5C
+    [       PULSE_DCIR] TC 85~85 (×1) chg=  0.5C dchg=  0.5C
+
+[             기타] [      ?] cap= 4991 mAh
+  260310_260312_05_이근준_4991mAh_Gen5P ATL MP1 8M Fresh 보관 용량 측정 2cycle SOC30 setting
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [        FORMATION] TC 2~3 (×2) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 4~4 (×1) chg=  0.2C dchg=     -
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260316_260320_05_현혜정_6330mAh_LWN 25P(after LT50cy) 0.5C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.5C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 13~13 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 23~23 (×1) chg=  0.5C dchg=  0.5C
+
+[           GITT] [  SWEEP] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT GITT
+    [       GITT_PULSE] TC 1~120 (×120) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 121~121 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 122~122 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter1
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 34~34 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter10
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [        FORMATION] TC 32~38 (×7) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 39~39 (×1) chg=     - dchg=     -
+    [              RPT] TC 40~40 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.8C dchg=  0.2C
+    [        REST_LONG] TC 42~42 (×1) chg=     - dchg=     -
+    [              RPT] TC 43~43 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 44~44 (×1) chg=  0.2C dchg= 0.15C
+    [        REST_LONG] TC 45~45 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 46~46 (×1) chg=     - dchg= 0.15C
+    [      TERMINATION] TC 47~47 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter2
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  0.5C
+    [        POWER_CHG] TC 34~34 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 39~39 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.5C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter3
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  1.0C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  0.2C dchg=  0.1C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 39~39 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  1.0C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter4
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  2.0C dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 39~39 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 42~42 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 44~44 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter5
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.5C dchg=  0.2C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  1.5C dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 44~44 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter6
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.0C dchg=  0.2C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  0.8C dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter7
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg= 1.75C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  0.2C dchg=  0.8C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg=  1.0C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 42~42 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter8
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.3C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg= 1.93C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.1C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 5882 mAh
+  260316_270318_00_이성일_5882mAh_M47 ATL ECT parameter9
+    [            ACCEL] TC 1~30 (×30) chg= 1.75C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.8C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 39~39 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg= 0.06C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg= 0.06C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[         히스테리시스] [GENERAL] cap= 4986 mAh
+  260317_260325_05_현혜정_4986mAh_SDI Gen5+ MP1 0.2C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260319_260326_05_현혜정_6330mAh_LWN 25P(after LT50cy) 0.2C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter1
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 34~34 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter10
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [        FORMATION] TC 31~37 (×7) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 38~38 (×1) chg=     - dchg=     -
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  0.8C dchg=  0.2C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 43~43 (×1) chg=  0.2C dchg= 0.19C
+    [        REST_LONG] TC 44~44 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 45~45 (×1) chg=     - dchg= 0.19C
+    [      TERMINATION] TC 46~46 (×1) chg=     - dchg=  1.0C
+
+[           GITT] [  SWEEP] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter11 GITT
+    [       GITT_PULSE] TC 1~120 (×120) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 121~121 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 122~122 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter2
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  0.5C
+    [        POWER_CHG] TC 34~34 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 39~39 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.5C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter3
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  1.0C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  0.2C dchg=  0.1C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 39~39 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  1.0C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter4
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 34~34 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 39~39 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 42~42 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 44~44 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter5
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.5C dchg=  0.2C
+    [         DCHG_SET] TC 34~34 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 44~44 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter6
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.0C dchg=  0.2C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  0.8C dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter7
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg= 1.14C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  0.2C dchg=  0.8C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg=  1.0C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 42~42 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter8
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.3C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg= 1.14C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.1C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 ATL ECT parameter9
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 33~33 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 39~39 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg= 0.07C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg= 0.07C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter1
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 34~34 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           GITT] [  SWEEP] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter11 GITT
+    [       GITT_PULSE] TC 1~120 (×120) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 121~121 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 122~122 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter2
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  0.5C
+    [        POWER_CHG] TC 34~34 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 39~39 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.5C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter3
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.2C dchg=  1.0C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  0.2C dchg=  0.1C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 39~39 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  1.0C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter4
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 33~33 (×1) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 34~34 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 39~39 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 42~42 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 44~44 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter5
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  0.5C dchg=  0.2C
+    [         DCHG_SET] TC 34~34 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 44~44 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_260329_00_류성택_4860mAh_A17 SDI ECT parameter6
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.0C dchg=  0.2C
+    [         CHG_DCHG] TC 34~34 (×1) chg=  0.8C dchg=  0.2C
+    [              RPT] TC 35~35 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter10
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [        FORMATION] TC 31~37 (×7) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 38~38 (×1) chg=     - dchg=     -
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 40~40 (×1) chg=  0.8C dchg=  0.2C
+    [        REST_LONG] TC 41~41 (×1) chg=     - dchg=     -
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 43~43 (×1) chg=  0.2C dchg= 0.19C
+    [        REST_LONG] TC 44~44 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 45~45 (×1) chg=     - dchg= 0.19C
+    [      TERMINATION] TC 46~46 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter7
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg= 1.14C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 35~35 (×1) chg=  0.2C dchg=  0.8C
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg=  1.0C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 42~42 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter8
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 33~33 (×1) chg=  1.3C dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 38~38 (×1) chg= 1.14C dchg=  0.2C
+    [              RPT] TC 39~39 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 41~41 (×1) chg=  0.1C dchg=  0.2C
+    [              RPT] TC 42~42 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[           가속수명] [GENERAL] cap= 4860 mAh
+  260326_270326_00_류성택_4860mAh_A17 SDI ECT Parameter9
+    [            ACCEL] TC 1~30 (×30) chg= 1.14C dchg=  0.5C
+    [       CHARGE_SET] TC 31~31 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 32~32 (×1) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 33~33 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 34~34 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 35~35 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 36~36 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 37~37 (×1) chg=     - dchg=     -
+    [              RPT] TC 38~38 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 39~39 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 40~40 (×1) chg=     - dchg=     -
+    [              RPT] TC 41~41 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 42~42 (×1) chg=  0.2C dchg= 0.07C
+    [        REST_LONG] TC 43~43 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 44~44 (×1) chg=     - dchg= 0.07C
+    [      TERMINATION] TC 45~45 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter1 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter10 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [        FORMATION] TC 2~8 (×7) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 9~9 (×1) chg=     - dchg=     -
+    [              RPT] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 11~11 (×1) chg=  0.8C dchg=  0.2C
+    [        REST_LONG] TC 12~12 (×1) chg=     - dchg=     -
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 14~14 (×1) chg=  0.2C dchg= 0.15C
+    [        REST_LONG] TC 15~15 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 16~16 (×1) chg=     - dchg= 0.15C
+    [      TERMINATION] TC 17~17 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter2 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.5C
+    [        POWER_CHG] TC 4~4 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg=  0.5C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter3 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.1C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg=  1.0C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter4 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  2.0C dchg=  0.2C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 9~9 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 12~12 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 14~14 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter5 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.5C dchg=  0.2C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  1.5C dchg=  0.2C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 14~14 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter6 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  1.0C dchg=  0.2C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  0.8C dchg=  0.2C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 8~8 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 11~11 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter7 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg= 1.75C dchg=  0.2C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.8C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 8~8 (×1) chg=  1.0C dchg=  0.2C
+    [              RPT] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 12~12 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter8 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  1.3C dchg=  0.2C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 5~5 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 8~8 (×1) chg= 1.93C dchg=  0.2C
+    [              RPT] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 11~11 (×1) chg=  0.1C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260327_270405_00_이성일_5882mAh_ATL M47 ECT parameter9 RT
+    [       CHARGE_SET] TC 1~1 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  1.8C dchg=  0.2C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 5~5 (×1) chg=  0.2C dchg=     -
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 9~9 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 10~10 (×1) chg=     - dchg=     -
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.2C dchg= 0.06C
+    [        REST_LONG] TC 13~13 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 14~14 (×1) chg=     - dchg= 0.06C
+    [      TERMINATION] TC 15~15 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter1 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter2 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg=  0.5C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter3 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg=  1.0C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter4 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 3~3 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 6~6 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 8~8 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter5 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 8~8 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter6 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 2~2 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 5~5 (×1) chg=  0.5C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter7 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 2~2 (×1) chg=  1.0C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 6~6 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter8 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 2~2 (×1) chg= 1.93C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 5~5 (×1) chg=  0.1C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260403_260407_00_류성택_5882mAh_ATL M47 ECT parameter9 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 3~3 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg= 0.06C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg= 0.06C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260406_260408_00_류성택_5882mAh_ATL M47 ECT parameter10 HT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.8C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg= 0.15C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg= 0.15C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter1 LT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 5~5 (×1) chg=     - dchg=  0.2C
+    [      TERMINATION] TC 6~6 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter2 LT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.5C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 5~5 (×1) chg=     - dchg=  0.5C
+    [      TERMINATION] TC 6~6 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter3 LT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 5~5 (×1) chg=     - dchg=  1.0C
+    [      TERMINATION] TC 6~6 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260406_270408_00_류성택_5882mAh_M47 ATL ECT Parameter4 LT
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [        POWER_CHG] TC 3~3 (×1) chg=  0.2C dchg=     -
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [        POWER_CHG] TC 5~5 (×1) chg=     - dchg=     -
+    [      TERMINATION] TC 6~6 (×1) chg=     - dchg=  1.0C
+
+[         히스테리시스] [GENERAL] cap= 4875 mAh
+  260202_260210_05_현혜정_4875mAh_LWN Gen5 MP1-1 0.5C hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.5C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 13~13 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 23~23 (×1) chg=  0.5C dchg=  0.5C
+
+[         히스테리시스] [GENERAL] cap= 4875 mAh
+  260212_260226_05_현혜정_4875mAh_LWN Gen5 MP1-1 0.2C hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 5000 mAh
+  260213_260226_05_현혜정_5000mAh_ATL Gen5+ 2C T-2 Stack 0.2C-10min hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 5000 mAh
+  260224_260304_05_현혜정_5000mAh_ATL Gen5+ 2C T-2 Stack 0.2C-60min hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260224_260304_05_현혜정_6330mAh_LWN 25P(after LT100cy) 0.2C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260303_260308_05_현혜정_6330mAh_LWN 25P(after LT100cy) 0.5C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.5C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 13~13 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 23~23 (×1) chg=  0.5C dchg=  0.5C
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260316_260320_05_현혜정_6330mAh_LWN 25P(after LT50cy) 0.5C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.5C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.5C dchg=  0.5C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 12~12 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 13~13 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.5C dchg=  0.5C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.5C dchg=  0.5C
+    [         CHG_DCHG] TC 23~23 (×1) chg=  0.5C dchg=  0.5C
+
+[         히스테리시스] [GENERAL] cap= 4986 mAh
+  260317_260325_05_현혜정_4986mAh_SDI Gen5+ MP1 0.2C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260319_260326_05_현혜정_6330mAh_LWN 25P(after LT50cy) 0.2C-10min volt hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 7750 mAh
+  260326_260330_05_박성철_7750mAh_Gen6++ ATL Si25% 7750mAh voltage hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[             기타] [      ?] cap= 4986 mAh
+  260327_260402_05_현혜정_4986mAh_SDI Gen5+ MP1 0.2C-10min volt hysteresis 충전 재측정
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 4960 mAh
+  260330_260405_05_신용호_4960mAh_Gen6+ ATL proto1차 Si 10% Hysteresis 측정
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 4960 mAh
+  260330_260405_05_신용호_4960mAh_Gen6+ ATL proto1차 Si 15% Hysteresis 측정
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 4948 mAh
+  260403_260410_05_박기진_4948mAh_Gen6+VB 4.57V SDI Proto1 HYSTERESIS
+    [             INIT] TC 1~1 (×1) chg=     - dchg= 0.02C
+    [         CHG_DCHG] TC 2~2 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg= 0.02C dchg= 0.02C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg= 0.02C dchg= 0.02C
+    [         CHG_DCHG] TC 12~12 (×1) chg= 0.02C dchg= 0.02C
+    [         CHG_DCHG] TC 13~13 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg= 0.02C dchg= 0.02C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg= 0.02C dchg= 0.02C
+    [         CHG_DCHG] TC 23~23 (×1) chg= 0.02C dchg= 0.02C
+
+[         히스테리시스] [GENERAL] cap= 4948 mAh
+  260406_260410_05_박기진_4948mAh_Gen6+VB SDI proto1 hysteresis re
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[         히스테리시스] [GENERAL] cap= 6330 mAh
+  260414_260425_05_현혜정_6330mAh_LWN 25P(after3.0C HT800cy) 0.2C-10min voltage hysteresis
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 4~4 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 6~6 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 9~9 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 10~10 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 11~11 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 12~12 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 13~13 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 15~15 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 19~19 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 20~20 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 21~21 (×1) chg=  0.2C dchg=  0.2C
+    [   HYSTERESIS_CHG] TC 22~22 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 23~23 (×1) chg=  0.2C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 ATL ECT parameter04 상온 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  2.0C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 ATL ECT parameter05 상온 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  1.5C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 ATL ECT parameter08 0도 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 2~2 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.1C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 ATL ECT parameter09 상온 0도 -10도 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg= 0.18C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg= 0.07C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg= 0.07C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 SDI ECT parameter04 상온 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  2.0C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 SDI ECT parameter05 상온 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 2~2 (×1) chg=  1.5C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 SDI ECT parameter08 0도 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 2~2 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.1C dchg=  0.2C
+
+[             기타] [      ?] cap= 4860 mAh
+  260413_260415_00_류성택_4860mAh_A17 SDI ECT parameter09 상온 0도 -10도 재측정
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg= 0.18C dchg=  0.2C
+    [              RPT] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 6~6 (×1) chg=  0.2C dchg= 0.07C
+    [        REST_LONG] TC 7~7 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 8~8 (×1) chg=     - dchg= 0.07C
+    [      TERMINATION] TC 9~9 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260413_260415_00_류성택_5882mAh_M47 ATL ECT parameter09 LT015 재측정
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.2C dchg= 0.06C
+    [        REST_LONG] TC 4~4 (×1) chg=     - dchg=     -
+    [         DCHG_SET] TC 5~5 (×1) chg=     - dchg= 0.06C
+    [      TERMINATION] TC 6~6 (×1) chg=     - dchg=  1.0C
+
+[             기타] [      ?] cap= 5882 mAh
+  260413_260415_00_류성택_5882mAh_M47 ATL ECT parameter10 HT 보충
+    [        REST_LONG] TC 1~1 (×1) chg=     - dchg=     -
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  0.8C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251028_260428_05_나무늬_2335mAh_Q8 ATL 선상 SEU4 RT @1-1202
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~100 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 602~602 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 603~700 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 701~701 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 702~801 (×100) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 802~802 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 803~803 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 804~901 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 902~902 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 903~903 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_251229_05_나무늬_2335mAh_Q8 선상 ATL SEU4 LT @1-401
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~100 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 402~402 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2935 mAh
+  251029_251229_05_나무늬_2935mAh_Q8 선상 ATL SEU4 LT @1-401 - 복사본
+    [             INIT] TC 1~1 (×1) chg=     - dchg= 0.16C
+    [              RPT] TC 2~2 (×1) chg= 0.16C dchg= 0.16C
+    [            ACCEL] TC 3~100 (×98) chg= 1.59C dchg=  0.8C
+    [              RPT] TC 101~101 (×1) chg= 0.16C dchg= 0.16C
+    [            ACCEL] TC 102~200 (×99) chg= 1.59C dchg=  0.8C
+    [              RPT] TC 201~201 (×1) chg= 0.16C dchg= 0.16C
+    [            ACCEL] TC 202~300 (×99) chg= 1.59C dchg=  0.8C
+    [              RPT] TC 301~301 (×1) chg= 0.16C dchg= 0.16C
+    [            ACCEL] TC 302~400 (×99) chg= 1.59C dchg=  0.8C
+    [              RPT] TC 401~401 (×1) chg= 0.16C dchg= 0.16C
+    [       CHARGE_SET] TC 402~402 (×1) chg= 0.16C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 50CY HT @1-801
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~51 (×49) chg=  2.0C dchg=  1.0C
+    [            ACCEL] TC 52~100 (×49) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 602~602 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 75CY HT @1-801
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~76 (×74) chg=  2.0C dchg=  1.0C
+    [            ACCEL] TC 77~100 (×24) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 602~602 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_260129_05_나무늬_2335mAh_Q8 선상 ATL SEU4 HT @1-801
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~100 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 602~602 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_260429_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 30CY @1-1202
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~31 (×29) chg=  2.0C dchg=  1.0C
+    [            ACCEL] TC 32~100 (×69) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 602~602 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 603~700 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 701~701 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 702~801 (×100) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 802~802 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 803~803 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 804~901 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 902~902 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 903~903 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_260429_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 50CY @1-1202
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~51 (×49) chg=  2.0C dchg=  1.0C
+    [            ACCEL] TC 52~100 (×49) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 602~602 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 603~700 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 701~701 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 702~801 (×100) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 802~802 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 803~803 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 804~901 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 902~902 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 903~903 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251029_260429_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 75CY @1-1202
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~76 (×74) chg=  2.0C dchg=  1.0C
+    [            ACCEL] TC 77~100 (×24) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 602~602 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 603~700 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 701~701 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 702~801 (×100) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 802~802 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 803~803 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 804~901 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 902~902 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 903~903 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap=    0 mAh
+  251029_260429_05_나무늬_Q8 선상 ATL SEU4 2.9V 30CY @1-1202 - 복사본
+    [             INIT] TC 1~1 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 2~2 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 3~31 (×29) chg=     - dchg=     -
+    [            ACCEL] TC 32~100 (×69) chg=     - dchg=     -
+    [         CHG_DCHG] TC 101~101 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 102~200 (×99) chg=     - dchg=     -
+    [         CHG_DCHG] TC 201~201 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 202~300 (×99) chg=     - dchg=     -
+    [         CHG_DCHG] TC 301~301 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 302~400 (×99) chg=     - dchg=     -
+    [         CHG_DCHG] TC 401~401 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 402~402 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 403~500 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 501~501 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 502~600 (×99) chg=     - dchg=     -
+    [         CHG_DCHG] TC 601~601 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 602~602 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 603~700 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 701~701 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 702~801 (×100) chg=     - dchg=     -
+    [         CHG_DCHG] TC 802~802 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 803~803 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 804~901 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 902~902 (×1) chg=     - dchg=     -
+    [         CHG_DCHG] TC 903~903 (×1) chg=     - dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251113_260113_05_나무늬_2335mAh_Q8 선상 ATL SEU4 2.9V 50CY LT @1-401
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~51 (×49) chg= 1.99C dchg= 0.99C
+    [            ACCEL] TC 52~100 (×49) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 402~402 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251113_260213_05_나무늬_2335mAh_Q8 선상 ATL 2.9V 30CY HT @1-801
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~31 (×29) chg=  2.0C dchg=  1.0C
+    [            ACCEL] TC 32~100 (×69) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 602~602 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  251209_260209_05_나무늬_2335mAh_Q8 선상 ATL SEU4 HT @301-801
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [            ACCEL] TC 2~100 (×99) chg=  2.0C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 202~202 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 203~300 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 402~402 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  260102_260630_03_홍승기_2335mAh_Q8 선상 ATL 2.9V 30Cy LT @1-400
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~31 (×29) chg= 1.99C dchg= 0.99C
+    [            ACCEL] TC 32~100 (×69) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 602~602 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 603~700 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 701~701 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 702~801 (×100) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 802~802 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 803~803 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 804~901 (×98) chg= 1.99C dchg= 0.99C
+    [              RPT] TC 902~902 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 903~903 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 2335 mAh
+  260115_260630_02_홍승기_2335mAh_Q8 선상 ATL SEU4 HT@1-802
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~100 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 602~602 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2369 mAh
+  260119_260616_03_홍승기_2369mAh_Q8 ATL Main 2.0C Rss RT
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 4~100 (×97) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 102~102 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 103~200 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 202~202 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 203~300 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 302~302 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 303~400 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 402~402 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 502~502 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 503~600 (×98) chg=  2.0C dchg=  1.0C
+    [       CHARGE_SET] TC 601~601 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2485 mAh
+  260119_260616_03_홍승기_2485mAh_Q8 ATL Sub 2.0C Rss RT
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 4~100 (×97) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 102~102 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 103~200 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 202~202 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 203~300 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 302~302 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 303~400 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 402~402 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 502~502 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 503~600 (×98) chg=  2.0C dchg=  1.0C
+    [       CHARGE_SET] TC 601~601 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2485 mAh
+  260119_260616_03_홍승기_2485mAh_Q8 ATL Sub 2C 2.9V 100Cy
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 3~100 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 102~200 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 202~300 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 301~301 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 302~400 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 401~401 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 402~402 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 403~500 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 501~501 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 502~600 (×99) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 601~601 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 602~602 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 2369 mAh
+  260130_260630_03_홍승기_2369mAh_Q8 Main 2C Rss RT CH32 57Cy-RE
+    [            ACCEL] TC 1~45 (×45) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 46~46 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 47~47 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 48~145 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 146~146 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 147~147 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 148~245 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 246~246 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 247~247 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 248~345 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 346~346 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 347~347 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 348~445 (×98) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 446~446 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 447~447 (×1) chg=  0.2C dchg=  1.0C
+    [            ACCEL] TC 448~545 (×98) chg=  2.0C dchg=  1.0C
+    [       CHARGE_SET] TC 546~546 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap=    0 mAh
+  260130_260630_03_홍승기_Q8 Main 2C Rss RT CH32 57Cy-RE
+    [            ACCEL] TC 1~45 (×45) chg=     - dchg=     -
+    [         CHG_DCHG] TC 46~46 (×1) chg=     - dchg=     -
+    [       PULSE_DCIR] TC 47~47 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 48~145 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 146~146 (×1) chg=     - dchg=     -
+    [       PULSE_DCIR] TC 147~147 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 148~245 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 246~246 (×1) chg=     - dchg=     -
+    [       PULSE_DCIR] TC 247~247 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 248~345 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 346~346 (×1) chg=     - dchg=     -
+    [       PULSE_DCIR] TC 347~347 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 348~445 (×98) chg=     - dchg=     -
+    [         CHG_DCHG] TC 446~446 (×1) chg=     - dchg=     -
+    [       PULSE_DCIR] TC 447~447 (×1) chg=     - dchg=     -
+    [            ACCEL] TC 448~545 (×98) chg=     - dchg=     -
+    [       CHARGE_SET] TC 546~546 (×1) chg=     - dchg=     -
+
+[           가속수명] [GENERAL] cap= 5000 mAh
+  260130_260630_05_이재연_5000mAh_4.53V Gen5P ATL 2.8C 고온수명 0-1600 신규 ver2 55C
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 3~3 (×1) chg=  0.2C dchg= 0.98C
+    [            ACCEL] TC 4~100 (×97) chg= 1.96C dchg= 0.98C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+
+[           가속수명] [GENERAL] cap= 4500 mAh
+  A1_MP1_4500mAh_T23_1
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 4~4 (×1) chg=  1.0C dchg=  1.0C
+    [            ACCEL] TC 5~101 (×97) chg=  2.0C dchg=  0.5C
+    [              RPT] TC 102~102 (×1) chg=  0.2C dchg=  0.2C
+    [         RSS_DCIR] TC 103~103 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 104~104 (×1) chg=  1.0C dchg=  1.0C
+    [            ACCEL] TC 105~151 (×47) chg=  2.0C dchg=  0.5C
+    [            ACCEL] TC 152~200 (×49) chg=  2.0C dchg=  0.5C
+    [              RPT] TC 201~201 (×1) chg=  0.2C dchg=  0.2C
+    [         RSS_DCIR] TC 202~202 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 203~203 (×1) chg=  1.0C dchg=  1.0C
+    [            ACCEL] TC 204~300 (×97) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 301~301 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 4500 mAh
+  A1_MP1_4500mAh_T23_2
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 4~4 (×1) chg=  1.0C dchg=  1.0C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [            ACCEL] TC 6~101 (×96) chg=  2.0C dchg=  0.5C
+    [       CHARGE_SET] TC 102~102 (×1) chg=  0.2C dchg=     -
+
+[           가속수명] [GENERAL] cap= 4500 mAh
+  A1_MP1_4500mAh_T23_3
+    [              RPT] TC 1~1 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [  HYSTERESIS_DCHG] TC 3~3 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 4~4 (×1) chg=  1.0C dchg=  1.0C
+    [            ACCEL] TC 5~100 (×96) chg=  2.0C dchg=  0.5C
+    [              RPT] TC 101~101 (×1) chg=  0.2C dchg=  0.2C
+    [              RPT] TC 102~102 (×1) chg=  0.2C dchg=  0.2C
+
+[             기타] [      ?] cap= 4905 mAh
+  250116_250501_05_김영환_4905mAh_ATL Gen5 4C HT floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 3~3 (×1) chg= 1.02C dchg=     -
+
+[             기타] [      ?] cap= 5060 mAh
+  250823_251231_05_김영환_5060mAh_LGES Gen5+ proto2 1C Floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 3~3 (×1) chg=  1.0C dchg=     -
+
+[             기타] [      ?] cap= 5060 mAh
+  251128_260630_05_김영환_5060mAh_LGES Gen5 MP1 main 1C HT Floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 3~3 (×1) chg=  0.8C dchg=     -
+
+[     PULSE_DCIR] [GENERAL] cap= 4981 mAh
+  260126_260531_01_최웅철_4981mAh_GB6 PRO16 ATL GEN4 1.3C 고온복합
+    [        FORMATION] TC 1~5 (×5) chg=  0.5C dchg=  0.5C
+    [         DCHG_SET] TC 6~6 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 8~8 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 9~9 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 10~15 (×6) chg=  1.3C dchg=  0.5C
+    [              RPT] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 4981 mAh
+  260126_260531_01_최웅철_4981mAh_GB6 PRO16 SDI GEN4 1.3C 고온복합
+    [        FORMATION] TC 1~5 (×5) chg=  0.5C dchg=  0.5C
+    [         DCHG_SET] TC 6~6 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 7~7 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 8~8 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 9~9 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 10~15 (×6) chg=  1.3C dchg=  0.5C
+    [              RPT] TC 16~16 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 2485 mAh
+  260130_260531_01_최웅철_2485mAh_Q8 SUB SDI GEN5+B 2C 고온복합
+    [        FORMATION] TC 1~6 (×6) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 7~7 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 9~9 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 10~10 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 11~16 (×6) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 4268 mAh
+  260203_260531_01_최웅철_4268mAh_SDI GB6 PRO14 GEN4 1.3C 고온복합
+    [        FORMATION] TC 1~3 (×3) chg=  0.5C dchg=  0.5C
+    [         DCHG_SET] TC 4~4 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 5~5 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 6~6 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 7~7 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 8~13 (×6) chg=  1.3C dchg=  0.5C
+    [              RPT] TC 14~14 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 2369 mAh
+  260223_260531_01_최웅철_2369mAh_Q8main ATL GEN5+B 2.0C 고온복합
+    [        FORMATION] TC 1~6 (×6) chg=  0.5C dchg=  0.5C
+    [         DCHG_SET] TC 7~7 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 9~9 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 10~10 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 11~16 (×6) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 2369 mAh
+  260223_260531_01_최웅철_2369mAh_Q8main COSMX GEN5+B 2.0C 고온복합
+    [        FORMATION] TC 1~6 (×6) chg=  0.5C dchg=  0.5C
+    [         DCHG_SET] TC 7~7 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 9~9 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 10~10 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 11~16 (×6) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 17~17 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 2485 mAh
+  260223_260531_01_최웅철_2485mAh_Q8 sub ATL GEN5+B 2.0C 고온복합
+    [        FORMATION] TC 1~6 (×6) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 7~7 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 9~9 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 10~10 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 11~17 (×7) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+
+[     PULSE_DCIR] [GENERAL] cap= 2485 mAh
+  260309_260731_01_최웅철_2485mAh_Q8 sub SDI GEN5+B 2.0C 고온복합
+    [        FORMATION] TC 1~6 (×6) chg=  0.2C dchg=  0.2C
+    [         DCHG_SET] TC 7~7 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 8~8 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 9~9 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 10~10 (×1) chg=     - dchg=  1.0C
+    [        FORMATION] TC 11~17 (×7) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+
+[             기타] [      ?] cap=  251 mAh
+  260320_260923_03_안성진_251mAh_HaeanProtoDOE복합Floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  1.0C dchg=  1.0C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  2.0C dchg=  0.5C
+    [          UNKNOWN] TC 5~18 (×14) chg=  2.0C dchg=  1.0C
+
+[           GITT] [  SWEEP] cap=  251 mAh
+  260320_260923_03_안성진_251mAh_HaeanProtoDOE일반Floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [      SWEEP_PULSE] TC 3~1001 (×999) chg=  0.8C dchg=     -
+
+[           GITT] [  SWEEP] cap=  251 mAh
+  260320_260923_03_안성진_251mAh_HaeanProtoDOE일반FloatingRe
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [      SWEEP_PULSE] TC 3~1001 (×999) chg=  0.8C dchg=     -
+
+[             기타] [      ?] cap=  251 mAh
+  260320_260923_03_안성진_251mAh_HaeanProtoMain복합Floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [         CHG_DCHG] TC 3~3 (×1) chg=  1.0C dchg=  1.0C
+    [         CHG_DCHG] TC 4~4 (×1) chg=  2.0C dchg=  0.5C
+    [          UNKNOWN] TC 5~18 (×14) chg=  2.0C dchg=  1.0C
+
+[           GITT] [  SWEEP] cap=  251 mAh
+  260320_260923_03_안성진_251mAh_HaeanProtoMain일반Floating
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [      SWEEP_PULSE] TC 3~1001 (×999) chg=  0.8C dchg=     -
+
+[           GITT] [  SWEEP] cap=  251 mAh
+  260320_260923_03_안성진_251mAh_HaeanProtoMain일반FloatingRe
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [      SWEEP_PULSE] TC 3~1001 (×999) chg=  0.8C dchg=     -
+
+[     PULSE_DCIR] [GENERAL] cap= 3365 mAh
+  260413_260930_05_김영환_3365mAh_Gen6+VB ATL Proto1 고온복합Floating 280day PNE15 1112
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [          UNKNOWN] TC 4~17 (×14) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 19~19 (×1) chg=  0.2C dchg=  1.0C
+
+[     PULSE_DCIR] [GENERAL] cap= 4948 mAh
+  260413_260930_05_박기진_4948mAh_Gen6+VB SDI Proto1 고온복합Floating 280day
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 3~3 (×1) chg=  0.2C dchg=  1.0C
+    [          UNKNOWN] TC 4~17 (×14) chg=  2.0C dchg=  1.0C
+    [              RPT] TC 18~18 (×1) chg=  0.2C dchg=  0.2C
+    [       PULSE_DCIR] TC 19~19 (×1) chg=  0.2C dchg=  1.0C
+
+[             기타] [      ?] cap= 3650 mAh
+  260413_261230_05_문현규_3650mAh_Cosmx 25SiC 타사spl floating ch55 61
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 3~3 (×1) chg=  1.0C dchg=     -
+
+[     PULSE_DCIR] [GENERAL] cap= 3650 mAh
+  260413_261230_05_문현규_3650mAh_Cosmx 25SiC 타사spl 복합floating ch23-24
+    [             INIT] TC 1~1 (×1) chg=     - dchg=  0.2C
+    [              RPT] TC 2~2 (×1) chg=  0.2C dchg=  0.2C
+    [       CHARGE_SET] TC 3~3 (×1) chg=  1.0C dchg=     -
+    [       PULSE_DCIR] TC 4~4 (×1) chg=     - dchg=  1.0C
+    [         CHG_DCHG] TC 5~5 (×1) chg=  2.0C dchg=  0.5C
+    [        FORMATION] TC 6~11 (×6) chg=  2.0C dchg=  1.0C
+
