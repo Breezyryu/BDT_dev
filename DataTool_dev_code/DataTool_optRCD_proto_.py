@@ -10014,31 +10014,52 @@ def _try_cyc_profile(raw_file_path: str, inicycle: int,
     if cyc_df.empty:
         return None
 
-    # 3-b) SaveEndData CSV 가 있으면 TotlCycle 을 ground truth 로 cross-validate.
-    # `_cyc_to_cycle_df` 의 LOOP 마커 휴리스틱은 Recall 98.89% — 짧은 휴지 등
-    # 1.11% 케이스에서 TC 경계를 놓쳐 인접 TC 가 같은 TotlCycle 로 묶이는 결함.
-    # SaveEndData CSV 의 col[27] (TotalCycle) 은 사이클러가 직접 기록한 값이라
-    # 정확. RecIndex (=col[0]) 매칭으로 cyc_df 의 TotlCycle 을 정정한다.
+    # 3-b) SaveEndData CSV 가 있으면 TotlCycle + Condition 을 ground truth 로 cross-validate.
+    # `_cyc_to_cycle_df` 의 LOOP 마커 휴리스틱은 Recall 98.89% — 짧은 휴지 (<300s)
+    # 또는 작은 dchg cap 케이스에서 TC 경계를 놓쳐 두 가지 결함 발생:
+    #   1) 인접 TC 가 같은 TotlCycle 로 묶임 (TC counter 어긋남)
+    #   2) LOOP marker (col[2]==8) 가 단순 휴지 (cond=3) 로 잘못 분류
+    # SaveEndData CSV 의 col[27] (TotalCycle) 과 col[2] (Condition) 는 사이클러가
+    # 직접 기록한 ground truth. RecIndex (=col[0]) 매칭으로 두 값 모두 정정.
+    # → 휴리스틱 LOOP 검출의 양면 결함 (TC merge + cond mis-classification) 을
+    #   하나의 cross-validate 로 deterministic 하게 해결.
     if 'cyc_tc_validated' not in cache:
         try:
             _se_data, _, _ = _cached_pne_restore_files(raw_file_path)
             if (_se_data is not None and not _se_data.empty
                     and 0 in _se_data.columns and 27 in _se_data.columns):
-                _se_tc_map = dict(zip(
-                    _se_data[0].astype(int).values,
-                    _se_data[27].astype(int).values))
-                _new_tc = cyc_df['RecIndex'].astype(int).map(_se_tc_map)
+                _se_idx = _se_data[0].astype(int).values
+                # col[27] (TotalCycle) cross-validate
+                _se_tc_map = dict(zip(_se_idx,
+                                      _se_data[27].astype(int).values))
+                _rec_int = cyc_df['RecIndex'].astype(int)
+                _new_tc = _rec_int.map(_se_tc_map)
                 # NaN (SaveEndData 에 없는 RecIndex — 시험 진행 중인 신규 행) 은
                 # 기존 휴리스틱 값 유지.
-                _resolved = _new_tc.fillna(cyc_df['TotlCycle']).astype(int)
-                _diff_n = int((_resolved != cyc_df['TotlCycle']).sum())
-                if _diff_n > 0:
+                _resolved_tc = _new_tc.fillna(cyc_df['TotlCycle']).astype(int)
+                _diff_tc = int((_resolved_tc != cyc_df['TotlCycle']).sum())
+                # col[2] (Condition / StepType) cross-validate — LOOP marker (=8)
+                # 정확히 표시 위해 함께 정정. 휴리스틱이 LOOP 를 휴지(3) 로 잘못
+                # 분류한 행을 SaveEndData 기준 8 로 복원.
+                _diff_cond = 0
+                if 2 in _se_data.columns:
+                    _se_cond_map = dict(zip(_se_idx,
+                                            _se_data[2].astype(int).values))
+                    _new_cond = _rec_int.map(_se_cond_map)
+                    _resolved_cond = _new_cond.fillna(cyc_df['Condition']).astype(int)
+                    _diff_cond = int((_resolved_cond != cyc_df['Condition']).sum())
+                else:
+                    _resolved_cond = None
+                if _diff_tc > 0 or _diff_cond > 0:
                     _perf_logger.info(
                         f'  [.cyc TC validate] {os.path.basename(raw_file_path)}: '
-                        f'{_diff_n} 행의 TotlCycle 을 SaveEndData 기준 정정 '
-                        f'(휴리스틱 LOOP 마커 누락 보정)')
+                        f'TotlCycle {_diff_tc} 행 / Condition {_diff_cond} 행 '
+                        f'을 SaveEndData 기준 정정 (휴리스틱 LOOP 마커 누락 보정)')
                     cyc_df = cyc_df.copy()
-                    cyc_df['TotlCycle'] = _resolved
+                    if _diff_tc > 0:
+                        cyc_df['TotlCycle'] = _resolved_tc
+                    if _diff_cond > 0 and _resolved_cond is not None:
+                        cyc_df['Condition'] = _resolved_cond
                     cache['cyc_cycle_df'] = cyc_df
             cache['cyc_tc_validated'] = True
         except Exception as _e:
