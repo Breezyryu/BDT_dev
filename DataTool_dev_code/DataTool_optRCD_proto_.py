@@ -7846,14 +7846,19 @@ def _classify_loop_group(
     if N >= 20 and len(chg_steps) >= 2 and dchg_steps:
         return 'ACCEL'
 
-    # 4. HYSTERESIS_DCHG: DCHG에 EC type=2048 (DOD%), N=1
-    if N == 1 and any(
-        s.get('end_condition', {}).get('type') == 2048 for s in ec_on_dchg):
+    # 4. HYSTERESIS_DCHG: DCHG에 EC type=2048 (DOD%), N=1, 짧은 펄스 없음
+    # 짧은 DCHG 펄스 (≤30s) 가 있으면 SOC별 DCIR/RSS 측정 (각 SOC 에서 펄스
+    # 으로 DCIR 측정) 일 가능성 → HYSTERESIS 가 아닌 PULSE_DCIR / RSS_DCIR
+    # 로 분류해야 함. has_short_dchg 가드로 이 케이스 제외.
+    if (N == 1 and not has_short_dchg and any(
+            s.get('end_condition', {}).get('type') == 2048 for s in ec_on_dchg)):
         return 'HYSTERESIS_DCHG'
 
-    # 5. HYSTERESIS_CHG: CHG에 EC type=18432 (SOC%), N=1
-    if N == 1 and any(
-        s.get('end_condition', {}).get('type') == 18432 for s in ec_on_chg):
+    # 5. HYSTERESIS_CHG: CHG에 EC type=18432 (SOC%), N=1, 짧은 충전 펄스 없음
+    has_short_chg = any(
+        0 < s.get('time_limit_s', 0) <= 30 for s in chg_steps)
+    if (N == 1 and not has_short_chg and any(
+            s.get('end_condition', {}).get('type') == 18432 for s in ec_on_chg)):
         return 'HYSTERESIS_CHG'
 
     # 6. SOC_DCIR: EC≥4건, body≥8스텝, N=5~19, EC 타입 다양성 ≥3
@@ -27682,13 +27687,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # ax4 OCV/CCV 오버레이 후 y tick / y label 재설정 (origin 호환).
                 # graph_continue 가 voltage 호출에서 설정한 tick 을 OCV/CCV scatter
                 # plot 자동 lim 확장으로 무너지는 케이스 차단. y label 도 의미 통합.
-                # set_ylim 인자 순서: ax1 (graph_continue 호출 시 hlimit 먼저 전달)
-                # 와 동일하게 (hlimit, llimit) 순으로 — 1번째 voltage plot 과
-                # Y축 설정 일관성 유지 (사용자 요청).
+                # ax1 (graph_continue 의 voltage 호출) 과 동일한 yticks/ylim 호출
+                # 시그니처로 — set_yticks(arange(hlimit, llimit, gap)) 는 빈 배열
+                # 을 만들어 matplotlib auto-tick 결정과 동등. 사용자 요청대로
+                # 1번째 voltage plot 의 y 축 tick / lim 과 정확히 일치.
                 if has_ocv or has_ccv:
                     ax4.set_yticks(np.arange(
-                        self.vol_y_llimit,
-                        self.vol_y_hlimit + self.vol_y_gap * 0.5,
+                        self.vol_y_hlimit,
+                        self.vol_y_llimit + self.vol_y_gap * 0.5,
                         self.vol_y_gap))
                     ax4.set_ylim(self.vol_y_hlimit, self.vol_y_llimit)
                     ax4.set_ylabel("Voltage / OCV / CCV (V)")
@@ -27735,12 +27741,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _artists.append(_plot_soc_line(
                                 _sub, "CCV", _label_or_nolegend(ax5, _base)))
                     ax5.set_xticks(np.arange(0, 110, 10))
-                    # Y axis 설정: ax1 (graph_continue 호출 시 hlimit 먼저 전달)
-                    # 와 동일하게 (hlimit, llimit) 순으로 — 1번째 voltage plot
-                    # 과 Y축 설정 일관성 유지 (사용자 요청).
+                    # Y axis 설정: ax1 (graph_continue 의 voltage 호출) 과 동일한
+                    # yticks/ylim 호출 시그니처로 — set_yticks(arange(hlimit, llimit,
+                    # gap)) 는 빈 배열이 되어 matplotlib auto-tick 결정과 동등.
+                    # 사용자 요청대로 1번째 voltage plot 의 y 축 tick / lim 과
+                    # 정확히 일치.
                     ax5.set_yticks(np.arange(
-                        self.vol_y_llimit,
-                        self.vol_y_hlimit + self.vol_y_gap * 0.5,
+                        self.vol_y_hlimit,
+                        self.vol_y_llimit + self.vol_y_gap * 0.5,
                         self.vol_y_gap))
                     ax5.set_ylim(self.vol_y_hlimit, self.vol_y_llimit)
                     graph_base_parameter(ax5, "SOC", "OCV/CCV")
