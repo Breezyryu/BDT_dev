@@ -3887,8 +3887,9 @@ def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
     line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-    ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
-    ax.set_ylim(lowlimit, highlimit - limitgap)
+    # Y tick: highlimit 포함 (np.arange stop 미포함 우회 + set_ylim 도 high 그대로)
+    ax.set_yticks(np.arange(lowlimit, highlimit + limitgap * 0.5, limitgap))
+    ax.set_ylim(lowlimit, highlimit)
     graph_base_parameter(ax, xlabel, ylabel)
     return line
 
@@ -3899,8 +3900,8 @@ def graph_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlab
     else:
         line, = ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
                 linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-    ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
-    ax.set_ylim(lowlimit, highlimit - limitgap)
+    ax.set_yticks(np.arange(lowlimit, highlimit + limitgap * 0.5, limitgap))
+    ax.set_ylim(lowlimit, highlimit)
     graph_base_parameter(ax, xlabel, ylabel)
     return line
 
@@ -3912,8 +3913,8 @@ def graph_soc_continue(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, 
         ax.plot(x, y, label=tlabel, marker='o', markersize=THEME['MARKER_SIZE'],
                 linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
     ax.set_xticks(np.arange(0, 110, 10))
-    ax.set_yticks(np.arange(lowlimit, highlimit, limitgap))
-    ax.set_ylim(lowlimit, highlimit - limitgap)
+    ax.set_yticks(np.arange(lowlimit, highlimit + limitgap * 0.5, limitgap))
+    ax.set_ylim(lowlimit, highlimit)
     graph_base_parameter(ax, xlabel, ylabel)
 
 # OCV 기반 DCIR 그래프 그리기
@@ -4375,10 +4376,12 @@ def _apply_legend_strategy(
 
 def graph_profile(x, y, ax, xlowlimit, xhighlimit, xlimitgap, ylowlimit, yhighlimit, ylimitgap, xlabel, ylabel, tlabel):
     line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
-    ax.set_xticks(np.arange(xlowlimit, xhighlimit, xlimitgap))
-    ax.set_xlim(xlowlimit, xhighlimit - xlimitgap)
-    ax.set_yticks(np.arange(ylowlimit, yhighlimit, ylimitgap))
-    ax.set_ylim(ylowlimit, yhighlimit - ylimitgap)
+    # X / Y tick: highlimit 포함하도록 stop 에 +0.5*gap (np.arange 미포함 우회).
+    # set_*lim 도 highlimit 그대로 (이전: highlimit - gap 이라 마지막 gap 잘림).
+    ax.set_xticks(np.arange(xlowlimit, xhighlimit + xlimitgap * 0.5, xlimitgap))
+    ax.set_xlim(xlowlimit, xhighlimit)
+    ax.set_yticks(np.arange(ylowlimit, yhighlimit + ylimitgap * 0.5, ylimitgap))
+    ax.set_ylim(ylowlimit, yhighlimit)
     graph_base_parameter(ax, xlabel, ylabel)
     return line
 
@@ -27420,11 +27423,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # ax4 OCV/CCV 오버레이 후 y tick / y label 재설정 (origin 호환).
                 # graph_continue 가 voltage 호출에서 설정한 tick 을 OCV/CCV scatter
                 # plot 자동 lim 확장으로 무너지는 케이스 차단. y label 도 의미 통합.
+                # y tick: highlimit 포함 (+0.5*gap), set_ylim 도 highlimit 그대로.
                 if has_ocv or has_ccv:
                     ax4.set_yticks(np.arange(
-                        self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap))
-                    ax4.set_ylim(
-                        self.vol_y_llimit, self.vol_y_hlimit - self.vol_y_gap)
+                        self.vol_y_llimit,
+                        self.vol_y_hlimit + self.vol_y_gap * 0.5,
+                        self.vol_y_gap))
+                    ax4.set_ylim(self.vol_y_llimit, self.vol_y_hlimit)
                     ax4.set_ylabel("Voltage / OCV / CCV (V)")
                 # 이어서 모드는 충/방전 모두 포함 — Crate y축 대칭 (방전=음수)
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
@@ -27469,10 +27474,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _artists.append(_plot_soc_line(
                                 _sub, "CCV", _label_or_nolegend(ax5, _base)))
                     ax5.set_xticks(np.arange(0, 110, 10))
+                    # Y tick: highlimit 포함 (+0.5*gap), set_ylim 도 highlimit 그대로.
                     ax5.set_yticks(np.arange(
-                        self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap))
-                    ax5.set_ylim(
-                        self.vol_y_llimit, self.vol_y_hlimit - self.vol_y_gap)
+                        self.vol_y_llimit,
+                        self.vol_y_hlimit + self.vol_y_gap * 0.5,
+                        self.vol_y_gap))
+                    ax5.set_ylim(self.vol_y_llimit, self.vol_y_hlimit)
                     graph_base_parameter(ax5, "SOC", "OCV/CCV")
                 else:
                     _artists.append(graph_continue(p.TimeMin, p.Crate, ax5,
