@@ -17401,7 +17401,7 @@ class Ui_sitool(object):
         self.smoothlb_2.setText(_translate("sitool", " ~ "))
         self.volrngyll.setText(_translate("sitool", "4.7"))
         self.smoothlb_4.setText(_translate("sitool", "  간격"))
-        self.volrnggap.setText(_translate("sitool", "0.1"))
+        self.volrnggap.setText(_translate("sitool", "0.2"))
         self.smoothlb.setText(_translate("sitool", "  Smooth"))
         self.smooth.setText(_translate("sitool", "0"))
         self.cutofflb.setText(_translate("sitool", "CV 컷오프"))
@@ -17424,7 +17424,7 @@ class Ui_sitool(object):
             "분리: 사이클별 t=0 겹침 — ICA/dV·dQ, LLI/LAM 분리")
         self.profile_ovlp_connected.setToolTip(
             "연결: 충전↔방전 히스테리시스 루프 — ΔV, η_total 정량")
-        self.ProfileConfirm.setText(_translate("sitool", "프로필 분석"))
+        self.ProfileConfirm.setText(_translate("sitool", "프로파일 분석"))
         self.DCIRConfirm.setText(_translate("sitool", "DCIR"))
         self.profile_tab_reset.setText(_translate("sitool", "초기화"))
         # 기존 버튼 텍스트 (숨김 — 하위 호환)
