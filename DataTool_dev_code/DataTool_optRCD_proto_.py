@@ -5661,6 +5661,87 @@ def _pne_cat_from_sch_group(sch_cat: str) -> str:
     return _sch_cat_to_label(cat, sub)
 
 
+# ── 휴리스틱 분류명 (classify_pne_cycles 등) → 신 9종 + 서브태그 매핑 ──
+# Phase 2 (260428): cycle bar 분류 일관성 — schedule 이 cover 하지 않는 TC 의
+# 휴리스틱 카테고리도 신 명칭으로 정규화. 결과 모든 TC 가 동일 naming convention
+# 사용 (사이클(ACCEL), DCIR, RPT, 방전(초기) 등).
+# 사용자 요청: 분류가 cycle timeline bar 에 일관되게 적용되도록.
+_HEURISTIC_CAT_NORMALIZE = {
+    'initial':  '방전(초기)',
+    'RPT':      'RPT',
+    'Rss':      'DCIR',
+    'DCIR':     'DCIR',
+    '가속수명':  '사이클(ACCEL)',
+    'unknown':  'unknown',
+    # 내부 마커 — 표시되지 않음 (GITT 병합 대상)
+    '_pulse':   '_pulse',
+    # 신 명칭 들 (이미 normalize 된 형태 — 그대로 유지)
+    '방전':                'fwd',
+    '방전(초기)':           'fwd',
+    '방전(종료)':           'fwd',
+    '방전(저장준비)':        'fwd',
+    '방전(SOC세팅)':        'fwd',
+    '충전':                'fwd',
+    '충전(세팅)':           'fwd',
+    '저장':                'fwd',
+    '저장(floating)':       'fwd',
+    '사이클':              'fwd',
+    '사이클(FORMATION)':    'fwd',
+    '사이클(ACCEL)':        'fwd',
+    'GITT':                'fwd',
+    'GITT(full)':           'fwd',
+    'GITT(simplified)':     'fwd',
+    'SOC별 사이클':         'fwd',
+    '히스테리시스':          'fwd',
+    '히스테리시스(충전)':    'fwd',
+    '히스테리시스(방전)':    'fwd',
+    '반사이클':              '방전',
+}
+
+
+def _normalize_classified_category(cat: str) -> str:
+    """단일 카테고리 명을 신 명칭으로 정규화. 이미 신 명칭이면 그대로 반환.
+
+    schedule 이 cover 하는 TC 는 `_apply_sch_categories_to_classified` 가
+    이미 신 명칭으로 override. schedule 미커버 TC 는 이 함수로 휴리스틱
+    구 명칭 (`가속수명`, `Rss`, `initial` 등) 을 신 명칭으로 변환.
+    """
+    mapped = _HEURISTIC_CAT_NORMALIZE.get(cat)
+    if mapped is None:
+        return cat  # unknown 마이너 카테고리 — 변경 없음
+    if mapped == 'fwd':
+        return cat  # 이미 신 명칭 — 그대로 사용
+    return mapped
+
+
+def _normalize_classified_categories(classified: list[dict]) -> list[dict]:
+    """classified 의 모든 항목 category 를 신 명칭으로 정규화.
+
+    `_apply_sch_categories_to_classified` 가 schedule 기반으로 override 한
+    뒤, 남은 휴리스틱 카테고리 (schedule 미커버 TC) 도 통일된 신 명칭으로
+    변환한다. cycle timeline bar 에 표시되는 모든 TC 가 일관된 naming.
+    원본 비파괴 (새 list 반환).
+    """
+    if not classified:
+        return classified
+    out = []
+    changed = 0
+    for entry in classified:
+        cat = entry.get('category')
+        if cat is None:
+            out.append(entry)
+            continue
+        new_cat = _normalize_classified_category(cat)
+        if new_cat != cat:
+            e2 = dict(entry)
+            e2['category'] = new_cat
+            out.append(e2)
+            changed += 1
+        else:
+            out.append(entry)
+    return out
+
+
 def _apply_sch_categories_to_classified(
     classified: list[dict],
     sch_struct: dict | None,
@@ -6405,10 +6486,12 @@ def _build_channel_meta(
     # classified 에 덮어쓴다. 신 9종 한글 + 서브태그 표기.
     if schedule_struct:
         classified = _apply_sch_categories_to_classified(classified, schedule_struct)
-        counts = {}
-        for c in classified:
-            cat = c['category']
-            counts[cat] = counts.get(cat, 0) + 1
+    # schedule 이 cover 하지 않는 TC 도 신 명칭으로 정규화 (cycle bar 일관성)
+    classified = _normalize_classified_categories(classified)
+    counts = {}
+    for c in classified:
+        cat = c['category']
+        counts[cat] = counts.get(cat, 0) + 1
 
     # CSV 폴백: 스케줄 파일 없거나 패턴 추출 실패 시
     if accel_pattern is None:
