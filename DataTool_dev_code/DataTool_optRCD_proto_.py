@@ -3992,7 +3992,15 @@ def _resolve_profile_color_mode(
 
     elif view_mode == 'all':
         n_total = n_channels * n_cycles
+        n_lines_total = n_total * n_folders
         if n_folders > 1:
+            # 다중 경로여도 사이클 수가 적으면 group gradation 대신 distinct.
+            # group 은 경로별 색상군 + 사이클별 gradation 으로, 사이클 수가
+            # 적을 때 같은 색군 내에서 거의 동일한 진한 색이 되어 가독성 저하.
+            # 임계: 사이클 ≤ 5 AND 총 라인 ≤ 15 → distinct (matplotlib default
+            # color cycle 10 색 + 약간의 여유). 그 외 group 유지.
+            if n_cycles <= 5 and n_lines_total <= 15:
+                return 'distinct'
             return 'group'
         if n_total <= 5:
             return 'distinct'
@@ -18429,7 +18437,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _btn_border = "#666" if _is_dark else "#ccc"
         
         # ── 토글 버튼 (컴팩트, toolbar 옆에 배치) ──
-        toggle_btn = QPushButton("▶ 범")
+        toggle_btn = QPushButton("▶ 제어")
         toggle_btn.setFixedSize(50, 22)
         toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.setStyleSheet(
@@ -18455,10 +18463,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             dlg = _ensure_dialog()
             if dlg.isVisible():
                 dlg.hide()
-                toggle_btn.setText("▶ CH")
+                toggle_btn.setText("▶ 제어")
             else:
                 dlg.show()
-                toggle_btn.setText("▼ CH")
+                toggle_btn.setText("▼ 제어")
         
         toggle_btn.clicked.connect(_toggle_panel)
         # GC 방지
