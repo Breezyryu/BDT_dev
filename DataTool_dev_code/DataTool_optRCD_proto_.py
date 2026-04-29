@@ -17900,11 +17900,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # Enter → 강조, Shift+Enter → 필터링
         self.FindText.installEventFilter(self)
         self.btn_highlight.clicked.connect(self.tb_cycler_combobox)
-        self.btn_filter.clicked.connect(self.filter_all_channels)
-        # 필터링 테이블 접기/펼치기
-        self.tb_channel.cellClicked.connect(self._filter_toggle_section)
+        # 현황 탭 btn_filter 는 검색어 동기화 + 필터링 탭 전환 + 실행
+        # (실제 cellClicked / contextMenu 바인딩은 _setup_filter_tab 에서
+        #  tb_channel_filter 에 수행)
+        self.btn_filter.clicked.connect(self._btn_filter_to_tab)
         self._filter_sections = {}  # {row: {'rows': [r1,r2,...], 'collapsed': bool}}
-        # tb_channel: 더블클릭 편집 비활성, Ctrl+C 복사 / Ctrl+A 전체 선택
+        # tb_channel(그리드): 더블클릭 편집 비활성, Ctrl+C 복사 / Ctrl+A 전체 선택
         self.tb_channel.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tb_channel.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         _tb_copy = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.tb_channel)
@@ -17913,9 +17914,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _tb_selall = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.SelectAll, self.tb_channel)
         _tb_selall.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         _tb_selall.activated.connect(self.tb_channel.selectAll)
-        # 필터링 테이블 우클릭 메뉴 (전체 펼침/닫힘)
-        self.tb_channel.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tb_channel.customContextMenuRequested.connect(self._filter_context_menu)
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -18176,6 +18174,115 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         self._bdt_setup_dnd()
         self._bdt_restore_window_state()
+        self._setup_filter_tab()
+
+    # ── 필터링 탭 (현황 탭과 분리된 별도 검색 결과 페이지) ──
+    def _setup_filter_tab(self) -> None:
+        """현황 탭 옆에 '필터링' 탭을 동적 생성.
+
+        구성:
+        - 자체 검색 입력(self.FindText_filter): cycler 명도 검색 가능
+        - 필터 실행 버튼(self.btn_filter_run): 클릭/Enter 로 filter_all_channels
+        - 결과 테이블(self.tb_channel_filter): filter_all_channels 결과 표시
+
+        기존 현황 탭의 btn_filter 도 호환 유지 — 클릭 시 검색어를 동기화하고
+        필터링 탭으로 전환 후 filter_all_channels 실행 (`_btn_filter_to_tab`).
+        """
+        self.tab_filter = QtWidgets.QWidget()
+        self.tab_filter.setObjectName("tab_filter")
+        _vlayout = QtWidgets.QVBoxLayout(self.tab_filter)
+        _vlayout.setContentsMargins(8, 8, 8, 8)
+        _vlayout.setSpacing(6)
+
+        # 검색바 영역
+        _top = QtWidgets.QHBoxLayout()
+        _top.setSpacing(6)
+        _font = QtGui.QFont("맑은 고딕", 10)
+        _label = QtWidgets.QLabel("검색:")
+        _label.setMinimumSize(QtCore.QSize(60, 40))
+        _label.setMaximumSize(QtCore.QSize(60, 40))
+        _label.setFont(_font)
+        _top.addWidget(_label)
+
+        self.FindText_filter = QtWidgets.QLineEdit()
+        self.FindText_filter.setMinimumSize(QtCore.QSize(480, 40))
+        self.FindText_filter.setMaximumHeight(40)
+        self.FindText_filter.setFont(_font)
+        self.FindText_filter.setPlaceholderText(
+            "스페이스=OR, 쉼표=AND. 충방전기명 검색 가능 "
+            "(예: PNE23, Toyo1, 4879mAh)")
+        _top.addWidget(self.FindText_filter)
+
+        self.btn_filter_run = QtWidgets.QPushButton("필터 실행")
+        self.btn_filter_run.setMinimumSize(QtCore.QSize(140, 40))
+        self.btn_filter_run.setMaximumSize(QtCore.QSize(140, 40))
+        self.btn_filter_run.setFont(_font)
+        _top.addWidget(self.btn_filter_run)
+        _top.addStretch(1)
+        _vlayout.addLayout(_top)
+
+        # 결과 테이블
+        self.tb_channel_filter = QtWidgets.QTableWidget()
+        self.tb_channel_filter.setMinimumSize(QtCore.QSize(400, 200))
+        self.tb_channel_filter.setRowCount(0)
+        self.tb_channel_filter.setColumnCount(8)
+        self.tb_channel_filter.setObjectName("tb_channel_filter")
+        self.tb_channel_filter.horizontalHeader().setVisible(False)
+        self.tb_channel_filter.horizontalHeader().setDefaultSectionSize(232)
+        self.tb_channel_filter.horizontalHeader().setMinimumSectionSize(100)
+        self.tb_channel_filter.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.tb_channel_filter.verticalHeader().setVisible(False)
+        self.tb_channel_filter.verticalHeader().setDefaultSectionSize(43)
+        self.tb_channel_filter.verticalHeader().setMinimumSectionSize(43)
+        self.tb_channel_filter.setItemDelegate(
+            BorderDelegate(self.tb_channel_filter))
+        self.tb_channel_filter.setStyleSheet(
+            "QTableWidget::item { padding: 0px 2px; }")
+        # 더블클릭 편집 비활성, ExtendedSelection (Ctrl+C / Ctrl+A 지원)
+        self.tb_channel_filter.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tb_channel_filter.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        _copy_sc = QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.Copy, self.tb_channel_filter)
+        _copy_sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _copy_sc.activated.connect(self._tb_channel_copy)
+        _selall_sc = QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.SelectAll, self.tb_channel_filter)
+        _selall_sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _selall_sc.activated.connect(self.tb_channel_filter.selectAll)
+        # 우클릭 컨텍스트 메뉴 (전체 펼침/닫힘) — 기존 _filter_context_menu 재사용
+        self.tb_channel_filter.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tb_channel_filter.customContextMenuRequested.connect(
+            self._filter_context_menu)
+        # 셀 클릭 → 섹션 접기/펼치기 (기존 _filter_toggle_section 재사용)
+        self.tb_channel_filter.cellClicked.connect(self._filter_toggle_section)
+        _vlayout.addWidget(self.tb_channel_filter)
+
+        # 현황 탭 바로 다음 위치(index 1)에 삽입
+        try:
+            idx_status = self.tabWidget.indexOf(self.tab)
+        except Exception:
+            idx_status = 0
+        self.tabWidget.insertTab(idx_status + 1, self.tab_filter, "필터링")
+
+        # 시그널 연결
+        self.btn_filter_run.clicked.connect(self.filter_all_channels)
+        self.FindText_filter.returnPressed.connect(self.filter_all_channels)
+
+    def _btn_filter_to_tab(self) -> None:
+        """현황 탭 btn_filter 호환 핸들러: 검색어 동기화 + 필터링 탭 전환 + 실행."""
+        try:
+            self.FindText_filter.setText(self.FindText.text())
+        except Exception:
+            pass
+        try:
+            self.tabWidget.setCurrentWidget(self.tab_filter)
+        except Exception:
+            pass
+        self.filter_all_channels()
 
     def _bdt_show_error(self, title: str, body: str) -> None:
         """워커가 emit 한 사용자 노출용 에러를 모달 + 로그."""
@@ -28958,38 +29065,41 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """필터링 테이블 우클릭 메뉴"""
         if not self._filter_sections:
             return
-        menu = QtWidgets.QMenu(self.tb_channel)
+        tb = getattr(self, 'tb_channel_filter', None) or self.tb_channel
+        menu = QtWidgets.QMenu(tb)
         menu.addAction("전체 펼침", self._filter_expand_all)
         menu.addAction("전체 닫힘", self._filter_collapse_all)
-        menu.exec(self.tb_channel.viewport().mapToGlobal(pos))
+        menu.exec(tb.viewport().mapToGlobal(pos))
 
     def _filter_expand_all(self) -> None:
         """필터링 테이블 모든 섹션 펼침"""
+        tb = getattr(self, 'tb_channel_filter', None) or self.tb_channel
         for row, sec in self._filter_sections.items():
             sec['collapsed'] = False
             for r in sec['rows']:
-                self.tb_channel.setRowHidden(r, False)
-            item = self.tb_channel.item(row, 0)
+                tb.setRowHidden(r, False)
+            item = tb.item(row, 0)
             if item:
                 item.setText(item.text().replace("▸", "▾", 1))
 
     def _filter_collapse_all(self) -> None:
         """필터링 테이블 모든 섹션 닫힘"""
+        tb = getattr(self, 'tb_channel_filter', None) or self.tb_channel
         # 충방전기 섹션 먼저 접고, 층 섹션 접기
         for row, sec in self._filter_sections.items():
             if sec['type'] == 'cycler':
                 sec['collapsed'] = True
                 for r in sec['rows']:
-                    self.tb_channel.setRowHidden(r, True)
-                item = self.tb_channel.item(row, 0)
+                    tb.setRowHidden(r, True)
+                item = tb.item(row, 0)
                 if item:
                     item.setText(item.text().replace("▾", "▸", 1))
         for row, sec in self._filter_sections.items():
             if sec['type'] == 'floor':
                 sec['collapsed'] = True
                 for r in sec['rows']:
-                    self.tb_channel.setRowHidden(r, True)
-                item = self.tb_channel.item(row, 0)
+                    tb.setRowHidden(r, True)
+                item = tb.item(row, 0)
                 if item:
                     item.setText(item.text().replace("▾", "▸", 1))
 
@@ -29002,18 +29112,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         sec['collapsed'] = collapsed
         # 하위 행 숨기기/보이기
         for r in sec['rows']:
-            self.tb_channel.setRowHidden(r, collapsed)
+            self.tb_channel_filter.setRowHidden(r, collapsed)
             # 층 접기 시 하위 충방전기 섹션도 동기화
             if sec['type'] == 'floor' and r in self._filter_sections:
                 child = self._filter_sections[r]
                 if collapsed:
                     for cr in child['rows']:
-                        self.tb_channel.setRowHidden(cr, True)
+                        self.tb_channel_filter.setRowHidden(cr, True)
                 elif not child['collapsed']:
                     for cr in child['rows']:
-                        self.tb_channel.setRowHidden(cr, False)
+                        self.tb_channel_filter.setRowHidden(cr, False)
         # 헤더 아이콘 변경 (▾↔▸)
-        item = self.tb_channel.item(row, 0)
+        item = self.tb_channel_filter.item(row, 0)
         if item:
             text = item.text()
             if collapsed:
@@ -29124,12 +29234,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def filter_all_channels(self) -> None:
         """전체 충방전기에서 검색 조건에 맞는 채널을 층별/충방전기별 그룹으로 출력
-        빈 텍스트: 유휴 채널 필터링 (완료/준비/작업정지)"""
-        search_text = str(self.FindText.text()).strip()
-        # 빈 텍스트 → 유휴 채널 검색 모드
-        is_idle_mode = not search_text
-        if is_idle_mode:
-            search_text = "유휴"
+        빈 텍스트: 유휴 채널 필터링 (완료/준비/작업정지)
+        충방전기명(예: PNE23, Toyo1) 토큰은 cycler 필터로 분리 처리."""
+        # 검색어: 필터링 탭 입력 우선 (없으면 현황 탭 FindText)
+        raw_search = ""
+        if hasattr(self, 'FindText_filter'):
+            raw_search = str(self.FindText_filter.text()).strip()
+        if not raw_search:
+            raw_search = str(self.FindText.text()).strip()
+        # 결과 출력 대상 테이블 (필터링 탭 우선, 없으면 현황 탭 그리드)
+        tb = getattr(self, 'tb_channel_filter', None) or self.tb_channel
         # 층별 충방전기 매핑 (tb_room 콤보박스와 동일 구조)
         floor_cyclers = [
             ("R5 15F", ["Toyo1", "Toyo2", "Toyo3", "Toyo4", "Toyo5",
@@ -29180,10 +29294,34 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "PNE24": (28, self.pne_cycler_name[28]),
             "PNE25": (29, self.pne_cycler_name[29]),
         }
+        # ── 검색어 파싱: cycler 토큰 vs 일반 토큰 분리 ──
+        known_cyclers = set(toyo_info.keys()) | set(pne_info.keys())
+        cycler_tokens: set[str] = set()
+        remaining: list[str] = []
+        if raw_search:
+            for tok in re.split(r'[\s,]+', raw_search):
+                tok = tok.strip()
+                if not tok:
+                    continue
+                _cy = next((cy for cy in known_cyclers
+                            if cy.lower() == tok.lower()), None)
+                if _cy:
+                    cycler_tokens.add(_cy)
+                else:
+                    remaining.append(tok)
+        filtered_search = " ".join(remaining)
+        is_idle_mode = (not filtered_search) and (not cycler_tokens)
+        if is_idle_mode:
+            search_text = "유휴"
+        else:
+            search_text = filtered_search   # cycler-only 면 빈 문자열 → 모두 매치
         # 전체 충방전기 리스트 구성 (모든 층 합산)
         all_cyclers = []
         for _, cyclers in floor_cyclers:
             all_cyclers.extend(cyclers)
+        # cycler 토큰이 있으면 해당 cycler 만 순회
+        if cycler_tokens:
+            all_cyclers = [c for c in all_cyclers if c in cycler_tokens]
         # 전체 충방전기를 순회하며 데이터 로드 + 매칭 채널 수집
         # matched_by_floor: {층: {충방전기: [(채널번호, 테스트명, 상태, cyc, vol, cell_path)]}}
         matched_by_floor = {}
@@ -29332,15 +29470,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 continue
             self.progressBar.setValue(int(((idx + 1) / total) * 100))
             QtWidgets.QApplication.processEvents()
-        # 테이블 초기화 및 리스트 출력
-        self.table_reset()
+        # 테이블 초기화 (필터링 탭 전용 — 그리드의 table_reset 호출 안 함)
+        tb.clear()
+        tb.setColumnCount(8)
+        tb.setRowCount(0)
+        tb.horizontalHeader().setVisible(False)
+        tb.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch)
         if total_matched == 0:
-            self.tb_channel.setRowCount(1)
-            self.tb_channel.setColumnCount(1)
+            tb.setRowCount(1)
+            tb.setColumnCount(1)
             item = QtWidgets.QTableWidgetItem("검색 결과 없음")
             item.setFont(QtGui.QFont("Malgun gothic", 10))
             item.setForeground(QtGui.QColor(173, 181, 189))
-            self.tb_channel.setItem(0, 0, item)
+            tb.setItem(0, 0, item)
             self.tb_summary.setItem(0, 0, QtWidgets.QTableWidgetItem("0"))
             self.tb_summary.setItem(1, 0, QtWidgets.QTableWidgetItem("0"))
             return
@@ -29353,18 +29496,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 row_count += len(matched_by_floor[floor_name][cycler_text])
         # 10열: 충방전기|채널|상태|경과|Step/Cycle|전압|동작|온도|테스트명|셀경로
         num_cols = 10
-        self.tb_channel.setColumnCount(num_cols)
+        tb.setColumnCount(num_cols)
         # 첫 호출 시 행 높이 미반영 버그 대응 (UI 초기 min=43 clamp 회피)
         # 1) 내용·구조·숨김 상태 전부 비움
         # 2) minimum 을 먼저 낮춰야 default 가 clamp 없이 적용됨
         # 3) setRowCount 로 새 행 생성 시 새 default(20) 적용
-        self.tb_channel.clearContents()
-        self.tb_channel.setRowCount(0)
-        self.tb_channel.verticalHeader().setMinimumSectionSize(9)   # 1차: min 낮춤
-        self.tb_channel.verticalHeader().setDefaultSectionSize(20)  # 2차: default 설정
-        self.tb_channel.setRowCount(row_count)
-        self.tb_channel.horizontalHeader().setVisible(True)
-        self.tb_channel.setHorizontalHeaderLabels(
+        tb.clearContents()
+        tb.setRowCount(0)
+        tb.verticalHeader().setMinimumSectionSize(9)   # 1차: min 낮춤
+        tb.verticalHeader().setDefaultSectionSize(20)  # 2차: default 설정
+        tb.setRowCount(row_count)
+        tb.horizontalHeader().setVisible(True)
+        tb.setHorizontalHeaderLabels(
             ["충방전기", "채널", "상태", "경과", "Step/Cycle/총Cycle",
              "전압", "동작", "온도", "테스트명", "셀 경로"])
         # 열 너비: 데이터 텍스트가 안 잘리는 최소 너비 (헤더는 잘림 허용)
@@ -29379,7 +29522,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             6: 68,   # 동작: "DisCharge"
             7: 44,   # 온도: "-10.0"
         }
-        header = self.tb_channel.horizontalHeader()
+        header = tb.horizontalHeader()
         # 1) 모드 먼저 설정 (Fixed/Stretch)
         for ci in range(num_cols):
             if ci in _fixed_widths:
@@ -29394,9 +29537,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 2) 고정폭 열 너비 설정 (모드 설정 후에 적용)
         header.setMinimumSectionSize(18)
         for ci, w in _fixed_widths.items():
-            self.tb_channel.setColumnWidth(ci, w)
+            tb.setColumnWidth(ci, w)
         # 행 높이는 setRowCount 이전에 default 로 일괄 설정됨 (위쪽 블록 참조)
-        self.tb_channel.setUpdatesEnabled(False)
+        tb.setUpdatesEnabled(False)
         self._filter_sections = {}
         row = 0
         # 상태별 행 전체 배경색 정의 (v3: 연녹/녹/노랑/빨강 4색)
@@ -29425,7 +29568,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             floor_item.setFont(QtGui.QFont("Malgun gothic", 10, QtGui.QFont.Weight.Bold))
             floor_item.setForeground(QtGui.QColor(255, 255, 255))
             floor_item.setBackground(QtGui.QColor(60, 84, 136))
-            self.tb_channel.setItem(row, 0, floor_item)
+            tb.setItem(row, 0, floor_item)
             floor_count = sum(len(v) for v in matched_by_floor[floor_name].values())
             for col in range(1, num_cols):
                 filler = QtWidgets.QTableWidgetItem(
@@ -29433,7 +29576,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 filler.setBackground(QtGui.QColor(60, 84, 136))
                 filler.setForeground(QtGui.QColor(255, 255, 255))
                 filler.setFont(QtGui.QFont("Malgun gothic", 9))
-                self.tb_channel.setItem(row, col, filler)
+                tb.setItem(row, col, filler)
             row += 1
             # floor_cycler_list 순서를 유지하여 충방전기별 출력
             for cycler_text in floor_cycler_list:
@@ -29447,7 +29590,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 cycler_item.setFont(QtGui.QFont("Malgun gothic", 9, QtGui.QFont.Weight.Bold))
                 cycler_item.setForeground(QtGui.QColor(60, 84, 136))
                 cycler_item.setBackground(QtGui.QColor(232, 236, 244))
-                self.tb_channel.setItem(row, 0, cycler_item)
+                tb.setItem(row, 0, cycler_item)
                 for col in range(1, num_cols):
                     if col == num_cols - 1:
                         txt = f"({len(channels)}건)  업데이트: {mtime_label}" if mtime_label else f"({len(channels)}건)"
@@ -29457,7 +29600,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     filler.setBackground(QtGui.QColor(232, 236, 244))
                     filler.setForeground(QtGui.QColor(100, 110, 130))
                     filler.setFont(QtGui.QFont("Malgun gothic", 9))
-                    self.tb_channel.setItem(row, col, filler)
+                    tb.setItem(row, col, filler)
                 row += 1
                 data_start = row
                 # ── 데이터 행 ──
@@ -29487,19 +29630,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     item_cycler.setFont(_font9)
                     if bg_color:
                         item_cycler.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 0, item_cycler)
+                    tb.setItem(row, 0, item_cycler)
                     # col 1: 채널
                     item_ch = QtWidgets.QTableWidgetItem(str(ch_no).zfill(3))
                     item_ch.setFont(_font9)
                     if bg_color:
                         item_ch.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 1, item_ch)
+                    tb.setItem(row, 1, item_ch)
                     # col 2: 상태
                     item_status = QtWidgets.QTableWidgetItem(status)
                     item_status.setFont(_font9)
                     if bg_color:
                         item_status.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 2, item_status)
+                    tb.setItem(row, 2, item_status)
                     # col 3: 경과
                     # 완료/시험완료 → 회색 (정상 방치), 그 외(멈춤류) → 빨강 (이상 경고)
                     item_elapsed = QtWidgets.QTableWidgetItem(elapsed_str)
@@ -29511,44 +29654,44 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             item_elapsed.setForeground(QtGui.QColor(150, 80, 80))
                     if bg_color:
                         item_elapsed.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 3, item_elapsed)
+                    tb.setItem(row, 3, item_elapsed)
                     # col 4: Step/Cycle
                     item_cyc = QtWidgets.QTableWidgetItem(cyc)
                     item_cyc.setFont(_font9)
                     if bg_color:
                         item_cyc.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 4, item_cyc)
+                    tb.setItem(row, 4, item_cyc)
                     # col 5: 전압
                     item_vol = QtWidgets.QTableWidgetItem(vol)
                     item_vol.setFont(_font9)
                     if bg_color:
                         item_vol.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 5, item_vol)
+                    tb.setItem(row, 5, item_vol)
                     # col 6: 동작
                     item_type = QtWidgets.QTableWidgetItem(type_str)
                     item_type.setFont(_font9)
                     if bg_color:
                         item_type.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 6, item_type)
+                    tb.setItem(row, 6, item_type)
                     # col 7: 온도
                     item_temp = QtWidgets.QTableWidgetItem(temp_str)
                     item_temp.setFont(_font9)
                     if bg_color:
                         item_temp.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 7, item_temp)
+                    tb.setItem(row, 7, item_temp)
                     # col 8: 테스트명
                     item_test = QtWidgets.QTableWidgetItem(testname)
                     item_test.setFont(_font9)
                     if bg_color:
                         item_test.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 8, item_test)
+                    tb.setItem(row, 8, item_test)
                     # col 9: 셀 경로
                     item_path = QtWidgets.QTableWidgetItem(cell_path)
                     item_path.setFont(QtGui.QFont("Malgun gothic", 8))
                     item_path.setForeground(QtGui.QColor(120, 120, 120))
                     if bg_color:
                         item_path.setBackground(bg_color)
-                    self.tb_channel.setItem(row, 9, item_path)
+                    tb.setItem(row, 9, item_path)
                     row += 1
                 # 충방전기 섹션 등록 (데이터 행 범위)
                 data_rows = list(range(data_start, row))
@@ -29560,9 +29703,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if floor_child_rows:
                 self._filter_sections[floor_row] = {
                     'rows': floor_child_rows, 'collapsed': False, 'type': 'floor'}
-        self.tb_channel.setUpdatesEnabled(True)
+        tb.setUpdatesEnabled(True)
         # 헤더 클릭 정렬 시그널 연결
-        _hdr = self.tb_channel.horizontalHeader()
+        _hdr = tb.horizontalHeader()
         try:
             _hdr.sectionClicked.disconnect(self._sort_filter_column)
         except (TypeError, RuntimeError):
@@ -29581,7 +29724,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.progressBar.setValue(100)
 
     def _sort_filter_column(self, col_idx: int):
-        """현황 탭 테이블 헤더 클릭 → 충방전기 그룹 내 데이터 행 정렬"""
+        """필터링 탭 테이블 헤더 클릭 → 충방전기 그룹 내 데이터 행 정렬"""
         if not self._filter_sections:
             return
         # 방향 토글: 같은 열 재클릭 → 반전, 다른 열 → 오름차순
@@ -29591,7 +29734,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self._filter_sort_col = col_idx
             self._filter_sort_asc = True
         ascending = self._filter_sort_asc
-        tb = self.tb_channel
+        tb = getattr(self, 'tb_channel_filter', None) or self.tb_channel
         num_cols = tb.columnCount()
         tb.setUpdatesEnabled(False)
         for sec in self._filter_sections.values():
