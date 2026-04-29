@@ -17918,13 +17918,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.tb_info.currentIndexChanged.connect(self.tb_info_combobox)
         self.tb_cycler.currentIndexChanged.connect(self.tb_cycler_combobox)
         self.tb_room.currentIndexChanged.connect(self.tb_room_combobox)
-        # Enter → 강조, Shift+Enter → 필터링
+        # 채널 리스트 sub-tab: Enter 만 강조 동작 (Shift+Enter 필터링 트리거 제거)
+        # 필터링은 '필터링' sub-tab 에서만 동작
         self.FindText.installEventFilter(self)
         self.btn_highlight.clicked.connect(self.tb_cycler_combobox)
-        # 현황 탭 btn_filter 는 검색어 동기화 + 필터링 탭 전환 + 실행
-        # (실제 cellClicked / contextMenu 바인딩은 _setup_filter_tab 에서
-        #  tb_channel_filter 에 수행)
-        self.btn_filter.clicked.connect(self._btn_filter_to_tab)
+        # btn_filter 는 _setup_filter_tab 에서 숨김 처리 (제거된 기능)
         self._filter_sections = {}  # {row: {'rows': [r1,r2,...], 'collapsed': bool}}
         # tb_channel(그리드): 더블클릭 편집 비활성, Ctrl+C 복사 / Ctrl+A 전체 선택
         self.tb_channel.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -18316,6 +18314,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 시그널 연결
         self.btn_filter_run.clicked.connect(self.filter_all_channels)
         self.FindText_filter.returnPressed.connect(self.filter_all_channels)
+
+        # 채널 리스트 sub-tab 의 btn_filter 는 숨김 (필터링은 필터링 sub-tab 전용)
+        try:
+            self.btn_filter.hide()
+        except Exception:
+            pass
 
     def _btn_filter_to_tab(self) -> None:
         """현황 탭 btn_filter 호환 핸들러: 검색어 동기화 + 필터링 sub-tab 전환 + 실행."""
@@ -29181,14 +29185,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 item.setText(text.replace("▸", "▾", 1))
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        """FindText Enter → 강조, Shift+Enter → 필터링"""
+        """채널 리스트 FindText Enter → 그리드 강조 (필터링은 '필터링' sub-tab 전용)"""
         if obj is self.FindText and event.type() == QtCore.QEvent.Type.KeyPress:
             key = event.key()
             if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
-                if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
-                    self.filter_all_channels()
-                else:
-                    self.tb_cycler_combobox()
+                self.tb_cycler_combobox()
                 return True
         return super().eventFilter(obj, event)
 
