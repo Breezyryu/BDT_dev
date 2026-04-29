@@ -7662,6 +7662,16 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
         elif type_name == 'LOOP':
             loop_count = struct.unpack_from('<I', blk, 56)[0]
             step_info['loop_count'] = loop_count
+            # PNE LOOP step 은 outer goto 정보도 자체 block 에 보유:
+            #   offset 52 = goto_target_step (점프할 step 번호, 1-based)
+            #   offset 580 = goto_repeat_count (Goto 반복횟수, 추가 반복 수)
+            # CTSEditor UI 의 'Goto 스텝' = goto_target, 'Goto 반복횟수' = goto_repeat.
+            # goto_repeat=0 또는 target=0 → 단순 inner loop (외곽 반복 없음).
+            goto_target = struct.unpack_from('<I', blk, 52)[0]
+            goto_repeat = struct.unpack_from('<I', blk, 580)[0]
+            if goto_target > 0 and goto_repeat > 0:
+                step_info['goto_target_step'] = int(goto_target)
+                step_info['goto_repeat_count'] = int(goto_repeat)
             loop_steps.append(step_info)
 
         elif type_name in ('REST', 'REST_SAFE'):
@@ -7867,10 +7877,16 @@ def _decompose_loop_groups(steps: list[dict]) -> list[dict]:
 
     각 그룹 = body(이전 LOOP/REST_SAFE 이후 ~ 현재 LOOP 직전) + loop_count.
     REST_SAFE, LOOP, GOTO, END는 body에서 제외.
+
+    Phase 2 (260428): PNE LOOP step 의 outer goto 정보 (goto_target_step,
+    goto_repeat_count) 도 그룹 dict 에 보존. `_build_loop_group_info` 가
+    이를 사용해 schedule 본체 반복 확장 (예: step 36 LOOP loop_count=97 +
+    goto_target=5 + goto_repeat=5 → step 5-36 블록이 추가 5회 반복).
     """
     _CTRL = {'LOOP', 'GOTO', 'REST_SAFE', 'END'}
     groups: list[dict] = []
     body_start = 0
+    body_start_step_num = 1  # 1-based step number where body starts
 
     for i, s in enumerate(steps):
         if s['type'] == 'LOOP':
@@ -7879,11 +7895,17 @@ def _decompose_loop_groups(steps: list[dict]) -> list[dict]:
             groups.append({
                 'loop_count': s.get('loop_count', 1),
                 'body': body,
+                # 그룹 body 의 시작 step 번호 (1-based) — goto_target 매칭용
+                'body_start_step': body_start_step_num,
+                # outer goto 확장 정보 (있는 경우만)
+                'goto_target_step': s.get('goto_target_step'),
+                'goto_repeat_count': s.get('goto_repeat_count', 0),
             })
             nxt = i + 1
             if nxt < len(steps) and steps[nxt]['type'] == 'REST_SAFE':
                 nxt += 1
             body_start = nxt
+            body_start_step_num = nxt + 1  # next group's body starts after this LOOP (+REST_SAFE)
 
     return groups
 
@@ -8087,13 +8109,23 @@ def _build_loop_group_info(
     """
     groups = _decompose_loop_groups(parsed['steps'])
     total = len(groups)
+    # Phase 2 (260428): PNE outer goto loop 확장 — LOOP step 의
+    # goto_repeat_count > 0 이면 goto_target_step 부터 해당 LOOP 까지의
+    # 그룹 시퀀스를 goto_repeat_count 만큼 추가 복제. 이렇게 해야 schedule
+    # 이 cover 하는 TC 범위가 실제 시험 사이클 수와 일치.
+    # 예: 이재연 5000mAh — ACCEL LOOP (goto_target=5, repeat=5) →
+    #   [INIT, RPT, PULSE_DCIR, ACCEL] (1 iter)
+    #   + [RPT, PULSE_DCIR, ACCEL] × 5 (outer repeats) + final RPT = 596 TC.
+    expanded = _expand_groups_with_outer_goto(groups)
+
     result: list[dict] = []
     tc = 1
+    total_expanded = len(expanded)
 
-    for i, g in enumerate(groups):
+    for i, g in enumerate(expanded):
         n = max(g['loop_count'], 1)
         cat = _classify_loop_group(
-            g['body'], g['loop_count'], i, total, capacity_mAh)
+            g['body'], g['loop_count'], i, total_expanded, capacity_mAh)
 
         # 대표 C-rate 추출
         chg_cr = None
@@ -8121,6 +8153,60 @@ def _build_loop_group_info(
         tc += n
 
     return result
+
+
+def _expand_groups_with_outer_goto(groups: list[dict]) -> list[dict]:
+    """LOOP step 의 outer goto (goto_target_step + goto_repeat_count) 를
+    해석하여 그룹 시퀀스를 확장.
+
+    Algorithm:
+    1. 각 그룹의 body_start_step (1-based) 가 다음 그룹의 시작점 정의.
+    2. 그룹 i 가 goto_repeat_count > 0 이면:
+       - target_step = goto_target_step
+       - target_group_idx = body_start_step ≤ target_step 인 그룹 중 가장 큰 idx
+         (= target_step 을 포함하는 그룹의 idx, 또는 그 직전)
+       - 그룹 [target_group_idx ... i] 를 goto_repeat_count 회 추가 반복
+
+    Parameters
+    ----------
+    groups : list[dict]
+        `_decompose_loop_groups` 결과.
+
+    Returns
+    -------
+    list[dict]
+        outer goto 적용 후 확장된 그룹 리스트.
+    """
+    if not groups:
+        return groups
+    # body_start_step 으로 정렬되어 있다고 가정 (schedule 순서 그대로)
+    expanded = []
+    i = 0
+    while i < len(groups):
+        g = groups[i]
+        expanded.append(g)
+        gtgt = g.get('goto_target_step')
+        grep = g.get('goto_repeat_count', 0) or 0
+        if gtgt and grep > 0:
+            # target_step 을 포함하는 그룹의 idx 찾기
+            # body_start_step <= target_step 인 그룹 중 idx 최대값
+            target_idx = None
+            for j in range(len(groups)):
+                bs = groups[j].get('body_start_step', 0)
+                if bs <= gtgt:
+                    target_idx = j
+                else:
+                    break
+            if target_idx is None or target_idx > i:
+                # 비정상 — outer loop 무시
+                i += 1
+                continue
+            # 그룹 [target_idx ... i] 를 grep 회 추가 반복
+            block = groups[target_idx:i + 1]
+            for _ in range(grep):
+                expanded.extend(block)
+        i += 1
+    return expanded
 
 
 def extract_schedule_structure_from_sch(
