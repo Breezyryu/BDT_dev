@@ -27682,13 +27682,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 # ax4 OCV/CCV 오버레이 후 y tick / y label 재설정 (origin 호환).
                 # graph_continue 가 voltage 호출에서 설정한 tick 을 OCV/CCV scatter
                 # plot 자동 lim 확장으로 무너지는 케이스 차단. y label 도 의미 통합.
-                # y tick: highlimit 포함 (+0.5*gap), set_ylim 도 highlimit 그대로.
+                # set_ylim 인자 순서: ax1 (graph_continue 호출 시 hlimit 먼저 전달)
+                # 와 동일하게 (hlimit, llimit) 순으로 — 1번째 voltage plot 과
+                # Y축 설정 일관성 유지 (사용자 요청).
                 if has_ocv or has_ccv:
                     ax4.set_yticks(np.arange(
                         self.vol_y_llimit,
                         self.vol_y_hlimit + self.vol_y_gap * 0.5,
                         self.vol_y_gap))
-                    ax4.set_ylim(self.vol_y_llimit, self.vol_y_hlimit)
+                    ax4.set_ylim(self.vol_y_hlimit, self.vol_y_llimit)
                     ax4.set_ylabel("Voltage / OCV / CCV (V)")
                 # 이어서 모드는 충/방전 모두 포함 — Crate y축 대칭 (방전=음수)
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
@@ -27733,12 +27735,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _artists.append(_plot_soc_line(
                                 _sub, "CCV", _label_or_nolegend(ax5, _base)))
                     ax5.set_xticks(np.arange(0, 110, 10))
-                    # Y tick: highlimit 포함 (+0.5*gap), set_ylim 도 highlimit 그대로.
+                    # Y axis 설정: ax1 (graph_continue 호출 시 hlimit 먼저 전달)
+                    # 와 동일하게 (hlimit, llimit) 순으로 — 1번째 voltage plot
+                    # 과 Y축 설정 일관성 유지 (사용자 요청).
                     ax5.set_yticks(np.arange(
                         self.vol_y_llimit,
                         self.vol_y_hlimit + self.vol_y_gap * 0.5,
                         self.vol_y_gap))
-                    ax5.set_ylim(self.vol_y_llimit, self.vol_y_hlimit)
+                    ax5.set_ylim(self.vol_y_hlimit, self.vol_y_llimit)
                     graph_base_parameter(ax5, "SOC", "OCV/CCV")
                 else:
                     _artists.append(graph_continue(p.TimeMin, p.Crate, ax5,
