@@ -1,2 +1,2 @@
 
-    @functools.wraps(func)
+    max_tc: int | None = None
