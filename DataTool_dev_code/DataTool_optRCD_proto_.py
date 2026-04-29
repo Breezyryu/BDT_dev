@@ -19905,20 +19905,26 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     header_row.addWidget(toggle_btn)
                 tab_layout.addLayout(header_row)
             # ── 서브탭 구성 (외부 탭 내부에 QTabWidget 중첩) ──
-            from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget as _QW
+            # matplot toolbar 는 결과/데이터 sub-tab "외부" (sub-tab 위) 에 단일
+            # 표시 — 사이클 분석 단순 모드와 UI 일관 (2026-04-29). sub-tab 변경
+            # 시 active canvas 의 toolbar 로 자동 swap (QStackedWidget).
+            from PyQt6.QtWidgets import (
+                QTabWidget, QVBoxLayout, QStackedWidget, QWidget as _QW)
             from matplotlib.backends.backend_qtagg import (
                 FigureCanvas, NavigationToolbar2QT as NavigationToolbar)
+            _toolbar_stack = QStackedWidget()
+            _toolbar_stack.addWidget(toolbar)  # subtab 0 (요약) 의 toolbar
+
             inner = QTabWidget()
             titles = list(subtab_titles) if subtab_titles else ["요약", "상세"]
-            # subtab 1: 기존 canvas + 기존 toolbar 내장
+            # subtab 1: canvas only — toolbar 는 외부 stack 에 위치
             _s1 = _QW()
             _l1 = QVBoxLayout(_s1)
             _l1.setContentsMargins(0, 0, 0, 0)
             _l1.setSpacing(0)
-            _l1.addWidget(toolbar)
             _l1.addWidget(canvas, 1)  # canvas 가 세로 stretch 독점
             inner.addTab(_s1, titles[0] if len(titles) > 0 else "요약")
-            # subtab N+1: extra_figs 각각 자체 toolbar 생성
+            # subtab N+1: extra_figs 각 canvas — toolbar 는 stack 으로
             for _i, _ef in enumerate(extra_figs):
                 _ec = FigureCanvas(_ef)
                 try:
@@ -19926,22 +19932,27 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 except Exception:
                     pass
                 _et = NavigationToolbar(_ec, None)
+                _toolbar_stack.addWidget(_et)
                 _sn = _QW()
                 _ln = QVBoxLayout(_sn)
                 _ln.setContentsMargins(0, 0, 0, 0)
                 _ln.setSpacing(0)
-                _ln.addWidget(_et)
                 _ln.addWidget(_ec, 1)
                 _t = (titles[_i + 1] if len(titles) > _i + 1
                       else f"상세{_i + 1}")
                 inner.addTab(_sn, _t)
-            # 데이터 서브탭 (엑셀 시트 형태) — 제공 시 끝에 추가
+            # 데이터 서브탭 (엑셀 시트 형태) — 그래프 없음 → 빈 placeholder toolbar
             if data_subtab_widget is not None:
+                _toolbar_stack.addWidget(_QW())  # 빈 영역 (toolbar 의미 없음)
                 _data_idx = 1 + len(extra_figs)  # canvas + extra_figs 뒤
                 _data_title = (titles[_data_idx]
                                if len(titles) > _data_idx else "데이터")
                 inner.addTab(data_subtab_widget, _data_title)
+            # sub-tab 변경 시 toolbar 동기화
+            inner.currentChanged.connect(_toolbar_stack.setCurrentIndex)
             inner.setCurrentIndex(0)   # 기본 "요약"
+            # outer tab_layout: toolbar (상단) → inner (아래) 순서
+            tab_layout.addWidget(_toolbar_stack)
             tab_layout.addWidget(inner, 1)  # inner 가 세로 공간 전부 차지
             # 요약(fig) + 상세(extra_figs) 모두 동일 tight_layout 적용.
             # 이전: fig 의 tight_layout 은 활성 figure 의존 (plt.tight_layout)
