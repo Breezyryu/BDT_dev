@@ -19543,6 +19543,51 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             except Exception:
                 continue
 
+    def _install_data_table_copy_shortcut(self, tbl):
+        """데이터 탭 QTableWidget 에 다중 선택 + Ctrl+C/Ctrl+A 단축키 설치.
+
+        - `SelectionMode.ExtendedSelection` 으로 드래그/Shift+클릭/Ctrl+클릭
+          다중 셀 선택 활성화.
+        - Ctrl+C: 선택 cellRange 를 엑셀 호환 형식 (탭=열 구분, 줄바꿈=행
+          구분) 으로 클립보드 복사. 다중 range 는 첫 range 만 처리.
+        - Ctrl+A: 전체 선택.
+
+        QTableWidget 은 기본적으로 Ctrl+C 를 처리하지 않으므로 명시적 설치
+        가 필요. (사이클·프로파일 데이터 탭의 read-only QTableWidget 에서
+        드래그 후 Ctrl+C 시 1셀만 복사되던 결함 해결.)
+
+        GC 방지를 위해 QShortcut 은 tbl 의 속성으로 보관.
+        """
+        from PyQt6 import QtCore, QtGui, QtWidgets
+        tbl.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+
+        def _copy():
+            sel = tbl.selectedRanges()
+            if not sel:
+                return
+            # 첫 range 기준 (사각형 영역). 다중 비-사각형 range 는 단순 처리.
+            rng = sel[0]
+            lines = []
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                cols = []
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    _it = tbl.item(r, c)
+                    cols.append(_it.text() if _it is not None else '')
+                lines.append('\t'.join(cols))
+            QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
+
+        _copy_sc = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, tbl)
+        _copy_sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _copy_sc.activated.connect(_copy)
+        _selall_sc = QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.SelectAll, tbl)
+        _selall_sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        _selall_sc.activated.connect(tbl.selectAll)
+        # GC 방지 — closure 로 잡고 있어야 shortcut 활성 유지
+        tbl._copy_shortcut = _copy_sc
+        tbl._selall_shortcut = _selall_sc
+
     def _create_cycle_data_subtab(self, sheets_per_channel: dict,
                                   channel_map: dict):
         """엑셀 시트 형태 데이터 서브탭 위젯 생성 (read-only).
@@ -19618,6 +19663,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 "QTableWidget { font-size: 9px; }"
                 "QHeaderView::section { font-size: 9px; padding: 2px 4px; }"
             )
+            # 다중 셀 선택 + Ctrl+C 복사 / Ctrl+A 전체선택 단축키
+            self._install_data_table_copy_shortcut(tbl)
             # 헤더 — OriCyc + 채널 라벨
             headers = ["OriCyc"] + col_labels
             tbl.setHorizontalHeaderLabels(headers)
@@ -19774,6 +19821,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 "QTableWidget { font-size: 9px; }"
                 "QHeaderView::section { font-size: 9px; padding: 2px 4px; }"
             )
+            # 다중 셀 선택 + Ctrl+C 복사 / Ctrl+A 전체선택 단축키
+            self._install_data_table_copy_shortcut(tbl)
             tbl.setHorizontalHeaderLabels([str(c) for c in df.columns])
             tbl.verticalHeader().setVisible(False)
             tbl.horizontalHeader().setSectionResizeMode(
