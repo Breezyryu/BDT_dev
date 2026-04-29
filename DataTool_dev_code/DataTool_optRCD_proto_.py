@@ -21056,6 +21056,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 )
                 fig.tight_layout(pad=2.0, rect=[0, 0, 0.91, 1] if _n_lines > 15 else None)
                 child.draw_idle()
+            # ── 색상 재도색 후 channel_map / 데이터 탭 색상 동기화 ──
+            # 이 블록은 group/warm/cool/dual/chg_dchg 모드로 라인이 재도색
+            # 된 후, CH 채널 제어 패널 (Lazy Init) 과 데이터 탭의 탭 라벨
+            # 색이 매트플롯립 기본 cycle 색에서 재도색 후 색으로 일치하도록
+            # channel_map['color'] 를 갱신한다. (`_finalize_plot_tab` 에서
+            # tab._channel_maps_for_resync 로 참조 보관됨.)
+            _resync_refs = getattr(
+                tab_widget, '_channel_maps_for_resync', None)
+            if _resync_refs:
+                _resync_data = getattr(
+                    tab_widget, '_data_subtab_for_resync', None)
+                try:
+                    self._sync_channel_map_colors_post_repaint(
+                        _resync_refs, data_subtab_widget=_resync_data)
+                except Exception as _e:
+                    logger.warning(
+                        '채널 색상 동기화 실패 (tab=%s): %s', tab_idx, _e)
 
         _set_progress(100)
         plt.close()
