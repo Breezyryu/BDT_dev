@@ -4176,6 +4176,7 @@ def _make_short_legend(
     condition: int | None = None,
     view_mode: str = 'cyc',
     channel_idx: int = 0,
+    test_name: str = '',
 ) -> str:
     """프로파일 범례 축약 텍스트 생성.
 
@@ -4184,6 +4185,15 @@ def _make_short_legend(
       cell — "01. CH044" / 다경로: "LWN CH044"
       all  — "CH044 Cy2" / 다경로: "LWN CH044 Cy2"
     히스테리시스: " chg" / " dchg" 접미사 추가
+
+    Parameters
+    ----------
+    test_name : str
+        사용자가 테이블 "시험명" 컬럼에 입력한 값. 비어있지 않으면
+        folder_name 보다 우선 사용 (사용자 입력이 통상 폴더 경로 끝
+        이름보다 짧고 의미명확). 다중 경로 라벨 식별자 source.
+    folder_name : str
+        시험명이 비어있을 때 fallback. 보통 경로 끝에서 2번째 폴더명.
     """
     # 사이클 번호
     if isinstance(cyc_no, tuple):
@@ -4199,8 +4209,9 @@ def _make_short_legend(
 
     # 채널 축약명
     ch_short = f"CH{channel_name}" if channel_name else ""
-    # 경로 축약명
-    folder_short = folder_name[:15] if folder_name else ""
+    # 시험명 우선 (사용자 입력) → 폴더명 fallback. [:15] 절단으로 compact.
+    _id_name = test_name if test_name else folder_name
+    folder_short = _id_name[:15] if _id_name else ""
 
     if view_mode == 'cell':
         # 셀별 통합: 구분 대상 = 채널 (같은 사이클의 서로 다른 셀)
@@ -20583,6 +20594,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             n_channels=chnlcountmax,
                             channel_name=extract_text_in_brackets(os.path.basename(FolderBase)),
                             folder_name=namelist[-2] if len(namelist) >= 2 else '',
+                            test_name=(str(all_data_name[i])
+                                       if i < len(all_data_name) and all_data_name[i]
+                                       else ''),
                             view_mode=view_mode,
                         )
                         temp_lgnd = lgnd
@@ -20715,6 +20729,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             n_channels=chnlcountmax,
                             channel_name=extract_text_in_brackets(os.path.basename(FolderBase)),
                             folder_name=last_namelist[-2] if len(last_namelist) >= 2 else '',
+                            test_name=(str(all_data_name[i])
+                                       if i < len(all_data_name) and all_data_name[i]
+                                       else ''),
                             view_mode='all',
                         )
                         temp = loaded_data.get((i, j, CycNo))
@@ -20729,8 +20746,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 continue
                         if temp is None or temp[1] is None:
                             continue
-                        temp_lgnd = (lgnd if len(all_data_name) == 0
-                                     else all_data_name[i] + " " + lgnd)
+                        # _make_short_legend 가 view_mode='all' + n_folders 조건으로
+                        # folder prefix 포함 여부를 자체 결정. 호출자에서 풀 폴더명을
+                        # 다시 prefix 로 붙이면 라벨이 40+ 자가 되어 plot 영역 잠식.
+                        # 2026-04-29: 중복 prefix 제거.
+                        temp_lgnd = lgnd
                         _plot_df, _meta = _extract_profile_data(temp)
                         if _plot_df is not None and len(_plot_df) > 2:
                             try:
@@ -20806,6 +20826,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             n_channels=chnlcountmax,
                             channel_name=extract_text_in_brackets(os.path.basename(FolderBase)),
                             folder_name=namelist[-2] if len(namelist) >= 2 else '',
+                            test_name=(str(all_data_name[i])
+                                       if i < len(all_data_name) and all_data_name[i]
+                                       else ''),
                             view_mode='cell',
                             channel_idx=j,
                         )
@@ -20822,8 +20845,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if temp is None or temp[1] is None:
                             error_reasons.append('로딩 결과 없음')
                             continue
-                        temp_lgnd = (lgnd if len(all_data_name) == 0
-                                     else all_data_name[i] + " " + lgnd)
+                        # _make_short_legend 가 view_mode='cell' + n_folders 조건으로
+                        # folder prefix 포함 여부를 자체 결정. 호출자 중복 prefix 제거.
+                        # 2026-04-29: AllProfile 과 동일 처리 (plot 영역 잠식 방지).
+                        temp_lgnd = lgnd
                         _plot_df, _meta = _extract_profile_data(temp)
                         if _plot_df is not None and len(_plot_df) > 2:
                             try:
