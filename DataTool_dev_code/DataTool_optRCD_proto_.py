@@ -27417,6 +27417,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         markersize=_ocv_ccv_ms, linestyle='none',
                         alpha=THEME['LINE_ALPHA'])
                     _artists.append(_l)
+                # ax4 OCV/CCV 오버레이 후 y tick / y label 재설정 (origin 호환).
+                # graph_continue 가 voltage 호출에서 설정한 tick 을 OCV/CCV scatter
+                # plot 자동 lim 확장으로 무너지는 케이스 차단. y label 도 의미 통합.
+                if has_ocv or has_ccv:
+                    ax4.set_yticks(np.arange(
+                        self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap))
+                    ax4.set_ylim(
+                        self.vol_y_llimit, self.vol_y_hlimit - self.vol_y_gap)
+                    ax4.set_ylabel("Voltage / OCV / CCV (V)")
                 # 이어서 모드는 충/방전 모두 포함 — Crate y축 대칭 (방전=음수)
                 _artists.append(graph_continue(p.TimeMin, p.Crate, ax2,
                     -3.2, 3.4, 0.4, "Time(min)", "C-rate", temp_lgnd))
