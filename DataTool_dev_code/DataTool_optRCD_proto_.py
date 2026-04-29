@@ -10014,6 +10014,37 @@ def _try_cyc_profile(raw_file_path: str, inicycle: int,
     if cyc_df.empty:
         return None
 
+    # 3-b) SaveEndData CSV 가 있으면 TotlCycle 을 ground truth 로 cross-validate.
+    # `_cyc_to_cycle_df` 의 LOOP 마커 휴리스틱은 Recall 98.89% — 짧은 휴지 등
+    # 1.11% 케이스에서 TC 경계를 놓쳐 인접 TC 가 같은 TotlCycle 로 묶이는 결함.
+    # SaveEndData CSV 의 col[27] (TotalCycle) 은 사이클러가 직접 기록한 값이라
+    # 정확. RecIndex (=col[0]) 매칭으로 cyc_df 의 TotlCycle 을 정정한다.
+    if 'cyc_tc_validated' not in cache:
+        try:
+            _se_data, _, _ = _cached_pne_restore_files(raw_file_path)
+            if (_se_data is not None and not _se_data.empty
+                    and 0 in _se_data.columns and 27 in _se_data.columns):
+                _se_tc_map = dict(zip(
+                    _se_data[0].astype(int).values,
+                    _se_data[27].astype(int).values))
+                _new_tc = cyc_df['RecIndex'].astype(int).map(_se_tc_map)
+                # NaN (SaveEndData 에 없는 RecIndex — 시험 진행 중인 신규 행) 은
+                # 기존 휴리스틱 값 유지.
+                _resolved = _new_tc.fillna(cyc_df['TotlCycle']).astype(int)
+                _diff_n = int((_resolved != cyc_df['TotlCycle']).sum())
+                if _diff_n > 0:
+                    _perf_logger.info(
+                        f'  [.cyc TC validate] {os.path.basename(raw_file_path)}: '
+                        f'{_diff_n} 행의 TotlCycle 을 SaveEndData 기준 정정 '
+                        f'(휴리스틱 LOOP 마커 누락 보정)')
+                    cyc_df = cyc_df.copy()
+                    cyc_df['TotlCycle'] = _resolved
+                    cache['cyc_cycle_df'] = cyc_df
+            cache['cyc_tc_validated'] = True
+        except Exception as _e:
+            logger.debug(f'.cyc TC cross-validate skipped: {_e}')
+            cache['cyc_tc_validated'] = True  # 재시도 방지
+
     try:
         t0 = _time.perf_counter()
 
@@ -10039,7 +10070,8 @@ def _try_cyc_profile(raw_file_path: str, inicycle: int,
         elapsed = (_time.perf_counter() - t0) * 1000
         _perf_logger.info(f'  [.cyc 프로파일] {os.path.basename(raw_file_path)}: '
                           f'TC {inicycle}~{endcycle}, '
-                          f'{len(result)}행, {elapsed:.1f}ms')
+                          f'{len(result)}행 (steps={len(matched_indices)}, '
+                          f'idx={start_index}~{end_index}), {elapsed:.1f}ms')
 
         # 기록 시각: FID43(Date YYMMDD) + FID44(HHMMSSmmm) 직접 파싱
         try:
