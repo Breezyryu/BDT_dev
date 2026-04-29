@@ -4210,7 +4210,14 @@ def _make_short_legend(
     # 채널 축약명
     ch_short = f"CH{channel_name}" if channel_name else ""
     # 시험명 우선 (사용자 입력) → 폴더명 fallback. [:15] 절단으로 compact.
+    # 폴더명 fallback 시 마지막 '_' 이후 텍스트를 추출 (날짜·번호 prefix 제거,
+    # 의미 명확한 시험 키워드만 남김). 예:
+    #   "260202_260210_05_현혜정_4875mAh_LWN Gen5 MP1-1 0.5C hysteresis"
+    #     → "LWN Gen5 MP1-1 0.5C hysteresis" → [:15] → "LWN Gen5 MP1-1 "
+    # test_name 입력 시는 사용자가 이미 짧게 작성한 것으로 간주 → 추출 SKIP.
     _id_name = test_name if test_name else folder_name
+    if _id_name and not test_name and '_' in _id_name:
+        _id_name = _id_name.rsplit('_', 1)[-1]
     folder_short = _id_name[:15] if _id_name else ""
 
     if view_mode == 'cell':
