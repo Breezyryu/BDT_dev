@@ -4382,6 +4382,19 @@ def graph_profile(x, y, ax, xlowlimit, xhighlimit, xlimitgap, ylowlimit, yhighli
     graph_base_parameter(ax, xlabel, ylabel)
     return line
 
+
+def _label_or_nolegend(ax, base_label: str) -> str:
+    """axes 에 동일 라벨이 이미 있으면 '_nolegend_' 반환 (범례 중복 방지).
+
+    OCV/CCV 처럼 모든 cycle/channel/folder 에서 동일 의미로 반복 표시되는
+    오버레이 마커는 범례에 한 번만 출력되어야 가독성이 유지된다.
+    첫 라인만 base_label 로 출력 → 후속 라인은 plot 은 되지만 범례 미표시.
+    """
+    for _line in ax.get_lines():
+        if _line.get_label() == base_label:
+            return "_nolegend_"
+    return base_label
+
 # set profile 그래프 그리기
 def graph_soc_set(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel, xlimit):
     _P = THEME['PALETTE']
@@ -27384,12 +27397,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                     "Time(min)", "Voltage(V)", temp_lgnd))
                 # ax4 OCV/CCV 오버레이 — 순수 scatter (라인 없음, 마커 30% 축소)
+                # 라벨: cycle/channel/folder 무관하게 "OCV", "CCV" 단일 라벨.
+                # 첫 라인만 범례 표시, 후속 라인은 _nolegend_ — 매 경로/채널/사이클
+                # 마다 동일 마커가 반복되어 범례 도배되는 것 방지 (origin 호환).
                 _ocv_ccv_ms = THEME['MARKER_SIZE'] * 0.7
                 if has_ocv:
                     _ocv_pts = p.dropna(subset=["OCV"])
                     _l, = ax4.plot(
                         _ocv_pts.TimeMin, _ocv_pts.OCV,
-                        label="OCV_" + temp_lgnd, marker='o',
+                        label=_label_or_nolegend(ax4, "OCV"), marker='o',
                         markersize=_ocv_ccv_ms, linestyle='none',
                         alpha=THEME['LINE_ALPHA'])
                     _artists.append(_l)
@@ -27397,7 +27413,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _ccv_pts = p.dropna(subset=["CCV"])
                     _l, = ax4.plot(
                         _ccv_pts.TimeMin, _ccv_pts.CCV,
-                        label="CCV_" + temp_lgnd, marker='o',
+                        label=_label_or_nolegend(ax4, "CCV"), marker='o',
                         markersize=_ocv_ccv_ms, linestyle='none',
                         alpha=THEME['LINE_ALPHA'])
                     _artists.append(_l)
@@ -27432,15 +27448,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             linewidth=THEME['LINE_WIDTH'],
                             alpha=THEME['LINE_ALPHA'])
                         return _l
+                    # 라벨: "OCV_Chg/Dch/Rst", "CCV_Chg/Dch/Rst" — temp_lgnd 제거.
+                    # cycle/channel/folder 무관 동일 라벨, 첫 라인만 범례 표시.
                     for _dir, _sub in _split_chg_dch(cf_soc, "OCV"):
-                        _suffix = f"_{_dir}" if _dir else ""
+                        _base = f"OCV_{_dir}" if _dir else "OCV"
                         _artists.append(_plot_soc_line(
-                            _sub, "OCV", f"OCV{_suffix}_" + temp_lgnd))
+                            _sub, "OCV", _label_or_nolegend(ax5, _base)))
                     if "CCV" in cf_soc.columns:
                         for _dir, _sub in _split_chg_dch(cf_soc, "CCV"):
-                            _suffix = f"_{_dir}" if _dir else ""
+                            _base = f"CCV_{_dir}" if _dir else "CCV"
                             _artists.append(_plot_soc_line(
-                                _sub, "CCV", f"CCV{_suffix}_" + temp_lgnd))
+                                _sub, "CCV", _label_or_nolegend(ax5, _base)))
                     ax5.set_xticks(np.arange(0, 110, 10))
                     ax5.set_yticks(np.arange(
                         self.vol_y_llimit, self.vol_y_hlimit, self.vol_y_gap))
