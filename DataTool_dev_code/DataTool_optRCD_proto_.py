@@ -1490,6 +1490,15 @@ def _unified_pne_load_raw(
             return None
         # TotlCycle 범위로 파일 검색 (최소~최대 범위 로딩)
         tc_min, tc_max = totl_cycles[0], totl_cycles[-1]
+        # 진단 로그 — 사용자가 입력한 사이클 범위가 실제 몇 개의 TC 로 확장되는지
+        # 추적. 1:N 매핑 케이스 (e.g., 비유의 TC 그룹화) 디버깅에 필수.
+        # CycNo 입력 99 → TC [99, 100] 등 확장 경로 가시화.
+        if len(totl_cycles) > (cycle_end - cycle_start + 1):
+            _perf_logger.info(
+                f'  [unified_raw] PNE cycle_range=({cycle_start},{cycle_end}) '
+                f'-> {len(totl_cycles)} TCs: {totl_cycles[:10]}'
+                f'{"..." if len(totl_cycles) > 10 else ""} '
+                f'scope={data_scope} path={os.path.basename(raw_file_path)}')
     else:
         tc_min, tc_max = cycle_start, cycle_end
         logical_to_totl = None
@@ -1657,6 +1666,7 @@ def _unified_toyo_load_raw(
 
     if cycle_map:
         # 논리사이클 → 물리파일 변환: 각 논리사이클별로 해당 물리파일들을 로드
+        _loaded_phys_cycles = []
         for logical_cyc in range(cycle_start, cycle_end + 1):
             if logical_cyc not in cycle_map:
                 continue
@@ -1675,6 +1685,14 @@ def _unified_toyo_load_raw(
                     file_boundaries.append((total_rows, phys_cyc))
                     total_rows += len(df_cyc)
                     frames.append(df_cyc)
+                    _loaded_phys_cycles.append(phys_cyc)
+        # 진단 로그 — 입력 사이클 범위가 1:N 으로 확장된 케이스 추적.
+        if len(_loaded_phys_cycles) > (cycle_end - cycle_start + 1):
+            _perf_logger.info(
+                f'  [unified_raw] Toyo cycle_range=({cycle_start},{cycle_end}) '
+                f'-> {len(_loaded_phys_cycles)} files: {_loaded_phys_cycles[:10]}'
+                f'{"..." if len(_loaded_phys_cycles) > 10 else ""} '
+                f'path={os.path.basename(raw_file_path)}')
     else:
         # 기존 동작: 물리파일 번호 직접 사용
         for cyc in range(cycle_start, cycle_end + 1):
