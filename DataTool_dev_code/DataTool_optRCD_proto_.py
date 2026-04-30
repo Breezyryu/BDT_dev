@@ -25,26 +25,39 @@ from datetime import timezone
 import glob
 from pathlib import Path
 
-# 무거운 의존성 lazy 로드 (Python 3.7+ 모듈 __getattr__).
-# pyodbc/xlwings 만 lazy — DB/엑셀 연동 시에만 사용. scipy 함수들은 모듈 내
-# 직접 사용 (NameError 회피) 위해 eager import.
-_BDT_LAZY = {
-    'pyodbc':      lambda: __import__('pyodbc'),
-    'xw':          lambda: __import__('xlwings'),
-}
+# 무거운 의존성 lazy 로드 — DB/엑셀 연동 시에만 import.
+# 프록시 객체를 모듈 globals 에 미리 바인딩하므로 외부 (`bdt.pyodbc`)·내부
+# (`pyodbc.connect(...)`) 접근 모두 동일하게 동작한다. 첫 attribute 접근에서
+# 실제 모듈을 import 하고 캐시한다.
+class _LazyModule:
+    """첫 attribute 접근에서 실제 모듈을 import 하는 프록시."""
+    __slots__ = ('_name', '_mod')
+
+    def __init__(self, name):
+        object.__setattr__(self, '_name', name)
+        object.__setattr__(self, '_mod', None)
+
+    def _load(self):
+        mod = object.__getattribute__(self, '_mod')
+        if mod is None:
+            mod = __import__(object.__getattribute__(self, '_name'))
+            object.__setattr__(self, '_mod', mod)
+        return mod
+
+    def __getattr__(self, attr):
+        return getattr(self._load(), attr)
+
+    def __repr__(self):
+        name = object.__getattribute__(self, '_name')
+        loaded = object.__getattribute__(self, '_mod') is not None
+        return f"<_LazyModule {name!r} loaded={loaded}>"
 
 
-def __getattr__(name):
-    loader = _BDT_LAZY.get(name)
-    if loader is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    obj = loader()
-    globals()[name] = obj
-    return obj
+pyodbc = _LazyModule('pyodbc')
+xw = _LazyModule('xlwings')
 
 
-# scipy 함수들은 모듈 내부 함수에서 직접 사용되므로 eager import.
-# (lazy __getattr__ 은 외부 attr 접근에만 trigger — 모듈 자체 코드에서는 NameError)
+# scipy 함수들은 가벼우므로 eager import (모듈 내부 함수에서 직접 사용).
 from scipy.optimize import curve_fit, root_scalar
 from scipy.stats import linregress
 
