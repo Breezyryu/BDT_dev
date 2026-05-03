@@ -955,8 +955,10 @@ def _compute_tc_hysteresis_labels(
 ) -> dict[int, dict]:
     """SaveEndData 에서 TC 별 히스테리시스 라벨·깊이 산출.
 
-    `classified` (meta.classified) 가 제공되면 category = '히스테리시스(방전)'
-    또는 '히스테리시스(충전)' 인 TC 만 결과에 포함. RPT / GITT / 사이클 등은
+    `classified` (meta.classified) 가 제공되면 category = '히스테리시스(방충전)'
+    (TC N dchg + TC N+1 chg, cross-TC) 또는 '히스테리시스(충방전)' (TC N
+    chg + dchg, within-TC) 인 TC 만 결과에 포함. 구 alias '히스테리시스(방전)'
+    / '히스테리시스(충전)' 도 동일하게 처리. RPT / GITT / 사이클 등은
     제외하여 rank 매핑이 hysteresis TC 들 사이에서만 이루어지게 함 (off-by-one
     방지). category 가 direction 결정에 사용되어 SOC anchor 휴리스틱 의존도
     감소.
@@ -1003,11 +1005,18 @@ def _compute_tc_hysteresis_labels(
                 tc_int = int(tc)
             except (TypeError, ValueError):
                 continue
-            # category 예: '히스테리시스(방전)', '히스테리시스(충전)'
+            # category 예: '히스테리시스(방충전)' (신, 260503), '히스테리시스(방전)' (구)
+            # 신 명칭: '방충전' = TC N dchg + TC N+1 chg (cross-TC, Dchg group)
+            #         '충방전' = TC N chg + TC N dchg (within-TC, Chg group)
+            # 구 alias 도 호환 — 라벨 변경 사이의 데이터 불일치 방지.
             if '히스테리시스' in cat:
-                if '방전' in cat:
+                if '방충전' in cat:
                     tc_to_hyst_dir[tc_int] = 'Dchg'
-                elif '충전' in cat:
+                elif '충방전' in cat:
+                    tc_to_hyst_dir[tc_int] = 'Chg'
+                elif '방전' in cat:  # 구 alias
+                    tc_to_hyst_dir[tc_int] = 'Dchg'
+                elif '충전' in cat:  # 구 alias
                     tc_to_hyst_dir[tc_int] = 'Chg'
             elif 'RPT' in cat:
                 rpt_tcs.add(tc_int)
@@ -1015,7 +1024,7 @@ def _compute_tc_hysteresis_labels(
     # RPT 중 hysteresis 그룹에 인접 (직전 또는 직후) 한 것은 100% reference 로 포함
     # 일반 protocol 예:
     #   TC 2 = RPT (전체 사이클) → 방전 hyst 직전 → "Dchg 100%" 레퍼런스
-    #   TC 3-11 = 히스테리시스(방전) 9 cycles (깊이 10~90%)
+    #   TC 3-12 = 히스테리시스(방충전) 10 cycles (깊이 10~100%)
     #   TC 12 = RPT (전체 사이클) → 방전 hyst 직후 → "Dchg 100%" 레퍼런스
     # 사용자가 TC 3-12 선택 시 TC 12 RPT 가 "Dchg 100%" 로 인식되어야 함.
     if tc_to_hyst_dir and rpt_tcs:
@@ -2429,10 +2438,20 @@ def _calc_soc(
     pd.Series
         SOC 값. df.index와 동일 인덱스.
     """
+    # Fix A (260503) — preset 4 (충전 분석) / preset 5 (방전 분석) 의 X축에
+    # axis_mode (SOC vs DOD) 반영. SOC = 1 − DOD 관계 항상 성립.
+    # 자연 anchor (Chg+SOC, Dchg+DOD) 는 phase 시작점 X=0, 반대 axis 는 X=1.
+    # 랩장님 원본 (oper1.py) 의 phase-relative 0 anchor 정신은 자연 anchor 에서 보존.
     if data_scope == "charge":
-        return df["ChgCap"]  # 정규화됨 (0~1)
+        # 충전: cell 이 SOC 0 (DOD 1) 에서 출발해 SOC 1 (DOD 0) 으로 진행
+        if axis_mode == "dod":
+            return 1.0 - df["ChgCap"]  # DOD 1 → 0, X 시작 = DOD 1.0
+        return df["ChgCap"]  # SOC 0 → 1, X 시작 = SOC 0 (oper1.py 동일)
     if data_scope == "discharge":
-        return df["DchgCap"]  # DOD 방향 (0~1)
+        # 방전: cell 이 SOC 1 (DOD 0) 에서 출발해 SOC 0 (DOD 1) 으로 진행
+        if axis_mode == "soc":
+            return 1.0 - df["DchgCap"]  # SOC 1 → 0, X 시작 = SOC 1.0
+        return df["DchgCap"]  # DOD 0 → 1, X 시작 = DOD 0 (oper1.py 동일)
 
     # data_scope == "cycle"
     if axis_mode == "dod" and overlap == "connected":
@@ -5666,8 +5685,11 @@ CATEGORY_LABELS = {
     'DCIR': 'DCIR (단일 펄스)',
     'SOC별 사이클': 'SOC별 사이클',
     '히스테리시스': '히스테리시스',
-    '히스테리시스(충전)': '히스테리시스 (충전 경로)',
-    '히스테리시스(방전)': '히스테리시스 (방전 경로)',
+    '히스테리시스(충방전)': '충방전 히스테리시스',  # TC N chg + dchg (within-TC)
+    '히스테리시스(방충전)': '방충전 히스테리시스',  # TC N dchg + TC N+1 chg (cross-TC)
+    # 구 약어 alias (하위 호환) — 260503 이전 분류 결과
+    '히스테리시스(충전)': '충방전 히스테리시스',
+    '히스테리시스(방전)': '방충전 히스테리시스',
     # ── 구 약어 alias (하위 호환) ──
     'Rss': 'Rss (DCIR pulse)',          # 구 — 신 DCIR 또는 GITT(simplified) 로 매핑
     '가속수명': '가속수명 (멀티스텝 충전)',  # 구 — 신 사이클(ACCEL)
@@ -5689,8 +5711,8 @@ _SCH_CAT_TO_NEW = {
     'SOC_DCIR':        ('SOC별 사이클', None),
     'PULSE_DCIR':      ('DCIR', None),
     'RSS_DCIR':        ('DCIR', None),         # 짧은 REST — 순수 DCIR
-    'HYSTERESIS_CHG':  ('히스테리시스', '충전'),
-    'HYSTERESIS_DCHG': ('히스테리시스', '방전'),
+    'HYSTERESIS_CHG':  ('히스테리시스', '충방전'),  # 사용자 요청 (260503): TC N chg + dchg = 충→방 페어링
+    'HYSTERESIS_DCHG': ('히스테리시스', '방충전'),  # TC N dchg + TC N+1 chg = 방→충 페어링
     'CHARGE_SET':      ('충전', '세팅'),
     'DISCHARGE_SET':   ('방전', 'SOC세팅'),
     'DCHG_SET':        ('방전', None),
@@ -5751,6 +5773,9 @@ _HEURISTIC_CAT_NORMALIZE = {
     'GITT(simplified)':     'fwd',
     'SOC별 사이클':         'fwd',
     '히스테리시스':          'fwd',
+    '히스테리시스(충방전)':  'fwd',
+    '히스테리시스(방충전)':  'fwd',
+    # 구 alias
     '히스테리시스(충전)':    'fwd',
     '히스테리시스(방전)':    'fwd',
     '반사이클':              '방전',
@@ -8163,10 +8188,90 @@ def _build_loop_group_info(
             'loop_count': n,
             'chg_crate': chg_cr,
             'dchg_crate': dchg_cr,
+            '_body': g['body'],  # envelope merge 판정용 (post-pass 에서 제거)
         })
         tc += n
 
+    # Post-pass — hysteresis envelope merge: hyst 그룹 직후의 단일 TC RPT 가
+    # 사용자 protocol 의 depth 100% envelope 인 경우 (chg recovery+full dchg
+    # 또는 full chg+dchg) 를 흡수해 hyst 그룹에 통합. 사용자 보고 (260503):
+    # "hysteresis(TC3-11, TC14-22) 로 분류됨 → TC3-12, TC14-23 으로 분류 필요".
+    # 단순 인접성 (next group only, single TC, body 호환) 으로 판정 — 중간
+    # RPT (mid-RPT) 는 흡수 대상 아님 (인접한 hyst 가 next 가 아니므로).
+    result = _merge_hysteresis_envelopes(result)
+    # _body 제거 — 외부 인터페이스 보존
+    for g in result:
+        g.pop('_body', None)
     return result
+
+
+def _merge_hysteresis_envelopes(result: list[dict]) -> list[dict]:
+    """Hyst 그룹 직후의 단일 TC RPT/CHG_DCHG 를 envelope 으로 흡수.
+
+    Hysteresis protocol 의 마지막 cycle 이 풀 chg+dchg (depth 100%) 일
+    경우, .sch 의 end_condition 이 voltage cutoff 로 정의되어 RPT 로
+    fall through 분류됨. 이를 인접한 hyst 그룹에 흡수하여 사용자 인지의
+    "10cy hyst" 그룹으로 정합화.
+
+    알고리즘:
+      1. HYSTERESIS_DCHG / HYSTERESIS_CHG 그룹 식별
+      2. 각 hyst 그룹의 ``i+1`` 위치 (next) 가 RPT/CHG_DCHG + loop_count==1
+         + body 호환 (chg+dchg, no short pulse) 이면 envelope 후보
+      3. ORIGINAL result 기준으로만 후보 수집 → 적용 (chain merge 방지)
+      4. envelope 후보의 category 를 hyst 카테고리로 변경
+
+    Examples
+    --------
+    Before: [HYSTERESIS_DCHG(3-11), RPT(12), RPT(13), HYSTERESIS_CHG(14-22), RPT(23)]
+    After:  [HYSTERESIS_DCHG(3-11), HYSTERESIS_DCHG(12), RPT(13), HYSTERESIS_CHG(14-22), HYSTERESIS_CHG(23)]
+            ↓ (popover 가 인접 same-category 자동 병합)
+            HYSTERESIS_DCHG(3-12), RPT(13), HYSTERESIS_CHG(14-23)
+    """
+    if not result:
+        return result
+
+    merges: list[tuple[int, str]] = []
+    for i, g in enumerate(result):
+        if g['category'] not in ('HYSTERESIS_DCHG', 'HYSTERESIS_CHG'):
+            continue
+        target_cat = g['category']
+        if i + 1 >= len(result):
+            continue
+        next_g = result[i + 1]
+        if next_g['category'] not in ('RPT', 'CHG_DCHG'):
+            continue
+        if next_g.get('loop_count', 0) != 1:
+            continue
+        if not _is_compatible_with_hyst_envelope(next_g):
+            continue
+        merges.append((i + 1, target_cat))
+
+    for idx, cat in merges:
+        result[idx]['category'] = cat
+
+    return result
+
+
+def _is_compatible_with_hyst_envelope(rpt_group: dict) -> bool:
+    """RPT/CHG_DCHG 그룹이 인접 hyst 그룹의 envelope (depth 100%) 후보인지 판정.
+
+    구조적 유사성 체크 — body 가 chg + dchg 둘 다 포함하고 짧은 pulse
+    (DCIR/GITT 패턴) 이 없어야 hyst envelope 후보.
+    """
+    body = rpt_group.get('_body', [])
+    if not body:
+        return False
+    chg_steps = [s for s in body if s['type'] in _SCH_CHG_TYPES]
+    dchg_steps = [s for s in body if s['type'] in _SCH_DCHG_TYPES]
+    if not chg_steps or not dchg_steps:
+        return False
+    # Short pulses 가 있으면 GITT/DCIR 패턴 — envelope 아님
+    has_short = any(
+        0 < s.get('time_limit_s', 0) <= 30
+        for s in chg_steps + dchg_steps)
+    if has_short:
+        return False
+    return True
 
 
 def _expand_groups_with_outer_goto(groups: list[dict]) -> list[dict]:
@@ -9317,8 +9422,11 @@ _CLASSIFIED_COLORS = {
     'DCIR':               {'color_idx': 1, 'desc': 'DCIR (단일 펄스)'},
     'SOC별 사이클':        {'color_idx': 6, 'desc': 'SOC별 사이클'},
     '히스테리시스':         {'color_idx': 8, 'desc': '히스테리시스'},
-    '히스테리시스(충전)':    {'color_idx': 8, 'desc': '히스테리시스 (충전 경로)'},
-    '히스테리시스(방전)':    {'color_idx': 8, 'desc': '히스테리시스 (방전 경로)'},
+    '히스테리시스(충방전)':  {'color_idx': 8, 'desc': '충방전 히스테리시스'},
+    '히스테리시스(방충전)':  {'color_idx': 8, 'desc': '방충전 히스테리시스'},
+    # 구 alias (하위 호환)
+    '히스테리시스(충전)':    {'color_idx': 8, 'desc': '충방전 히스테리시스'},
+    '히스테리시스(방전)':    {'color_idx': 8, 'desc': '방충전 히스테리시스'},
     # ── 구 약어 alias (하위 호환, 색상 유지) ──
     'Rss':     {'color_idx': 1, 'desc': 'Rss (DCIR pulse)'},      # 신: DCIR/GITT(simplified)
     '가속수명': {'color_idx': 0, 'desc': '가속수명 (멀티스텝 충전)'},  # 신: 사이클(ACCEL)
@@ -21175,6 +21283,22 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         _start = _next_df['SOC'].iloc[0]
                                         _next_df['SOC'] = (_next_df['SOC']
                                                            - _start + _ofs)
+                                        # Phase canonical anchor — main path 와 동기화
+                                        # (_apply_hysteresis_phase_canonical_anchor 와 동일 로직)
+                                        _label_maps = getattr(
+                                            self, '_hyst_phase_label_maps', None)
+                                        if (_label_maps and 'Condition' in _next_df.columns):
+                                            _info = _label_maps.get(i, {}).get(
+                                                int(_next_cyc))
+                                            if _info:
+                                                _delta = (
+                                                    self._compute_hysteresis_phase_canonical_delta(
+                                                        _next_df, _info))
+                                                if abs(_delta) > 1e-6:
+                                                    _next_df['SOC'] = _next_df['SOC'] + _delta
+                                                # dchg endpoint scaling
+                                                self._scale_hysteresis_dchg_phase_to_canonical_end(
+                                                    _next_df, _info)
                             hyst_pair_state['next_temp'] = _next_temp
                         elif hyst_pair_state is not None:
                             hyst_pair_state['next_temp'] = None
@@ -26549,6 +26673,216 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 f'TC{_t}={_v:+.3f}' for _t, _v in sorted(_ofs.items())[:25])
             _perf_logger.info(f'  [hysteresis] folder={_fi} TC offsets: {_ofs_str}')
 
+    def _apply_hysteresis_phase_canonical_anchor(
+        self,
+        loaded_data: dict,
+        all_data_folder: list,
+        mincapacity: float,
+        data_attr: str = "df",
+    ) -> None:
+        """히스테리시스 phase 시작점을 canonical SOC 로 강제.
+
+        `_apply_hysteresis_soc_offsets` 직후 호출. cumul anchor drift 와
+        CC-CV 잉여 (CC 후 CV 단계의 ChgCap 추가 누적, 보통 +0.05~0.10) 를
+        per-cycle 보정. Hyst label (direction) 별로:
+
+        - **Dchg 그룹** (방전 hyst): 각 TC 의 dchg phase 첫 row SOC = **1.0**
+          → cross-TC 페어링 시 closed loop top 이 SOC 1.0 line 에 정렬.
+          TC 의 chg phase 도 함께 shift 되므로 chg end (= dchg start) = 1.0.
+        - **Chg 그룹** (충전 hyst): 각 TC 의 chg phase 첫 row SOC = **0.0**
+          → closed loop bottom 이 SOC 0.0 line 에 정렬.
+
+        Hyst label 에 없는 TC (비 hyst, RPT 비인접, classified 미인식) 는
+        변경 없음 — 기존 absolute SOC anchor 유지.
+
+        사용자 protocol 의 의도:
+          (Voltage hysteresis test_Graph format_v1.3, 사용자 보고)
+          - TC 3-12 (방전 hyst): 모든 dchg arc 가 SOC 1.0 시작
+          - TC 14-23 (충전 hyst): 모든 chg arc 가 SOC 0.0 시작
+        랩장님 원본 (`pne_chg_Profile_data` / `pne_dchg_Profile_data`) 의
+        phase-relative anchor 와 동등한 시작점 정렬을 hysteresis preset 의
+        cross-TC 페어링 시각에 보장.
+
+        Side effect: cross-TC pair 의 closure 가 약간 어긋날 수 있음
+        (각 TC 의 chg amount 가 raw 데이터에서 일관되지 않을 시). 사용자
+        protocol 처럼 chg amount = 정확히 (1 - prev_dchg_end) 면 closure
+        보존. CC-CV 잉여 (+ε) 는 본 anchor 가 흡수.
+
+        Parameters
+        ----------
+        loaded_data : dict
+            {(folder_idx, subfolder_idx, cycle_key): [mincap, UnifiedProfileResult]}.
+            UnifiedProfileResult.df 는 absolute SOC anchor 이미 적용된 상태.
+        all_data_folder : list
+            폴더 경로 목록 (folder_idx 인덱싱).
+        mincapacity : float
+            정격용량 (라벨링 fallback 용).
+        data_attr : str
+            UnifiedProfileResult 의 DataFrame 속성명 (기본 "df").
+        """
+        # folder_idx 별 hysteresis 라벨 사전 계산 (RPT 인접 100% 자동 인식 포함)
+        _label_maps: dict[int, dict[int, dict]] = {}
+        for fi, folder in enumerate(all_data_folder):
+            try:
+                if not os.path.isdir(str(folder)):
+                    continue
+                channels = sorted([f.path for f in os.scandir(str(folder))
+                            if f.is_dir() and _is_channel_folder(f.name)])
+                if not channels:
+                    continue
+                best_ch = channels[0]
+                best_lc = 0
+                for ch in channels:
+                    m = get_channel_meta(ch)
+                    if m and (m.max_tc or 0) > best_lc:
+                        best_lc = m.max_tc or 0
+                        best_ch = ch
+                meta = get_channel_meta(best_ch)
+                cap = meta.min_capacity if meta else mincapacity
+                classified = (meta.classified if meta
+                              and getattr(meta, 'classified', None) else None)
+                _label_maps[fi] = _compute_tc_hysteresis_labels(
+                    best_ch, cap, classified=classified)
+            except Exception as _e:
+                _perf_logger.debug(f'  [phase_anchor] label 계산 실패 fi={fi}: {_e}')
+                _label_maps[fi] = {}
+
+        # offset map 저장 — pair fetch fallback (`_profile_render_loop` L21164~)
+        # 시 동일 정규화 적용을 위해 재사용.
+        self._hyst_phase_label_maps = _label_maps
+
+        # 각 cycle 의 SOC 를 phase canonical anchor 로 추가 shift + dchg endpoint scaling
+        n_shifted = 0
+        n_scaled = 0
+        for key, val in loaded_data.items():
+            if not isinstance(val, (list, tuple)) or len(val) < 2:
+                continue
+            result_obj = val[1]
+            df = getattr(result_obj, data_attr, None)
+            if df is None or 'SOC' not in df.columns or 'Condition' not in df.columns:
+                continue
+            if not isinstance(key, tuple) or len(key) < 3:
+                continue
+            folder_idx = key[0]
+            cycle_key = key[2]
+            if isinstance(cycle_key, int):
+                tc = cycle_key
+            elif isinstance(cycle_key, tuple) and len(cycle_key) == 2:
+                tc = cycle_key[0]
+            else:
+                continue
+
+            labels = _label_maps.get(folder_idx, {})
+            info = labels.get(int(tc))
+            if not info:
+                continue
+
+            # Step A: phase 첫 row 를 canonical SOC 로 shift (Layer 2-α)
+            delta = self._compute_hysteresis_phase_canonical_delta(df, info)
+            if abs(delta) > 1e-6:
+                df['SOC'] = df['SOC'] + delta
+                n_shifted += 1
+
+            # Step B: dchg phase 의 endpoint 를 canonical end 로 scaling
+            # (Cy0012 dchg start, TC 14-23 dchg end 잔존 drift 보정)
+            if self._scale_hysteresis_dchg_phase_to_canonical_end(df, info):
+                n_scaled += 1
+
+        _perf_logger.info(
+            f'  [hysteresis] phase canonical anchor 적용: '
+            f'shift={n_shifted}개, dchg-scale={n_scaled}개 cycle')
+
+    @staticmethod
+    def _compute_hysteresis_phase_canonical_delta(
+        df: 'pd.DataFrame',
+        info: dict,
+    ) -> float:
+        """Phase canonical anchor 를 만족하는 추가 shift 량 산출.
+
+        Dchg → dchg 첫 row 가 SOC 1.0 이 되도록.
+        Chg  → chg 첫 row 가 SOC 0.0 이 되도록.
+        대상 phase 부재 시 0 반환.
+        """
+        direction = info.get('direction')
+        if direction == 'Dchg':
+            dchg_rows = df[df['Condition'] == 2]
+            if len(dchg_rows) > 0:
+                return 1.0 - float(dchg_rows['SOC'].iloc[0])
+        elif direction == 'Chg':
+            chg_rows = df[df['Condition'] == 1]
+            if len(chg_rows) > 0:
+                return 0.0 - float(chg_rows['SOC'].iloc[0])
+        return 0.0
+
+    @staticmethod
+    def _scale_hysteresis_dchg_phase_to_canonical_end(
+        df: 'pd.DataFrame',
+        info: dict,
+        max_scale_deviation: float = 0.20,
+    ) -> bool:
+        """방전 phase 의 endpoint 를 canonical SOC 로 강제 (linear scaling).
+
+        Layer 2-α (`_compute_hysteresis_phase_canonical_delta`) 의 shift
+        후에도 잔존하는 dchg endpoint drift 를 보정. 첫 row 는 보존하고
+        마지막 row 만 canonical end 로 끌어당김 (linear scaling, 작은
+        ratio 만 허용).
+
+        - **Dchg 그룹** (방전 hyst): dchg 마지막 row → SOC `1 - depth_pct/100`
+          (예: TC 12 depth 100% → 0.0, TC 4 depth 20% → 0.8)
+          → Cy0012 의 dchg 끝점 정렬. 일반적으로 cumul + Layer 2-α 가
+            이미 정확하지만, CC-CV 잉여 잔존 시 보정.
+        - **Chg 그룹** (충전 hyst): dchg 마지막 row → SOC **0.0**
+          (within-TC 페어링의 return-to-start 보장)
+          → 사용자 보고 "TC 14-23 의 dchg 끝점 ≠ 0.0" 해소.
+
+        Scaling 은 dchg phase 만 적용 — chg phase 보존하여 cross-TC
+        페어링 closure 유지. raw range 와 target range 차이가
+        `max_scale_deviation` 초과 시 skip (데이터 이상 신호로 간주).
+
+        Returns
+        -------
+        bool
+            scaling 적용 여부.
+        """
+        if 'Condition' not in df.columns or 'SOC' not in df.columns:
+            return False
+        direction = info.get('direction')
+        depth_pct = info.get('depth_pct', 0)
+        if direction not in ('Dchg', 'Chg') or not depth_pct:
+            return False
+
+        dchg_idx = df.index[df['Condition'] == 2]
+        if len(dchg_idx) < 2:
+            return False
+
+        s_first = float(df.loc[dchg_idx[0], 'SOC'])
+        s_last = float(df.loc[dchg_idx[-1], 'SOC'])
+
+        if direction == 'Dchg':
+            target_last = 1.0 - depth_pct / 100.0
+        else:  # 'Chg'
+            target_last = 0.0
+
+        raw_range = s_last - s_first
+        target_range = target_last - s_first
+        if abs(raw_range) < 1e-6:
+            return False
+
+        # 보정 비율이 max_scale_deviation 초과 시 skip — 비정상 데이터
+        if abs(target_range / raw_range - 1.0) > max_scale_deviation:
+            _perf_logger.warning(
+                f'  [phase_scale] dchg range 차이 과다 '
+                f'(raw={raw_range:+.3f}, target={target_range:+.3f}) — skip')
+            return False
+
+        scale = target_range / raw_range
+        # scale ≈ 1.0 (변화 없음) 시 skip — applied=False 로 회계 정확화
+        if abs(scale - 1.0) < 1e-6:
+            return False
+        df.loc[dchg_idx, 'SOC'] = (
+            s_first + (df.loc[dchg_idx, 'SOC'] - s_first) * scale)
+        return True
+
     def _build_hysteresis_long_dataframe(
         self,
         loaded_data: dict,
@@ -27171,11 +27505,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # ── 히스테리시스 프리셋 모드 자동 감지 ──
         # connected + hyst_pair 동시 활성 = 히스테리시스 분석.
-        # 이 조합에서 단일 flow + origin_compat dQdV 자동 활성화 (Excel
-        # 골든 레퍼런스 일치). UI 토글 추가 없이 프리셋이 결정한다.
+        # 이 조합에서 단일 flow 자동 활성화. UI 토글 추가 없이 프리셋이 결정한다.
+        # origin_compat (CV 마스킹 OFF) 는 사용자 요청 (260503) 으로 비활성화 —
+        # CV 구간의 dQdV 노이즈 (충전 plateau 의 |ΔV|<2mV 영역) 가 시각/Excel
+        # 출력 모두에서 제외되도록 변경. 이전 wiki 노트 260429 의 "origin Excel
+        # 골든 일치" 정책 재검토 결과, CV 마스킹이 사용자 분석 의도에 더 부합.
         is_hysteresis_mode = (overlap == "connected" and hyst_pair)
         unified_flow = is_hysteresis_mode
-        origin_compat = is_hysteresis_mode
+        origin_compat = False
 
         return {
             "data_scope": data_scope,
@@ -27365,6 +27702,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if options.get('overlap') == 'connected' and options.get('axis_mode') == 'soc':
             self._apply_hysteresis_soc_offsets(
                 _compat_data, all_data_folder, mincapacity, data_attr)
+            # Phase canonical anchor — Dchg dchg 시작 = 1.0, Chg chg 시작 = 0.0.
+            # CC-CV 잉여 + cumul drift 흡수, 사용자 기대 anchor 강제. 사용자 보고:
+            # "TC3-12 close loop 가 SOC 1.0 시작점이 아님 / TC14-23 SOC 0.0 시작점이 아님".
+            # wiki 11_profile_analysis/260503_anchor_layer_separation.md 참조.
+            self._apply_hysteresis_phase_canonical_anchor(
+                _compat_data, all_data_folder, mincapacity, data_attr)
 
         # ── 3-b'. 히스테리시스 프리셋 long-format 빌드 ──
         # `_profile_render_loop` 의 writer.close() 직전에 'Hysteresis_Analysis'
@@ -27469,6 +27812,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_order = None  # 기본 step 스타일
 
         elif legacy_mode == "chg":
+            # Fix A (260503): axis_mode 에 따라 X축 라벨 + Excel 헤더 동적
+            # 결정 — SOC = 1 − DOD 일관성. _calc_soc 가 데이터를 변환 (charge +
+            # dod 시 X = 1 − ChgCap), 여기서는 라벨/헤더만 동기화.
+            _chg_axis_label = "DOD" if options.get('axis_mode') == 'dod' else "SOC"
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
@@ -27478,12 +27825,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                 _a = graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "SOC", "Voltage(V)", temp_lgnd)
+                    _chg_axis_label, "Voltage(V)", temp_lgnd)
                 _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Vol, ax3,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "SOC", "Voltage(V)", temp_lgnd)
+                    _chg_axis_label, "Voltage(V)", temp_lgnd)
                 _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 if self.chk_dqdv.isChecked():
@@ -27498,15 +27845,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Crate, ax5,
-                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, _chg_axis_label, "C-rate", temp_lgnd)
                 _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.dVdQ, ax4,
-                    -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, "SOC", "dVdQ", temp_lgnd)
+                    -0.1, 1.2, 0.1, 0, 5.5 * dvscale, 0.5 * dvscale, _chg_axis_label, "dVdQ", temp_lgnd)
                 _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Temp, ax6,
-                    -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd)
+                    -0.1, 1.2, 0.1, -15, 60, 5, _chg_axis_label, "Temp.", lgnd)
                 _a._cond_tag = 1; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 if self.saveok.isChecked() and save_file_name:
@@ -27514,7 +27861,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _sd = p[[c for c in _sc if c in p.columns]]
                     _sd.to_excel(writer, startcol=writecolno, index=False,
                         header=[headername + c for c in
-                                ["Time(min)", "SOC", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]][:len(_sd.columns)])
+                                ["Time(min)", _chg_axis_label, "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]][:len(_sd.columns)])
                     writecolno += len(_sd.columns)
                 if self.ect_saveok.isChecked() and save_file_name:
                     cdf = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
@@ -27529,9 +27876,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return writecolno, _artists
 
             def _fallback(FolderBase, CycNo, is_pne):
+                # Fix A: axis_mode 전달 (charge + dod 시 X = 1 − ChgCap)
                 r = unified_profile_core(
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
-                    data_scope="charge", axis_mode="soc", calc_dqdv=True,
+                    data_scope="charge",
+                    axis_mode=options.get("axis_mode", "soc"),
+                    calc_dqdv=True,
                     smooth_degree=smoothdegree,
                     include_cv=options["include_cv"],
                     cutoff=mincrate,  # Chg 프로파일: Voltage 하한 (이전 chg_Profile_data 동작)
@@ -27542,6 +27892,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             axes_order = [0, 1, 2, 3, 4, 5]
 
         elif legacy_mode == "dchg":
+            # Fix A (260503): axis_mode 에 따라 X축 라벨 + Excel 헤더 동적
+            # 결정 — SOC = 1 − DOD 일관성. _calc_soc 가 데이터를 변환 (discharge
+            # + soc 시 X = 1 − DchgCap), 여기서는 라벨/헤더만 동기화.
+            _dchg_axis_label = "SOC" if options.get('axis_mode') == 'soc' else "DOD"
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
                 ax1, ax2, ax3, ax4, ax5, ax6 = axes
@@ -27551,12 +27905,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                 _a = graph_profile(p.SOC, p.Vol, ax1,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "DOD", "Voltage(V)", temp_lgnd)
+                    _dchg_axis_label, "Voltage(V)", temp_lgnd)
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Vol, ax3,
                     -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                    "DOD", "Voltage(V)", temp_lgnd)
+                    _dchg_axis_label, "Voltage(V)", temp_lgnd)
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.dQdV, p.Vol, ax2,
@@ -27566,16 +27920,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Crate, ax5,
-                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd)
+                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, _dchg_axis_label, "C-rate", temp_lgnd)
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.dVdQ, ax4,
                     -0.1, 1.2, 0.1, -5 * dvscale, 0.5 * dvscale, 0.5 * dvscale,
-                    "DOD", "dVdQ", temp_lgnd)
+                    _dchg_axis_label, "dVdQ", temp_lgnd)
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Temp, ax6,
-                    -0.1, 1.2, 0.1, -15, 60, 5, "DOD", "Temp.", lgnd)
+                    -0.1, 1.2, 0.1, -15, 60, 5, _dchg_axis_label, "Temp.", lgnd)
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 if self.saveok.isChecked() and save_file_name:
@@ -27583,7 +27937,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _sd = p[[c for c in _sc if c in p.columns]]
                     _sd.to_excel(writer, startcol=writecolno, index=False,
                         header=[headername + c for c in
-                                ["Time(min)", "DOD", "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]][:len(_sd.columns)])
+                                ["Time(min)", _dchg_axis_label, "Energy", "Voltage", "Crate", "dQdV", "dVdQ", "Temp."]][:len(_sd.columns)])
                     writecolno += len(_sd.columns)
                 if self.ect_saveok.isChecked() and save_file_name:
                     cdf = p[["TimeMin", "Vol", "Crate", "Temp"]].copy()
@@ -27598,9 +27952,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return writecolno, _artists
 
             def _fallback(FolderBase, CycNo, is_pne):
+                # Fix A: axis_mode 전달 (discharge + soc 시 X = 1 − DchgCap)
                 r = unified_profile_core(
                     FolderBase, (CycNo, CycNo), mincapacity, firstCrate,
-                    data_scope="discharge", axis_mode="soc", calc_dqdv=True,
+                    data_scope="discharge",
+                    axis_mode=options.get("axis_mode", "dod"),
+                    calc_dqdv=True,
                     smooth_degree=smoothdegree,
                     include_cv=options["include_cv"],
                     cutoff=mincrate,  # Dchg 프로파일: Voltage 하한 (이전 dchg_Profile_data 동작)
@@ -27656,8 +28013,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         except Exception:
                             _pair_p = None
 
+                    # Dchg 페어링 + raw SOC range ≥ 0.98 의 cycle 은 의미상 minor.
+                    # 사용자 protocol 예: TC 3 = chg 0→100% + dchg 100→90% (depth 10%
+                    # mini-loop), TC 12 = chg 10→100% + dchg 100→0% (depth 100%
+                    # envelope). raw SOC range 가 둘 다 1.0 이라 _is_major=True 로
+                    # over-classify 되어 segment 분할이 우회 → chg + dchg 가 한 곡선
+                    # 으로 그려져 비대칭 loop 발생. cross-TC 페어링 (Cy0003 = TC3 dchg
+                    # + TC4 chg, Cy0012 = TC12 dchg + TC13 chg) 정상화 위해 rendering
+                    # 차원에서 minor 로 처리. Chg major (예: Cy0023 = chg 0→100% + dchg
+                    # 100→0% within-TC envelope) 는 fallthrough 보존.
+                    _render_major = _is_major
+                    if _is_major and _pair_enabled and _direction == 'Dchg':
+                        _render_major = False
                     # 충전/방전 세그먼트별 색상 분기 (V-x 플롯)
-                    if 'Condition' in p.columns and not _is_major:
+                    if 'Condition' in p.columns and not _render_major:
                         # 페어링 모드: 방향에 따라 현재/다음 TC 의 segment 선택
                         # - Dchg cycle: 현재 TC 의 DCHG (Cond=2) + 다음 TC 의 CHG (Cond=1)
                         # - Chg  cycle: 현재 TC 의 CHG (Cond=1) + 다음 TC 의 DCHG (Cond=2)
@@ -27739,7 +28108,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _artists.append(_a3)
 
                     _sub_color, _sub_lw, _sub_alpha = _get_profile_color(
-                        'chg_dchg', _cyc_idx, _n_cyc, is_major=_is_major)
+                        'chg_dchg', _cyc_idx, _n_cyc, is_major=_render_major)
                     if 'dQdV' in p.columns:
                         _a2 = graph_profile(p.dQdV, p.Vol, ax2,
                             -5 * dqscale, 5.5 * dqscale, 0.5 * dqscale,
