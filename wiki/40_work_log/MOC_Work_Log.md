@@ -14,7 +14,32 @@ updated: 2026-03-15
 # 📝 업무 기록
 
 > [!abstract] 개요
-> 업무 목표, 주간 보고(SRIB RUL), 프로젝트 기획, 행정 기록의 허브.
+> 업무 목표, cadence pipeline (일/주/8w/3m/6m/Q), 주간 보고(SRIB RUL), 프로젝트 기획, 행정 기록의 허브.
+
+---
+
+## ⏱️ Cadence Pipeline (ADR-0011)
+
+> [!important] 5-layer cadence pipeline
+> 데일리 → **위클리 (★ source-of-truth)** → 청중·cadence 별 view 파생 + MBO 분기 갱신.
+> 자세히는 [[31_software_dev/adr/0011-daily-weekly-quarterly-pipeline]].
+
+| Layer | Cadence | 파일명 컨벤션 | 청중 |
+|---|---|---|---|
+| 데일리 워크로그 | 매일 (작업 있는 날) | `YYMMDD_daily_worklog.md` | 본인 |
+| 위클리 로그 ★ | 매주 금요일 | `YYMMDD_W{nn}_weekly_log.md` | 본인 (source-of-truth) |
+| 그룹장 보고 | 8주 | `YYMMDD_W{nn}_groupleader_8w.md` | 그룹장 (상무) |
+| 그룹원 공람 | 3개월 | `YYMMDD_W{nn}_weekly_3m_share.md` | 80 그룹원 |
+| 테크미팅 | 6개월 | `YYMMDD_W{nn}_techmeeting_6m.md` | 박사급 peer |
+| MBO 수시피드백 | 분기 (3개월) | `YYMMDD_Q{n}_mbo_review.md` + [[mbo_2026]] 갱신 | 평가 시스템 |
+
+**자연어 트리거**:
+- "오늘 한 일 정리해줘" → 데일리
+- "이번 주 위클리 정리해줘" → 위클리
+- "8주차 그룹장 보고 만들어줘" / "3개월 그룹원 공람" / "6개월 테크미팅"
+- "Q1 MBO 수시피드백 작성해줘"
+
+**Anchors**: [[31_software_dev/adr/0006-reporting-format-core-and-appendix|ADR-0006]] (청중·cadence 차등) · [[31_software_dev/adr/0007-workflow-efficiency-pipeline|ADR-0007]] (6단계 업무 flow) · [[31_software_dev/adr/0010-mbo-track-mapping|ADR-0010]] (7트랙 매핑) · [[31_software_dev/adr/0011-daily-weekly-quarterly-pipeline|ADR-0011]] (cadence pipeline)
 
 ---
 
