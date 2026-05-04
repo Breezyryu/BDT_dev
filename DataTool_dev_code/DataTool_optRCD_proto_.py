@@ -1470,10 +1470,16 @@ def _unified_pne_load_raw(
     cycle_start: int,
     cycle_end: int,
     cycle_map: dict | None = None,
-    *,
-    data_scope: str = "cycle",
 ) -> pd.DataFrame | None:
-    """PNE SaveData에서 원시 프로필 데이터 로딩.
+    """PNE SaveData에서 원시 프로필 데이터 로딩 — Layer A (Source).
+
+    Layer A 단일화 (ADR 0002, 260504): `data_scope` 파라미터 제거. 항상 모든
+    Cond (1, 2, 3) row + 사이클 범위의 모든 TC 를 로딩. data_scope 별 row 필터링
+    은 downstream Stage 3 (`_unified_filter_condition`) 와 view layer Step 1
+    (`_unified_apply_view`) 에서 수행.
+
+    효과: 캐시 키가 `(raw_path, tc_min, tc_max)` 만으로 결정 → 사용자가 scope
+    토글 (cycle ↔ charge ↔ discharge) 시 raw 재로드 없음.
 
     Parameters
     ----------
@@ -1486,13 +1492,11 @@ def _unified_pne_load_raw(
     cycle_map : dict | None
         논리사이클 → {'all': (s,e), 'chg': [...], 'dchg': [...], ...} 매핑.
         None이면 TotlCycle 직접 사용.
-    data_scope : str
-        "cycle" | "charge" | "discharge". scope에 맞는 TC만 로딩.
 
     Returns
     -------
     pd.DataFrame | None
-        표준 컬럼 구조의 원시 데이터. Restore 폴더 없으면 None.
+        표준 컬럼 구조의 원시 데이터 (모든 Cond + 모든 TC). Restore 폴더 없으면 None.
 
     Notes
     -----
@@ -1504,24 +1508,23 @@ def _unified_pne_load_raw(
       [17]=StepTime(/100s), [18]=TotTime(day), [19]=TotTime(/100s),
       [21]=Temp1, [27]=TotalCycle
     cycle_map 사용 시 논리사이클 번호가 Cycle 컬럼에 부여된다.
-    data_scope별로 cycle_map dict의 chg/dchg TC 목록에서 필요한 TC만 로딩한다.
     """
     restore_dir = os.path.join(raw_file_path, "Restore")
     has_restore = os.path.isdir(restore_dir)
 
     # cycle_map이 있으면 논리사이클 → TotlCycle로 변환
     if cycle_map:
-        # 요청된 논리사이클 범위에 해당하는 TotlCycle 값들 수집
-        # cycle_map dict에서 data_scope별 TC 목록 추출
+        # 요청된 논리사이클 범위에 해당하는 TotlCycle 값들 수집.
+        # Layer A 단일화 (ADR 0002): scope 무관, 항상 'cycle' (전체 TC) 로딩.
+        # downstream Stage 3 / view Step 1 가 row mask 로 scope 적용.
         totl_cycles_set: set[int] = set()
         logical_to_totl: dict[int, int] = {}  # 역매핑: TotlCycle → 논리사이클
         for logical_cyc in range(cycle_start, cycle_end + 1):
             if logical_cyc not in cycle_map:
                 continue
             entry = cycle_map[logical_cyc]
-            tc_list = _cm_tc_list(entry, data_scope)
+            tc_list = _cm_tc_list(entry, 'cycle')
             if not tc_list:
-                # scope별 TC 없으면 전체 범위 폴백
                 tc_list = _cm_tc_list(entry, 'all')
             for tc in tc_list:
                 totl_cycles_set.add(tc)
@@ -1539,7 +1542,8 @@ def _unified_pne_load_raw(
                 f'  [unified_raw] PNE cycle_range=({cycle_start},{cycle_end}) '
                 f'-> {len(totl_cycles)} TCs: {totl_cycles[:10]}'
                 f'{"..." if len(totl_cycles) > 10 else ""} '
-                f'scope={data_scope} path={os.path.basename(raw_file_path)}')
+                f'(Layer A 단일화: scope 무관, 모든 TC) '
+                f'path={os.path.basename(raw_file_path)}')
     else:
         tc_min, tc_max = cycle_start, cycle_end
         logical_to_totl = None
@@ -2859,12 +2863,12 @@ def unified_profile_core(
         v['all'][0] != v['all'][1] for v in cycle_map.values() if isinstance(v, dict))
 
     # ── 통합 파이프라인: 스윕/비스윕 공통 ──
-    # Stage 2: 원시 데이터 로딩 (data_scope별 TC 직접 선택)
+    # Stage 2: 원시 데이터 로딩 (Layer A — ADR 0002: 항상 모든 Cond/TC 로딩)
+    # data_scope 별 row 필터링은 Stage 3 + view Step 1 에서 수행.
     if is_pne:
         raw = _unified_pne_load_raw(
             raw_file_path, cycle_start, cycle_end,
             cycle_map=cycle_map,
-            data_scope=_data_scope_pipe,
         )
     else:
         raw = _unified_toyo_load_raw(
@@ -3302,10 +3306,10 @@ def unified_profile_batch(
         _chunk_size = 30
         for _chunk_start in range(0, len(_sorted_cycles), _chunk_size):
             chunk_cycles = _sorted_cycles[_chunk_start:_chunk_start + _chunk_size]
+            # Layer A 단일화 (ADR 0002): data_scope 무관, 모든 TC 로딩.
             all_raw = _unified_pne_load_raw(
                 raw_file_path, min(chunk_cycles), max(chunk_cycles),
                 cycle_map=cycle_map,
-                data_scope=data_scope,
             )
 
             if all_raw is None or all_raw.empty:
