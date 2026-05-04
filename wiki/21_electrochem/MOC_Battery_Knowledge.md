@@ -90,6 +90,7 @@ updated: 2026-03-15
 - [[MSMD]] — Multi-Scale Multi-Dimensional 열 모델
 - [[MFS_vs_MCS]] — 팩 설계 비교
 - [[Fuel_Gauge_IC_Architectures]] — Fuel Gauge IC 회로 구조
+- **[[AI_TF_Glossary_SBP]]** — SBP 알고리즘 용어집 (NVT/SDI/ADI/TI 4-vendor SOC·SOH·CSD·ISD·SBA·EDV·R-Table·Smoothing, 137개 항목)
 - [[안전배터리]] — 안전 배터리 설계
 - [[전고체_디자인]] — 전고체 배터리 디자인
 
