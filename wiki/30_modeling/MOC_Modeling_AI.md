@@ -61,6 +61,12 @@ updated: 2026-04-21
 - [[Prep_Electrochemical_Modeling_Interview]] — 전기화학 모델링 인터뷰 준비
 - [[pyqt6]] — PyQt6 GUI (BDT 연계)
 
+## 📚 용어집
+
+- [[시뮬레이션_용어사전]] — 시뮬레이션 16-개념 분류(셀 모델 계층·V_cell 분해·Rate-determining 등)
+- **[[AI_TF_Glossary_Simulation]]** — AI TF 활동 시뮬레이션 카테고리 (13개 그룹 151개 항목, MSMD·PINN·구조해석·도구 등)
+- [[!용어]] — 일반 배터리 용어 사전
+
 ---
 
 ## 🔗 연결망
