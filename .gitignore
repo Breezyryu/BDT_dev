@@ -33,3 +33,5 @@ data/
 CLAUDE.md
 # Added by code-review-graph
 .code-review-graph/
+# Vercel-labs `skills` CLI lockfile — body(.claude/skills/) is already ignored, lockfile has no value alone
+skills-lock.json
