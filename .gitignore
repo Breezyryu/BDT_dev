@@ -35,3 +35,5 @@ CLAUDE.md
 .code-review-graph/
 # Vercel-labs `skills` CLI lockfile — body(.claude/skills/) is already ignored, lockfile has no value alone
 skills-lock.json
+# Phase 0 audit debug output — large, regenerable from sch_dump.py
+tools/sch_dump_output.txt
