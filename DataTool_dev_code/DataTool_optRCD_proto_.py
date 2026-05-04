@@ -873,34 +873,53 @@ def _is_sweep_map(cycle_map: dict) -> bool:
 _DCIR_STANDARD_COLS = ['dcir', 'dcir2', 'rssocv', 'rssccv', 'soc70_dcir', 'soc70_rss_dcir']
 
 
+# 히스테리시스 SOC 누적 한계 — CC-CV 충전 잉여(보통 +5~8%) 및 정전류 방전
+# 잉여를 흡수하면서도 라벨링용 라운딩 루프(SOC=1.5 등)는 차단한다. 정격용량
+# 보다 큰 실측 용량(예: nominal=4960mAh, actual=5300mAh → 1.07) 이 정상이며
+# 1.2 가 실측 상한 마진. 하한은 deep dchg 정전류 잉여 흡수용.
+_HYST_SOC_HARD_MAX = 1.2
+_HYST_SOC_HARD_MIN = -0.2
+
+
 def _compute_tc_soc_offsets(
     channel_path: str, capacity_mah: float,
 ) -> dict[int, float]:
     """SaveEndData에서 TC별 시작 SOC(절대) 오프셋 계산.
 
     히스테리시스 플롯에서 각 TC 의 프로파일을 절대 SOC 좌표에 배치할 때 사용한다.
-    각 TC 의 ChgCap / DchgCap 누적을 [0, 1] 범위 안에서 클립하며 진행하여
-    각 TC 시작 시점의 절대 SOC 를 산출한다.
+    각 TC 의 ChgCap / DchgCap 누적을 ``[_HYST_SOC_HARD_MIN,
+    _HYST_SOC_HARD_MAX]`` 범위에서 클립하며 진행하여 각 TC 시작 시점의 절대
+    SOC 를 산출한다.
 
     초기 상태 추정 — 1차 패스에서 무클립 누적의 최저점이 −5% 보다 깊으면
     셀이 만충 (SOC=1.0) 에서 시험을 시작한 것으로 간주한다 (히스테리시스
     프로토콜 표준). 그렇지 않으면 SOC=0 에서 시작한다고 가정한다.
 
     클립 누적 — CC-CV 충전은 100% 도달 후에도 CV 전류가 ChgCap 에 누적
-    되므로 raw ChgCap 합계가 (1.0 − prev_SOC) 를 초과할 수 있다. 이때
-    유효 chg 를 (1.0 − prev_SOC) 로 클립하여 SOC 가 1.0 을 넘지 않게
-    한다. 마찬가지로 dchg 도 가용 SOC (end_chg_SOC) 로 클립한다.
+    되므로 raw ChgCap 합계가 (1.0 − prev_SOC) 를 초과할 수 있다. 정격용량
+    (mincapacity) 대비 실측이 클 경우 raw 정규화 SOC 가 자연스럽게 1.0 +
+    α 로 오를 수 있다. v1.3 엑셀 골든 (`Voltage hysteresis test_Graph
+    format_v1.3.xlsx`) 은 이 잉여를 그대로 anchor 에 누적시켜 mini-loop 곡선
+    이 SOC=0~1.1 영역에 자연 펼쳐진다. 이전 BDT 의 ``[0, 1]`` 클립은 매
+    사이클마다 잉여분 (≈ +0.05~0.08) 을 손실시켜 sweep 누적 시 약 7~8%
+    좌측 시프트를 유발했다.
+
+    클립 한도를 ``[-0.2, 1.2]`` 로 완화 — 정상 hysteresis raw SOC 잉여
+    (보통 +0.05~0.10) 는 흡수하면서도 SaveEndData 정의 오류로 인한 폭주
+    (cap*N 누적 등) 는 차단한다. 정격용량보다 더 큰 실측 용량이 나올 수
+    있지만 1.2 를 넘는 단일 TC 는 비정상으로 간주.
 
     이전 버전의 "전역 anchor shift" (− min(offset))는 사용자가 선택한 TC
     범위 밖의 사이클까지 포함해 shift 양을 결정하므로, 후속 RPT/추가
     프로토콜이 더 깊은 음수를 만들면 hysteresis TC 들이 SOC=1.2 등 절대
     좌표 밖으로 밀려 플롯이 깨지는 결함이 있었다. 클립 누적은 이 의존성을
-    제거하고 각 TC 의 시작 SOC 를 항상 [0, 1] 안에 둔다.
+    제거한다.
 
     Returns
     -------
     dict[int, float]
-        {TC번호: 시작SOC(0~1 범위)}.
+        {TC번호: 시작SOC} — 일반적으로 ``[0, 1]`` 범위, raw 잉여 시 최대
+        ``_HYST_SOC_HARD_MAX (=1.2)`` 까지.
     """
     save_end = get_channel_save_end_data(channel_path)
     if save_end is None or save_end.empty:
@@ -927,17 +946,17 @@ def _compute_tc_soc_offsets(
         cumul_min = min(cumul_min, cumul)
     initial_full = (cumul_min < -0.05)
 
-    # 2차 패스: 클립 누적으로 절대 SOC 추적
-    # chg 는 (1.0 − prev_SOC) 이내, dchg 는 end_chg 이내로 클립.
-    # CC-CV 의 CV 구간 누적이나 일부 사이클러의 전류 노이즈가 SOC 추정을
-    # 1.0 위 또는 0.0 아래로 밀지 않도록 방어한다.
+    # 2차 패스: 완화된 클립 누적으로 절대 SOC 추적
+    # chg 는 (HARD_MAX − prev_SOC) 이내, dchg 는 (end_chg − HARD_MIN) 이내로
+    # 클립. 정격용량보다 큰 실측 용량의 raw 정규화 잉여 (+0.05~0.10) 를
+    # 흡수하면서, 이상 데이터 (TC 단위 +0.2 이상) 는 차단한다.
     prev_SOC = 1.0 if initial_full else 0.0
     result: dict[int, float] = {}
     for tc, chg, dchg in tc_caps:
         result[tc] = prev_SOC
-        eff_chg = max(0.0, min(chg, 1.0 - prev_SOC))
+        eff_chg = max(0.0, min(chg, _HYST_SOC_HARD_MAX - prev_SOC))
         end_chg = prev_SOC + eff_chg
-        eff_dchg = max(0.0, min(dchg, end_chg))
+        eff_dchg = max(0.0, min(dchg, end_chg - _HYST_SOC_HARD_MIN))
         prev_SOC = end_chg - eff_dchg
 
     if initial_full:
