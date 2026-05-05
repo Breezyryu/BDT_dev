@@ -2478,18 +2478,27 @@ def _calc_soc(
 
     # data_scope == "cycle"
     if axis_mode == "dod" and overlap == "connected":
-        # 히스테리시스 DOD 축: 방전 심도 기준.
-        # 방전은 DchgCap(0→방전량), 충전은 (-ChgCap)로 음수 영역 배치하여 "U 모양"
-        # 루프 모양을 유지하되, 두 곡선이 x=0에서 만나도록 한다. 실무에서는
-        # 방전만 관심인 경우가 많아 색상/alpha 로 시각 강조.
+        # 히스테리시스 DOD 축: 방전 심도 기준 (2026-05-05 fix).
+        # SOC connected (chg=ChgCap 0→peak, dchg=peak−DchgCap peak→0) 의 mirror image:
+        #   chg = peak − ChgCap (peak → 0)  : 충전 진행 시 DOD 감소
+        #   dchg = DchgCap (0 → peak)        : 방전 진행 시 DOD 증가
+        # 결과: [0, peak] 범위에서 닫힌 hysteresis loop. SOC 와 1−x 대칭.
+        # 이전 버전은 chg=−ChgCap 로 음수 영역(-1~0)에 배치해 plot 이 비대칭이고
+        # 사용자 mental model 의 "DOD = depth of discharge ∈ [0, 1]" 와 어긋남.
         if "Condition" in df.columns:
             dod = pd.Series(np.nan, index=df.index)
-            chg_mask = df["Condition"] == 1
-            dchg_mask = df["Condition"] == 2
-            if chg_mask.any():
-                dod[chg_mask] = -df.loc[chg_mask, "ChgCap"]
-            if dchg_mask.any():
-                dod[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
+            for cyc in df["Cycle"].unique():
+                cyc_mask = df["Cycle"] == cyc
+                if not cyc_mask.any():
+                    continue
+                chg_mask = cyc_mask & (df["Condition"] == 1)
+                dchg_mask = cyc_mask & (df["Condition"] == 2)
+                peak = (df.loc[chg_mask, "ChgCap"].max()
+                        if chg_mask.any() else 1.0)
+                if chg_mask.any():
+                    dod[chg_mask] = peak - df.loc[chg_mask, "ChgCap"]
+                if dchg_mask.any():
+                    dod[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
             return dod.ffill()
         return df["DchgCap"] - df["ChgCap"]
 
@@ -2513,15 +2522,18 @@ def _calc_soc(
         return df["ChgCap"] - df["DchgCap"]
 
     if axis_mode in ("soc", "dod"):
-        # SOC/DOD 축 (split 등): 충전/방전 독립 좌표
-        # DOD 모드는 방전량을 양의 방향으로 직접 표시 (충전은 대칭 음수 방향)
+        # SOC/DOD 축 (split 등): 충전/방전 독립 좌표 (2026-05-05 DOD fix).
+        # SOC: chg=ChgCap (0→1), dchg=DchgCap (0→1) — 둘 다 cumulative throughput.
+        # DOD: chg=1−ChgCap (1→0), dchg=DchgCap (0→1) — 물리 의미 그대로,
+        #      data_scope=charge/discharge + DOD 분기와 동일한 식.
+        # 둘 다 [0, 1] 범위. 충전은 DOD 감소(우→좌), 방전은 DOD 증가(좌→우).
         if "Condition" in df.columns:
             soc = pd.Series(np.nan, index=df.index)
             chg_mask = df["Condition"] == 1
             dchg_mask = df["Condition"] == 2
             rest_mask = df["Condition"] == 3
             if axis_mode == "dod":
-                soc[chg_mask] = -df.loc[chg_mask, "ChgCap"]
+                soc[chg_mask] = 1.0 - df.loc[chg_mask, "ChgCap"]
                 soc[dchg_mask] = df.loc[dchg_mask, "DchgCap"]
             else:
                 soc[chg_mask] = df.loc[chg_mask, "ChgCap"]
@@ -27834,7 +27846,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _compat_data[key] = val
 
         # ── 3-b. 히스테리시스 모드: SOC 절대좌표 보정 ──
-        # DOD 축은 모든 cycle이 0에서 시작하므로 offset 불필요.
+        # DOD 축은 별도 보정 로직 (mirror image) 미구현 — 현재 SOC 만 적용.
+        # DOD connected 는 _calc_soc 에서 [0, peak] 닫힌 loop 로 표시 (per-cycle).
         if options.get('overlap') == 'connected' and options.get('axis_mode') == 'soc':
             self._apply_hysteresis_soc_offsets(
                 _compat_data, all_data_folder, mincapacity, data_attr)
@@ -28108,9 +28121,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             # 사이클+SOC+오버레이: 충전(0→1)+방전(1→0) 루프를 SOC 축에 표시
             _is_hysteresis = (options.get('overlap') == 'connected')
             _axis_label = "DOD" if options.get('axis_mode') == 'dod' else "SOC"
-            # DOD 축은 충전을 -1~0, 방전을 0~+1 범위로 표시 (방전 위주 해석)
+            # SOC/DOD 모두 [0, 1] 범위 (2026-05-05 DOD fix).
+            # DOD: chg=1−ChgCap(1→0), dchg=DchgCap(0→1) → 물리 [0,1] 좌표계.
             _is_dod = (options.get('axis_mode') == 'dod')
-            _x_lo, _x_hi = (-1.1, 1.2) if _is_dod else (-0.1, 1.2)
+            _x_lo, _x_hi = (-0.1, 1.2)
 
             def _plot_one(temp, axes, headername, lgnd, temp_lgnd,
                           writer, save_file_name, writecolno, CycNo):
@@ -28277,6 +28291,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 else:
                     # 비히스테리시스: Condition 기반 충방전 분리 착색
                     # cycle_idx = CycleNo 순서 (사이클별 색상 정렬용)
+                    # 2026-05-05: 분리 모드도 _axis_label 사용 (DOD 선택 시 라벨 SOC→DOD)
                     _nh_cyc_idx = CycleNo.index(CycNo) if CycNo in CycleNo else 0
                     _has_cond = 'Condition' in p.columns
                     if _has_cond:
@@ -28287,14 +28302,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             _c_init = '#D6604D' if _cond == 1 else '#4393C3'
                             _seg_lbl = temp_lgnd if _cond == 1 else '_nolegend_'
                             _a1 = graph_profile(_seg.SOC, _seg.Vol, ax1,
-                                -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                "SOC", "Voltage(V)", _seg_lbl)
+                                _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                _axis_label, "Voltage(V)", _seg_lbl)
                             _a1.set_color(_c_init); _a1._cond_tag = _cond
                             _a1._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a1)
                             _a3 = graph_profile(_seg.SOC, _seg.Vol, ax3,
-                                -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                                "SOC", "Voltage(V)", '_nolegend_')
+                                _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                                _axis_label, "Voltage(V)", '_nolegend_')
                             _a3.set_color(_c_init); _a3._cond_tag = _cond
                             _a3._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a3)
@@ -28307,43 +28322,43 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 _a2._cycle_id_tag = _nh_cyc_idx
                                 _artists.append(_a2)
                             _a5 = graph_profile(_seg.SOC, _seg.Crate, ax5,
-                                -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", '_nolegend_')
+                                _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", '_nolegend_')
                             _a5.set_color(_c_init); _a5._cond_tag = _cond
                             _a5._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a5)
                             if 'dVdQ' in _seg.columns:
                                 _a4 = graph_profile(_seg.SOC, _seg.dVdQ, ax4,
-                                    -0.1, 1.2, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
-                                    "SOC", "dVdQ", '_nolegend_')
+                                    _x_lo, _x_hi, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
+                                    _axis_label, "dVdQ", '_nolegend_')
                                 _a4.set_color(_c_init); _a4._cond_tag = _cond
                                 _a4._cycle_id_tag = _nh_cyc_idx
                                 _artists.append(_a4)
                             _a6 = graph_profile(_seg.SOC, _seg.Temp, ax6,
-                                -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", '_nolegend_')
+                                _x_lo, _x_hi, 0.1, -15, 60, 5, _axis_label, "Temp.", '_nolegend_')
                             _a6.set_color(_c_init); _a6._cond_tag = _cond
                             _a6._cycle_id_tag = _nh_cyc_idx
                             _artists.append(_a6)
                     else:
                         # Condition 없는 폴백: 단일 라인
                         _artists.append(graph_profile(p.SOC, p.Vol, ax1,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "Voltage(V)", temp_lgnd))
+                            _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                            _axis_label, "Voltage(V)", temp_lgnd))
                         _artists.append(graph_profile(p.SOC, p.Vol, ax3,
-                            -0.1, 1.2, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
-                            "SOC", "Voltage(V)", temp_lgnd))
+                            _x_lo, _x_hi, 0.1, self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
+                            _axis_label, "Voltage(V)", temp_lgnd))
                         if 'dQdV' in p.columns:
                             _artists.append(graph_profile(p.dQdV, p.Vol, ax2,
                                 -5 * dqscale, 5.5 * dqscale, 0.5 * dqscale,
                                 self.vol_y_hlimit, self.vol_y_llimit, self.vol_y_gap,
                                 "dQdV", "Voltage(V)", temp_lgnd))
                         _artists.append(graph_profile(p.SOC, p.Crate, ax5,
-                            -0.1, 1.2, 0.1, 0, 3.4, 0.2, "SOC", "C-rate", temp_lgnd))
+                            _x_lo, _x_hi, 0.1, 0, 3.4, 0.2, _axis_label, "C-rate", temp_lgnd))
                         if 'dVdQ' in p.columns:
                             _artists.append(graph_profile(p.SOC, p.dVdQ, ax4,
-                                -0.1, 1.2, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
-                                "SOC", "dVdQ", temp_lgnd))
+                                _x_lo, _x_hi, 0.1, -5 * dvscale, 5.5 * dvscale, 0.5 * dvscale,
+                                _axis_label, "dVdQ", temp_lgnd))
                         _artists.append(graph_profile(p.SOC, p.Temp, ax6,
-                            -0.1, 1.2, 0.1, -15, 60, 5, "SOC", "Temp.", lgnd))
+                            _x_lo, _x_hi, 0.1, -15, 60, 5, _axis_label, "Temp.", lgnd))
                 # Excel 저장
                 if self.saveok.isChecked() and save_file_name:
                     save_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]

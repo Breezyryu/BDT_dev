@@ -48,6 +48,7 @@ updated: 2026-04-28
 - [[260404_changelog_unified_profile_ui]] — 5버튼→4옵션+1버튼
 - [[260405_changelog_test_profile_analysis]] — 1,900건 자동 검증
 - [[260505_disable_cycle_split_time]] — 사이클+분리+시간 조합 결과값 이상 → UI 차단 ⚠️
+- [[260505_dod_axis_logic_fix]] — 사이클+분리/연결+DOD 물리 좌표계 회복 (음수 영역 → [0,1]) 🔧
 
 ## 🎛️ Channel Popup
 
