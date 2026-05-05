@@ -5727,6 +5727,7 @@ _SCH_CAT_TO_NEW = {
     'INIT':            ('방전', '초기'),
     'FORMATION':       ('사이클', 'FORMATION'),
     'ACCEL':           ('사이클', 'ACCEL'),
+    'STORAGE_CYCLE':   ('저장', 'floating'),     # Phase 0-5 v3 (260505): 사용자 도메인 지적 — 복합floating schedule 의 만충저장 + 주기 capacity check (UI 표기는 FLOATING 과 동일 'floating' 으로 통일)
     'RPT':             ('RPT', None),
     'CHG_DCHG':        ('RPT', None),          # 일반 1회 충방전 → RPT 취급
     'GITT_PULSE':      ('GITT', 'full'),
@@ -7614,19 +7615,24 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
     -----
     .sch 구조:
       - 헤더: 1920 bytes (magic + schedule 메타데이터)
+        +0:   magic (740721)
+        +664: schedule_description (ASCII 64 byte) — Phase 0-5 v3
       - 스텝 블록: 각 652 bytes 고정
-        +0: step_number (uint32)
-        +8: type_code (uint32)
+        +0:   step_number (uint32)
+        +8:   type_code (uint32)
         +12/+16: voltage (mV, uint32) — CHG는 +12, DCHG는 +16
-        +20: current (mA, uint32)
-        +24: time_limit (sec, uint32)
-        +28: cv_voltage (mV, CHG_CCCV 전용)
-        +32: cv_cutoff_current (mA, CHG_CCCV 전용)
-        +56: loop_count (uint32, LOOP 전용)
+        +20:  current (mA, uint32)
+        +24:  time_limit (sec, uint32)
+        +28:  cv_voltage (mV, CHG_CCCV 전용)
+        +32:  cv_cutoff_current (mA, CHG_CCCV 전용)
+        +56:  loop_count (uint32, LOOP 전용)
+        +84:  mode_flag (uint32) — Phase 0-5 v3 (DCIR pulse 식별)
         +104: capacity_limit (mAh, uint32)
-        +336: record_interval (sec, uint32)
+        +336: record_interval (sec, float32) — Phase 0-5 v3
         +372: end_condition_value_pct (float32)
+        +396: chamber_temp_c (float32) — Phase 0-5 v3 (시험 환경 group)
         +500: end_condition_type (uint32)
+              = (ref_step_number << 8) | type_marker  (Phase 0-5-α)
         +504: end_condition_enabled (uint32)
     """
     try:
@@ -7647,6 +7653,17 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
     n_steps = (len(data) - _SCH_HEADER_SIZE) // _SCH_BLOCK_SIZE
     if n_steps <= 0:
         return None
+
+    # Phase 0-5 v3: schedule description (header +664 ASCII 64 byte)
+    # 분류 룰에서 keyword prior 로 활용 (hysteresis/gitt/ect/floating/rss/dcir/rpt/formation)
+    desc_b = data[664:664 + 64]
+    null_idx = desc_b.find(b'\x00')
+    if null_idx >= 0:
+        desc_b = desc_b[:null_idx]
+    try:
+        schedule_description = desc_b.decode('ascii', errors='replace').strip()
+    except Exception:
+        schedule_description = ''
 
     steps = []
     loop_steps = []
@@ -7745,7 +7762,21 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
 
         # GITT 블록 코드 (GITT_START, GITT_END, GITT_PAUSE)는 파라미터 없음
 
+        # Phase 0-5 v3: step common metadata (active step types 만 의미 있음)
+        # 분류 룰에서 직접 활용:
+        #   record_interval_s   = +336 (GITT/PULSE rec_iv hint, 펄스 측정 식별)
+        #   mode_flag           =  +84 (DCHG_CCCV mode=0 → DCIR pulse 식별)
+        #   chamber_temp_c      = +396 (시험 환경 group, ECT 식별 보조)
+        step_info['record_interval_s'] = struct.unpack_from('<f', blk, 336)[0]
+        step_info['mode_flag'] = struct.unpack_from('<I', blk, 84)[0]
+        step_info['chamber_temp_c'] = struct.unpack_from('<f', blk, 396)[0]
+
         # End Condition (SOC/DOD 종료 조건) — Rss 판별용
+        # Phase 0-5-α 발견 (260505): +500 uint32 = (ref_step_number << 8) | type_marker
+        #   - +501 byte = ref_step_number (1-255, 도메인 step 번호)
+        #   - +500 byte = type marker (관측된 모든 sample 에서 0)
+        # → fixed value (2048/18432) 매칭 대신 ref_step_number > 0 일반 매칭으로
+        #   임의 schedule 의 hysteresis/DCIR ref-step 시험 정확 식별 가능.
         ec_type = struct.unpack_from('<I', blk, 500)[0]
         ec_enabled = struct.unpack_from('<I', blk, 504)[0]
         if ec_type != 0 and ec_enabled == 1:
@@ -7753,6 +7784,8 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
             step_info['end_condition'] = {
                 'type': ec_type,
                 'value_pct': round(ec_value, 2),
+                'ref_step_number': (ec_type >> 8) & 0xFF,   # ⭐ Phase 0-5-α
+                'type_marker': ec_type & 0xFF,              # 본 데이터셋 항상 0
             }
 
         steps.append(step_info)
@@ -7765,6 +7798,8 @@ def _parse_pne_sch(sch_path: str) -> dict | None:
         'loop_steps': loop_steps,
         'charge_steps': charge_steps,
         'discharge_steps': discharge_steps,
+        # Phase 0-5 v3: schedule_description keyword prior 로 분류 룰 보강
+        'schedule_description': schedule_description,
     }
 
 
@@ -7972,6 +8007,48 @@ def _decompose_loop_groups(steps: list[dict]) -> list[dict]:
     return groups
 
 
+# ═══════════════════════════════════════════════════════════════
+# Phase 0-5 v3 helper functions (260505)
+# ═══════════════════════════════════════════════════════════════
+
+def _step_v_cutoff_mV(s: dict) -> float:
+    """CC vs CCCV 의 실제 V cutoff 추출 (사용자 통찰, 260504).
+
+    - CC mode  (CHG_CC/DCHG_CC):  실제 cutoff = +28 end_voltage_mV
+    - CCCV mode (CHG_CCCV/DCHG_CCCV): CC target = CV target = +12 voltage_mV
+    """
+    t = s.get('type', '')
+    if t in ('CHG_CCCV', 'DCHG_CCCV'):
+        return s.get('voltage_mV', 0)        # CV target
+    if t in ('CHG_CC', 'DCHG_CC'):
+        return s.get('end_voltage_mV', 0)    # EndCondition
+    return 0
+
+
+def _schedule_desc_keyword(desc: str) -> str:
+    """schedule_description 에서 시험 keyword 추출 (분류 prior 용)."""
+    if not desc:
+        return ''
+    d = desc.lower()
+    if 'rss' in d:
+        return 'rss'
+    if 'hysteresis' in d:
+        return 'hysteresis'
+    if 'gitt' in d:
+        return 'gitt'
+    if 'ect' in d:
+        return 'ect'
+    if 'floating' in d or '120d' in d or '280day' in d:
+        return 'floating'
+    if 'dcir' in d:
+        return 'dcir'
+    if 'rpt' in d:
+        return 'rpt'
+    if 'formation' in d or '화성' in d:
+        return 'formation'
+    return ''
+
+
 def _classify_loop_group(
     body: list[dict],
     loop_count: int,
@@ -7979,9 +8056,17 @@ def _classify_loop_group(
     total_loops: int,
     capacity_mAh: float,
 ) -> str:
-    """Loop 그룹의 TC 의미를 .sch 구조만으로 판별.
+    """Loop 그룹의 TC 의미를 .sch 구조만으로 판별 (Phase 0-5 v3, 260505).
 
-    우선순위 순서대로 체크하여 첫 매칭 반환.
+    우선순위 순서대로 체크하여 첫 매칭 반환. 22 카테고리.
+
+    Phase 0-5 v3 변경 (260505):
+      A. v_chg 키 mismatch fix → voltage_mV 사용 (FLOATING 활성화)
+      B. ref_step_number 일반화 (Phase 0-5-α) — fixed value 매칭에서
+         임의 ref_step 매칭으로 (HYSTERESIS_DCHG/CHG / RSS_DCIR cluster)
+      C. RSS_DCIR multi-cluster 우선 매칭 (≥2 distinct ref_step)
+      D. ACCEL N=11~19 mid-range (UNKNOWN 142 → 0)
+      E. PULSE_DCIR — DCHG_CCCV mode=0 단독 hint 추가 (DCIR pulse 식별)
 
     Parameters
     ----------
@@ -7999,7 +8084,7 @@ def _classify_loop_group(
     Returns
     -------
     str
-        TC 그룹 카테고리명.
+        TC 그룹 카테고리명 (22 카테고리 중 1개).
     """
     if not body:
         return 'EMPTY'
@@ -8021,7 +8106,24 @@ def _classify_loop_group(
     has_gitt_block = bool(type_set & _SCH_GITT_TYPES)
     has_short_dchg = any(
         0 < s.get('time_limit_s', 0) <= 30 for s in dchg_steps)
+    has_short_chg = any(
+        0 < s.get('time_limit_s', 0) <= 30 for s in chg_steps)
     rate_02c = capacity_mAh * 0.2 if capacity_mAh > 0 else 0
+
+    # Phase 0-5 v3 (260505): ref_step 일반화 — fixed value (2048/18432) 대신
+    # ref_step_number > 0 매칭. +500 = (ref_step << 8) | type_marker (Phase 0-5-α).
+    has_ref_step_dchg = any(
+        s.get('end_condition', {}).get('ref_step_number', 0) > 0
+        for s in ec_on_dchg)
+    has_ref_step_chg = any(
+        s.get('end_condition', {}).get('ref_step_number', 0) > 0
+        for s in ec_on_chg)
+
+    # Phase 0-5 v3 (260505): mode_flag 활용 — DCHG_CCCV mode=0 = DCIR pulse
+    # measurement (도메인 검증: 100% EC enabled, capacity reference matching).
+    has_dchg_cccv_pulse = any(
+        s['type'] == 'DCHG_CCCV' and s.get('mode_flag', 0) == 0
+        for s in body)
 
     # 1. INIT: 첫 Loop, 방전만(+REST), N=1
     if position == 0 and N == 1:
@@ -8030,8 +8132,6 @@ def _classify_loop_group(
                 return 'INIT'
 
     # 2. GITT_PULSE: GITT 블록 코드 또는 REST(≥600s)+충/방 1~2스텝, N≥10
-    # Phase 1 (260419): first-REST 뿐 아니라 any-REST 를 허용 (반셀 GITT 커버).
-    # 반셀 GITT 패턴: DCHG_CC(I≈0) → REST(1h) × N≥50
     if has_gitt_block and N >= 10:
         return 'GITT_PULSE'
     max_rest_s = max(
@@ -8043,39 +8143,45 @@ def _classify_loop_group(
             for s in non_rest):
             return 'GITT_PULSE'
 
-    # 2b. Floating (Phase 1): CC/CCCV 장시간(≥12h) 충전 + 방전 없음
-    # 패턴: CC → V 도달 후 CV 유지 → 일~수개월 방치 (SEI·calendar aging).
-    # 예: 김영환 Floating 70일(I=5005mA, V=4500mV, t=6048000s), HaeanProto N=999.
+    # 2b. FLOATING — Phase 0-5 v3 fix A (260505):
+    # v_chg / v_chg_mV 키 mismatch bug 수정. parser output 의 실제 키 'voltage_mV'
+    # 사용. 이전: parser 가 emit 하지 않는 키를 lookup → 항상 False → FLOATING
+    # 분류 자체가 작동 안 함. fix 후 30+ group 활성화.
     if chg_steps and not dchg_steps:
         max_chg_time = max(
             (s.get('time_limit_s', 0) for s in chg_steps), default=0)
         has_v_cut = any(
-            s.get('v_chg_mV', s.get('v_chg', 0)) > 0 for s in chg_steps)
+            s.get('voltage_mV', 0) > 0 for s in chg_steps)
         if max_chg_time >= 43200 and has_v_cut:
             return 'FLOATING'
 
-    # 3. ACCEL: 다단충전(CHG≥2) + 방전, N≥20
+    # 3. ACCEL strong: 다단충전(CHG≥2) + 방전, N≥20
     if N >= 20 and len(chg_steps) >= 2 and dchg_steps:
         return 'ACCEL'
 
-    # 4. HYSTERESIS_DCHG: DCHG에 EC type=2048 (DOD%), N=1, 짧은 펄스 없음
-    # 짧은 DCHG 펄스 (≤30s) 가 있으면 SOC별 DCIR/RSS 측정 (각 SOC 에서 펄스
-    # 으로 DCIR 측정) 일 가능성 → HYSTERESIS 가 아닌 PULSE_DCIR / RSS_DCIR
-    # 로 분류해야 함. has_short_dchg 가드로 이 케이스 제외.
-    if (N == 1 and not has_short_dchg and any(
-            s.get('end_condition', {}).get('type') == 2048 for s in ec_on_dchg)):
+    # 3b. RSS_DCIR — Phase 0-5 v3 (260505): HYSTERESIS_DCHG 보다 먼저 매칭.
+    # 도메인: N=1 + DCHG≥4 + body≥10 + 짧은 pulse 없음 = 정상상태 측정 cluster.
+    # has_short_dchg 가드로 PULSE_DCIR (짧은 펄스) 와 분리.
+    # v2 의 RSS_DCIR 룰 (HYSTERESIS_DCHG 뒤) 위치 변경 — ref_step 일반화 룰
+    # 도입 후 hysteresis 와 RSS 가 모두 ref_step≠0 가지므로 RSS 가 먼저 매칭
+    # 되도록 하여 v2 RSS_DCIR 8 group + multi-cluster RSS pattern 모두 흡수.
+    if (N == 1 and has_ec and len(dchg_steps) >= 4 and len(body) >= 10
+            and not has_short_dchg):
+        return 'RSS_DCIR'
+
+    # 4. HYSTERESIS_DCHG — Phase 0-5 v3 일반화 (260505):
+    # v2: ec_type == 2048 fixed value (ref_step=8 인 표준 hysteresis 만 매칭)
+    # v3: ref_step_number > 0 일반 매칭 (임의 schedule 의 hysteresis 식별)
+    # has_short_dchg 가드: 짧은 펄스가 있으면 PULSE_DCIR / RSS_DCIR.
+    if N == 1 and not has_short_dchg and has_ref_step_dchg:
         return 'HYSTERESIS_DCHG'
 
-    # 5. HYSTERESIS_CHG: CHG에 EC type=18432 (SOC%), N=1, 짧은 충전 펄스 없음
-    has_short_chg = any(
-        0 < s.get('time_limit_s', 0) <= 30 for s in chg_steps)
-    if (N == 1 and not has_short_chg and any(
-            s.get('end_condition', {}).get('type') == 18432 for s in ec_on_chg)):
+    # 5. HYSTERESIS_CHG — Phase 0-5 v3 일반화 (260505):
+    # v2: ec_type == 18432 fixed value → v3: ref_step_number > 0 일반 매칭.
+    if N == 1 and not has_short_chg and has_ref_step_chg:
         return 'HYSTERESIS_CHG'
 
     # 6. SOC_DCIR: EC≥4건, body≥8스텝, N=5~19, EC 타입 다양성 ≥3
-    # Phase 1 (260419): N<20 + EC 타입 다양성 조건 추가 — N≥20 은 ACCEL 우선.
-    # 240919 #7/#8 같은 가속수명(EC 다수)이 SOC_DCIR 로 오분류되는 문제 해결.
     if 5 <= N < 20 and len(ec_steps) >= 4 and len(body) >= 8:
         ec_type_set = {
             s.get('end_condition', {}).get('type', 0) for s in ec_steps}
@@ -8086,9 +8192,19 @@ def _classify_loop_group(
     if has_ec and has_short_dchg and len(dchg_steps) >= 2 and len(body) >= 5:
         return 'PULSE_DCIR'
 
-    # 8. RSS_DCIR: N=1, EC, DCHG≥4, body≥10
-    if N == 1 and has_ec and len(dchg_steps) >= 4 and len(body) >= 10:
-        return 'RSS_DCIR'
+    # 7b. PULSE_DCIR (강한 hint) — Phase 0-5 v3 추가 (260505):
+    # DCHG_CCCV mode=0 = DCIR pulse measurement (도메인 검증: 100% EC enabled).
+    # 짧은 펄스 없는 케이스도 mode_flag 만으로 식별 가능.
+    if has_dchg_cccv_pulse and len(dchg_steps) >= 2:
+        return 'PULSE_DCIR'
+
+    # 3c. ACCEL mid-range — Phase 0-5 v3 gap fix (260505):
+    # ACCEL N≥20 strong 룰과 FORMATION 2≤N≤10 사이의 N=11~19 gap 보강.
+    # multi-step charge (≥3) 조건으로 FORMATION 와 disambiguate.
+    # 복합floating HaeanProto N=14, 김영환/박기진 280day N=14 등 v2 UNKNOWN 142
+    # group 모두 흡수.
+    if 11 <= N <= 19 and len(chg_steps) >= 3 and dchg_steps:
+        return 'ACCEL'
 
     # 9. DISCHARGE_SET: DCHG_CCCV 단독, N=1
     if N == 1 and has_dchg_cccv and len(body) <= 2:
@@ -8222,6 +8338,21 @@ def _build_loop_group_info(
     # 단순 인접성 (next group only, single TC, body 호환) 으로 판정 — 중간
     # RPT (mid-RPT) 는 흡수 대상 아님 (인접한 hyst 가 next 가 아니므로).
     result = _merge_hysteresis_envelopes(result)
+
+    # Post-pass — STORAGE_CYCLE 변환 (Phase 0-5 v3, 260505):
+    # 사용자 도메인 지적: 복합floating schedule 의 N=2~10 + CHG+DCHG group 은
+    # FORMATION 이 아니라 "만충저장 + 주기 capacity check". schedule level 단서
+    # ('floating' keyword OR ≥12hr CV step) 로 식별 후 FORMATION → STORAGE_CYCLE.
+    schedule_desc = parsed.get('schedule_description', '') or ''
+    desc_kw = _schedule_desc_keyword(schedule_desc)
+    has_long_cv_step = any(
+        s['type'] == 'CHG_CCCV' and s.get('time_limit_s', 0) >= 43200
+        for s in parsed.get('steps', []))
+    if desc_kw == 'floating' or has_long_cv_step:
+        for g in result:
+            if g['category'] == 'FORMATION':
+                g['category'] = 'STORAGE_CYCLE'
+
     # _body 제거 — 외부 인터페이스 보존
     for g in result:
         g.pop('_body', None)
@@ -9434,7 +9565,7 @@ _CLASSIFIED_COLORS = {
     '방전(저장준비)':       {'color_idx': 4, 'desc': '방전 (저장 준비 심방전)'},
     '방전(SOC세팅)':       {'color_idx': 4, 'desc': '방전 (SOC 세팅, DCHG_CCCV)'},
     '저장':               {'color_idx': 7, 'desc': '저장 (K-value / 장시간 휴지)'},
-    '저장(floating)':      {'color_idx': 7, 'desc': '저장 (Floating, CC→CV 유지)'},
+    '저장(floating)':      {'color_idx': 7, 'desc': '저장 (Floating + 만충 cycling, 복합floating 시험)'},
     '사이클':              {'color_idx': 0, 'desc': '사이클'},
     '사이클(FORMATION)':   {'color_idx': 0, 'desc': '사이클 (FORMATION)'},
     '사이클(ACCEL)':       {'color_idx': 0, 'desc': '사이클 (가속수명)'},
