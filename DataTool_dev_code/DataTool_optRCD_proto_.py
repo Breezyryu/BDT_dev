@@ -4002,6 +4002,84 @@ def _auto_adjust_cycle_axes(axes_list, ylimitlow, ylimithigh, xscale=0):
     _fit_ax_y_from_data(ax6, padding=0.05, max_nbins=6, ymax_cap=4.0)
 
 
+def _sync_ratio_axes_y(axes, *, step: float = 0.05,
+                       ymin_floor: float = 0.0,
+                       ymax_cap: float | None = None,
+                       outlier_filter: str = 'iqr',
+                       base_ylim: tuple[float, float] | None = None) -> bool:
+    """비율(unitless 0~1) ax 들의 ylim·yticks 를 동기화 (데이터 union 기반).
+
+    Discharge Capacity Ratio / Charge Capacity Ratio / Discharge Energy Ratio
+    처럼 같은 단위의 그래프들이 동일 y 축 스케일을 갖도록 데이터 합산 →
+    IQR outlier 제거 → step 라운딩 → 동일 ylim·yticks 적용. 채널/사이클
+    비교 시 시각적 정렬 효과.
+
+    Parameters
+    ----------
+    axes : iterable[Axes]
+        동기화 대상. 보통 (ax1, _ax1b, _ax2b, _ax4b) 비율 그래프 4개.
+    step : float
+        ylim 라운딩 단위. 기본 0.05 (5% pt).
+    ymin_floor : float
+        ylim 최솟값 floor. 라운딩 결과가 이 값보다 낮으면 floor 로 cap.
+    ymax_cap : float | None
+        ylim 최댓값 cap. None 이면 무제한.
+    outlier_filter : str
+        'iqr' = Tukey 1.5×IQR. 'none' = 비활성. 한 점 이상치로 ylim 이
+        과도하게 확장되는 것 방지.
+    base_ylim : (low, high) | None
+        시작 ylim. 보통 ax1 의 `_auto_adjust_cycle_axes` 결과 (= user-input
+        ylim 의 자동 확장본) 를 anchor 로 넘김. union 으로 확장만 하고
+        절대 축소하지 않음 → 기존 사용자 입력 범위 보존.
+
+    Returns
+    -------
+    bool
+        True if 적용, False if 모든 ax 가 빈 데이터.
+    """
+    all_ys = []
+    for ax in axes:
+        for coll in ax.collections:
+            offs = coll.get_offsets()
+            if len(offs) > 0:
+                y = np.array(offs[:, 1], dtype=float)
+                valid = y[~np.isnan(y)]
+                if len(valid) > 0:
+                    all_ys.extend(valid.tolist())
+    if not all_ys:
+        return False
+    arr = np.asarray(all_ys)
+    if outlier_filter == 'iqr' and len(arr) >= 5:
+        q1, q3 = np.percentile(arr, [25, 75])
+        iqr = q3 - q1
+        if iqr > 0:
+            mask = (arr >= q1 - 1.5 * iqr) & (arr <= q3 + 1.5 * iqr)
+            if mask.any():
+                arr = arr[mask]
+    y_min = float(arr.min())
+    y_max = float(arr.max())
+    new_low = round(np.floor(y_min / step) * step - step, 2)
+    new_high = round(np.ceil(y_max / step) * step + step, 2)
+    if base_ylim is not None:
+        # union: 기존 anchor 범위 절대 축소 금지 (사용자 입력 ylim 보존)
+        new_low = min(new_low, base_ylim[0])
+        new_high = max(new_high, base_ylim[1])
+    new_low = max(new_low, ymin_floor)
+    if ymax_cap is not None:
+        new_high = min(new_high, ymax_cap)
+    if new_high <= new_low:
+        return False
+    cur_step = step
+    y_range = new_high - new_low
+    if y_range / cur_step > 10:
+        cur_step = round(np.ceil(y_range / 10 / step) * step, 2)
+    yticks = np.arange(new_low, new_high + cur_step / 2, cur_step)
+    for ax in axes:
+        ax.set_ylim(new_low, new_high)
+        ax.set_yticks(yticks)
+    return True
+
+
 # Step charge Profile 그래프 그리기
 def graph_step(x, y, ax, lowlimit, highlimit, limitgap, xlabel, ylabel, tlabel):
     line, = ax.plot(x, y, label=tlabel, linewidth=THEME['LINE_WIDTH'], alpha=THEME['LINE_ALPHA'])
@@ -23653,21 +23731,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         _ax_b.set_xlim(_x1_lim)
                         _ax_b.set_xticks(_x1_ticks)
                     # 상세 탭 ax 별 옵션 (사용자 요청 정정):
-                    #   2-1 Dchg Cap Ratio: 1-1 과 완전 동일 (ylim/yticks 동기화)
-                    #   2-2 Chg Cap Ratio: ymin_floor=0.6 + IQR outlier 필터
+                    #   2-1 Dchg Cap Ratio | 2-2 Chg Cap Ratio | 2-4 DchgEng Ratio
+                    #     → 1-1 과 함께 4개 ylim·yticks 동기화 (비율 비교용)
                     #   2-3 AvgV: ymax_cap=4.0
-                    #   2-4 DchgEng: 단순 fit (특수 옵션 없음)
                     #   2-5 Charge Rest End V: 그대로 (4.0~4.5 자연 범위)
                     #   2-6 Discharge Rest End V: ymax_cap=4.0
                     _ax1b, _ax2b, _ax3b, _ax4b, _ax5b, _ax6b = axes_list_b
-                    # 2-1 ↔ 1-1 완전 동일: _auto_adjust_cycle_axes 결과를 그대로
-                    # 복사하여 ylim·yticks 일치 보장 (사용자 요청)
-                    _ax1b.set_ylim(*ax1.get_ylim())
-                    _ax1b.set_yticks(ax1.get_yticks())
-                    _fit_ax_y_from_data(_ax2b, ymin_floor=0.6,
-                                        outlier_filter='iqr')
+                    # 1-1 / 2-1 / 2-2 / 2-4 비율 그래프 4 개 ylim·yticks 통일.
+                    # ax1 (탭1 Dchg Cap) 의 _auto_adjust 결과를 base 로 사용 →
+                    # 2-2 (Chg Cap) / 2-4 (Eng Ratio) 데이터가 더 넓으면 union
+                    # 으로 확장만 (사용자 입력 ylim 절대 축소 금지).
+                    _sync_ratio_axes_y(
+                        (ax1, _ax1b, _ax2b, _ax4b),
+                        step=0.05,
+                        ymin_floor=0.0,
+                        base_ylim=ax1.get_ylim(),
+                    )
                     _fit_ax_y_from_data(_ax3b, ymax_cap=4.0)
-                    _fit_ax_y_from_data(_ax4b)
                     _fit_ax_y_from_data(_ax5b)
                     _fit_ax_y_from_data(_ax6b, ymax_cap=4.0)
 
