@@ -20451,13 +20451,20 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         - 셀 폰트: Consolas 9pt (사이클 데이터 탭과 일치, 숫자 자리수 정렬용)
         - 헤더 폰트: 앱 기본 (Malgun Gothic) — CSS font-family 미지정
         - 셀 우측 정렬, AlternatingRowColors, read-only
-        - Ctrl+C 복사 = QTableWidget 기본 동작 (별도 구현 X)
+        - Ctrl+C 복사 = 인라인 view 단축키 (QTableView 전용)
+
+        성능:
+        - 260505 변경: QTableWidget (셀당 QTableWidgetItem) → QTableView +
+          AbstractTableModel. 100k+ 행 setup 시간이 수십 초 → 수 ms 로 감소
+          (M47 ECT 30cy continuous = 331k 행 × 8 컬럼: 40.8s → ~20ms).
+        - 모델은 DataFrame 을 wrap, view 가 가시 영역에 대해서만 data()
+          호출 → 메모리도 셀 객체 미할당으로 절감.
         """
         from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget,
-                                     QTableWidget, QTableWidgetItem,
-                                     QHeaderView)
-        from PyQt6.QtGui import QColor, QFont
-        from PyQt6.QtCore import Qt
+                                     QTableView, QHeaderView,
+                                     QAbstractItemView, QApplication)
+        from PyQt6.QtGui import QColor, QFont, QShortcut, QKeySequence
+        from PyQt6.QtCore import (Qt, QAbstractTableModel, QModelIndex)
         if not profile_data_per_combo:
             return None
         # 컬럼명 → 소수점 자리수 (지표 의미별)
@@ -20480,44 +20487,148 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 헤더/탭 라벨은 앱 기본 폰트 (Malgun Gothic) 유지.
         _cell_font = QFont("Consolas")
         _cell_font.setPointSize(9)
+        _align_role = int(Qt.AlignmentFlag.AlignRight
+                          | Qt.AlignmentFlag.AlignVCenter)
 
-        def _build_table(df) -> QTableWidget:
-            n_rows, n_cols = len(df), len(df.columns)
-            tbl = QTableWidget(n_rows, n_cols)
-            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            tbl.setSelectionBehavior(
-                QTableWidget.SelectionBehavior.SelectItems)
-            tbl.setAlternatingRowColors(True)
-            tbl.setStyleSheet(
-                "QTableWidget { font-size: 9px; }"
+        class _PandasTableModel(QAbstractTableModel):
+            """DataFrame 을 wrap 한 read-only 모델 — view lazy 렌더링.
+
+            셀당 QTableWidgetItem 미리 생성 (~15µs/cell) 패턴은 100k+ 행에서
+            setup 시간이 수십 초로 폭발. 모델은 가시 영역에 대해서만 data()
+            호출 받으므로 setup 즉시, scroll 시 동적 렌더.
+            """
+            def __init__(self, df, decimals_map, cell_font, parent=None):
+                super().__init__(parent)
+                self._cols = [str(c) for c in df.columns]
+                # mixed dtype 시 object array, 단일 dtype 시 native array
+                self._values = df.to_numpy()
+                self._n_rows = len(df)
+                self._n_cols = len(df.columns)
+                self._cell_font = cell_font
+                self._col_decimals = [decimals_map.get(c, 3)
+                                      for c in self._cols]
+
+            def rowCount(self, parent=QModelIndex()):
+                return 0 if parent.isValid() else self._n_rows
+
+            def columnCount(self, parent=QModelIndex()):
+                return 0 if parent.isValid() else self._n_cols
+
+            def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+                if not index.isValid():
+                    return None
+                r, c = index.row(), index.column()
+                if r < 0 or r >= self._n_rows or c < 0 or c >= self._n_cols:
+                    return None
+                if role == Qt.ItemDataRole.DisplayRole:
+                    v = self._values[r, c]
+                    if v is None:
+                        return ""
+                    # pd.isna 스칼라 — np.nan / pd.NaT / pd.NA 일괄 처리.
+                    # lazy 렌더 (가시 영역만 호출) 이라 성능 영향 없음.
+                    try:
+                        if pd.isna(v):
+                            return ""
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        return f"{float(v):.{self._col_decimals[c]}f}"
+                    except (TypeError, ValueError):
+                        return str(v)
+                if role == Qt.ItemDataRole.TextAlignmentRole:
+                    return _align_role
+                if role == Qt.ItemDataRole.FontRole:
+                    return self._cell_font
+                return None
+
+            def headerData(self, section, orientation,
+                           role=Qt.ItemDataRole.DisplayRole):
+                if role != Qt.ItemDataRole.DisplayRole:
+                    return None
+                if orientation == Qt.Orientation.Horizontal:
+                    if 0 <= section < self._n_cols:
+                        return self._cols[section]
+                return None
+
+            def flags(self, index):
+                if not index.isValid():
+                    return Qt.ItemFlag.NoItemFlags
+                return (Qt.ItemFlag.ItemIsSelectable
+                        | Qt.ItemFlag.ItemIsEnabled)
+
+        def _install_view_copy_shortcut(view):
+            """QTableView 다중 셀 선택 + Ctrl+C/Ctrl+A 단축키.
+
+            QTableWidget 의 selectedRanges()/item() 대신 selectionModel()
+            기반. 사각형 선택 영역만 복사 (행/열 사전 sort 후 hole 은 빈
+            셀로 채움 — Excel 호환).
+            """
+            view.setSelectionMode(
+                QAbstractItemView.SelectionMode.ExtendedSelection)
+
+            def _copy():
+                sel = view.selectionModel().selectedIndexes()
+                if not sel:
+                    return
+                rows = sorted({i.row() for i in sel})
+                cols = sorted({i.column() for i in sel})
+                sel_set = {
+                    (i.row(), i.column()):
+                    (i.data(Qt.ItemDataRole.DisplayRole) or '')
+                    for i in sel
+                }
+                lines = []
+                for r in rows:
+                    row_cells = [str(sel_set.get((r, c), '')) for c in cols]
+                    lines.append('\t'.join(row_cells))
+                QApplication.clipboard().setText('\n'.join(lines))
+
+            _copy_sc = QShortcut(QKeySequence.StandardKey.Copy, view)
+            _copy_sc.setContext(Qt.ShortcutContext.WidgetShortcut)
+            _copy_sc.activated.connect(_copy)
+            _selall_sc = QShortcut(QKeySequence.StandardKey.SelectAll, view)
+            _selall_sc.setContext(Qt.ShortcutContext.WidgetShortcut)
+            _selall_sc.activated.connect(view.selectAll)
+            # GC 방지 — closure 로 잡고 있어야 shortcut 활성 유지
+            view._copy_shortcut = _copy_sc
+            view._selall_shortcut = _selall_sc
+
+        def _build_table(df) -> 'QTableView':
+            model = _PandasTableModel(df, _DECIMALS, _cell_font)
+            view = QTableView()
+            view.setModel(model)
+            view.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
+            view.setSelectionBehavior(
+                QTableView.SelectionBehavior.SelectItems)
+            view.setAlternatingRowColors(True)
+            view.setStyleSheet(
+                "QTableView { font-size: 9px; }"
                 "QHeaderView::section { font-size: 9px; padding: 2px 4px; }"
             )
             # 다중 셀 선택 + Ctrl+C 복사 / Ctrl+A 전체선택 단축키
-            self._install_data_table_copy_shortcut(tbl)
-            tbl.setHorizontalHeaderLabels([str(c) for c in df.columns])
-            tbl.verticalHeader().setVisible(False)
-            tbl.horizontalHeader().setSectionResizeMode(
-                QHeaderView.ResizeMode.ResizeToContents)
-            for ri in range(n_rows):
-                for ci, col in enumerate(df.columns):
-                    _v = df.iat[ri, ci]
-                    if _v is None or pd.isna(_v):
-                        _txt = ""
-                    else:
-                        _decimals = _DECIMALS.get(str(col), 3)
-                        try:
-                            _txt = f"{float(_v):.{_decimals}f}"
-                        except (TypeError, ValueError):
-                            _txt = str(_v)
-                    _it = QTableWidgetItem(_txt)
-                    _it.setFont(_cell_font)
-                    _it.setTextAlignment(
-                        Qt.AlignmentFlag.AlignRight
-                        | Qt.AlignmentFlag.AlignVCenter)
-                    _it.setFlags(Qt.ItemFlag.ItemIsSelectable
-                                 | Qt.ItemFlag.ItemIsEnabled)
-                    tbl.setItem(ri, ci, _it)
-            return tbl
+            _install_view_copy_shortcut(view)
+            view.verticalHeader().setVisible(False)
+            # 컬럼 너비 — sample 50 행 기반 추정 (ResizeToContents 는 N×N
+            # 행 비용 → 100k+ 행에서 lazy 의미 상실).
+            n_rows = model.rowCount()
+            n_cols = model.columnCount()
+            sample_n = min(50, n_rows)
+            for c in range(n_cols):
+                header_txt = str(model.headerData(
+                    c, Qt.Orientation.Horizontal,
+                    Qt.ItemDataRole.DisplayRole) or '')
+                max_chars = len(header_txt)
+                for r in range(sample_n):
+                    _txt = str(model.data(model.index(r, c),
+                                          Qt.ItemDataRole.DisplayRole) or '')
+                    if len(_txt) > max_chars:
+                        max_chars = len(_txt)
+                # Consolas 9pt ≈ 6.5px/char, padding ~12px
+                view.setColumnWidth(
+                    c, max(70, min(160, max_chars * 8 + 12)))
+            # GC 방지 — model 도 view 에 보관
+            view._pandas_model = model
+            return view
 
         # 분리/연결: 채널당 1탭 + 사이클 세로 누적 (Cycle 컬럼 prepend)
         if overlap_mode in ('split', 'connected'):
@@ -21336,6 +21447,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     error_reasons = []
                     # 데이터 서브탭용 (channel, cycle) 별 DataFrame 누적
                     profile_data_per_combo: dict = {}
+                    _t_cyc_loop = time.perf_counter()
+                    _cyc_plot_total = 0.0
+                    _cyc_plot_n = 0
                     for CycNo in CycleNo:
                         cyccountmax = len(CycleNo)
                         cyccount += 1
@@ -21424,6 +21538,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             hyst_pair_state['next_temp'] = None
                         _plot_df, _meta = _extract_profile_data(temp)
                         if _plot_df is not None and len(_plot_df) > 2:
+                            _t_one = time.perf_counter()
                             try:
                                 writecolno, _artists = plot_one_fn(
                                     temp, axes, headername, lgnd, temp_lgnd,
@@ -21433,6 +21548,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 logger.warning('프로파일 플롯 오류: %s cy%s — %s',
                                                os.path.basename(FolderBase), CycNo, e)
                                 continue
+                            _cyc_plot_total += time.perf_counter() - _t_one
+                            _cyc_plot_n += 1
                             # path_idx tag 일괄 부착 (group 색상 모드용 — 다중 경로 hue 구분)
                             for _a in _artists:
                                 if not hasattr(_a, '_path_idx_tag'):
@@ -21453,6 +21570,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 ch_label, cyc_label)
                         else:
                             error_reasons.append(str(_meta.get('error', '데이터 없음')))
+                    _perf_logger.info(
+                        f'  [perf] cyc-loop ({chnlcount}/{chnlcountmax}): '
+                        f'{time.perf_counter() - _t_cyc_loop:.3f}s '
+                        f'(plot_one×{_cyc_plot_n}={_cyc_plot_total:.3f}s, '
+                        f'overhead={time.perf_counter() - _t_cyc_loop - _cyc_plot_total:.3f}s)')
                     # 채널 fig 마무리 — 데이터 없으면 탭 생성 건너뜀
                     if not has_data:
                         _skip_no_data_tab(
@@ -21466,6 +21588,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         plt.suptitle(title, fontsize=THEME['SUPTITLE_SIZE'],
                                      fontweight=THEME['SUPTITLE_WEIGHT'])
                     # 데이터 서브탭 위젯 생성 (실패 시 그래프만 표시)
+                    _t_subtab = time.perf_counter()
                     try:
                         _data_widget = self._create_profile_data_subtab(
                             profile_data_per_combo, channel_map,
@@ -21473,6 +21596,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     except Exception as _e:
                         logger.warning('프로파일 데이터 서브탭 생성 실패 (CycProfile): %s', _e)
                         _data_widget = None
+                    _perf_logger.info(
+                        f'  [perf] _create_profile_data_subtab: '
+                        f'{time.perf_counter() - _t_subtab:.3f}s '
+                        f'(combos={len(profile_data_per_combo)}, '
+                        f'overlap={overlap_mode})')
+                    _t_finalize = time.perf_counter()
                     self._finalize_plot_tab(
                         tab, tab_layout, canvas, toolbar, tab_no,
                         channel_map=channel_map, fig=fig,
@@ -21480,6 +21609,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         sub2_channel_map=sub2_channel_map,
                         data_subtab_widget=_data_widget,
                         subtab_titles=["결과", "데이터"])
+                    _perf_logger.info(
+                        f'  [perf] _finalize_plot_tab: '
+                        f'{time.perf_counter() - _t_finalize:.3f}s')
                     tab_no += 1
                     output_fig(self.figsaveok,
                                f"{namelist[-2]}={namelist[-1]}" if namelist else "")
@@ -28348,6 +28480,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             is_link=_link_mode,
             data_scope=options.get('data_scope', 'cycle'),
         )
+        _t_render = time.perf_counter()
         self._profile_render_loop(
             loaded_data=_compat_data,
             all_data_folder=all_data_folder,
@@ -28367,6 +28500,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             overlap_mode=options.get('overlap', 'continuous'),
             hyst_pair_state=_hyst_pair_state,
         )
+        _perf_logger.info(
+            f'  [perf] _profile_render_loop: '
+            f'{time.perf_counter() - _t_render:.3f}s '
+            f'(legacy_mode={legacy_mode}, color_mode={_color_mode}, '
+            f'view_mode={_view_mode}, n_cyc={len(CycleNo)}, '
+            f'n_ch={_n_channels})')
         self.ProfileConfirm.setEnabled(True)
         self._pump_ui()
 
