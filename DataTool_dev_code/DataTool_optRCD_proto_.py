@@ -9565,7 +9565,7 @@ _CLASSIFIED_COLORS = {
     '방전(저장준비)':       {'color_idx': 4, 'desc': '방전 (저장 준비 심방전)'},
     '방전(SOC세팅)':       {'color_idx': 4, 'desc': '방전 (SOC 세팅, DCHG_CCCV)'},
     '저장':               {'color_idx': 7, 'desc': '저장 (K-value / 장시간 휴지)'},
-    '저장(floating)':      {'color_idx': 7, 'desc': '저장 (Floating + 만충 cycling, 복합floating 시험)'},
+    '저장(floating)':      {'color_idx': 7, 'desc': '저장 (복합Floating)'},
     '사이클':              {'color_idx': 0, 'desc': '사이클'},
     '사이클(FORMATION)':   {'color_idx': 0, 'desc': '사이클 (FORMATION)'},
     '사이클(ACCEL)':       {'color_idx': 0, 'desc': '사이클 (가속수명)'},
