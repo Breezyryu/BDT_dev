@@ -12400,8 +12400,7 @@ class Ui_sitool(object):
         self.horizontalLayout_111.addWidget(self.stepnum)
         self.verticalLayout_4.addWidget(self._stepnum_container)
 
-        # ── 사이클 타임라인 바 + 펼침 상세 ──
-        # 바 행: [바(스크롤)] [TC토글 / ▶펼침 (상하)]
+        # ── 사이클 타임라인 바 ──
         self._timeline_row = QtWidgets.QHBoxLayout()
         self._timeline_row.setContentsMargins(0, 0, 0, 0)
         self._timeline_row.setSpacing(2)
@@ -12418,38 +12417,16 @@ class Ui_sitool(object):
         self._timeline_scroll.setMinimumHeight(self.cycle_timeline._min_h)
         self._timeline_scroll.setMaximumHeight(self.cycle_timeline._max_h)
         self._timeline_row.addWidget(self._timeline_scroll, 1)
-        # 상세 펼침 버튼
-        _btn_col = QtWidgets.QVBoxLayout()
-        _btn_col.setContentsMargins(0, 0, 0, 0)
-        _btn_col.setSpacing(2)
-        self._detail_toggle = QtWidgets.QPushButton("▶", parent=self.tab_6)
-        self._detail_toggle.setCheckable(True)
-        self._detail_toggle.setFixedSize(28, 20)
-        self._detail_toggle.setFont(QtGui.QFont("맑은 고딕", 8))
-        self._detail_toggle.setToolTip("사이클 상세 정보 펼침/접기")
-        self._detail_toggle.setStyleSheet(
-            "QPushButton { border: 1px solid #B0B0B0; border-radius: 3px; "
-            "background: #F5F5F5; color: #666; padding: 0px; }"
-            "QPushButton:checked { background: #E8E8E8; color: #333; }")
-        _btn_col.addWidget(self._detail_toggle)
-        self._timeline_row.addLayout(_btn_col)
         self.verticalLayout_4.addLayout(self._timeline_row)
 
-        # ── 인라인 상세 패널 (바 아래 확장형) ──
-        self._detail_panel = QtWidgets.QFrame(parent=self.tab_6)
-        self._detail_panel.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
-        self._detail_panel.setStyleSheet(
-            "QFrame#_detail_panel { background: #FAFAFA; "
-            "border: 1px solid #D8D8D8; border-radius: 4px; }")
-        self._detail_panel.setObjectName("_detail_panel")
-        self._detail_panel_layout = QtWidgets.QVBoxLayout(self._detail_panel)
-        self._detail_panel_layout.setContentsMargins(10, 6, 10, 6)
-        self._detail_panel_layout.setSpacing(4)
-        self._detail_panel.setVisible(False)
-        self.verticalLayout_4.addWidget(self._detail_panel)
-        # 하위 호환
-        self._timeline_detail = self._detail_panel
-        self._detail_popup = None  # 레거시 참조 유지
+        # 사이클 바 아래 선택 상태 레이블
+        self._timeline_selection_label = QtWidgets.QLabel(parent=self.tab_6)
+        self._timeline_selection_label.setFont(QtGui.QFont("맑은 고딕", 9))
+        self._timeline_selection_label.setStyleSheet("color: #888; padding-left: 2px;")
+        self._timeline_selection_label.setText("")
+        self._timeline_selection_label.setFixedHeight(16)
+        self._timeline_selection_label.setObjectName("_timeline_selection_label")
+        self.verticalLayout_4.addWidget(self._timeline_selection_label)
 
         # ── 공용 폰트 (Cycle 탭과 동일) ──
         _pf_font = QtGui.QFont("맑은 고딕", 10)
@@ -12772,16 +12749,6 @@ class Ui_sitool(object):
         self.horizontalLayout_116 = self.horizontalLayout_118
         self.horizontalLayout_117 = self.horizontalLayout_118
 
-        # ── UX 개선: 레이아웃 순서 재배치 ──
-        # 사이클 바 아래 선택 상태 레이블
-        self._timeline_selection_label = QtWidgets.QLabel(parent=self.tab_6)
-        self._timeline_selection_label.setFont(QtGui.QFont("맑은 고딕", 9))
-        self._timeline_selection_label.setStyleSheet("color: #888; padding-left: 2px;")
-        self._timeline_selection_label.setText("")
-        self._timeline_selection_label.setFixedHeight(16)
-        self._timeline_selection_label.setObjectName("_timeline_selection_label")
-        _detail_idx = self.verticalLayout_4.indexOf(self._detail_panel)
-        self.verticalLayout_4.insertWidget(_detail_idx, self._timeline_selection_label)
         # 모드+버튼을 그래프 옵션 아래에 배치
         self.verticalLayout_4.addWidget(self._profile_analysis_groupbox)
         # 하단 여백
@@ -18378,7 +18345,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_timeline.selectionChanged.connect(
             lambda row, text: self._on_timeline_selection_changed(row, text))
         self.stepnum.textChanged.connect(self._on_stepnum_text_changed)
-        self._detail_toggle.toggled.connect(self._on_detail_toggle_changed)
         # 기존 버튼 시그널 (숨김 — 하위 호환)
         # SET 관련 버튼
         # self.BMSetProfile.clicked.connect(self.BMSetProfilebutton)
@@ -26361,9 +26327,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if self._timeline_syncing:
             return
         self._timeline_syncing = True
-        # 펼침 패널 갱신
-        if self._detail_toggle.isChecked():
-            self._refresh_timeline_detail()
         self._write_cycle_to_table(text, col=4, bar_row=row_idx)
         self.stepnum.setPlainText(text)
         # 선택 상태 레이블 갱신
@@ -26409,202 +26372,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 f"  선택: {text.strip()}  ({len(nums)}개 TC)")
         else:
             self._timeline_selection_label.setText(f"  선택: {text.strip()}")
-
-    def _on_detail_toggle_changed(self, checked: bool) -> None:
-        """상세 패널 표시/접기."""
-        if checked:
-            self._show_detail_panel()
-            self._detail_toggle.setText("▼")
-        else:
-            self._hide_detail_panel()
-            self._detail_toggle.setText("▶")
-
-    def _show_detail_panel(self) -> None:
-        """사이클 바 아래 인라인 상세 패널 표시 (블록 라벨 + RPT 마커)."""
-        # 기존 내용 제거
-        layout = self._detail_panel_layout
-        while layout.count():
-            item = layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-            elif item.layout():
-                _clear = item.layout()
-                while _clear.count():
-                    _sub = _clear.takeAt(0)
-                    if _sub.widget():
-                        _sub.widget().deleteLater()
-
-        rows = self.cycle_timeline._rows
-        if not rows:
-            self._detail_toggle.setChecked(False)
-            return
-
-        # ── 각 행별 상세 ──
-        _font_bold = QtGui.QFont("맑은 고딕", 9, QtGui.QFont.Weight.Bold)
-        _font_normal = QtGui.QFont("맑은 고딕", 8)
-        panel = self._detail_panel
-
-        for ri, (label, blocks, total) in enumerate(rows):
-            if len(rows) > 1:
-                path_lbl = QtWidgets.QLabel(f"<b>{label or f'경로 {ri+1}'}</b>", panel)
-                path_lbl.setFont(_font_bold)
-                path_lbl.setStyleSheet("color: #3C5488;")
-                layout.addWidget(path_lbl)
-
-            # ① 블록 라벨 행
-            block_parts = []
-            for b in blocks:
-                _p = b['pattern']
-                pat = (_CLASSIFIED_COLORS.get(_p)
-                       or _PATTERN_CATEGORIES.get(_p)
-                       or {'desc': _p, 'color_idx': 9})
-                color = THEME['PALETTE'][pat['color_idx']]
-                name = pat['desc']
-                if b['start'] == b['end']:
-                    rng = str(b['start'])
-                else:
-                    rng = f"{b['start']}-{b['end']}"
-                block_parts.append(
-                    f"<span style='color:{color}'>■</span> "
-                    f"{name} <span style='color:#888'>[{rng}]</span> "
-                    f"<b>{b['count']}</b>cy")
-
-            blocks_lbl = QtWidgets.QLabel(" → ".join(block_parts), panel)
-            blocks_lbl.setFont(_font_normal)
-            blocks_lbl.setWordWrap(True)
-            layout.addWidget(blocks_lbl)
-
-            # ② RPT 마커 — classified에서 RPT 사이클 추출
-            rpt_cycles = self._get_rpt_cycles(ri)
-            if rpt_cycles:
-                rpt_text = ", ".join(str(c) for c in rpt_cycles)
-                rpt_lbl = QtWidgets.QLabel(
-                    f"<span style='color:{THEME['PALETTE'][5]}'>▼</span> "
-                    f"RPT: <b>{rpt_text}</b>"
-                    f" <span style='color:#888'>({len(rpt_cycles)}회)</span>",
-                    panel)
-                rpt_lbl.setFont(_font_normal)
-                layout.addWidget(rpt_lbl)
-
-            # 선택 정보
-            sel = self.cycle_timeline.get_selection_text(row=ri)
-            if sel:
-                sel_lbl = QtWidgets.QLabel(
-                    f"<span style='color:#888'>선택:</span> <b>{sel}</b>", panel)
-                sel_lbl.setFont(_font_normal)
-                layout.addWidget(sel_lbl)
-
-            # 채널별 진행 정보
-            ch_info = self._get_channel_progress(ri)
-            if ch_info and len(ch_info) > 1:
-                max_lc = max(c['lc'] for c in ch_info)
-                ch_parts = []
-                for ci in ch_info:
-                    bar_len = int(ci['lc'] / max_lc * 15) if max_lc > 0 else 0
-                    bar_str = '█' * bar_len + '░' * (15 - bar_len)
-                    tag = ' (기준)' if ci['lc'] == max_lc else ''
-                    ch_parts.append(
-                        f"<span style='font-family:Consolas,monospace;color:#3C5488'>"
-                        f"{bar_str}</span> "
-                        f"{ci['name']}  <b>{ci['lc']}</b>cy{tag}")
-                ch_lbl = QtWidgets.QLabel(
-                    "<span style='color:#888'>채널별 진행:</span><br>"
-                    + "<br>".join(ch_parts), panel)
-                ch_lbl.setFont(_font_normal)
-                layout.addWidget(ch_lbl)
-
-            if ri < len(rows) - 1:
-                sep = QtWidgets.QFrame(panel)
-                sep.setFrameShape(QtWidgets.QFrame.Shape.HLine)
-                sep.setStyleSheet("color: #E0E0E0;")
-                layout.addWidget(sep)
-
-        self._detail_panel.setVisible(True)
-
-    def _hide_detail_panel(self) -> None:
-        """상세 패널 숨기기."""
-        self._detail_panel.setVisible(False)
-
-    def _get_best_channel_meta(self, bar_row: int):
-        """바 행의 최대 사이클 채널 메타데이터 반환."""
-        try:
-            pne_path = self.pne_path_setting()
-            if not pne_path or not pne_path[0]:
-                return None
-            folders = pne_path[0]
-            if bar_row >= len(folders):
-                return None
-            folder_str = str(folders[bar_row])
-            if not os.path.isdir(folder_str):
-                return None
-            channels = sorted([f.path for f in os.scandir(folder_str)
-                        if f.is_dir() and _is_channel_folder(f.name)])
-            if not channels:
-                return None
-            best_meta = None
-            for ch in channels:
-                m = get_channel_meta(ch)
-                if m and (best_meta is None
-                          or (m.max_tc or 0) > (best_meta.max_tc or 0)):
-                    best_meta = m
-            return best_meta
-        except Exception:
-            return None
-
-    def _get_rpt_cycles(self, bar_row: int) -> list[int]:
-        """바 행 인덱스에 해당하는 RPT 사이클 번호 목록 반환."""
-        try:
-            meta = self._get_best_channel_meta(bar_row)
-            if not meta or not meta.classified or not meta.cycle_map:
-                return []
-            # classified(TC 기준) → cycle_map으로 논리사이클 변환 후 RPT 필터
-            tc_to_ln = {}
-            for ln, val in meta.cycle_map.items():
-                if isinstance(val, dict) and 'all' in val:
-                    s, e = val['all']
-                    for tc in range(s, e + 1):
-                        tc_to_ln[tc] = ln
-            rpt_lns = set()
-            for cl in meta.classified:
-                if cl['category'] == 'RPT':
-                    ln = tc_to_ln.get(cl['cycle'], cl['cycle'])
-                    rpt_lns.add(ln)
-            return sorted(rpt_lns)
-        except Exception:
-            return []
-
-    def _get_channel_progress(self, bar_row: int) -> list[dict]:
-        """바 행의 모든 채널별 진행 정보 반환.
-
-        Returns
-        -------
-        list[dict]
-            [{'name': 'CH008', 'lc': 765}, {'name': 'CH014', 'lc': 764}, ...]
-            사이클 수 내림차순 정렬.
-        """
-        try:
-            pne_path = self.pne_path_setting()
-            if not pne_path or not pne_path[0]:
-                return []
-            folders = pne_path[0]
-            if bar_row >= len(folders):
-                return []
-            folder_str = str(folders[bar_row])
-            if not os.path.isdir(folder_str):
-                return []
-            channels = sorted([f.path for f in os.scandir(folder_str)
-                        if f.is_dir() and _is_channel_folder(f.name)])
-            result = []
-            for ch in channels:
-                meta = get_channel_meta(ch)
-                if meta and meta.max_tc:
-                    ch_name = extract_text_in_brackets(os.path.basename(ch))
-                    result.append({'name': f'CH{ch_name}', 'lc': meta.max_tc})
-            result.sort(key=lambda x: -x['lc'])
-            return result
-        except Exception:
-            return []
 
     def _apply_hysteresis_soc_offsets(
         self,
@@ -27053,11 +26820,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         ]
         present = [c for c in cols_order if c in long_df.columns]
         return long_df[present].reset_index(drop=True)
-
-    def _refresh_timeline_detail(self) -> None:
-        """패널 열려있으면 갱신."""
-        if self._detail_panel.isVisible():
-            self._show_detail_panel()
 
     def _table_row_to_bar_row(self, table_row: int) -> int:
         """테이블 행 번호 → 바 행 인덱스 (데이터 행 순번)."""
