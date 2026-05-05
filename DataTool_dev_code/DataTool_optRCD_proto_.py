@@ -26529,13 +26529,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """overlap/axis 버튼 활성/비활성 상태 갱신.
 
         유효 조합:
-          - 사이클 × {이어서(시간), 분리(SOC/시간), 연결(SOC)}
-          - 충전/방전 × {분리(SOC/시간)} 만
+          - 사이클 × {이어서(시간), 분리(SOC/DOD), 연결(SOC/DOD)}
+          - 충전/방전 × {분리(SOC/DOD/시간)} 만
         무효 조합 시 해당 버튼 비활성화 + 유효 기본값으로 강제.
 
         2026-04-28: 충전/방전 + 이어서 조합 제거 (사용자 요청). 충전·방전
         단방향에서 시계열 연속(이어서) 은 분리 모드와 시각·해석상 차이가
         없어 혼란만 가중 → 분리 단일 옵션으로 통일.
+
+        2026-05-05: 사이클 + 분리 + 시간 조합 비활성화 (사용자 요청). 사이클
+        모드에서 분리 overlap 의 시간 축은 결과값이 이상하여 일단 차단.
+        충전/방전 단방향의 분리 + 시간은 유효하므로 유지.
         """
         is_cycle = (self.profile_scope_group.checkedId() == 0)
 
@@ -26564,10 +26568,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.profile_axis_time.setEnabled(False)
             if self.profile_axis_group.checkedId() == 2:
                 self.profile_axis_soc.setChecked(True)
-        else:  # 분리: SOC/DOD/시간 모두 허용
+        else:  # 분리: SOC/DOD 허용. 사이클 모드에서는 시간 비활성 (결과값 이상)
             self.profile_axis_soc.setEnabled(True)
             self.profile_axis_dod.setEnabled(True)
-            self.profile_axis_time.setEnabled(True)
+            # 사이클 + 분리 + 시간 조합 비활성화 (2026-05-05)
+            # 충전/방전 단방향에서는 분리 + 시간 유효 → 활성 유지
+            self.profile_axis_time.setEnabled(not is_cycle)
+            if is_cycle and self.profile_axis_group.checkedId() == 2:
+                self.profile_axis_soc.setChecked(True)
 
     def _profile_opt_scope_changed(self, btn_id: int, checked: bool = True) -> None:
         """데이터 범위 변경 시 overlap 의존성 처리.
