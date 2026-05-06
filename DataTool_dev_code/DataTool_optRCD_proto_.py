@@ -12918,11 +12918,14 @@ class Ui_sitool(object):
         self.verticalLayout_4.setObjectName("verticalLayout_4")
         self.horizontalLayout_15 = QtWidgets.QHBoxLayout()
         self.horizontalLayout_15.setObjectName("horizontalLayout_15")
-        # 통합 모드: 세그먼티드 버튼 그룹으로 생성
+        # 묶음 기준: 세그먼티드 버튼 그룹 (라인을 무엇 단위로 묶을지 선택)
         _pv_font = QtGui.QFont("맑은 고딕", 10)
+        self.profile_view_label = QtWidgets.QLabel(parent=self.tab_6)
+        self.profile_view_label.setFont(_pv_font)
+        self.profile_view_label.setObjectName("profile_view_label")
         self.profile_view_group = QtWidgets.QButtonGroup(self.tab_6)
         self._profile_view_seg, _pv_btns = self._make_seg_group(
-            ["사이클 통합", "셀별 통합", "전체 통합"], self.tab_6,
+            ["사이클별", "셀별", "전체"], self.tab_6,
             self.profile_view_group, _pv_font, checked_idx=0)
         self.CycProfile = _pv_btns[0]
         self.CycProfile.setObjectName("CycProfile")
@@ -12930,11 +12933,16 @@ class Ui_sitool(object):
         self.CellProfile.setObjectName("CellProfile")
         self.AllProfile = _pv_btns[2]
         self.AllProfile.setObjectName("AllProfile")
+        # 세그 버튼 균일 폭/높이 (프로파일 탭 12개 통일 — 데이터 범위 박스와 동일 사양)
+        # setFixedWidth 로 강제 통일 (자동 sizeHint 무시, 가장 긴 "사이클별" 4글자 수용)
+        for _b in _pv_btns:
+            _b.setFixedWidth(80)
+            _b.setFixedHeight(30)
         self.horizontalLayout_15.addWidget(self._profile_view_seg)
         # chk_dqdv는 아래 _graph_opt_groupbox_pf 그리드로 이동
         self.chk_coincell_cyc = QtWidgets.QCheckBox(parent=self.tab_6)
-        self.chk_coincell_cyc.setMinimumSize(QtCore.QSize(80, 30))
-        self.chk_coincell_cyc.setMaximumSize(QtCore.QSize(100, 30))
+        self.chk_coincell_cyc.setMinimumSize(QtCore.QSize(120, 30))
+        self.chk_coincell_cyc.setMaximumSize(QtCore.QSize(160, 30))
         font = QtGui.QFont()
         font.setFamily("맑은 고딕")
         font.setPointSize(10)
@@ -13016,24 +13024,46 @@ class Ui_sitool(object):
         # GroupBox 1: 데이터 범위
         # ══════════════════════════════════════════
         self._data_scope_groupbox = QtWidgets.QGroupBox("데이터 범위", parent=self.tab_6)
+        # 박스 가로 길이 — 폭 명시 없이 부모 verticalLayout_4 stretch 따름
+        # (그래프 옵션 박스와 동일 부모 → 자연스럽게 동일 폭 받음)
         _ds_layout = QtWidgets.QVBoxLayout(self._data_scope_groupbox)
-        _ds_layout.setContentsMargins(6, 4, 6, 4)
-        _ds_layout.setSpacing(4)
+        _ds_layout.setContentsMargins(8, 6, 8, 6)
+        _ds_layout.setSpacing(6)
 
-        # 행 1: 데이터 scope + 연속성 + 루프  (레이블 제거 — GroupBox 제목으로 충분)
-        self._profile_opt_row1 = QtWidgets.QHBoxLayout()
-        self._profile_opt_row1.setObjectName("_profile_opt_row1")
+        # ── 정렬 상수 (시각적 일관성) ─────────────────────────────────
+        # 세그 버튼·라벨·그룹 간 spacing 통일 — 박스 가로폭 안에 들어가도록 압축
+        # 12개 버튼 (프로파일 탭 전체) setFixedWidth 로 강제 통일
+        # 폭 80 = 가장 긴 "사이클별" 4글자(약 60px) + 좌우 padding 10px씩
+        # → 짧은 텍스트(SOC/방전 등)에도 좌우 padding 균일하게 확보, 시각적 균형
+        _SEG_BTN_W = 80         # 세그 버튼 고정 폭 — 12개 통일
+        _SEG_BTN_FIXED_H = 30   # 세그 버튼 고정 높이
+        _LABEL_MIN_W = 32       # 콜론 라벨 최소 폭 (구간:/이음:/X축:/프리셋:)
+        _LABEL_TO_FIELD = 4     # 라벨 ↔ 위젯 spacing
+        _GROUP_GAP = 12         # 그룹 ↔ 그룹 spacing
+        _CHECKBOX_GAP = 8       # 체크박스 ↔ 체크박스 spacing
 
-        # 하위 호환: 레이블 위젯 유지 (숨김)
+        def _normalize_seg(btns):
+            """세그 버튼 폭·높이 강제 통일 (자동 sizeHint 무시)."""
+            for _b in btns:
+                _b.setFixedWidth(_SEG_BTN_W)
+                _b.setFixedHeight(_SEG_BTN_FIXED_H)
+
+        def _normalize_label(lbl):
+            """콜론 라벨 최소 폭 통일 (행 간 좌측 정렬 — 구간/이음/X축/프리셋 동일 X)."""
+            lbl.setMinimumWidth(_LABEL_MIN_W)
+
+        # ── 위젯 생성 ─────────────────────────────────────────────────
+        # 라벨 위젯 (콜론 라벨 패턴 — 시각적 일관성)
         self.profile_scope_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
         self.profile_scope_label.setFont(_pf_font)
         self.profile_scope_label.setObjectName("profile_scope_label")
-        self.profile_scope_label.setVisible(False)
+        _normalize_label(self.profile_scope_label)
         self.profile_cont_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
         self.profile_cont_label.setFont(_pf_font)
         self.profile_cont_label.setObjectName("profile_cont_label")
-        self.profile_cont_label.setVisible(False)
+        _normalize_label(self.profile_cont_label)
 
+        # 사이클 / 충전 / 방전 (data_scope)
         self.profile_scope_group = QtWidgets.QButtonGroup(self.tab_6)
         _scope_seg, _scope_btns = self._make_seg_group(
             ["사이클", "충전", "방전"], self._data_scope_groupbox,
@@ -13041,18 +13071,17 @@ class Ui_sitool(object):
         self.profile_scope_cyc = _scope_btns[0]
         self.profile_scope_chg = _scope_btns[1]
         self.profile_scope_dchg = _scope_btns[2]
-        self._profile_opt_row1.addWidget(_scope_seg)
+        _normalize_seg(_scope_btns)
 
-        self._profile_opt_row1.addSpacing(8)
-
+        # 이어서 / 분리 / 루프 (overlap)
         self.profile_overlap_group = QtWidgets.QButtonGroup(self.tab_6)
         _ovlp_seg, _ovlp_btns = self._make_seg_group(
-            ["이어서", "분리", "연결"], self._data_scope_groupbox,
+            ["이어서", "분리", "루프"], self._data_scope_groupbox,
             self.profile_overlap_group, _pf_font, checked_idx=0)
         self.profile_ovlp_continuous = _ovlp_btns[0]   # id=0
         self.profile_ovlp_split = _ovlp_btns[1]        # id=1
-        self.profile_ovlp_connected = _ovlp_btns[2]    # id=2
-        self._profile_opt_row1.addWidget(_ovlp_seg)
+        self.profile_ovlp_connected = _ovlp_btns[2]    # id=2 (UI 표기 "루프")
+        _normalize_seg(_ovlp_btns)
 
         # 하위 호환: 기존 위젯 참조 유지 (숨김, 신호 연결 방지용)
         # sequential은 UI에서 제거 — split으로 alias (외부 참조 보호)
@@ -13063,18 +13092,11 @@ class Ui_sitool(object):
         self.profile_loop_chk = QtWidgets.QCheckBox(parent=self._data_scope_groupbox)
         self.profile_loop_chk.setVisible(False)  # 제거 대신 숨김 (하위 호환)
 
-        self._profile_opt_row1.addStretch()
-        _ds_layout.addLayout(self._profile_opt_row1)
-
-        # 행 2: X축 + 체크박스
-        self._profile_opt_row2 = QtWidgets.QHBoxLayout()
-        self._profile_opt_row2.setObjectName("_profile_opt_row2")
-
+        # X축 라벨 + SOC / DOD / 시간 (axis_mode)
         self.profile_axis_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
         self.profile_axis_label.setFont(_pf_font)
         self.profile_axis_label.setObjectName("profile_axis_label")
-        self._profile_opt_row2.addWidget(self.profile_axis_label)
-
+        _normalize_label(self.profile_axis_label)
         self.profile_axis_group = QtWidgets.QButtonGroup(self.tab_6)
         # 버튼 순서(id): 0=SOC, 1=DOD, 2=시간
         # DOD는 히스테리시스(연결)·방전 시나리오에서 방전 심도 좌표로 표시
@@ -13084,39 +13106,28 @@ class Ui_sitool(object):
         self.profile_axis_soc = _axis_btns[0]
         self.profile_axis_dod = _axis_btns[1]
         self.profile_axis_time = _axis_btns[2]
-        self._profile_opt_row2.addWidget(_axis_seg)
+        _normalize_seg(_axis_btns)
 
-        self._profile_opt_row2.addSpacing(12)
-
+        # Rest포함 체크박스
         self.profile_rest_chk = QtWidgets.QCheckBox(parent=self._data_scope_groupbox)
         self.profile_rest_chk.setFont(_pf_font)
         self.profile_rest_chk.setObjectName("profile_rest_chk")
-        self._profile_opt_row2.addWidget(self.profile_rest_chk)
-        self._profile_opt_row2.addSpacing(8)
 
+        # CV포함 체크박스
         self.profile_cv_chk = QtWidgets.QCheckBox(parent=self._data_scope_groupbox)
         self.profile_cv_chk.setFont(_pf_font)
         self.profile_cv_chk.setChecked(True)
         self.profile_cv_chk.setObjectName("profile_cv_chk")
-        self._profile_opt_row2.addWidget(self.profile_cv_chk)
 
-        self._profile_opt_row2.addStretch()
-        _ds_layout.addLayout(self._profile_opt_row2)
-
-        # 행 3: 프리셋 — Row 1/2 의 버튼·체크박스와 가로폭 경쟁 회피
-        self._profile_opt_row3 = QtWidgets.QHBoxLayout()
-        self._profile_opt_row3.setObjectName("_profile_opt_row3")
-
+        # 프리셋 라벨 + 콤보 (라벨 폰트는 일관성 위해 normal 통일)
         self.profile_preset_label = QtWidgets.QLabel(parent=self._data_scope_groupbox)
-        _pf_font_bold = QtGui.QFont(_pf_font)
-        _pf_font_bold.setBold(True)
-        self.profile_preset_label.setFont(_pf_font_bold)
+        self.profile_preset_label.setFont(_pf_font)
         self.profile_preset_label.setObjectName("profile_preset_label")
-        self._profile_opt_row3.addWidget(self.profile_preset_label)
+        _normalize_label(self.profile_preset_label)
 
         self.profile_preset_combo = QtWidgets.QComboBox(parent=self._data_scope_groupbox)
         self.profile_preset_combo.setFont(_pf_font)
-        self.profile_preset_combo.setMinimumWidth(140)
+        self.profile_preset_combo.setMinimumWidth(100)
         self.profile_preset_combo.setObjectName("profile_preset_combo")
         self.profile_preset_combo.addItems([
             "(선택)",
@@ -13127,9 +13138,6 @@ class Ui_sitool(object):
         ])
         self.profile_preset_combo.setToolTip(
             "프리셋: 자주 쓰는 옵션 조합 일괄 적용")
-        self._profile_opt_row3.addWidget(self.profile_preset_combo)
-
-        self._profile_opt_row3.addSpacing(14)
 
         # 히스테리시스 TC 페어링 체크박스
         # ON: TC N 의 phase + TC N+1 의 보완 phase = 닫힌 hysteresis loop
@@ -13141,10 +13149,49 @@ class Ui_sitool(object):
         self.profile_hyst_pair_chk.setToolTip(
             "ON: 방전→충전 루프 (TC N 방전 + TC N+1 충전 결합)\n"
             "OFF: 충전→방전 루프 (같은 TC 내 충방전)")
-        self._profile_opt_row3.addWidget(self.profile_hyst_pair_chk)
 
+        # ── 레이아웃 구성 ─────────────────────────────────────────────
+        # 행 1: 프리셋 | Rest포함 | CV포함 | 방전→충전
+        self._profile_opt_row1 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row1.setObjectName("_profile_opt_row1")
+        self._profile_opt_row1.addWidget(self.profile_preset_label)
+        self._profile_opt_row1.addSpacing(_LABEL_TO_FIELD)
+        self._profile_opt_row1.addWidget(self.profile_preset_combo)
+        self._profile_opt_row1.addSpacing(_GROUP_GAP)
+        self._profile_opt_row1.addWidget(self.profile_rest_chk)
+        self._profile_opt_row1.addSpacing(_CHECKBOX_GAP)
+        self._profile_opt_row1.addWidget(self.profile_cv_chk)
+        self._profile_opt_row1.addSpacing(_CHECKBOX_GAP)
+        self._profile_opt_row1.addWidget(self.profile_hyst_pair_chk)
+        self._profile_opt_row1.addStretch()
+        _ds_layout.addLayout(self._profile_opt_row1)
+
+        # 행 2: 구간: [사이클|충전|방전]
+        self._profile_opt_row2 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row2.setObjectName("_profile_opt_row2")
+        self._profile_opt_row2.addWidget(self.profile_scope_label)
+        self._profile_opt_row2.addSpacing(_LABEL_TO_FIELD)
+        self._profile_opt_row2.addWidget(_scope_seg)
+        self._profile_opt_row2.addStretch()
+        _ds_layout.addLayout(self._profile_opt_row2)
+
+        # 행 3: 이음: [이어서|분리|루프]
+        self._profile_opt_row3 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row3.setObjectName("_profile_opt_row3")
+        self._profile_opt_row3.addWidget(self.profile_cont_label)
+        self._profile_opt_row3.addSpacing(_LABEL_TO_FIELD)
+        self._profile_opt_row3.addWidget(_ovlp_seg)
         self._profile_opt_row3.addStretch()
         _ds_layout.addLayout(self._profile_opt_row3)
+
+        # 행 4: X축: [SOC|DOD|시간]
+        self._profile_opt_row4 = QtWidgets.QHBoxLayout()
+        self._profile_opt_row4.setObjectName("_profile_opt_row4")
+        self._profile_opt_row4.addWidget(self.profile_axis_label)
+        self._profile_opt_row4.addSpacing(_LABEL_TO_FIELD)
+        self._profile_opt_row4.addWidget(_axis_seg)
+        self._profile_opt_row4.addStretch()
+        _ds_layout.addLayout(self._profile_opt_row4)
 
         self.verticalLayout_4.addWidget(self._data_scope_groupbox)
         # 하위 호환
@@ -13282,9 +13329,10 @@ class Ui_sitool(object):
         _pa_vlayout.setContentsMargins(6, 6, 6, 6)
         _pa_vlayout.setSpacing(6)
 
-        # 행 1: 통합 모드 라디오 버튼 (사이클통합 / 셀별통합 / 전체통합) + 코인셀 체크
+        # 행 1: 묶음 기준 라디오 버튼 (사이클별 / 셀별 / 전체) + 코인셀 체크
         _pa_mode_row = QtWidgets.QHBoxLayout()
         _pa_mode_row.setSpacing(8)
+        _pa_mode_row.addWidget(self.profile_view_label)
         _pa_mode_row.addWidget(self._profile_view_seg)
         _pa_mode_row.addStretch()
         _pa_mode_row.addWidget(self.chk_coincell_cyc)
@@ -13373,7 +13421,7 @@ class Ui_sitool(object):
         spacerItem1 = QtWidgets.QSpacerItem(40, 28, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
         self.horizontalLayout_129.addItem(spacerItem1)
         self.chk_coincell = QtWidgets.QCheckBox(parent=self.tab_2)
-        self.chk_coincell.setFixedSize(QtCore.QSize(80, 24))
+        self.chk_coincell.setFixedSize(QtCore.QSize(160, 24))
         self.chk_coincell.setObjectName("chk_coincell")
         self.horizontalLayout_129.addWidget(self.chk_coincell)
         self.verticalLayout_8.addLayout(self.horizontalLayout_129)
@@ -18367,7 +18415,7 @@ class Ui_sitool(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("sitool", "현황"))
         self.chk_cyclepath.setText(_translate("sitool", "지정Path사용"))
         self.chk_ectpath.setText(_translate("sitool", "ECT path 사용"))
-        self.chk_coincell_cyc.setText(_translate("sitool", "코인셀"))
+        self.chk_coincell_cyc.setText(_translate("sitool", "코인셀(단위변환)"))
         self.cycle_tab_reset.setText(_translate("sitool", "초기화"))
         self.dcirchk.setText(_translate("sitool", "PNE 설비 DCIR (SOC100 10s 방전 Pulse)"))
         self.pulsedcir.setText(_translate("sitool", "PNE 10s DCIR (SOC5, 50 10s 방전 Pulse)"))
@@ -18387,9 +18435,10 @@ class Ui_sitool(object):
         self.chk_link_cycle.setText(_translate("sitool", "연결처리"))
         self.cycle_confirm.setText(_translate("sitool", "Cycle 분석"))
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_5), _translate("sitool", "Cycle"))
-        self.CycProfile.setText(_translate("sitool", "사이클 통합"))
-        self.CellProfile.setText(_translate("sitool", "셀별 통합"))
-        self.AllProfile.setText(_translate("sitool", "전체 통합"))
+        self.profile_view_label.setText(_translate("sitool", "묶음 기준:"))
+        self.CycProfile.setText(_translate("sitool", "사이클별"))
+        self.CellProfile.setText(_translate("sitool", "셀별"))
+        self.AllProfile.setText(_translate("sitool", "전체"))
         self.chk_dqdv.setText(_translate("sitool", "dQdV 전환"))
         self.stepnumlb.setText(_translate("sitool", "Cycle\n"
 "(원하는 스텝들을 띄어쓰기나 -로 표기)\n"
@@ -18409,11 +18458,11 @@ class Ui_sitool(object):
         self.dqdvscalelb.setText(_translate("sitool", "  스케일"))
         self.dqdvscale.setText(_translate("sitool", "1"))
         # 통합 프로필 옵션 위젯 텍스트
-        self.profile_scope_label.setText(_translate("sitool", "데이터:"))
-        self.profile_cont_label.setText(_translate("sitool", "연속성:"))
+        self.profile_scope_label.setText(_translate("sitool", "구간:"))
+        self.profile_cont_label.setText(_translate("sitool", "이음:"))
         self.profile_axis_label.setText(_translate("sitool", "X축:"))
-        self.profile_rest_chk.setText(_translate("sitool", "Rest"))
-        self.profile_cv_chk.setText(_translate("sitool", "CV"))
+        self.profile_rest_chk.setText(_translate("sitool", "Rest포함"))
+        self.profile_cv_chk.setText(_translate("sitool", "CV포함"))
         self.profile_preset_label.setText(_translate("sitool", "프리셋:"))
         self.profile_hyst_pair_chk.setText(_translate("sitool", "방전→충전"))
         # overlap 3단 버튼 툴팁
@@ -18430,7 +18479,7 @@ class Ui_sitool(object):
         self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_6), _translate("sitool", "Profile"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.CycTab), _translate("sitool", "사이클데이터"))
         self.label_10.setText(_translate("sitool", "패턴 리스트 Load를 누르고 패턴을 선택한 후에 오른쪽 패널에서 원하는 부분 수정"))
-        self.chk_coincell.setText(_translate("sitool", "Coin cell"))
+        self.chk_coincell.setText(_translate("sitool", "코인셀(단위변환)"))
         self.cycxlabel_7.setText(_translate("sitool", "패턴 경로"))
         self.ptn_load.setText(_translate("sitool", "패턴 리스트 Load"))
         self.ptn_ori_path.setText(_translate("sitool", "C:\\Program Files\\PNE CTSPro\\DataBase\\Cycler_Schedule_2000.mdb"))
@@ -29933,17 +29982,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     #   208/209: 전압/전류 이상(경고)
     SAFETY_CODES = frozenset({"128", "129", "134", "142", "208", "209"})
 
-    # .log 세분화 결과 → 노랑 (사용자 조작 또는 원인 불명)
+    # .log 세분화 결과 → 노랑 (사용자 조작)
     USER_OR_ERROR_LABELS = frozenset({
         "사용자멈춤",
-        "작업멈춤",   # _classify_paused_reason 의 fallback 반환값
         "잠시멈춤",   # 작업멈춤과 동일 계열 (PNE State 변형)
         # "중단점 도달 (S*/C*)" 는 startswith 로 판정
     })
 
-    # .log 세분화 결과 → 빨강 (하드웨어/챔버 이슈)
+    # .log 세분화 결과 → 빨강 (하드웨어/챔버 이슈 + 원인 불명 fallback)
     HW_WARNING_LABELS = frozenset({
         "챔버이슈",
+        "작업멈춤",   # _classify_paused_reason 의 fallback 반환값 (원인 불명)
     })
 
     # 완료 계열 (셀있음) → 연녹
@@ -30953,8 +31002,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._filter_sections = {}
         row = 0
         # 상태별 행 전체 배경색 정의 (v3: 연녹/녹/노랑/빨강 4색)
-        _PAUSED_BG = QtGui.QColor(214, 155, 154)       # 빨강: 안전조건 Code + 챔버이슈
-        _STOPPED_BG = QtGui.QColor(240, 220, 160)      # 노랑: 사용자멈춤, 중단점 도달, 작업멈춤(fallback)
+        _PAUSED_BG = QtGui.QColor(214, 155, 154)       # 빨강: 안전조건 Code + 챔버이슈 + 작업멈춤(fallback, 원인 불명)
+        _STOPPED_BG = QtGui.QColor(240, 220, 160)      # 노랑: 사용자멈춤, 중단점 도달, 잠시멈춤
         _COMPLETED_BG = QtGui.QColor(234, 239, 230)    # 연녹: 완료/시험완료 (셀있음)
         _IDLE_BG = QtGui.QColor(176, 203, 176)         # 녹: 대기/준비/작업정지 (셀없음)
         STATUS_BG = {
@@ -30964,8 +31013,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             "완료": _COMPLETED_BG,
             "시험완료": _COMPLETED_BG,   # 🆕 .log 세분화 결과: 연녹 (셀있음)
             "사용자멈춤": _STOPPED_BG,
-            "작업멈춤": _STOPPED_BG,     # 🆕 .log fallback (원인 불명) → 노랑
-            "잠시멈춤": _STOPPED_BG,     # 작업멈춤 동일 계열 → 노랑
+            "작업멈춤": _PAUSED_BG,      # 🆕 .log fallback (원인 불명) → 빨강 (260507 변경)
+            "잠시멈춤": _STOPPED_BG,     # 작업멈춤과 동일 계열이지만 PNE State 명시 → 노랑 유지
             "챔버이슈": _PAUSED_BG,       # 🆕 하드웨어 이슈 → 빨강
         }
         # floor_cyclers 순서를 유지하여 출력
@@ -31028,12 +31077,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         elif status_base in self.COMPLETED_LABELS:
                             bg_color = _COMPLETED_BG  # 연녹
                         elif status_base in self.HW_WARNING_LABELS:
-                            bg_color = _PAUSED_BG    # 빨강 (챔버이슈 등)
+                            bg_color = _PAUSED_BG    # 빨강 (챔버이슈 + 작업멈춤 fallback)
                         elif status_base in self.USER_OR_ERROR_LABELS:
-                            bg_color = _STOPPED_BG   # 노랑 (사용자/작업멈춤)
+                            bg_color = _STOPPED_BG   # 노랑 (사용자멈춤/잠시멈춤)
                         else:
                             # Code 128/129/134/142/208/209 Code_Desc 라벨 + 미정의 코드
-                            bg_color = _PAUSED_BG    # 빨강 (안전조건 + fallback)
+                            bg_color = _PAUSED_BG    # 빨강 (안전조건 + 미정의 fallback)
                     _font9 = QtGui.QFont("Malgun gothic", 9)
                     # col 0: 충방전기
                     item_cycler = QtWidgets.QTableWidgetItem(cycler_text)
