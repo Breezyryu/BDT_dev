@@ -4,15 +4,30 @@ echo Building DataTool (onedir)...
 
 cd /d "%~dp0"
 
-set "VENV_EXE=%~dp0.venv\Scripts\pyinstaller.exe"
+:: .venv 탐색: 현재 디렉토리 → 상위 디렉토리
+if exist "%~dp0.venv\Scripts\pyinstaller.exe" (
+    set "VENV_DIR=%~dp0.venv"
+) else if exist "%~dp0..\.venv\Scripts\pyinstaller.exe" (
+    set "VENV_DIR=%~dp0..\.venv"
+) else (
+    echo [ERROR] .venv not found. Checked:
+    echo   %~dp0.venv
+    echo   %~dp0..\.venv
+    pause
+    exit /b 1
+)
+
+set "VENV_EXE=%VENV_DIR%\Scripts\pyinstaller.exe"
 set "SCRIPT_PATH=%~dp0DataTool_dev_code\DataTool_optRCD_proto_.py"
+set "BDT_PYBAMM=%~dp0DataTool_dev_code\bdt_pybamm.py"
 set "ICON_PATH=%~dp0DataTool.ico"
 set "RUNTIME_HOOK=%~dp0hook-runtime-casadi.py"
 set "SPLASH_PATH=%~dp0splash.png"
 
 if not exist "%SPLASH_PATH%" (
-    echo splash.png not found, generating placeholder...
-    "%~dp0.venv\Scripts\python.exe" "%~dp0gen_splash.py"
+    echo [ERROR] splash.png not found: %SPLASH_PATH%
+    pause
+    exit /b 1
 )
 
 "%VENV_EXE%" ^
@@ -37,6 +52,7 @@ if not exist "%SPLASH_PATH%" (
     --exclude-module sphinx ^
     --exclude-module notebook ^
     --runtime-hook="%RUNTIME_HOOK%" ^
+    --add-data "%BDT_PYBAMM%;." ^
     --splash="%SPLASH_PATH%" ^
     --icon="%ICON_PATH%" ^
     "%SCRIPT_PATH%" ^
