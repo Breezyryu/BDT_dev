@@ -27087,17 +27087,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         CC-CV 잉여 (CC 후 CV 단계의 ChgCap 추가 누적, 보통 +0.05~0.10) 를
         per-cycle 보정. Hyst label (direction) 별로:
 
-        - **Dchg/Chg 그룹 공통**: 각 TC 의 chg phase 첫 row SOC = **0.0**
+        - **Dchg 그룹** (방전 hyst): 각 TC 의 dchg phase 첫 row SOC = **1.0**
+          → cross-TC 페어링 시 closed loop top 이 SOC 1.0 line 에 정렬.
+          TC 의 chg phase 도 함께 shift 되므로 chg end (= dchg start) = 1.0.
+        - **Chg 그룹** (충전 hyst): 각 TC 의 chg phase 첫 row SOC = **0.0**
           → closed loop bottom 이 SOC 0.0 line 에 정렬.
-          dchg start 는 chg 종료 지점에서 자연 결정 (1.0 이상 가능).
 
         Hyst label 에 없는 TC (비 hyst, RPT 비인접, classified 미인식) 는
         변경 없음 — 기존 absolute SOC anchor 유지.
 
         사용자 protocol 의 의도:
           (Voltage hysteresis test_Graph format_v1.3, 사용자 보고)
-          - TC 3-12 (방전 hyst): chg 시작 SOC 0.0, dchg 는 chg 종료점에서 시작
-          - TC 14-23 (충전 hyst): chg 시작 SOC 0.0
+          - TC 3-12 (방전 hyst): 모든 dchg arc 가 SOC 1.0 시작
+          - TC 14-23 (충전 hyst): 모든 chg arc 가 SOC 0.0 시작
         랩장님 원본 (`pne_chg_Profile_data` / `pne_dchg_Profile_data`) 의
         phase-relative anchor 와 동등한 시작점 정렬을 hysteresis preset 의
         cross-TC 페어링 시각에 보장.
@@ -27198,11 +27200,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     ) -> float:
         """Phase canonical anchor 를 만족하는 추가 shift 량 산출.
 
-        Dchg/Chg 모두 chg 첫 row 가 SOC 0.0 이 되도록.
+        Dchg → dchg 첫 row 가 SOC 1.0 이 되도록.
+        Chg  → chg 첫 row 가 SOC 0.0 이 되도록.
         대상 phase 부재 시 0 반환.
         """
         direction = info.get('direction')
-        if direction in ('Dchg', 'Chg'):
+        if direction == 'Dchg':
+            dchg_rows = df[df['Condition'] == 2]
+            if len(dchg_rows) > 0:
+                return 1.0 - float(dchg_rows['SOC'].iloc[0])
+        elif direction == 'Chg':
             chg_rows = df[df['Condition'] == 1]
             if len(chg_rows) > 0:
                 return 0.0 - float(chg_rows['SOC'].iloc[0])
