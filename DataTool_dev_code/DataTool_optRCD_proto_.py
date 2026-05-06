@@ -23548,18 +23548,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     nrows=2, ncols=3, figsize=(_fig_w, 8))
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
 
-                # ── 신뢰성 Excel 오버레이 (통합 모드) ──
-                if _excel_overlay_data:
-                    _excel_color = graphcolor[0]
-                    _legend_done = False
-                    for _fname, _df in _excel_overlay_data:
-                        for _, column in _df.items():
-                            lgnd = f"[신뢰성] {_fname}" if not _legend_done else ""
-                            graph_cycle(_df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
-                                        "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
-                                        _excel_color)
-                            _legend_done = True
-
                 # ── 상세(탭2) figure — Step 3: 실제 그래프 ──
                 # (2×3: Dchg / Chg / AvgV / DchgEng / RndV_chg_rest / RndV)
                 fig2, axes_b_grid = plt.subplots(
@@ -23866,6 +23854,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                             colorno = 0
                         else:
                             colorno = colorno % len(THEME['PALETTE']) + 1
+
+                # ── 신뢰성 Excel 오버레이 (PNE 채널 이후, colorno 이어받음) ──
+                if _excel_overlay_data:
+                    for _fname, _df in _excel_overlay_data:
+                        _excel_color = graphcolor[colorno % len(THEME['PALETTE'])]
+                        _legend_done = False
+                        for _, column in _df.items():
+                            lgnd = f"[신뢰성] {_fname}" if not _legend_done else ""
+                            graph_cycle(_df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
+                                        "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
+                                        _excel_color)
+                            graph_cycle(_df.index, column, ax1b, ylimitlow, ylimithigh, 0.05,
+                                        "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
+                                        _excel_color)
+                            _legend_done = True
+                        # 데이터 탭용: 신뢰성 방전용량비율 시트 추가
+                        _sheet_key = 'Dchg'
+                        if _sheet_key not in sheets_per_channel:
+                            sheets_per_channel[_sheet_key] = {}
+                        for _ci, _col in enumerate(_df.columns):
+                            _ch_lbl = f"[신뢰성] {_fname}" if _ci == 0 else f"[신뢰성] {_fname}_{_ci+1}"
+                            sheets_per_channel[_sheet_key][_ch_lbl] = _df[_col]
+                        colorno = colorno % len(THEME['PALETTE']) + 1
+                        has_valid_data = True
 
                 # suptitle 결정
                 if cycnamelist:
