@@ -18824,6 +18824,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _tb_selall = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.SelectAll, self.tb_channel)
         _tb_selall.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         _tb_selall.activated.connect(self.tb_channel.selectAll)
+        # 우클릭 컨텍스트 메뉴 — 복사/전체 선택
+        self.tb_channel.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tb_channel.customContextMenuRequested.connect(
+            lambda pos, _tb=self.tb_channel: self._tb_channel_context_menu(_tb, pos))
         self.toyosumstate = 0
         self.pnesumstate = 0
         # unmount, mount button에 각각 명령어 할당
@@ -30387,13 +30392,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         err_msg('파일 or 경로없음!!','C드라이브에 cycler_path.txt 파일이 없거나 toyo/PNE 경로 설정 오류')
 
     def _filter_context_menu(self, pos) -> None:
-        """필터링 테이블 우클릭 메뉴"""
-        if not self._filter_sections:
-            return
+        """필터링 테이블 우클릭 메뉴 — 복사/전체 선택 + 섹션 펼침/닫힘"""
         tb = getattr(self, 'tb_channel_filter', None) or self.tb_channel
         menu = QtWidgets.QMenu(tb)
-        menu.addAction("전체 펼침", self._filter_expand_all)
-        menu.addAction("전체 닫힘", self._filter_collapse_all)
+        # 복사 (선택 영역 → 클립보드, TSV+HTML)
+        act_copy = menu.addAction("복사 (Ctrl+C)")
+        act_copy.setShortcut(QtGui.QKeySequence.StandardKey.Copy)
+        act_copy.triggered.connect(lambda: self._tb_channel_copy(tb))
+        act_copy.setEnabled(bool(tb.selectedIndexes()))
+        # 전체 선택
+        act_selall = menu.addAction("전체 선택 (Ctrl+A)")
+        act_selall.setShortcut(QtGui.QKeySequence.StandardKey.SelectAll)
+        act_selall.triggered.connect(tb.selectAll)
+        # 섹션 펼침/닫힘
+        if self._filter_sections:
+            menu.addSeparator()
+            menu.addAction("전체 펼침", self._filter_expand_all)
+            menu.addAction("전체 닫힘", self._filter_collapse_all)
         menu.exec(tb.viewport().mapToGlobal(pos))
 
     def _filter_expand_all(self) -> None:
@@ -30429,9 +30444,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     item.setText(item.text().replace("▾", "▸", 1))
 
     def _filter_toggle_section(self, row: int, _col: int) -> None:
-        """필터링 테이블 헤더 행 클릭 → 하위 행 접기/펼치기"""
+        """필터링 테이블 헤더 행 클릭 → 하위 행 접기/펼치기
+
+        드래그로 다중 선택된 상태(>1행)는 토글 스킵 — 드래그→복사 흐름 보호.
+        """
         sec = self._filter_sections.get(row)
         if sec is None:
+            return
+        # 다중 선택(드래그) 시 토글 스킵
+        sel_rows = {i.row() for i in self.tb_channel_filter.selectedIndexes()}
+        if len(sel_rows) > 1:
             return
         collapsed = not sec['collapsed']
         sec['collapsed'] = collapsed
@@ -30537,22 +30559,75 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     def tb_info_combobox(self):
         self.tb_cycler_combobox()
 
-    def _tb_channel_copy(self) -> None:
-        """tb_channel 선택 영역을 탭 구분 텍스트로 클립보드에 복사"""
-        sel = self.tb_channel.selectedIndexes()
+    def _tb_channel_context_menu(self, tb, pos) -> None:
+        """tb_channel(현황 채널 그리드) 우클릭 메뉴 — 복사/전체 선택"""
+        menu = QtWidgets.QMenu(tb)
+        act_copy = menu.addAction("복사 (Ctrl+C)")
+        act_copy.setShortcut(QtGui.QKeySequence.StandardKey.Copy)
+        act_copy.triggered.connect(lambda: self._tb_channel_copy(tb))
+        act_copy.setEnabled(bool(tb.selectedIndexes()))
+        act_selall = menu.addAction("전체 선택 (Ctrl+A)")
+        act_selall.setShortcut(QtGui.QKeySequence.StandardKey.SelectAll)
+        act_selall.triggered.connect(tb.selectAll)
+        menu.exec(tb.viewport().mapToGlobal(pos))
+
+    def _tb_channel_copy(self, tb=None) -> None:
+        """현재 포커스된 채널 테이블 선택 영역을 클립보드에 복사.
+
+        - tb 인자 명시 시 해당 테이블 사용
+        - 미지정 시 sender (Shortcut/Action) parent → focusWidget 순으로 자동 감지
+        - 숨겨진 행(섹션 접힘) 제외 — 사용자가 보지 못한 데이터는 복사 안 함
+        - TSV(plain text) + HTML 동시 저장 → Excel·다른 표·메모장 모두 호환
+        """
+        # 1) 대상 테이블 자동 감지
+        if tb is None:
+            sc = self.sender()
+            pw = sc.parentWidget() if isinstance(
+                sc, (QtGui.QShortcut, QtGui.QAction)) else None
+            if isinstance(pw, QtWidgets.QTableWidget):
+                tb = pw
+        if tb is None:
+            fw = QtWidgets.QApplication.focusWidget()
+            if isinstance(fw, QtWidgets.QTableWidget):
+                tb = fw
+        if tb is None:
+            tb = getattr(self, 'tb_channel_filter', None) or getattr(
+                self, 'tb_channel', None)
+        if tb is None:
+            return
+        # 2) 선택 영역 (숨겨진 행 제외) — 사각 범위 채움
+        sel = tb.selectedIndexes()
         if not sel:
             return
-        # 행/열 범위 계산
-        rows = sorted(set(idx.row() for idx in sel))
-        cols = sorted(set(idx.column() for idx in sel))
-        lines = []
+        rows = sorted({idx.row() for idx in sel
+                       if not tb.isRowHidden(idx.row())})
+        cols = sorted({idx.column() for idx in sel})
+        if not rows or not cols:
+            return
+        # 3) TSV + HTML 동시 작성
+        def _esc_html(s: str) -> str:
+            return (s.replace('&', '&amp;').replace('<', '&lt;')
+                    .replace('>', '&gt;').replace('\n', '<br>'))
+        tsv_lines = []
+        html_rows = []
         for r in rows:
             cells = []
+            html_cells = []
             for c in cols:
-                item = self.tb_channel.item(r, c)
-                cells.append(item.text() if item else "")
-            lines.append('\t'.join(cells))
-        QtWidgets.QApplication.clipboard().setText('\n'.join(lines))
+                item = tb.item(r, c)
+                t = item.text() if item else ""
+                cells.append(t)
+                html_cells.append(f"<td>{_esc_html(t)}</td>")
+            tsv_lines.append('\t'.join(cells))
+            html_rows.append(f"<tr>{''.join(html_cells)}</tr>")
+        tsv_text = '\n'.join(tsv_lines)
+        html_text = (
+            "<table border='1' style='border-collapse:collapse'>"
+            f"{''.join(html_rows)}</table>")
+        mime = QtCore.QMimeData()
+        mime.setText(tsv_text)
+        mime.setHtml(html_text)
+        QtWidgets.QApplication.clipboard().setMimeData(mime)
 
     def filter_all_channels(self) -> None:
         """전체 충방전기에서 검색 조건에 맞는 채널을 층별/충방전기별 그룹으로 출력
