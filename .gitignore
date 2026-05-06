@@ -37,3 +37,11 @@ CLAUDE.md
 skills-lock.json
 # Phase 0 audit debug output — large, regenerable from sch_dump.py
 tools/sch_dump_output.txt
+# PyInstaller build artifacts — regenerable
+DataTool_dev_build/
+# Separate project — should be its own repo
+bdt_data_platform/
+# Obsidian editor state / plugins
+wiki/.obsidian/
+# Wiki generated outputs
+wiki/outputs/
