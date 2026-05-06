@@ -20399,7 +20399,67 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             
             sub2_list.itemClicked.connect(on_sub2_item_clicked)
             sub2_list.itemChanged.connect(on_sub2_item_changed)
-            
+
+            # ── 전체 표시 / 전체 하이라이트 → 사이클 그룹 연동 ──
+            chk_show_all.stateChanged.disconnect(_on_show_all)
+
+            def _on_show_all_with_sub2(state):
+                if _chk_guard['updating']:
+                    return
+                _chk_guard['updating'] = True
+                checked = state == Qt.CheckState.Checked.value
+                new_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                ch_list.blockSignals(True)
+                for i in range(ch_list.count()):
+                    it = ch_list.item(i)
+                    it.setCheckState(new_state)
+                    orig_key = it.data(Qt.ItemDataRole.UserRole)
+                    if orig_key in channel_map:
+                        for art in channel_map[orig_key]['artists']:
+                            art.set_visible(checked)
+                ch_list.blockSignals(False)
+                if _has_sub:
+                    _sub_chk_guard['updating'] = True
+                    sub_list.blockSignals(True)
+                    for i in range(sub_list.count()):
+                        sub_list.item(i).setCheckState(new_state)
+                    sub_list.blockSignals(False)
+                    _sub_chk_guard['updating'] = False
+                _sub2_chk_guard['updating'] = True
+                sub2_list.blockSignals(True)
+                for i in range(sub2_list.count()):
+                    sub2_list.item(i).setCheckState(new_state)
+                sub2_list.blockSignals(False)
+                _sub2_chk_guard['updating'] = False
+                _update_ch_count()
+                _rebuild_legend()
+                _redraw_all_canvases()
+                _chk_guard['updating'] = False
+
+            chk_show_all.stateChanged.connect(_on_show_all_with_sub2)
+
+            chk_hl_all.stateChanged.disconnect(_on_hl_all)
+
+            def _on_hl_all_with_sub2(state):
+                checked = state == Qt.CheckState.Checked.value
+                highlight_state['enabled'] = not checked
+                if checked:
+                    _restore_all()
+                    _redraw_all_canvases()
+                else:
+                    highlight_state['active'] = set()
+                    for lbl, info in channel_map.items():
+                        for art in info['artists']:
+                            _dim_artist(art)
+                            art.set_zorder(1)
+                    for lbl, info in sub2_channel_map.items():
+                        for art in info['artists']:
+                            _dim_artist(art)
+                            art.set_zorder(1)
+                    _redraw_all_canvases()
+
+            chk_hl_all.stateChanged.connect(_on_hl_all_with_sub2)
+
             # 서브2 채널 열 레이아웃
             sub2_list_col = QVBoxLayout()
             sub2_list_col.setSpacing(1)
