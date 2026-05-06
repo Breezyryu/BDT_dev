@@ -28486,14 +28486,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                         if _pair_enabled and _direction == 'Dchg':
                             _segments = [(2, p)]  # 현재 TC 의 DCHG
                             if _pair_p is not None and 'Condition' in _pair_p.columns:
-                                _pair_chg = _pair_p[_pair_p['Condition'] == 1]
-                                if len(_pair_chg) > 0:
-                                    _pair_chg_shifted = _pair_chg.copy()
-                                    _pair_chg_shifted['SOC'] = (_pair_chg_shifted['SOC']
-                                        - float(_pair_chg_shifted['SOC'].iloc[0]))
-                                    _segments.append((1, _pair_chg_shifted))
-                                else:
-                                    _segments.append((1, _pair_p))
+                                _segments.append((1, _pair_p))  # 다음 TC 의 CHG
                         elif _pair_enabled and _direction == 'Chg':
                             _segments = [(1, p)]  # 현재 TC 의 CHG
                             if _pair_p is not None and 'Condition' in _pair_p.columns:
