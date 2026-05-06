@@ -12984,13 +12984,18 @@ class Ui_sitool(object):
         self.horizontalLayout_111.addWidget(self.stepnum)
         self.verticalLayout_4.addWidget(self._stepnum_container)
 
-        # ── 사이클 타임라인 바 ──
+        # ── 사이클 타임라인 바 (GroupBox 박스 처리, 데이터 범위/그래프 옵션과 시각 일관) ──
+        self._timeline_groupbox = QtWidgets.QGroupBox("사이클 패턴", parent=self.tab_6)
+        _tl_layout = QtWidgets.QVBoxLayout(self._timeline_groupbox)
+        _tl_layout.setContentsMargins(8, 6, 8, 6)
+        _tl_layout.setSpacing(4)
+
         self._timeline_row = QtWidgets.QHBoxLayout()
         self._timeline_row.setContentsMargins(0, 0, 0, 0)
         self._timeline_row.setSpacing(2)
-        self.cycle_timeline = CycleTimelineBar(parent=self.tab_6)
+        self.cycle_timeline = CycleTimelineBar(parent=self._timeline_groupbox)
         self.cycle_timeline.setObjectName("cycle_timeline")
-        self._timeline_scroll = QtWidgets.QScrollArea(parent=self.tab_6)
+        self._timeline_scroll = QtWidgets.QScrollArea(parent=self._timeline_groupbox)
         self._timeline_scroll.setWidget(self.cycle_timeline)
         self._timeline_scroll.setWidgetResizable(True)
         self._timeline_scroll.setHorizontalScrollBarPolicy(
@@ -13001,16 +13006,18 @@ class Ui_sitool(object):
         self._timeline_scroll.setMinimumHeight(self.cycle_timeline._min_h)
         self._timeline_scroll.setMaximumHeight(self.cycle_timeline._max_h)
         self._timeline_row.addWidget(self._timeline_scroll, 1)
-        self.verticalLayout_4.addLayout(self._timeline_row)
+        _tl_layout.addLayout(self._timeline_row)
 
-        # 사이클 바 아래 선택 상태 레이블
-        self._timeline_selection_label = QtWidgets.QLabel(parent=self.tab_6)
+        # 사이클 바 아래 선택 상태 레이블 — 박스 안에 포함 (사이클 바와 한 묶음)
+        self._timeline_selection_label = QtWidgets.QLabel(parent=self._timeline_groupbox)
         self._timeline_selection_label.setFont(QtGui.QFont("맑은 고딕", 9))
         self._timeline_selection_label.setStyleSheet("color: #888; padding-left: 2px;")
         self._timeline_selection_label.setText("")
         self._timeline_selection_label.setFixedHeight(16)
         self._timeline_selection_label.setObjectName("_timeline_selection_label")
-        self.verticalLayout_4.addWidget(self._timeline_selection_label)
+        _tl_layout.addWidget(self._timeline_selection_label)
+
+        self.verticalLayout_4.addWidget(self._timeline_groupbox)
 
         # ── 공용 폰트 (Cycle 탭과 동일) ──
         _pf_font = QtGui.QFont("맑은 고딕", 10)
@@ -13037,7 +13044,7 @@ class Ui_sitool(object):
         # → 짧은 텍스트(SOC/방전 등)에도 좌우 padding 균일하게 확보, 시각적 균형
         _SEG_BTN_W = 80         # 세그 버튼 고정 폭 — 12개 통일
         _SEG_BTN_FIXED_H = 30   # 세그 버튼 고정 높이
-        _LABEL_MIN_W = 32       # 콜론 라벨 최소 폭 (구간:/이음:/X축:/프리셋:)
+        _LABEL_MIN_W = 48       # 콜론 라벨 최소 폭 — "프리셋:" 4글자 sizeHint(~40px) 잘림 방지
         _LABEL_TO_FIELD = 4     # 라벨 ↔ 위젯 spacing
         _GROUP_GAP = 12         # 그룹 ↔ 그룹 spacing
         _CHECKBOX_GAP = 8       # 체크박스 ↔ 체크박스 spacing
@@ -13151,45 +13158,46 @@ class Ui_sitool(object):
             "OFF: 충전→방전 루프 (같은 TC 내 충방전)")
 
         # ── 레이아웃 구성 ─────────────────────────────────────────────
-        # 행 1: 프리셋 | Rest포함 | CV포함 | 방전→충전
+        # 각 라디오 그룹 우측에 체크박스 1개씩 1열 정렬 (Rest포함 / CV포함 / 방전→충전)
+        # 행 1: 프리셋
         self._profile_opt_row1 = QtWidgets.QHBoxLayout()
         self._profile_opt_row1.setObjectName("_profile_opt_row1")
         self._profile_opt_row1.addWidget(self.profile_preset_label)
         self._profile_opt_row1.addSpacing(_LABEL_TO_FIELD)
         self._profile_opt_row1.addWidget(self.profile_preset_combo)
-        self._profile_opt_row1.addSpacing(_GROUP_GAP)
-        self._profile_opt_row1.addWidget(self.profile_rest_chk)
-        self._profile_opt_row1.addSpacing(_CHECKBOX_GAP)
-        self._profile_opt_row1.addWidget(self.profile_cv_chk)
-        self._profile_opt_row1.addSpacing(_CHECKBOX_GAP)
-        self._profile_opt_row1.addWidget(self.profile_hyst_pair_chk)
         self._profile_opt_row1.addStretch()
         _ds_layout.addLayout(self._profile_opt_row1)
 
-        # 행 2: 구간: [사이클|충전|방전]
+        # 행 2: 구간: [사이클|충전|방전]   ☐ Rest포함
         self._profile_opt_row2 = QtWidgets.QHBoxLayout()
         self._profile_opt_row2.setObjectName("_profile_opt_row2")
         self._profile_opt_row2.addWidget(self.profile_scope_label)
         self._profile_opt_row2.addSpacing(_LABEL_TO_FIELD)
         self._profile_opt_row2.addWidget(_scope_seg)
+        self._profile_opt_row2.addSpacing(_GROUP_GAP)
+        self._profile_opt_row2.addWidget(self.profile_rest_chk)
         self._profile_opt_row2.addStretch()
         _ds_layout.addLayout(self._profile_opt_row2)
 
-        # 행 3: 이음: [이어서|분리|루프]
+        # 행 3: 이음: [이어서|분리|루프]   ☑ CV포함
         self._profile_opt_row3 = QtWidgets.QHBoxLayout()
         self._profile_opt_row3.setObjectName("_profile_opt_row3")
         self._profile_opt_row3.addWidget(self.profile_cont_label)
         self._profile_opt_row3.addSpacing(_LABEL_TO_FIELD)
         self._profile_opt_row3.addWidget(_ovlp_seg)
+        self._profile_opt_row3.addSpacing(_GROUP_GAP)
+        self._profile_opt_row3.addWidget(self.profile_cv_chk)
         self._profile_opt_row3.addStretch()
         _ds_layout.addLayout(self._profile_opt_row3)
 
-        # 행 4: X축: [SOC|DOD|시간]
+        # 행 4: X축: [SOC|DOD|시간]   ☐ 방전→충전
         self._profile_opt_row4 = QtWidgets.QHBoxLayout()
         self._profile_opt_row4.setObjectName("_profile_opt_row4")
         self._profile_opt_row4.addWidget(self.profile_axis_label)
         self._profile_opt_row4.addSpacing(_LABEL_TO_FIELD)
         self._profile_opt_row4.addWidget(_axis_seg)
+        self._profile_opt_row4.addSpacing(_GROUP_GAP)
+        self._profile_opt_row4.addWidget(self.profile_hyst_pair_chk)
         self._profile_opt_row4.addStretch()
         _ds_layout.addLayout(self._profile_opt_row4)
 
@@ -13323,7 +13331,7 @@ class Ui_sitool(object):
         # ══════════════════════════════════════════
         # 프로필 분석 — 모드 + 실행 버튼 (상단 배치)
         # ══════════════════════════════════════════
-        self._profile_analysis_groupbox = QtWidgets.QGroupBox(parent=self.tab_6)
+        self._profile_analysis_groupbox = QtWidgets.QGroupBox("프로파일 분석", parent=self.tab_6)
         self._profile_analysis_groupbox.setFont(_pf_font)
         _pa_vlayout = QtWidgets.QVBoxLayout(self._profile_analysis_groupbox)
         _pa_vlayout.setContentsMargins(6, 6, 6, 6)
@@ -13377,7 +13385,9 @@ class Ui_sitool(object):
 
         self.horizontalLayout_17.addLayout(self.verticalLayout_4)
         self.tabWidget_2.addTab(self.tab_6, "")
-        self.verticalLayout_6.addWidget(self.tabWidget_2, stretch=0)
+        # tabWidget_2 stretch=1 → 좌측 패널 빈 세로 공간을 Cycle/Profile 탭이 흡수
+        # _path_groupbox 는 stretch=0 → sizeHint 만큼만 차지 (필요 시 사용자가 splitter 로 조절)
+        self.verticalLayout_6.addWidget(self.tabWidget_2, stretch=1)
         # 왼쪽 패널을 스크롤 영역으로 래핑
         self._left_scroll = QtWidgets.QScrollArea(parent=self.CycTab)
         self._left_scroll.setWidget(self._left_panel_widget)
