@@ -2584,7 +2584,7 @@ def _calc_soc(
     pd.Series
         SOC 값. df.index와 동일 인덱스.
     """
-    # Fix A (260503) — preset 4 (충전 분석) / preset 5 (방전 분석) 의 X축에
+    # Fix A (260503) — preset 2 (충전분석) / preset 3 (방전분석) 의 X축에
     # axis_mode (SOC vs DOD) 반영. SOC = 1 − DOD 관계 항상 성립.
     # 자연 anchor (Chg+SOC, Dchg+DOD) 는 phase 시작점 X=0, 반대 axis 는 X=1.
     # 랩장님 원본 (oper1.py) 의 phase-relative 0 anchor 정신은 자연 anchor 에서 보존.
@@ -12916,11 +12916,10 @@ class Ui_sitool(object):
         self.profile_preset_combo.setObjectName("profile_preset_combo")
         self.profile_preset_combo.addItems([
             "(선택)",
-            "전체 진단",
-            "ICA / dV·dQ",
+            "전체 프로파일",
+            "충전분석",
+            "방전분석",
             "히스테리시스",
-            "충전 분석",
-            "방전 분석",
         ])
         self.profile_preset_combo.setToolTip(
             "프리셋: 자주 쓰는 옵션 조합 일괄 적용")
@@ -26838,21 +26837,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """프리셋 콤보 → 프로파일 옵션 일괄 적용.
 
         idx 매핑:
-          1: 전체 진단      — 사이클·이어서·시간·Rest·CV
-          2: ICA / dV·dQ    — 사이클·분리·SOC·CV·dQdV
-          3: 히스테리시스   — 사이클·연결·SOC·Rest·CV
-          4: 충전 분석      — 충전·분리·SOC·CV
-          5: 방전 분석      — 방전·분리·SOC
+          1: 전체 프로파일   — 사이클·이어서·시간·Rest·CV
+          2: 충전분석        — 충전·분리·SOC·CV
+          3: 방전분석        — 방전·분리·SOC
+          4: 히스테리시스    — 사이클·연결·SOC·Rest·CV
         """
         if idx <= 0:
             return
         # (scope, overlap, axis, rest, cv, dqdv)
         presets = {
             1: ("cycle", "continuous", "time", True, True, False),
-            2: ("cycle", "split", "soc", False, True, True),
-            3: ("cycle", "connected", "soc", False, True, False),
-            4: ("charge", "split", "soc", False, True, False),
-            5: ("discharge", "split", "soc", False, True, False),
+            2: ("charge", "split", "soc", False, True, False),
+            3: ("discharge", "split", "soc", False, True, False),
+            4: ("cycle", "connected", "soc", False, True, False),
         }
         if idx not in presets:
             return
@@ -26867,8 +26864,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.profile_rest_chk.setChecked(rest)
         self.profile_cv_chk.setChecked(cv)
         self.chk_dqdv.setChecked(dqdv)
-        # 히스테리시스 프리셋 (idx=3) → TC 페어링 자동 ON, 그 외 → OFF
-        self.profile_hyst_pair_chk.setChecked(idx == 3)
+        # 히스테리시스 프리셋 (idx=4) → TC 페어링 자동 ON, 그 외 → OFF
+        self.profile_hyst_pair_chk.setChecked(idx == 4)
         # 콤보는 (선택)으로 복귀 — 재선택 허용
         self.profile_preset_combo.blockSignals(True)
         self.profile_preset_combo.setCurrentIndex(0)
