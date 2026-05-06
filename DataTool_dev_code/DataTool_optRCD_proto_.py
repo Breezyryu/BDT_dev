@@ -12477,7 +12477,7 @@ class Ui_sitool(object):
         # col 0=시험명, 1=경로, 2=채널, 3=용량, 4=TC, 5=모드, 6=정격V(default 3.7V)
         self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
         self.cycle_path_table.setHorizontalHeaderLabels(
-            ["시험명", "경로(필수입력)", "채널", "용량", "사이클", "모드", "정격V"])
+            ["시험명", "경로(필수입력)", "채널", "용량", "사이클", "모드", "V nom"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
