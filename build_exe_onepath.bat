@@ -25,8 +25,8 @@ set "RUNTIME_HOOK=%~dp0hook-runtime-casadi.py"
 set "SPLASH_PATH=%~dp0splash.png"
 
 :: 출력명: BatteryDataTool_YYMMDD (로케일 무관)
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set "DT=%%I"
-set "YYMMDD=%DT:~2,6%"
+:: Win11 24H2 이후 wmic 제거 → powershell Get-Date 로 대체 (Win7+ 호환)
+for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyMMdd"') do set "YYMMDD=%%I"
 set "BUILD_NAME=BatteryDataTool_%YYMMDD%"
 
 if not exist "%SPLASH_PATH%" (
