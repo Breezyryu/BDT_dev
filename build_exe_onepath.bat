@@ -24,6 +24,11 @@ set "ICON_PATH=%~dp0DataTool.ico"
 set "RUNTIME_HOOK=%~dp0hook-runtime-casadi.py"
 set "SPLASH_PATH=%~dp0splash.png"
 
+:: 출력명: BatteryDataTool_YYMMDD
+for /f "tokens=1-3 delims=/" %%a in ("%date:~-10%") do set "YYMMDD=%%c%%a%%b"
+set "YYMMDD=%YYMMDD:~2%"
+set "BUILD_NAME=BatteryDataTool_%YYMMDD%"
+
 if not exist "%SPLASH_PATH%" (
     echo [ERROR] splash.png not found: %SPLASH_PATH%
     pause
@@ -46,6 +51,8 @@ if not exist "%SPLASH_PATH%" (
     --hidden-import platformdirs ^
     --hidden-import casadi ^
     --hidden-import casadi._casadi ^
+    --hidden-import xlwings ^
+    --hidden-import pyodbc ^
     --exclude-module IPython ^
     --exclude-module jupyter ^
     --exclude-module pytest ^
@@ -55,6 +62,7 @@ if not exist "%SPLASH_PATH%" (
     --add-data "%BDT_PYBAMM%;." ^
     --splash="%SPLASH_PATH%" ^
     --icon="%ICON_PATH%" ^
+    --name "%BUILD_NAME%" ^
     "%SCRIPT_PATH%" ^
     --distpath "."
 
