@@ -12935,10 +12935,8 @@ class Ui_sitool(object):
         self.profile_hyst_pair_chk.setChecked(False)
         self.profile_hyst_pair_chk.setObjectName("profile_hyst_pair_chk")
         self.profile_hyst_pair_chk.setToolTip(
-            "히스테리시스 TC 페어링 — 한 사이클 = TC N + TC N+1 결합.\n"
-            "방전: TC N DCHG (100→(100-X)%) + TC N+1 CHG ((100-X)→100%)\n"
-            "충전: TC N CHG  (0→X%)         + TC N+1 DCHG (X→0%)\n"
-            "끄면 현재 TC 의 양 phase 모두 plot (기존 동작)")
+            "ON: 방전→충전 루프 (TC N 방전 + TC N+1 충전 결합)\n"
+            "OFF: 충전→방전 루프 (같은 TC 내 충방전)")
         self._profile_opt_row3.addWidget(self.profile_hyst_pair_chk)
 
         self._profile_opt_row3.addStretch()
@@ -18213,7 +18211,7 @@ class Ui_sitool(object):
         self.profile_rest_chk.setText(_translate("sitool", "Rest"))
         self.profile_cv_chk.setText(_translate("sitool", "CV"))
         self.profile_preset_label.setText(_translate("sitool", "프리셋:"))
-        self.profile_hyst_pair_chk.setText(_translate("sitool", "TC 페어링"))
+        self.profile_hyst_pair_chk.setText(_translate("sitool", "방전→충전"))
         # overlap 3단 버튼 툴팁
         self.profile_ovlp_continuous.setToolTip(
             "이어서: 실험 전체 타임라인 — 이상 이벤트·OCV relaxation·CV tail 진단")
