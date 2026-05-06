@@ -66,4 +66,12 @@ if not exist "%SPLASH_PATH%" (
     "%SCRIPT_PATH%" ^
     --distpath "."
 
+:: 빌드 성공 시 .py 원본을 출력 폴더에 복사
+if exist "%~dp0%BUILD_NAME%" (
+    echo Copying source files...
+    copy "%~dp0DataTool_dev_code\DataTool_optRCD_proto_.py" "%~dp0%BUILD_NAME%\" >nul
+    copy "%~dp0DataTool_dev_code\bdt_pybamm.py" "%~dp0%BUILD_NAME%\" >nul
+    echo Done: %BUILD_NAME%\
+)
+
 pause
