@@ -25,9 +25,20 @@ set "RUNTIME_HOOK=%~dp0hook-runtime-casadi.py"
 set "SPLASH_PATH=%~dp0splash.png"
 
 :: 출력명: BatteryDataTool_YYMMDD (로케일 무관)
+:: 폴더 이미 존재 시 _v1, _v2 ... suffix 추가 (덮어쓰기 방지)
 :: Win11 24H2 이후 wmic 제거 → powershell Get-Date 로 대체 (Win7+ 호환)
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyMMdd"') do set "YYMMDD=%%I"
-set "BUILD_NAME=BatteryDataTool_%YYMMDD%"
+set "BUILD_BASE=BatteryDataTool_%YYMMDD%"
+set "BUILD_NAME=%BUILD_BASE%"
+set "VERSION=1"
+
+:check_folder
+if exist "%~dp0..\build\%BUILD_NAME%" (
+    set "BUILD_NAME=%BUILD_BASE%_v%VERSION%"
+    set /a VERSION+=1
+    goto check_folder
+)
+echo Output folder: %BUILD_NAME%
 
 if not exist "%SPLASH_PATH%" (
     echo [ERROR] splash.png not found: %SPLASH_PATH%
