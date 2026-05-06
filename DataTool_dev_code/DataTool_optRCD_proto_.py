@@ -27087,9 +27087,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         CC-CV 잉여 (CC 후 CV 단계의 ChgCap 추가 누적, 보통 +0.05~0.10) 를
         per-cycle 보정. Hyst label (direction) 별로:
 
-        - **Dchg 그룹** (방전 hyst): 각 TC 의 dchg phase 첫 row SOC = **1.0**
-          → cross-TC 페어링 시 closed loop top 이 SOC 1.0 line 에 정렬.
-          TC 의 chg phase 도 함께 shift 되므로 chg end (= dchg start) = 1.0.
+        - **Dchg 그룹** (방전 hyst): 각 TC 의 dchg phase 마지막 row SOC = **0.0**
+          → 방전 끝점 기준 정렬. chg/dchg start 는 자연 결정.
         - **Chg 그룹** (충전 hyst): 각 TC 의 chg phase 첫 row SOC = **0.0**
           → closed loop bottom 이 SOC 0.0 line 에 정렬.
 
@@ -27200,7 +27199,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     ) -> float:
         """Phase canonical anchor 를 만족하는 추가 shift 량 산출.
 
-        Dchg → dchg 첫 row 가 SOC 1.0 이 되도록.
+        Dchg → dchg 마지막 row 가 SOC 0.0 이 되도록.
         Chg  → chg 첫 row 가 SOC 0.0 이 되도록.
         대상 phase 부재 시 0 반환.
         """
@@ -27208,7 +27207,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if direction == 'Dchg':
             dchg_rows = df[df['Condition'] == 2]
             if len(dchg_rows) > 0:
-                return 1.0 - float(dchg_rows['SOC'].iloc[0])
+                return 0.0 - float(dchg_rows['SOC'].iloc[-1])
         elif direction == 'Chg':
             chg_rows = df[df['Condition'] == 1]
             if len(chg_rows) > 0:
@@ -27228,13 +27227,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         마지막 row 만 canonical end 로 끌어당김 (linear scaling, 작은
         ratio 만 허용).
 
-        - **Dchg 그룹** (방전 hyst): dchg 마지막 row → SOC `1 - depth_pct/100`
-          (예: TC 12 depth 100% → 0.0, TC 4 depth 20% → 0.8)
-          → Cy0012 의 dchg 끝점 정렬. 일반적으로 cumul + Layer 2-α 가
-            이미 정확하지만, CC-CV 잉여 잔존 시 보정.
-        - **Chg 그룹** (충전 hyst): dchg 마지막 row → SOC **0.0**
-          (within-TC 페어링의 return-to-start 보장)
-          → 사용자 보고 "TC 14-23 의 dchg 끝점 ≠ 0.0" 해소.
+        - **Dchg/Chg 공통**: dchg 마지막 row → SOC **0.0**
+          → 방전 끝점 = 0.0 정렬 (anchor delta 와 일치).
 
         Scaling 은 dchg phase 만 적용 — chg phase 보존하여 cross-TC
         페어링 closure 유지. raw range 와 target range 차이가
@@ -27259,10 +27253,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         s_first = float(df.loc[dchg_idx[0], 'SOC'])
         s_last = float(df.loc[dchg_idx[-1], 'SOC'])
 
-        if direction == 'Dchg':
-            target_last = 1.0 - depth_pct / 100.0
-        else:  # 'Chg'
-            target_last = 0.0
+        target_last = 0.0
 
         raw_range = s_last - s_first
         target_range = target_last - s_first
