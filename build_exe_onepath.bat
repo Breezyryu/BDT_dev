@@ -24,9 +24,9 @@ set "ICON_PATH=%~dp0DataTool.ico"
 set "RUNTIME_HOOK=%~dp0hook-runtime-casadi.py"
 set "SPLASH_PATH=%~dp0splash.png"
 
-:: 출력명: BatteryDataTool_YYMMDD
-for /f "tokens=1-3 delims=/" %%a in ("%date:~-10%") do set "YYMMDD=%%c%%a%%b"
-set "YYMMDD=%YYMMDD:~2%"
+:: 출력명: BatteryDataTool_YYMMDD (로케일 무관)
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set "DT=%%I"
+set "YYMMDD=%DT:~2,6%"
 set "BUILD_NAME=BatteryDataTool_%YYMMDD%"
 
 if not exist "%SPLASH_PATH%" (
