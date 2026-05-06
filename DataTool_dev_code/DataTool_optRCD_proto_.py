@@ -23304,25 +23304,17 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         writecolno = 0
         self.progressBar.setValue(0)
 
-        # ═══ Excel 그룹 (신뢰성) ═══
+        # ═══ Excel 그룹 (신뢰성) — 데이터 선로드 ═══
+        _excel_overlay_data: list[tuple[str, pd.DataFrame]] = []
+        _excel_dfs_output: list[pd.DataFrame] = []
+        _excel_col_names: list[str] = []
         if excel_groups:
-            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
-            colorno = 0
-            dfs_output = []
-            col_name_output = []
-            filename = ""
             total_excel = sum(len(g.paths) for g in excel_groups)
             done_excel = 0
-            # 신뢰성 데이터: 모든 Excel 파일을 하나의 그룹(동일 색상)으로 처리
-            group_color = graphcolor[colorno % len(graphcolor)]
-            _group_legend_done = False
-
-            # 전용 Excel 인스턴스 (visible=False, 사용자 Excel과 분리)
             _xw_app = xw.App(visible=False, add_book=False)
             try:
                 for g in excel_groups:
                     for datafilepath in g.paths:
-                        # 용량: 테이블 입력값 우선, 없으면 파일명에서 자동 추출
                         _tbl_cap = (g.per_path_capacities[0]
                                     if g.per_path_capacities else 0)
                         if _tbl_cap > 0:
@@ -23368,15 +23360,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 df.reset_index(drop=True, inplace=True)
                                 df.index = df.index + 1
 
-                            # 같은 그룹: 동일 색상, 범례는 첫 채널에만
-                            for _, column in df.items():
-                                lgnd = filename if not _group_legend_done else ""
-                                graph_cycle(df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
-                                            "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
-                                            group_color)
-                                _group_legend_done = True
-                            dfs_output.append(df)
-                            col_name_output += col_name
+                            _excel_overlay_data.append((filename, df))
+                            _excel_dfs_output.append(df)
+                            _excel_col_names += col_name
                         except Exception as e:
                             logger.error("신뢰성 Excel 처리 오류: %s — %s",
                                          datafilepath, e)
@@ -23384,38 +23370,45 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 self, "Excel 읽기 오류",
                                 f"{type(e).__name__}: {e}\n\n{datafilepath}")
                             continue
-
                         done_excel += 1
                         self.progressBar.setValue(int(done_excel / total_excel * 100))
             finally:
-                # 전용 Excel 인스턴스 확실히 종료
                 try:
                     _xw_app.quit()
                 except Exception:
                     pass
 
-            colorno += 1  # 신뢰성 그룹 전체에서 1색상만 사용 → 처리 후 1회 증가
+            if self.saveok.isChecked() and save_file_name and _excel_dfs_output:
+                dfoutput = pd.concat(_excel_dfs_output, axis=1)
+                dfoutput.to_excel(writer, sheet_name="Approval_cycle", header=_excel_col_names)
 
-            dfoutput = pd.concat(dfs_output, axis=1) if dfs_output else pd.DataFrame()
-            if self.saveok.isChecked() and save_file_name:
-                dfoutput.to_excel(writer, sheet_name="Approval_cycle", header=col_name_output)
-
-            if filename:
-                plt.suptitle(filename, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
-                plt.legend(loc="upper right")
-                plt.tight_layout(pad=1, w_pad=1, h_pad=1)
-                output_fig(self.figsaveok, filename)
-                tab = QtWidgets.QWidget()
-                tab_layout = QtWidgets.QVBoxLayout(tab)
-                canvas = FigureCanvas(fig)
-                toolbar = NavigationToolbar(canvas, None)
-                tab_layout.addWidget(toolbar)
-                tab_layout.addWidget(canvas)
-                self.cycle_tab.addTab(tab, str(tab_no))
-                self.cycle_tab.setCurrentWidget(tab)
-                self.cycle_tab_reset.setEnabled(True)
-                self.profile_tab_reset.setEnabled(True)
-                tab_no += 1
+        # Excel만 있고 Folder 없는 경우 → 단독 탭 생성
+        if _excel_overlay_data and not folder_groups:
+            fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(nrows=2, ncols=3, figsize=(14, 8))
+            _excel_color = graphcolor[0]
+            _legend_done = False
+            for _fname, _df in _excel_overlay_data:
+                for _, column in _df.items():
+                    lgnd = _fname if not _legend_done else ""
+                    graph_cycle(_df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
+                                "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
+                                _excel_color)
+                    _legend_done = True
+            plt.suptitle(_fname, fontsize=THEME['SUPTITLE_SIZE'], fontweight=THEME['SUPTITLE_WEIGHT'])
+            plt.legend(loc="upper right")
+            plt.tight_layout(pad=1, w_pad=1, h_pad=1)
+            output_fig(self.figsaveok, _fname)
+            tab = QtWidgets.QWidget()
+            tab_layout = QtWidgets.QVBoxLayout(tab)
+            canvas = FigureCanvas(fig)
+            toolbar = NavigationToolbar(canvas, None)
+            tab_layout.addWidget(toolbar)
+            tab_layout.addWidget(canvas)
+            self.cycle_tab.addTab(tab, str(tab_no))
+            self.cycle_tab.setCurrentWidget(tab)
+            self.cycle_tab_reset.setEnabled(True)
+            self.profile_tab_reset.setEnabled(True)
+            tab_no += 1
             plt.close(fig)
 
         # ═══ Folder 그룹 ═══
@@ -23554,6 +23547,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(
                     nrows=2, ncols=3, figsize=(_fig_w, 8))
                 axes_list = [ax1, ax2, ax3, ax4, ax5, ax6]
+
+                # ── 신뢰성 Excel 오버레이 (통합 모드) ──
+                if _excel_overlay_data:
+                    _excel_color = graphcolor[0]
+                    _legend_done = False
+                    for _fname, _df in _excel_overlay_data:
+                        for _, column in _df.items():
+                            lgnd = f"[신뢰성] {_fname}" if not _legend_done else ""
+                            graph_cycle(_df.index, column, ax1, ylimitlow, ylimithigh, 0.05,
+                                        "Cycle", "Discharge Capacity Ratio", lgnd, xscale,
+                                        _excel_color)
+                            _legend_done = True
 
                 # ── 상세(탭2) figure — Step 3: 실제 그래프 ──
                 # (2×3: Dchg / Chg / AvgV / DchgEng / RndV_chg_rest / RndV)
