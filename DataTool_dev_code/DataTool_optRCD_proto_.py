@@ -28313,7 +28313,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.Crate, ax5,
-                    -0.1, 1.2, 0.1, 0, 3.4, 0.2, _dchg_axis_label, "C-rate", temp_lgnd)
+                    -0.1, 1.2, 0.1, -1.2, 0.2, 0.2, _dchg_axis_label, "C-rate", temp_lgnd)
                 _a._cond_tag = 2; _a._cycle_id_tag = _cyc_idx
                 _artists.append(_a)
                 _a = graph_profile(p.SOC, p.dVdQ, ax4,
