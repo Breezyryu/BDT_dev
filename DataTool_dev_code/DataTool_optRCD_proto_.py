@@ -12477,7 +12477,7 @@ class Ui_sitool(object):
         # col 0=시험명, 1=경로, 2=채널, 3=용량, 4=TC, 5=모드, 6=정격V(default 3.7V)
         self.cycle_path_table = QtWidgets.QTableWidget(5, 7, parent=self._path_groupbox)
         self.cycle_path_table.setHorizontalHeaderLabels(
-            ["시험명", "경로(필수입력)", "채널", "용량", "TC", "모드", "정격V"])
+            ["시험명", "경로(필수입력)", "채널", "용량", "사이클", "모드", "정격V"])
         self.cycle_path_table.setMinimumSize(QtCore.QSize(380, 70))
         _hdr = self.cycle_path_table.horizontalHeader()
         _hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -25491,7 +25491,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     # 테이블 컬럼명 (한글) + 경로 파일 키워드 (영문) + UI 헤더("경로(필수입력)")
     _PASTE_HEADER_TOKENS = frozenset({
         # 한글 (테이블 헤더)
-        '시험명', '경로', '채널', '용량', 'tc', '모드',
+        '시험명', '경로', '채널', '용량', 'tc', '사이클', '모드',
         '경로(필수입력)', '경로(필수)',
         # 영문 (path 파일 헤더 / 외부 엑셀)
         'pathname', 'path', 'ch', 'channel', 'capacity', 'cycle', 'mode',
