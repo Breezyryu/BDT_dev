@@ -1287,6 +1287,197 @@ def resolve_tc_range(
     return (min(tc_list), max(tc_list))
 
 
+def _read_pne_endpoint_indices(channel_path: str) -> dict:
+    """PNE 채널의 3 데이터 소스 끝점 Index (col[0]) 비교 정보 반환.
+
+    소스
+    ----
+    1) `<channel>.cyc`     : 시계열 raw 바이너리. 끝점 Index = 마지막 sample
+       의 FID22 값 (= 1-based total_records).
+    2) Restore/`<chXX>_SaveDataNNNN.csv` 마지막 파일 : 시계열 CSV 청크.
+       끝점 Index = 마지막 row 의 col[0].
+    3) Restore/`<chXX>_SaveEndData.csv` : 스텝 종료 요약. 끝점 Index =
+       마지막 row 의 col[0] (= 마지막 step 종료 시점의 sample Index).
+
+    세 값이 일관돼야 정상. 시험이 mid-step 에서 끊기면
+    `.cyc/SaveData last > SaveEndData` 격차가 발생하고, 이는
+    `_cached_pne_restore_files` 의 .cyc gap-fill 트리거 조건이 된다.
+
+    Returns
+    -------
+    dict
+        {
+          'cyc':         {'index', 'rows', 'file', 'err'},
+          'savedata':    {'index', 'rows', 'file', 'err'},
+          'saveenddata': {'index', 'rows', 'file', 'err'},
+        }
+        index/rows/file 은 실패 시 None, 사유는 err 에 기록.
+    """
+    out = {
+        'cyc':         {'index': None, 'rows': None, 'file': None, 'err': None},
+        'savedata':    {'index': None, 'rows': None, 'file': None, 'err': None},
+        'saveenddata': {'index': None, 'rows': None, 'file': None, 'err': None},
+    }
+    # 1) .cyc — 채널 폴더 직속
+    try:
+        cyc_files = sorted([f for f in os.listdir(channel_path)
+                            if f.endswith('.cyc')])
+        if not cyc_files:
+            out['cyc']['err'] = 'no .cyc file'
+        else:
+            cyc_name = cyc_files[0]
+            cyc_path = os.path.join(channel_path, cyc_name)
+            hdr = _parse_cyc_header(cyc_path)
+            total = hdr['total_records']
+            if total <= 0:
+                out['cyc']['err'] = 'empty (0 records)'
+                out['cyc']['file'] = cyc_name
+            else:
+                fid_pos = _build_fid_pos(hdr['fids'])
+                idx_pos = fid_pos.get(22)  # FID 22 = Index
+                if idx_pos is None:
+                    # FID22 없음 — 1-based 가정 (total_records)
+                    out['cyc'] = {'index': total, 'rows': total,
+                                  'file': cyc_name,
+                                  'err': 'FID22 missing → assume total'}
+                else:
+                    last = _read_cyc_records(cyc_path, total - 1, 1)
+                    out['cyc'] = {'index': int(last[0, idx_pos]),
+                                  'rows': total, 'file': cyc_name,
+                                  'err': None}
+    except Exception as e:
+        out['cyc']['err'] = f'read fail: {e}'
+
+    restore_dir = os.path.join(channel_path, 'Restore')
+    if not os.path.isdir(restore_dir):
+        out['savedata']['err'] = 'no Restore/'
+        out['saveenddata']['err'] = 'no Restore/'
+        return out
+
+    # 2) SaveDataNNNN.csv 중 마지막 파일 (zero-padded 정렬)
+    try:
+        sd_files = sorted([
+            f for f in os.listdir(restore_dir)
+            if f.endswith('.csv')
+            and 'SaveData' in f and 'SaveEndData' not in f
+        ])
+        if not sd_files:
+            out['savedata']['err'] = 'no SaveData CSV'
+        else:
+            last_file = sd_files[-1]
+            df = pd.read_csv(
+                os.path.join(restore_dir, last_file),
+                sep=',', engine='c', header=None, encoding='cp949',
+                on_bad_lines='skip', usecols=[0],
+            )
+            if df.empty:
+                out['savedata'] = {'index': None, 'rows': 0,
+                                   'file': last_file, 'err': 'empty rows'}
+            else:
+                out['savedata'] = {'index': int(df.iloc[-1, 0]),
+                                   'rows': len(df), 'file': last_file,
+                                   'err': None}
+    except Exception as e:
+        out['savedata']['err'] = f'read fail: {e}'
+
+    # 3) SaveEndData.csv
+    try:
+        sed_files = [f for f in os.listdir(restore_dir)
+                     if f.endswith('.csv') and 'SaveEndData' in f]
+        if not sed_files:
+            out['saveenddata']['err'] = 'no SaveEndData CSV'
+        else:
+            sed_file = sed_files[0]
+            df = pd.read_csv(
+                os.path.join(restore_dir, sed_file),
+                sep=',', engine='c', header=None, encoding='cp949',
+                on_bad_lines='skip', usecols=[0],
+            )
+            if df.empty:
+                out['saveenddata'] = {'index': None, 'rows': 0,
+                                      'file': sed_file, 'err': 'empty rows'}
+            else:
+                out['saveenddata'] = {'index': int(df.iloc[-1, 0]),
+                                      'rows': len(df), 'file': sed_file,
+                                      'err': None}
+    except Exception as e:
+        out['saveenddata']['err'] = f'read fail: {e}'
+    return out
+
+
+def _log_pne_endpoint_indices(data_folders) -> None:
+    """프로파일 전체 사이클(continuous) 분석 시 PNE 채널 끝점 Index 비교 로그.
+
+    `_read_pne_endpoint_indices` 결과를 `_perf_logger.info` 로 콘솔 출력.
+    Toyo 폴더는 자동 skip. 채널이 없거나 폴더 접근 실패는 silently skip.
+
+    Parameters
+    ----------
+    data_folders : list[str] | tuple | str
+        데이터 루트 폴더 (또는 그 목록). 각 폴더 하위의 채널 폴더를
+        `_is_channel_folder` 로 자동 탐색.
+    """
+    if isinstance(data_folders, str):
+        folders = [data_folders]
+    else:
+        try:
+            folders = [str(f) for f in data_folders]
+        except TypeError:
+            folders = [str(data_folders)]
+    for folder in folders:
+        if not folder or not os.path.isdir(folder):
+            continue
+        try:
+            if not is_pne_folder(folder):
+                continue
+            ch_paths = sorted([
+                os.path.join(folder, d)
+                for d in os.listdir(folder)
+                if _is_channel_folder(d)
+                and os.path.isdir(os.path.join(folder, d))
+            ])
+        except OSError as _e:
+            _perf_logger.warning(
+                f'  [Endpoint Index] {folder} 접근 실패: {_e}')
+            continue
+        if not ch_paths:
+            continue
+        _perf_logger.info(
+            f'  [Endpoint Index] {os.path.basename(folder) or folder} '
+            f'(채널 {len(ch_paths)}개) — .cyc / 마지막 SaveData CSV / '
+            f'SaveEndData col[0] 끝점 비교')
+        for ch_path in ch_paths:
+            ch_name = os.path.basename(ch_path)
+            info = _read_pne_endpoint_indices(ch_path)
+            def _fmt(d):
+                if d['index'] is not None:
+                    _f = d['file'] or ''
+                    _suffix = f' [{_f}]' if _f else ''
+                    return (f"{d['index']:,} "
+                            f"(rows={d['rows']:,}){_suffix}")
+                return f"N/A ({d['err']})"
+            cyc_s = _fmt(info['cyc'])
+            sd_s = _fmt(info['savedata'])
+            sed_s = _fmt(info['saveenddata'])
+            # 일관성 체크 — .cyc / SaveData last 가 일치, SaveEndData 는
+            # 그 이하면 정상. 어긋나면 ⚠ 표시.
+            _vals = [info[k]['index'] for k in ('cyc', 'savedata', 'saveenddata')]
+            _have = [v for v in _vals if v is not None]
+            _flag = ''
+            if len(_have) >= 2:
+                cyc_v = info['cyc']['index']
+                sd_v = info['savedata']['index']
+                sed_v = info['saveenddata']['index']
+                if cyc_v is not None and sd_v is not None and cyc_v != sd_v:
+                    _flag = ' ⚠ .cyc≠SaveData'
+                elif (cyc_v is not None and sed_v is not None
+                      and sed_v > cyc_v):
+                    _flag = ' ⚠ SaveEndData>.cyc'
+            _perf_logger.info(
+                f'    {ch_name}: .cyc={cyc_s} | SaveData={sd_s} | '
+                f'SaveEndData={sed_s}{_flag}')
+
+
 def _cached_pne_restore_files(raw_file_path: str) -> tuple:
     """PNE Restore 폴더의 SaveEndData, file_index, subfile 목록을 캐싱하여 반환.
 
@@ -28090,6 +28281,18 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                 return
 
         writer, save_file_name = self._setup_file_writer()
+
+        # ── Endpoint Index 비교 (continuous 모드 전용 진단 로그) ──
+        # 사용자 요청: 프로파일 전체 사이클 구간 분석 시 .cyc / 마지막
+        # SaveData CSV / SaveEndData.csv 의 col[0] 끝점 Index 를 채널별로
+        # 비교 출력. 데이터 일관성 검증용 (값 불일치 = 시험 mid-step 종료
+        # 또는 .cyc gap-fill 후보 신호).
+        if legacy_mode == "continue":
+            try:
+                _log_pne_endpoint_indices(all_data_folder)
+            except Exception as _e:
+                _perf_logger.warning(
+                    f'  [Endpoint Index] 로깅 실패 (분석은 정상 진행): {_e}')
 
         # ── 2. 통합 병렬 데이터 로딩 ──
         self.progressBar.setValue(0)
