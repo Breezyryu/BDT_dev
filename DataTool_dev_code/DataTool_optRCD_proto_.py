@@ -5023,8 +5023,21 @@ def graph_default(ax, x, y, x_llimit, x_hlimit, x_gap, y_llimit, y_hlimit, y_gap
     graph_base_parameter(ax, xlabel, ylabel)
 
 # Data 엑셀로 output
+# Excel 시트명 금지 문자 치환 테이블 — `[ ]` → `( )`, `: * ? / \` 는 안전 문자로
+_EXCEL_SHEET_BAD = str.maketrans({
+    '[': '(', ']': ')',
+    ':': '-', '*': '', '?': '',
+    '/': '_', '\\': '_',
+})
+
+def _excel_sheet_name(name: str) -> str:
+    """xlsxwriter 시트명 제약(금지문자 + 31자) 통과시킨 안전 시트명을 반환."""
+    return str(name).translate(_EXCEL_SHEET_BAD)[:31]
+
+
 def output_data(df, sheetname, start_col, start_row, colname, head, use_index = False):
-    df.to_excel(writer, sheet_name=sheetname[:30], startcol=start_col, startrow=start_row,
+    df.to_excel(writer, sheet_name=_excel_sheet_name(sheetname),
+                startcol=start_col, startrow=start_row,
                 columns=[colname], header=head, index=use_index)
 
 def output_para_fig(figsaveokchk, filename):
