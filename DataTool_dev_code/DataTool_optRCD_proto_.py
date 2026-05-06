@@ -23684,14 +23684,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 canvas = FigureCanvas(fig)
                                 toolbar = NavigationToolbar(canvas, None)
 
+                            _combined_label = f"{info['ch_label']}_{sub_label}"
                             if not is_individual:
                                 if info['ch_label'] not in _seen_ch_labels:
-                                    lgnd = info['ch_label'].split("_")[-1] if "_" in info['ch_label'] else info['ch_label']
+                                    lgnd = _combined_label
                                     _seen_ch_labels.add(info['ch_label'])
                                 else:
                                     lgnd = "_nolegend_"
                             else:
-                                lgnd = sub_label
+                                lgnd = _combined_label
 
                             # 개별: sub_label별 다른 색 / 통합: 그룹(ch_label) 동일 색
                             _plot_colorno = info['colorno'] + colorno if is_individual else colorno
@@ -23729,9 +23730,9 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 channel_map[_ch] = {'artists': _all_artists, 'color': _color}
                             sub_channel_map[sub_label] = {
                                 'artists': list(_all_artists), 'color': _color, 'parent': _ch}
-                            # 데이터 서브탭용 시트 누적 (연결 모드: sub_label 단위)
+                            # 데이터 서브탭용 시트 누적 (연결 모드: 시험명+채널번호)
                             self._accumulate_cycle_sheets(
-                                sheets_per_channel, merged_df, sub_label)
+                                sheets_per_channel, merged_df, _combined_label)
 
                         # 개별: sub 수만큼 증가 / 통합: 그룹 1개분만 증가
                         if is_individual:
@@ -23782,14 +23783,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                 if len(ch_label) > 30:
                                     ch_label = ch_label[:30] + "..."
 
+                                _combined_label = f"{ch_label}_{sub_label}"
                                 if not is_individual:
                                     if ch_label not in _seen_ch_labels:
-                                        lgnd = ch_label.split("_")[-1] if "_" in ch_label else ch_label
+                                        lgnd = _combined_label
                                         _seen_ch_labels.add(ch_label)
                                     else:
                                         lgnd = "_nolegend_"
                                 else:
-                                    lgnd = sub_label
+                                    lgnd = _combined_label
 
                                 if hasattr(cyctemp[1], "NewData"):
                                     if float(self.dcirscale.text()) == 0 and cyctemp[0] != 0:
@@ -23836,10 +23838,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                                         _sub_sfx += 1
                                     sub_channel_map[sub_label] = {
                                         'artists': list(_all_artists), 'color': _color, 'parent': ch_label}
-                                    # 데이터 서브탭용 시트 누적 (비연결: sub_label 단위)
+                                    # 데이터 서브탭용 시트 누적 (비연결: 시험명+채널번호)
                                     self._accumulate_cycle_sheets(
                                         sheets_per_channel,
-                                        cyctemp[1].NewData, sub_label)
+                                        cyctemp[1].NewData, _combined_label)
 
                                     if is_individual:
                                         colorno += 1
