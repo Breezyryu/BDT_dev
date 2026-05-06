@@ -20534,11 +20534,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         _DECIMALS = {
             "방전용량": 4, "충전용량": 4,
             "충방효율": 4, "방충효율": 4,
-            "평균 전압": 3, "Rest End": 3, "Rest End Chg": 3,
-            "충전전압": 3, "방전전압": 3,
+            "평균 전압 [V]": 3, "Rest End [V]": 3, "Rest End Chg [V]": 3,
+            "충전전압 [V]": 3, "방전전압 [V]": 3,
             "방전Energy": 3,
-            "DCIR": 1, "RSS": 1, "RSS_OCV": 3, "RSS_CCV": 3,
-            "SOC70_DCIR": 1, "SOC70_RSS": 1,
+            "DCIR [mΩ]": 1, "RSS [mΩ]": 1, "RSS_OCV [V]": 3, "RSS_CCV [V]": 3,
+            "SOC70_DCIR [mΩ]": 1, "SOC70_RSS [mΩ]": 1,
         }
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -22742,11 +22742,11 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         """
         specs = []
         specs.append(("방전용량", "Dchg", None))
-        specs.append(("Rest End", "RndV", None))
+        specs.append(("Rest End [V]", "RndV", None))
         if ("RndV_chg_rest" in nd.columns
                 and not nd["RndV_chg_rest"].dropna().empty):
-            specs.append(("Rest End Chg", "RndV_chg_rest", None))
-        specs.append(("평균 전압", "AvgV", None))
+            specs.append(("Rest End Chg [V]", "RndV_chg_rest", None))
+        specs.append(("평균 전압 [V]", "AvgV", None))
         specs.append(("충방효율", "Eff", None))
         specs.append(("충전용량", "Chg", None))
         specs.append(("방충효율", "Eff2", None))
@@ -22758,19 +22758,19 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         if _has_mkdcir:
             if ("soc70_dcir" in nd.columns
                     and not nd["soc70_dcir"].dropna().empty):
-                specs.append(("SOC70_DCIR", "soc70_dcir", None))
-                specs.append(("SOC70_RSS", "soc70_rss_dcir", None))
-            specs.append(("RSS", "dcir", None))
-            specs.append(("DCIR", "dcir2", None))
-            specs.append(("RSS_OCV", "rssocv", None))
-            specs.append(("RSS_CCV", "rssccv", None))
+                specs.append(("SOC70_DCIR [mΩ]", "soc70_dcir", None))
+                specs.append(("SOC70_RSS [mΩ]", "soc70_rss_dcir", None))
+            specs.append(("RSS [mΩ]", "dcir", None))
+            specs.append(("DCIR [mΩ]", "dcir2", None))
+            specs.append(("RSS_OCV [V]", "rssocv", None))
+            specs.append(("RSS_CCV [V]", "rssccv", None))
         else:
-            specs.append(("DCIR", "dcir", None))
+            specs.append(("DCIR [mΩ]", "dcir", None))
         # 충전/방전 종료 전압 (컬럼 존재 시)
         if "ChgVolt" in nd.columns:
-            specs.append(("충전전압", "ChgVolt", ["ChgVolt(V)"]))
+            specs.append(("충전전압 [V]", "ChgVolt", ["ChgVolt(V)"]))
         if "DchgVolt" in nd.columns:
-            specs.append(("방전전압", "DchgVolt", ["DchgVolt(V)"]))
+            specs.append(("방전전압 [V]", "DchgVolt", ["DchgVolt(V)"]))
         return specs
 
     def _save_cycle_excel_data(self, nd, writecolno, start_row, headername):
@@ -22780,15 +22780,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 기본 데이터 시트
         output_data(nd, "방전용량", writecolno, start_row, "OriCyc", cyc_head)
         output_data(nd, "방전용량", _dc, start_row, "Dchg", headername)
-        output_data(nd, "Rest End", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "Rest End", _dc, start_row, "RndV", headername)
+        output_data(nd, "Rest End [V]", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "Rest End [V]", _dc, start_row, "RndV", headername)
         # 충전 Rest End V 시트 (Step 4) — 데이터 있을 때만 생성
         if "RndV_chg_rest" in nd.columns and not nd["RndV_chg_rest"].dropna().empty:
             _chg_rest = nd[["OriCyc", "RndV_chg_rest"]].dropna(subset=["RndV_chg_rest"])
-            output_data(_chg_rest, "Rest End Chg", writecolno, 0, "OriCyc", cyc_head)
-            output_data(_chg_rest, "Rest End Chg", _dc, 0, "RndV_chg_rest", headername)
-        output_data(nd, "평균 전압", writecolno, start_row, "OriCyc", cyc_head)
-        output_data(nd, "평균 전압", _dc, start_row, "AvgV", headername)
+            output_data(_chg_rest, "Rest End Chg [V]", writecolno, 0, "OriCyc", cyc_head)
+            output_data(_chg_rest, "Rest End Chg [V]", _dc, 0, "RndV_chg_rest", headername)
+        output_data(nd, "평균 전압 [V]", writecolno, start_row, "OriCyc", cyc_head)
+        output_data(nd, "평균 전압 [V]", _dc, start_row, "AvgV", headername)
         output_data(nd, "충방효율", writecolno, start_row, "OriCyc", cyc_head)
         output_data(nd, "충방효율", _dc, start_row, "Eff", headername)
         output_data(nd, "충전용량", writecolno, start_row, "OriCyc", cyc_head)
@@ -22808,30 +22808,30 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             if not nd["soc70_dcir"].dropna().empty:
                 cyctempsoc70dcir = nd[["OriCyc", "soc70_dcir"]].dropna(subset=["soc70_dcir"])
                 cyctempsoc70rssdcir = nd[["OriCyc", "soc70_rss_dcir"]].dropna(subset=["soc70_rss_dcir"])
-                output_data(cyctempsoc70dcir, "SOC70_DCIR", writecolno, 0, "OriCyc", cyc_head)
-                output_data(cyctempsoc70dcir, "SOC70_DCIR", _dc, 0, "soc70_dcir", headername)
-                output_data(cyctempsoc70rssdcir, "SOC70_RSS", writecolno, 0, "OriCyc", cyc_head)
-                output_data(cyctempsoc70rssdcir, "SOC70_RSS", _dc, 0, "soc70_rss_dcir", headername)
-            output_data(cyctempdcir, "RSS", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctempdcir, "RSS", _dc, 0, "dcir", headername)
-            output_data(cyctempdcir2, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctempdcir2, "DCIR", _dc, 0, "dcir2", headername)
-            output_data(cyctemprssocv, "RSS_OCV", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctemprssocv, "RSS_OCV", _dc, 0, "rssocv", headername)
-            output_data(cyctemprssccv, "RSS_CCV", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctemprssccv, "RSS_CCV", _dc, 0, "rssccv", headername)
+                output_data(cyctempsoc70dcir, "SOC70_DCIR [mΩ]", writecolno, 0, "OriCyc", cyc_head)
+                output_data(cyctempsoc70dcir, "SOC70_DCIR [mΩ]", _dc, 0, "soc70_dcir", headername)
+                output_data(cyctempsoc70rssdcir, "SOC70_RSS [mΩ]", writecolno, 0, "OriCyc", cyc_head)
+                output_data(cyctempsoc70rssdcir, "SOC70_RSS [mΩ]", _dc, 0, "soc70_rss_dcir", headername)
+            output_data(cyctempdcir, "RSS [mΩ]", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctempdcir, "RSS [mΩ]", _dc, 0, "dcir", headername)
+            output_data(cyctempdcir2, "DCIR [mΩ]", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctempdcir2, "DCIR [mΩ]", _dc, 0, "dcir2", headername)
+            output_data(cyctemprssocv, "RSS_OCV [V]", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctemprssocv, "RSS_OCV [V]", _dc, 0, "rssocv", headername)
+            output_data(cyctemprssccv, "RSS_CCV [V]", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctemprssccv, "RSS_CCV [V]", _dc, 0, "rssccv", headername)
         else:
-            output_data(cyctempdcir, "DCIR", writecolno, 0, "OriCyc", cyc_head)
-            output_data(cyctempdcir, "DCIR", _dc, 0, "dcir", headername)
+            output_data(cyctempdcir, "DCIR [mΩ]", writecolno, 0, "OriCyc", cyc_head)
+            output_data(cyctempdcir, "DCIR [mΩ]", _dc, 0, "dcir", headername)
         # 충전/방전 종료 전압 시트 (컬럼 존재 시)
         if "ChgVolt" in nd.columns:
             cyctempchg = nd[["OriCyc", "ChgVolt"]].dropna(subset=["ChgVolt"])
-            output_data(cyctempchg, "충전전압", writecolno, start_row, "OriCyc", cyc_head)
-            output_data(cyctempchg, "충전전압", _dc, start_row, "ChgVolt", ["ChgVolt(V)"])
+            output_data(cyctempchg, "충전전압 [V]", writecolno, start_row, "OriCyc", cyc_head)
+            output_data(cyctempchg, "충전전압 [V]", _dc, start_row, "ChgVolt", ["ChgVolt(V)"])
         if "DchgVolt" in nd.columns:
             cyctempdchg = nd[["OriCyc", "DchgVolt"]].dropna(subset=["DchgVolt"])
-            output_data(cyctempdchg, "방전전압", writecolno, start_row, "OriCyc", cyc_head)
-            output_data(cyctempdchg, "방전전압", _dc, start_row, "DchgVolt", ["DchgVolt(V)"])
+            output_data(cyctempdchg, "방전전압 [V]", writecolno, start_row, "OriCyc", cyc_head)
+            output_data(cyctempdchg, "방전전압 [V]", _dc, start_row, "DchgVolt", ["DchgVolt(V)"])
 
     # ═══════════════════════════════════════════════════════════════
     # 통합 Cycle 분석 관련 메서드
