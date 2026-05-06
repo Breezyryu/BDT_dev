@@ -1538,16 +1538,39 @@ def _unified_pne_load_raw(
         # downstream Stage 3 / view Step 1 가 row mask 로 scope 적용.
         totl_cycles_set: set[int] = set()
         logical_to_totl: dict[int, int] = {}  # 역매핑: TotlCycle → 논리사이클
+
+        # 부분 TC 선택 지원 (260505 fix): sweep 시험 (PULSE_DCIR 등) 의 cycle_map 은
+        # 다수 TC 를 하나의 논리사이클로 묶음 (cycle_map[ln]['all']=(start,end)).
+        # 사용자가 그 그룹 안의 개별 TC (예: TC=5-19) 를 입력하면 logical_cyc 5..19
+        # 가 cycle_map keys 에 없어서 모두 skip → totl_cycles 빈 집합 → "데이터 없음".
+        # 이를 막기 위해 cycle_map 의 'all' 범위들을 펼쳐 physical-TC → logical-cyc
+        # 역인덱스를 만들어 두고, key 가 없는 input 은 physical TC 로 해석한다.
+        _tc_to_logical: dict[int, int] = {}
+        for _lc, _entry in cycle_map.items():
+            if isinstance(_entry, dict) and 'all' in _entry:
+                _s, _e = _entry['all']
+                for _tc in range(int(_s), int(_e) + 1):
+                    if _tc not in _tc_to_logical:
+                        _tc_to_logical[_tc] = _lc
+
         for logical_cyc in range(cycle_start, cycle_end + 1):
-            if logical_cyc not in cycle_map:
-                continue
-            entry = cycle_map[logical_cyc]
-            tc_list = _cm_tc_list(entry, 'cycle')
-            if not tc_list:
-                tc_list = _cm_tc_list(entry, 'all')
-            for tc in tc_list:
-                totl_cycles_set.add(tc)
-                logical_to_totl[tc] = logical_cyc
+            if logical_cyc in cycle_map:
+                # 표준 경로: logical_cyc 를 그대로 사용
+                entry = cycle_map[logical_cyc]
+                tc_list = _cm_tc_list(entry, 'cycle')
+                if not tc_list:
+                    tc_list = _cm_tc_list(entry, 'all')
+                for tc in tc_list:
+                    totl_cycles_set.add(tc)
+                    logical_to_totl[tc] = logical_cyc
+            elif logical_cyc in _tc_to_logical:
+                # 폴백: 사용자가 sweep 그룹 내부의 physical TC 를 직접 선택한 경우.
+                # 해당 TC 만 단독으로 로드 (identity 매핑) → 사용자가 입력한 TC 가
+                # 별도 탭으로 그려진다. 기존 sweep 키 입력 (예: TC=3) 은 영향 없음.
+                totl_cycles_set.add(logical_cyc)
+                logical_to_totl[logical_cyc] = logical_cyc  # identity
+            # else: cycle_map 어디에도 없는 TC → skip (예: max_tc 초과)
+
         totl_cycles = sorted(totl_cycles_set)
         if not totl_cycles:
             return None
@@ -1982,6 +2005,88 @@ def _unified_normalize_toyo(
     return result
 
 
+def _diagnose_empty_filter(
+    raw_cycle: pd.DataFrame,
+    data_scope: str,
+    include_rest: bool,
+) -> str:
+    """필터 결과가 empty 일 때 사용자가 원인을 알 수 있도록 진단 메시지를 만든다.
+
+    raw_cycle 의 Condition 분포를 분석해 "어떤 step 이 있고 어떤 게 없는지"
+    +"무엇을 토글하면 보일 수 있는지" 까지 알려주는 메시지를 반환한다.
+
+    예시
+    ----
+    - "방전 스텝 없음 (충전만 존재) — '사이클' 스코프 권장"
+    - "방전 스텝 없음 (휴지만 존재) — '사이클' 스코프 + '휴지 포함' 권장"
+    - "휴지 스텝만 존재 — '휴지 포함' 옵션 ON 필요"
+    - "필터 후 데이터 없음" (분석 불가 시 폴백)
+
+    Parameters
+    ----------
+    raw_cycle : pd.DataFrame
+        필터 직전의 단일 사이클 데이터.
+    data_scope : str
+        사용자가 선택한 스코프 ("charge" | "discharge" | "cycle").
+    include_rest : bool
+        '휴지 포함' 토글 상태.
+
+    Returns
+    -------
+    str
+        사용자에게 보여줄 진단 메시지. (탭 경고 / 팝업 양쪽 동일하게 사용)
+    """
+    if raw_cycle is None or raw_cycle.empty or "Condition" not in raw_cycle.columns:
+        return "필터 후 데이터 없음"
+
+    # CC 재분류는 _unified_filter_condition 가 in-place 수정 전이므로
+    # raw 의 Condition 분포 (1=충전, 2=방전, 3=휴지, 9=CC) 를 그대로 본다.
+    _conds = set()
+    try:
+        for v in raw_cycle["Condition"].unique():
+            if pd.notna(v):
+                _conds.add(int(v))
+    except (ValueError, TypeError):
+        return "필터 후 데이터 없음"
+    _conds.discard(0)  # 0 은 사용되지 않음, 안전 처리
+
+    _name = {1: '충전', 2: '방전', 3: '휴지', 9: 'CC'}
+    _scope_name = {'charge': '충전', 'discharge': '방전', 'cycle': '사이클'}.get(
+        data_scope, data_scope or '?')
+
+    # CC (cond=9) 는 전류 부호로 재분류되므로 단독 표기 시 의미 모호 → 표기 생략
+    _present_active = sorted(c for c in _conds if c in (1, 2))
+    _has_rest = 3 in _conds
+    _has_only_rest = (not _present_active) and _has_rest
+    _has_only_cc = _conds == {9}
+
+    if _has_only_cc:
+        # CC 만 있는 케이스: 전류 부호 기반 재분류 단계에서 실패한 경우
+        return f"{_scope_name} 데이터 없음 (Current 부호 인식 실패)"
+
+    if _has_only_rest:
+        # 휴지만 있는 TC (저장/대기 사이클)
+        if data_scope == 'cycle' and not include_rest:
+            return f"휴지 스텝만 존재 — '휴지 포함' 옵션 ON 필요"
+        # charge/discharge scope 는 휴지만으론 그릴 수 없음
+        return f"{_scope_name} 스텝 없음 (휴지만 존재) — '사이클' 스코프 + '휴지 포함' 권장"
+
+    if data_scope in ('charge', 'discharge'):
+        _target = 1 if data_scope == 'charge' else 2
+        if _target not in _conds:
+            _present_str = ', '.join(_name[c] for c in _present_active) or '없음'
+            _rest_note = ' + 휴지' if _has_rest else ''
+            return (f"{_scope_name} 스텝 없음 ({_present_str}{_rest_note}만 존재) — "
+                    f"'사이클' 스코프 권장")
+
+    # cycle scope 인데 비어있는 경우 — include_rest=False + 휴지만 있는 케이스 등
+    if data_scope == 'cycle' and not include_rest and _has_rest and not _present_active:
+        return f"휴지 스텝만 존재 — '휴지 포함' 옵션 ON 필요"
+
+    # 진단 불가 폴백
+    return "필터 후 데이터 없음"
+
+
 def _unified_filter_condition(
     df: pd.DataFrame,
     data_scope: str,
@@ -2152,6 +2257,24 @@ def _unified_filter_condition(
             final_mask = target_mask | interpulse_mask
 
         filtered = df.loc[final_mask].copy()
+
+    # --- scope 미스매치 폴백: 사용자 명시 선택 TC 의 raw 보존 ---
+    # 사용자가 부분 TC 를 선택했는데 scope 필터로 모두 drop 되는 경우 (저장 사이클,
+    # 단방향 TC 등) 별도 탭이 안 나와서 "여전히 TC 별도 구현 안됨" 보고가 들어옴.
+    # 사용자 의도: "내가 선택한 TC 는 일단 보여줘". 데이터를 통째로 버리지 말고
+    # 모든 active+rest cond 를 보존해 downstream 이 가능한 만큼 그리도록 한다.
+    #
+    # Layer A 단일화 (260504 PR-1) 이후 raw 가 항상 채워져서 발생 빈도 ↑.
+    # 호환성: 정상 케이스 (filter 결과 non-empty) 는 영향 없음.
+    if filtered.empty and len(df) > 0:
+        _has_any = df["Condition"].isin([1, 2, 3]).any()
+        if _has_any:
+            filtered = df[df["Condition"].isin([1, 2, 3])].copy()
+            _perf_logger.info(
+                f"  [filter] {data_scope} scope 결과 empty + raw 데이터 존재 → "
+                f"all-cond 폴백 적용 ({len(filtered)} rows). "
+                f"사용자 명시 TC 선택 보존."
+            )
 
     # --- 보충전/보방전 제외 (제거됨, 2026-04-18) ---
     # 이전: 공칭 용량의 2% 미만 스텝 자동 제외 (스윕 시험)
@@ -2919,10 +3042,14 @@ def unified_profile_core(
         is_sweep=_is_sweep, mincapacity=mincapacity, include_cv=include_cv)
 
     if filtered.empty:
+        # filter 의 raw 폴백을 거쳐도 empty 인 edge case (raw 자체가 빈 경우 등) —
+        # 한 줄 "필터 후 데이터 없음" 대신 어떤 cond 가 있었는지 진단 메시지로 안내.
+        _err = _diagnose_empty_filter(
+            raw, _data_scope_pipe, _include_rest_pipe)
         return UnifiedProfileResult(
             df=pd.DataFrame(), mincapacity=mincapacity, columns=[],
             metadata={"cycler_type": "PNE" if is_pne else "TOYO",
-                      "cycle_range": cycle_range, "error": "필터 후 데이터 없음"})
+                      "cycle_range": cycle_range, "error": _err})
 
     # Stage 4: 정규화
     if is_pne:
@@ -3145,11 +3272,15 @@ def _unified_process_single_cycle_from_raw(
         is_sweep=_is_sweep, mincapacity=mincapacity, include_cv=include_cv,
     )
     if filtered.empty:
+        # filter 의 raw 폴백을 거쳐도 empty 인 edge case — 한 줄 "필터 후 데이터 없음"
+        # 대신 어떤 cond 가 있었는지 진단 메시지로 안내.
+        _err = _diagnose_empty_filter(
+            raw_cycle, _data_scope_pipe, _include_rest_pipe)
         return UnifiedProfileResult(
             df=pd.DataFrame(),
             mincapacity=mincapacity,
             columns=[],
-            metadata={"cycle": cycle_val, "error": "필터 후 데이터 없음"},
+            metadata={"cycle": cycle_val, "error": _err},
         )
 
     # Stage 3: 정규화
@@ -5786,11 +5917,12 @@ CATEGORY_LABELS = {
     '방전(종료)': '방전 (시험 종료)',
     '방전(저장준비)': '방전 (저장 준비 심방전)',
     '방전(SOC세팅)': '방전 (SOC 세팅, DCHG_CCCV)',
-    '저장': '저장 (K-value / 장시간 휴지)',
+    '저장': '저장 (장시간 휴지)',
     '저장(floating)': '저장 (Floating, CC→CV 유지)',
     '사이클': '사이클',
     '사이클(FORMATION)': '사이클 (FORMATION)',
     '사이클(ACCEL)': '사이클 (가속수명)',
+    '사이클(스텝충전)': '사이클 (스텝 충전)',  # 260505: N=1 multi-step CHG + DCHG (POR/PA1 등)
     'RPT': 'RPT (0.2C 충방전)',
     'GITT': 'GITT',
     'GITT(full)': 'GITT (OCV·D_Li 측정)',
@@ -5819,7 +5951,8 @@ _SCH_CAT_TO_NEW = {
     'ACCEL':           ('사이클', 'ACCEL'),
     'STORAGE_CYCLE':   ('저장', 'floating'),     # Phase 0-5 v3 (260505): 사용자 도메인 지적 — 복합floating schedule 의 만충저장 + 주기 capacity check (UI 표기는 FLOATING 과 동일 'floating' 으로 통일)
     'RPT':             ('RPT', None),
-    'CHG_DCHG':        ('RPT', None),          # 일반 1회 충방전 → RPT 취급
+    'CHG_DCHG':        ('사이클', None),          # 260505 fix: 일반 1회 충방전 → '사이클' (RPT=0.2C 충방전 라벨 분리, POR/PA1 등 step charge cycle 의 RPT 오인 방지)
+    'STEP_CHG':        ('사이클', '스텝충전'),     # 260505 신규: N=1 multi-step CHG + DCHG (POR 40C pulse, PA1 등 단차 충전)
     'GITT_PULSE':      ('GITT', 'full'),
     'SWEEP_PULSE':     ('GITT', 'simplified'),
     'SOC_DCIR':        ('SOC별 사이클', None),
@@ -6278,6 +6411,11 @@ _LCG_CATEGORY_MAP = {
     'Rss': ('accel', '가속수명'),
     'GITT': ('gitt', 'GITT'),
     '_pulse': ('gitt', 'GITT'),
+    # 260505 신규 (Phase 0-5 v3+): 신 카테고리도 LCG 그룹으로 매핑
+    '사이클': ('accel', '사이클'),
+    '사이클(FORMATION)': ('formation', '화성'),
+    '사이클(ACCEL)': ('accel', '가속수명'),
+    '사이클(스텝충전)': ('accel', '스텝충전'),  # POR/PA1 등 — 사이클 그룹으로 묶음
     'unknown': ('unknown', '기타'),
 }
 
@@ -8334,7 +8472,19 @@ def _classify_loop_group(
             abs(I - rate_02c) / rate_02c < 0.3 for I in currents):
             return 'RPT'
 
-    # 16. CHG_DCHG: N=1, CHG+DCHG (일반 충방전)
+    # 15b. STEP_CHG — Phase 0-5 v3+ (260505): N=1, multi-step CHG (≥2 단차) + DCHG.
+    # 사용자 보고 (POR 40C pulse PA1 SDI): TC25-90 step-charge cycle 들이 V3 에서
+    # CHG_DCHG → 'RPT (0.2C 충방전)' 으로 잘못 라벨링.
+    # 도메인: 단차 충전 (예: 0.7C → 1C → 1.5C → 2C 으로 V 단계 별 변경) 은
+    # RPT (단일 0.2C) 와는 명확히 구분되는 충전 프로토콜. 실제 currents 가
+    # 0.2C 가 아닌데도 CHG_DCHG fallback 으로 RPT 라벨이 붙어 사용자 혼동.
+    # 다단 charge 가 있고 RPT (15) 에 안 걸렸다 = currents 가 0.2C 아님 = STEP_CHG.
+    if N == 1 and len(chg_steps) >= 2 and dchg_steps:
+        return 'STEP_CHG'
+
+    # 16. CHG_DCHG: N=1, CHG+DCHG (일반 충방전, RPT/STEP_CHG 에 안 걸린 케이스)
+    # 260505 fix: _SCH_CAT_TO_NEW 에서 ('사이클', None) 으로 매핑 변경 (이전 RPT 매핑은
+    # 0.2C 가 아닌 일반 충방전을 RPT 라벨로 잘못 표기 → POR/PA1 등 도메인 혼동 유발).
     if N == 1 and chg_steps and dchg_steps:
         return 'CHG_DCHG'
 
@@ -9659,6 +9809,7 @@ _CLASSIFIED_COLORS = {
     '사이클':              {'color_idx': 0, 'desc': '사이클'},
     '사이클(FORMATION)':   {'color_idx': 0, 'desc': '사이클 (FORMATION)'},
     '사이클(ACCEL)':       {'color_idx': 0, 'desc': '사이클 (가속수명)'},
+    '사이클(스텝충전)':     {'color_idx': 0, 'desc': '사이클 (스텝 충전)'},  # 260505: POR/PA1 등
     'RPT':                {'color_idx': 5, 'desc': 'RPT (0.2C 충방전)'},
     'GITT':               {'color_idx': 3, 'desc': 'GITT'},
     'GITT(full)':          {'color_idx': 3, 'desc': 'GITT (OCV·D_Li 측정)'},
@@ -24468,6 +24619,13 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
     _path_meta_cache_light: dict[str, dict] = {}
     # ── 행별 마지막 경로 (col=1 교체 감지용) ──
     _row_last_path: dict[int, str] = {}
+    # ── 행별 "마지막으로 실제 분석된 경로" (260505 추가) ──
+    # 사용자 시나리오: 경로 A 에서 TC 5-19 분석 → 경로 B 로 교체 → 프로파일 분석 클릭 시
+    # 이전 TC 값으로 stale 분석되는 문제. confirm 시점에 현재 경로와 비교해 다르면
+    # cycle 정보만 갱신하고 분석 skip → 사용자가 TC 재확인 후 다시 클릭하면 분석 실행.
+    # _row_last_path 와 별개 — _row_last_path 는 셀 편집 추적용 (paste·load 시 동기화),
+    # _rows_last_analyzed_path 는 "실제 분석 실행 완료 시점" 의 스냅샷이라 paste 와 무관.
+    _rows_last_analyzed_path: dict[int, str] = {}
 
     def _resolve_path_meta_light(self, path: str) -> dict | None:
         """경로명·용량(regex) 만 산출하는 light 메타 — IO 없음.
@@ -24916,6 +25074,7 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self._path_meta_cache.clear()
         self._path_meta_cache_light.clear()
         self._row_last_path.clear()
+        self._rows_last_analyzed_path.clear()
         self._update_ect_columns_state()
 
     # 인식 가능한 헤더 키워드 (소문자)
@@ -27738,6 +27897,70 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         # 다중 경로 사이클 중복 제거
         self._remove_duplicates_across_rows()
+
+        # ── 경로 교체 후 첫 클릭: 사이클 정보만 갱신 + 분석은 다음 클릭 (260505) ──
+        # 사용자 보고: 경로 A 에서 TC=5-19 분석 → 경로 B 로 교체 → 프로파일 분석 시
+        # 이전 TC 값으로 분석되는 문제. 새 경로의 사이클 바를 먼저 갱신해 보여주고,
+        # 사용자가 TC 입력을 재확인한 뒤 다시 클릭하면 실제 분석을 실행.
+        # paste·load 등 _on_path_cell_changed 우회 경로도 감지하기 위해 confirm
+        # 시점에 현재 경로 vs 마지막 분석 경로 직접 비교.
+        _cur_paths = {
+            r: self._get_table_cell(r, 1)
+            for r in range(self.cycle_path_table.rowCount())
+            if self._get_table_cell(r, 1)
+        }
+        _changed_paths = [
+            (r, p) for r, p in _cur_paths.items()
+            if self._rows_last_analyzed_path.get(r) != p
+        ]
+        if _changed_paths:
+            # 다음 클릭부터는 분석 실행되도록 현 경로 매핑을 커밋
+            self._rows_last_analyzed_path = dict(_cur_paths)
+            # 변경된 행의 stale TC (col 4 사용자 입력) 를 새 경로의 "1-{max_tc}" 로
+            # 자동 재설정 → 두 번째 클릭에서 "TC 범위 초과" 다이얼로그 방지.
+            # 검정 폰트 (= 사용자 입력 취급) 로 설정하여 다음 confirm 에서
+            # `_get_table_cycle_input` 이 그대로 사용하도록 한다 (회색 힌트는 무시되어
+            # stepnum 폴백 → 빈 CycleNo 가 되어 분석 실행 안 됨).
+            # 사용자가 다른 TC 를 원하면 col 4 를 직접 수정하면 됨.
+            _changed_rows = {r for r, _ in _changed_paths}
+            tbl = self.cycle_path_table
+            tbl.blockSignals(True)
+            try:
+                _user_fg = QtGui.QColor(0, 0, 0)
+                for r in _changed_rows:
+                    path = _cur_paths.get(r, '')
+                    if not path:
+                        continue
+                    # 새 경로의 max_tc 산출 (meta cache 활용 — 위에서 이미 build됨)
+                    _max = self._get_path_max_cycle(path)
+                    item4 = tbl.item(r, 4)
+                    if item4 is None:
+                        item4 = QtWidgets.QTableWidgetItem('')
+                        tbl.setItem(r, 4, item4)
+                    if _max:
+                        item4.setText(f"1-{_max}")
+                        item4.setForeground(_user_fg)  # 사용자 입력 취급
+                        item4.setToolTip(f"새 경로 자동 갱신 — 최대 TC: {_max}")
+                    else:
+                        # max_tc 산출 실패 → stale 값 비움 (안전)
+                        item4.setText('')
+                        item4.setToolTip('')
+            finally:
+                tbl.blockSignals(False)
+
+            self.ProfileConfirm.setEnabled(True)
+            self._pump_ui(0)
+            try:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.information(
+                    self, "새 경로 감지",
+                    f"새 경로 {len(_changed_paths)}건의 사이클 정보를 갱신했습니다.\n"
+                    f"TC (col 4) 도 '1-최대TC' 로 자동 재설정 — 다른 범위가 필요하면\n"
+                    f"col 4 를 수정한 뒤 '프로파일 분석' 을 다시 눌러주세요.",
+                )
+            except Exception:
+                pass
+            return
 
         # 사이클 미입력 시 바 갱신만 하고 종료
         if not CycleNo:
