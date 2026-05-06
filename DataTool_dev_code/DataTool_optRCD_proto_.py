@@ -24028,6 +24028,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     ax4.set_xlim(ax1.get_xlim())
                     place_avgrest_labels(ax6)
                     _opaque_legend_markers(*axes_list)
+                    # 상세(탭2) 범례 — ax1b에 요약 탭과 동일한 범례 표시
+                    _h_b, _l_b = ax1b.get_legend_handles_labels()
+                    _seen_b = set()
+                    _hl_b = [(h, l) for h, l in zip(_h_b, _l_b)
+                             if l and not l.startswith('_') and l not in _seen_b
+                             and not _seen_b.add(l)]
+                    if _hl_b:
+                        ax1b.legend([h for h, l in _hl_b],
+                                    [l for h, l in _hl_b],
+                                    loc="lower left",
+                                    fontsize=THEME['LEGEND_SIZE'],
+                                    framealpha=THEME['LEGEND_FRAMEALPHA'],
+                                    edgecolor=THEME['LEGEND_EDGECOLOR'],
+                                    fancybox=True)
+                    _opaque_legend_markers(*axes_list_b)
                     # figure 범례(외부 범례)도 alpha 보정
                     for _fig_leg in fig.legends:
                         for handle in _fig_leg.legend_handles:
