@@ -3690,7 +3690,7 @@ def graph_output_cycle(df, xscale, ylimitlow, ylimithigh, irscale, temp_lgnd, co
                     "Cycle", "Discharge Capacity Ratio", temp_lgnd, xscale, color))
         artists.append(graph_cycle(_x, df.NewData.Eff, ax2, 0.992, 1.004, 0.002,
                     "Cycle", "Discharge/Charge Efficiency", temp_lgnd, xscale, color))
-        artists.append(graph_cycle(_x, df.NewData.Temp, ax3, 0, 50, 5,
+        artists.append(graph_cycle(_x, df.NewData.Temp, ax3, 0, 60, 5,
                     "Cycle", "Temperature (℃)", temp_lgnd, xscale, color))
         # 1-6 ax6: Rest End Voltage = 충전 직전 V = 방전 후 Rest 종료 OCV
         # (= 기존 RndV, pivot Ocv.min 이 실제로 방전 후 OCV 를 캡처)
