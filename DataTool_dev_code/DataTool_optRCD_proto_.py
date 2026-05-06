@@ -27984,16 +27984,6 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
             self.ProfileConfirm.setEnabled(True)
             self._pump_ui(0)
-            try:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(
-                    self, "새 경로 감지",
-                    f"새 경로 {len(_changed_paths)}건의 사이클 정보를 갱신했습니다.\n"
-                    f"TC (col 4) 도 '1-최대TC' 로 자동 재설정 — 다른 범위가 필요하면\n"
-                    f"col 4 를 수정한 뒤 '프로파일 분석' 을 다시 눌러주세요.",
-                )
-            except Exception:
-                pass
             return
 
         # 사이클 미입력 시 바 갱신만 하고 종료
