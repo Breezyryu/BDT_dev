@@ -54,6 +54,8 @@ if not exist "%SPLASH_PATH%" (
     --collect-all pybamm ^
     --collect-all casadi ^
     --collect-all pybammsolvers ^
+    --collect-all pandas ^
+    --collect-all numpy ^
     --hidden-import fsspec ^
     --hidden-import anytree ^
     --hidden-import pooch ^
