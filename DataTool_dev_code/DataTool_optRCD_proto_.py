@@ -30654,8 +30654,12 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 1) 대상 테이블 자동 감지
         if tb is None:
             sc = self.sender()
-            pw = sc.parentWidget() if isinstance(
-                sc, (QtGui.QShortcut, QtGui.QAction)) else None
+            pw = None
+            if isinstance(sc, QtGui.QShortcut):
+                # PyQt6: QShortcut 은 QObject 상속 → parentWidget() 없음, parent() 사용
+                pw = sc.parent()
+            elif isinstance(sc, QtGui.QAction):
+                pw = sc.parentWidget()
             if isinstance(pw, QtWidgets.QTableWidget):
                 tb = pw
         if tb is None:
