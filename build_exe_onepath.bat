@@ -46,6 +46,10 @@ if not exist "%SPLASH_PATH%" (
     exit /b 1
 )
 
+:: --distpath 를 한 단계 더 깊게 잡아 다음 구조 생성:
+::   ..\build\%BUILD_NAME%\%BUILD_NAME%\_internal\
+::   ..\build\%BUILD_NAME%\%BUILD_NAME%\%BUILD_NAME%.exe
+::   ..\build\%BUILD_NAME%\src\*.py
 "%VENV_EXE%" ^
     --onedir ^
     --noconsole ^
@@ -77,13 +81,14 @@ if not exist "%SPLASH_PATH%" (
     --icon="%ICON_PATH%" ^
     --name "%BUILD_NAME%" ^
     "%SCRIPT_PATH%" ^
-    --distpath "%~dp0..\build"
+    --distpath "%~dp0..\build\%BUILD_NAME%"
 
-:: 빌드 성공 시 .py 원본을 출력 폴더에 복사
-if exist "%~dp0..\build\%BUILD_NAME%" (
-    echo Copying source files...
-    copy "%~dp0DataTool_dev_code\DataTool_optRCD_proto_.py" "%~dp0..\build\%BUILD_NAME%\" >nul
-    copy "%~dp0DataTool_dev_code\bdt_pybamm.py" "%~dp0..\build\%BUILD_NAME%\" >nul
+:: 빌드 성공 시 .py 원본을 src/ 하위에 복사
+if exist "%~dp0..\build\%BUILD_NAME%\%BUILD_NAME%" (
+    echo Copying source files to src/...
+    if not exist "%~dp0..\build\%BUILD_NAME%\src" mkdir "%~dp0..\build\%BUILD_NAME%\src"
+    copy "%~dp0DataTool_dev_code\DataTool_optRCD_proto_.py" "%~dp0..\build\%BUILD_NAME%\src\" >nul
+    copy "%~dp0DataTool_dev_code\bdt_pybamm.py" "%~dp0..\build\%BUILD_NAME%\src\" >nul
     echo Done: ..\build\%BUILD_NAME%\
 )
 
