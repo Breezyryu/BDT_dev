@@ -9,20 +9,26 @@
       외부 PC 로 bundle.txt 반출 후 `--render` 로 재생성.
 
 회피 전략:
-    사내 반출물은 **.txt 단일 번들 하나만**. 이미지/차트는 외부 환경에서 재생성.
-        사내: `<stem>_bundle.txt` (값/수식/차트 시리즈 데이터 통합, 첫 줄 공란)
-        외부: 번들 txt 를 matplotlib 으로 PNG/SVG/PDF 재렌더링
+    사내 반출물은 **폴더 안의 .txt 들**. 이미지/차트는 외부 환경에서 재생성.
+        사내 출력 폴더 `<stem>_bundle/` (모든 .txt 첫 줄 공란):
+            _bundle.txt                  ← 통합 (load_bundle / --to-xlsx / --render 호환)
+            _meta.txt                    ← 사람이 읽는 요약 (파일 목록·통계·사용법)
+            values_<sheet>.txt           ← (Excel) 시트별 TSV 값
+            formulas_<sheet>.txt         ← (Excel) 시트별 셀↔수식
+            chart_<idx>_<name>.txt       ← (Excel) 차트별 시리즈 X/Y
+        외부: 폴더(또는 _bundle.txt) 를 matplotlib/openpyxl 로 재렌더링 ·복원.
 
 사용법:
-    # 사내 — 단일 추출
+    # 사내 — 단일 추출 (폴더 모드)
     python drm_reload_test.py <입력파일> [출력stem]
+    #   → <stem>_bundle/ 폴더 생성 + 안에 분리된 .txt 들
 
-    # 외부 — 단일 렌더링
-    python drm_reload_test.py --render <bundle.txt> [출력디렉터리] [png|svg|pdf]
+    # 외부 — 단일 렌더링 (폴더 또는 _bundle.txt 둘 다 OK)
+    python drm_reload_test.py --render <bundle폴더|bundle.txt> [출력디렉터리] [png|svg|pdf]
 
     # 여러 경로 한번에 (파일/디렉터리 혼합 가능, 디렉터리는 재귀 탐색)
-    #   .xlsx/.xls/.xlsm/.pptx/.ppt/.pptm → bundle.txt 추출
-    #   *_bundle.txt                      → 차트 렌더링
+    #   .xlsx/.xls/.xlsm/.pptx/.ppt/.pptm/.pdf/.docx → <stem>_bundle/ 폴더
+    #   *_bundle.txt 또는 *_bundle/ 폴더              → 차트 렌더링
     python drm_reload_test.py --batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]
 
 지원 확장자:
@@ -285,9 +291,206 @@ def export_excel_bundle(src: Path, bundle_txt: Path) -> dict:
     return stats
 
 
+# ── Excel 폴더 모드 — 통합 _bundle.txt + 시트/차트별 분리 .txt ──────
+def export_excel_bundle_dir(src: Path, out_dir: Path) -> dict:
+    """Excel → 폴더 안에 통합 _bundle.txt + 시트/차트별 분리 .txt.
+
+    출력 구조 (모든 .txt 첫 줄 공란 — Fasoo proto_:22176 회피):
+        out_dir/
+            _bundle.txt                  ← 통합 (load_bundle / --to-xlsx / --render 호환)
+            _meta.txt                    ← 사람용 요약 (파일 목록·통계·복원 명령)
+            values_<sheet>.txt           ← 시트별 TSV (no header, raw values)
+            formulas_<sheet>.txt         ← 시트별 셀↔수식 매핑
+            chart_<idx:02d>_<name>.txt   ← 차트별 시리즈 X/Y (전역 일련번호)
+
+    수식 보존: 모든 셀의 수식이 셀 주소(A1 표기)와 함께 기록됨.
+    차트 보존: 시리즈별 X/Y 값 그대로 — 외부 환경에서 동일 데이터로 재구성 가능.
+              색상/스타일은 openpyxl 기본값(다를 수 있음), 데이터는 정확히 일치.
+    """
+    import xlwings as xw
+    import pandas as pd
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stats = {"sheets": 0, "rows_total": 0, "formulas": 0, "charts": 0}
+    sheet_data: list[tuple[str, pd.DataFrame, list[tuple[str, str]], list[dict]]] = []
+
+    app = xw.App(visible=False, add_book=False)
+    try:
+        app.display_alerts = False
+        wb = app.books.open(str(src), update_links=False, read_only=True)
+        try:
+            for sh in wb.sheets:
+                rng = sh.used_range
+                empty = (rng.last_cell.row == 1 and rng.last_cell.column == 1
+                         and rng.value is None)
+                if empty:
+                    df = pd.DataFrame()
+                    f_list: list[tuple[str, str]] = []
+                else:
+                    val = rng.options(pd.DataFrame, index=False, header=False).value
+                    df = val if isinstance(val, pd.DataFrame) else pd.DataFrame([[val]])
+                    row0, col0 = rng.row, rng.column
+                    nrows = rng.last_cell.row - row0 + 1
+                    ncols = rng.last_cell.column - col0 + 1
+                    formulas_2d = _to_2d(rng.formula, nrows, ncols)
+                    f_list = []
+                    for i, row in enumerate(formulas_2d):
+                        for j, v in enumerate(row):
+                            if isinstance(v, str) and v.startswith('='):
+                                addr = f"{_col_to_letter(col0 + j)}{row0 + i}"
+                                f_list.append((addr, v))
+                    stats["rows_total"] += len(df)
+                    stats["formulas"] += len(f_list)
+
+                chart_list = _extract_charts(sh)
+                stats["charts"] += len(chart_list)
+                stats["sheets"] += 1
+                sheet_data.append((sh.name, df, f_list, chart_list))
+        finally:
+            wb.close()
+    finally:
+        app.quit()
+
+    # 1) 통합 _bundle.txt — 기존 단일 파일 형식과 동일 (load_bundle 호환)
+    bundle_txt = out_dir / "_bundle.txt"
+    with open(bundle_txt, 'w', encoding='utf-8') as f:
+        f.write("\n")  # DRM 회피용 첫 줄 공란
+        f.write("# DRM-bypass bundle (folder-mode integrated)\n")
+        f.write(f"# Source: {src}\n")
+        f.write(f"# Exported: {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write(f"# Sheets: {stats['sheets']}, Formulas: {stats['formulas']}, "
+                f"Charts: {stats['charts']}\n")
+        f.write("# Render charts: python drm_reload_test.py --render <this.txt|parent_dir> <outdir>\n")
+        f.write("\n")
+
+        f.write("===VALUES===\n")
+        for name, df, _, _ in sheet_data:
+            f.write(f"[{name}]\n")
+            if not df.empty:
+                df.to_csv(f, sep='\t', index=False, header=False,
+                          lineterminator='\n', na_rep='')
+            f.write("\n")
+
+        f.write("===FORMULAS===\n")
+        for name, _, f_list, _ in sheet_data:
+            if not f_list:
+                continue
+            f.write(f"[{name}]\n")
+            for addr, formula in f_list:
+                f.write(f"{addr}\t{formula}\n")
+            f.write("\n")
+
+        f.write("===CHARTS===\n")
+        for sheet_name, _, _, chart_list in sheet_data:
+            for ch in chart_list:
+                tag = ch.get("name") or f"Chart{ch['id']}"
+                f.write(f"[{sheet_name}::{tag}]\n")
+                for key in ("title", "x_axis", "y_axis"):
+                    if ch.get(key):
+                        f.write(f"{key}={ch[key]}\n")
+                for si, s in enumerate(ch.get("series", []), start=1):
+                    sname = str(s.get("name") or "").replace('\t', ' ').replace('\n', ' ')
+                    f.write(f"series.{si}.name\t{sname}\n")
+                    f.write(f"series.{si}.x\t{_join_values(s.get('x', []))}\n")
+                    f.write(f"series.{si}.y\t{_join_values(s.get('y', []))}\n")
+                f.write("\n")
+
+    # 2) 시트별 values_*.txt / formulas_*.txt
+    for name, df, f_list, _ in sheet_data:
+        safe = _safe_name(name)
+        vp = out_dir / f"values_{safe}.txt"
+        with open(vp, 'w', encoding='utf-8') as f:
+            f.write("\n")  # DRM 회피
+            f.write("# DRM-bypass Excel values\n")
+            f.write(f"# Sheet: {name}\n")
+            f.write("# Format: TSV (no header, raw cell values)\n")
+            f.write("\n")
+            if not df.empty:
+                df.to_csv(f, sep='\t', index=False, header=False,
+                          lineterminator='\n', na_rep='')
+
+        if f_list:
+            fp = out_dir / f"formulas_{safe}.txt"
+            with open(fp, 'w', encoding='utf-8') as f:
+                f.write("\n")  # DRM 회피
+                f.write("# DRM-bypass Excel formulas\n")
+                f.write(f"# Sheet: {name}\n")
+                f.write("# Format: <addr>\\t<formula>\n")
+                f.write("\n")
+                for addr, formula in f_list:
+                    f.write(f"{addr}\t{formula}\n")
+
+    # 3) 차트별 chart_<idx:02d>_<name>.txt — 전역 일련번호 (시트 무관)
+    chart_idx = 0
+    for sheet_name, _, _, chart_list in sheet_data:
+        for ch in chart_list:
+            chart_idx += 1
+            tag = ch.get("name") or f"Chart{ch['id']}"
+            safe_tag = _safe_name(f"{sheet_name}_{tag}")[:60]
+            cp = out_dir / f"chart_{chart_idx:02d}_{safe_tag}.txt"
+            with open(cp, 'w', encoding='utf-8') as f:
+                f.write("\n")  # DRM 회피
+                f.write("# DRM-bypass Excel chart\n")
+                f.write(f"# Sheet: {sheet_name}\n")
+                f.write(f"# Chart-Id: {ch['id']}\n")
+                if ch.get("name"):
+                    f.write(f"# Chart-Name: {ch['name']}\n")
+                f.write("\n")
+                for key in ("title", "x_axis", "y_axis"):
+                    if ch.get(key):
+                        f.write(f"{key}={ch[key]}\n")
+                f.write("\n")
+                for si, s in enumerate(ch.get("series", []), start=1):
+                    sname = str(s.get("name") or "").replace('\t', ' ').replace('\n', ' ')
+                    f.write(f"[series.{si}]\n")
+                    f.write(f"name\t{sname}\n")
+                    f.write(f"x\t{_join_values(s.get('x', []))}\n")
+                    f.write(f"y\t{_join_values(s.get('y', []))}\n")
+                    f.write("\n")
+
+    # 4) _meta.txt — 사람이 읽는 요약
+    mp = out_dir / "_meta.txt"
+    with open(mp, 'w', encoding='utf-8') as f:
+        f.write("\n")  # DRM 회피
+        f.write("# DRM-bypass Excel bundle (folder)\n")
+        f.write(f"# Source: {src}\n")
+        f.write(f"# Exported: {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write(f"# Sheets: {stats['sheets']}, Rows: {stats['rows_total']:,}, "
+                f"Formulas: {stats['formulas']}, Charts: {stats['charts']}\n")
+        f.write("# \n")
+        f.write("# Files in this folder:\n")
+        f.write("#   _bundle.txt              — 통합 (load_bundle / --to-xlsx / --render 호환)\n")
+        f.write("#   _meta.txt                — 이 파일 (사람용 요약)\n")
+        f.write("#   values_<sheet>.txt       — 시트별 TSV 값\n")
+        f.write("#   formulas_<sheet>.txt     — 시트별 셀↔수식 매핑\n")
+        f.write("#   chart_<idx>_<name>.txt   — 차트별 시리즈 X/Y\n")
+        f.write("# \n")
+        f.write("# 외부 환경 사용 예:\n")
+        f.write("#   차트 PNG: python drm_reload_test.py --render <this_dir> <outdir>\n")
+        f.write("#   xlsx 복원: python drm_reload_test.py --to-xlsx <this_dir> <out.xlsx>\n")
+        f.write("#            (수식·차트 데이터 보존. 차트 색/스타일은 openpyxl 기본값)\n")
+        f.write("# \n")
+        f.write("# 모든 .txt 첫 줄 공란 (Fasoo proto_:22176 회피).\n")
+
+    return stats
+
+
 # ── 번들 로더 ───────────────────────────────────────────────────────
+def _bundle_path_resolve(path: str | Path) -> Path:
+    """입력이 폴더면 폴더 내부의 _bundle.txt 를 사용. 그 외는 그대로 반환."""
+    p = Path(path)
+    if p.is_dir():
+        candidate = p / "_bundle.txt"
+        if candidate.is_file():
+            return candidate
+    return p
+
+
 def load_bundle(path: str | Path) -> dict:
-    """번들 txt 파싱 → dict.
+    """번들 txt(또는 번들 폴더) 파싱 → dict.
+
+    path 가 폴더면 폴더 안의 `_bundle.txt` 를 우선 사용 (호환성).
 
     키:
       values      {sheet: [[cell,...]]}        (Excel)
@@ -298,6 +501,7 @@ def load_bundle(path: str | Path) -> dict:
       paragraphs  [str, ...]                   (Word)
       tables      [{name, rows:[[cell,...]]}, ...]  (Word)
     """
+    path = _bundle_path_resolve(path)
     result: dict = {
         "values": {}, "formulas": {}, "charts": [],
         "slides": [], "pages": {}, "paragraphs": [], "tables": [],
@@ -1128,27 +1332,34 @@ def _cmd_extract(argv: list[str]) -> int:
 
     try:
         if ext in (".xlsx", ".xls", ".xlsm"):
-            bundle = Path(f"{out_stem}_bundle.txt")
-            print(f"[출력] {bundle}  (첫 줄 공란 — 값/수식/차트 시리즈 통합)")
-            stats = export_excel_bundle(src_path, bundle)
+            out_dir = Path(f"{out_stem}_bundle")
+            print(f"[출력] {out_dir}{os.sep}  (폴더 — _bundle.txt + 시트/차트별 분리 .txt, 첫 줄 공란)")
+            stats = export_excel_bundle_dir(src_path, out_dir)
             print(f"[Excel] 시트 {stats['sheets']}, 행 {stats['rows_total']:,}, "
                   f"수식 {stats['formulas']}, 차트 {stats['charts']}")
+            print(f"  외부 환경 사용 예:")
             if stats['charts']:
-                print(f"  외부 환경에서 차트 이미지 생성:")
-                print(f"    python {Path(__file__).name} --render {bundle.name} <outdir>")
+                print(f"    차트 PNG: python {Path(__file__).name} --render {out_dir.name} <outdir>")
+            print(f"    xlsx 복원: python {Path(__file__).name} --to-xlsx {out_dir.name} <out.xlsx>")
         elif ext in (".pptx", ".ppt", ".pptm"):
-            bundle = Path(f"{out_stem}_bundle.txt")
-            print(f"[출력] {bundle}  (슬라이드 텍스트/도형 메타 — 첫 줄 공란)")
+            out_dir = Path(f"{out_stem}_bundle")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            bundle = out_dir / "_bundle.txt"
+            print(f"[출력] {out_dir}{os.sep}  (폴더 — _bundle.txt: 슬라이드 텍스트/도형 메타, 첫 줄 공란)")
             stats = export_pptx_bundle(src_path, bundle)
             print(f"[PPT] 슬라이드 {stats['slides']}, 도형 {stats['shapes']}")
         elif ext == ".pdf":
-            bundle = Path(f"{out_stem}_bundle.txt")
-            print(f"[출력] {bundle}  (PDF 페이지별 텍스트 — 첫 줄 공란)")
+            out_dir = Path(f"{out_stem}_bundle")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            bundle = out_dir / "_bundle.txt"
+            print(f"[출력] {out_dir}{os.sep}  (폴더 — _bundle.txt: PDF 페이지별 텍스트, 첫 줄 공란)")
             stats = export_pdf_bundle(src_path, bundle)
             print(f"[PDF] 페이지 {stats['pages']}, 문자 {stats['chars']:,}")
         elif ext in (".docx", ".doc", ".docm"):
-            bundle = Path(f"{out_stem}_bundle.txt")
-            print(f"[출력] {bundle}  (Word 단락+표 — 첫 줄 공란)")
+            out_dir = Path(f"{out_stem}_bundle")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            bundle = out_dir / "_bundle.txt"
+            print(f"[출력] {out_dir}{os.sep}  (폴더 — _bundle.txt: Word 단락+표, 첫 줄 공란)")
             stats = export_word_bundle(src_path, bundle)
             print(f"[Word] 단락 {stats['paragraphs']}, 표 {stats['tables']}, 문자 {stats['chars']:,}")
         else:
@@ -1164,13 +1375,19 @@ def _cmd_extract(argv: list[str]) -> int:
 
 def _cmd_render(argv: list[str]) -> int:
     if len(argv) < 3:
-        print("[에러] 사용법: --render <bundle.txt> [출력디렉터리] [png|svg|pdf]")
+        print("[에러] 사용법: --render <bundle.txt|bundle폴더> [출력디렉터리] [png|svg|pdf]")
         return 2
     bundle = Path(argv[2]).expanduser().resolve()
-    if not bundle.is_file():
-        print(f"[에러] 번들 파일 없음: {bundle}")
+    if not (bundle.is_file() or bundle.is_dir()):
+        print(f"[에러] 번들 경로 없음: {bundle}")
         return 2
-    out_dir = Path(argv[3]).expanduser().resolve() if len(argv) >= 4 else bundle.parent / 'charts'
+    if bundle.is_dir() and not (bundle / "_bundle.txt").is_file():
+        print(f"[에러] 폴더 안 _bundle.txt 없음: {bundle}")
+        return 2
+    if len(argv) >= 4:
+        out_dir = Path(argv[3]).expanduser().resolve()
+    else:
+        out_dir = (bundle / 'charts') if bundle.is_dir() else (bundle.parent / 'charts')
     fmt = argv[4].lower() if len(argv) >= 5 else 'png'
     if fmt not in ('png', 'svg', 'pdf'):
         print(f"[에러] format 은 png/svg/pdf 중 하나: {fmt}")
@@ -1243,42 +1460,53 @@ def _process_one(src: Path, out_dir: Path | None, fmt: str) -> tuple[str, str]:
 
     if ext in ('.xlsx', '.xls', '.xlsm'):
         out_stem = _batch_out_stem(src, out_dir)
-        bundle = Path(f"{out_stem}_bundle.txt")
-        bundle.parent.mkdir(parents=True, exist_ok=True)
-        stats = export_excel_bundle(src, bundle)
-        msg = (f"→ {bundle.name}  "
+        bundle_dir = Path(f"{out_stem}_bundle")
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        stats = export_excel_bundle_dir(src, bundle_dir)
+        msg = (f"→ {bundle_dir.name}{os.sep}  "
                f"(sheet={stats['sheets']}, row={stats['rows_total']:,}, "
                f"formula={stats['formulas']}, chart={stats['charts']})")
         return 'ok', msg
 
     if ext in ('.pptx', '.ppt', '.pptm'):
         out_stem = _batch_out_stem(src, out_dir)
-        bundle = Path(f"{out_stem}_bundle.txt")
-        bundle.parent.mkdir(parents=True, exist_ok=True)
+        bundle_dir = Path(f"{out_stem}_bundle")
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle = bundle_dir / "_bundle.txt"
         stats = export_pptx_bundle(src, bundle)
-        msg = f"→ {bundle.name}  (slide={stats['slides']}, shape={stats['shapes']})"
+        msg = (f"→ {bundle_dir.name}{os.sep}_bundle.txt  "
+               f"(slide={stats['slides']}, shape={stats['shapes']})")
         return 'ok', msg
 
     if ext == '.pdf':
         out_stem = _batch_out_stem(src, out_dir)
-        bundle = Path(f"{out_stem}_bundle.txt")
-        bundle.parent.mkdir(parents=True, exist_ok=True)
+        bundle_dir = Path(f"{out_stem}_bundle")
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle = bundle_dir / "_bundle.txt"
         stats = export_pdf_bundle(src, bundle)
-        msg = f"→ {bundle.name}  (page={stats['pages']}, char={stats['chars']:,})"
+        msg = (f"→ {bundle_dir.name}{os.sep}_bundle.txt  "
+               f"(page={stats['pages']}, char={stats['chars']:,})")
         return 'ok', msg
 
     if ext in ('.docx', '.doc', '.docm'):
         out_stem = _batch_out_stem(src, out_dir)
-        bundle = Path(f"{out_stem}_bundle.txt")
-        bundle.parent.mkdir(parents=True, exist_ok=True)
+        bundle_dir = Path(f"{out_stem}_bundle")
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        bundle = bundle_dir / "_bundle.txt"
         stats = export_word_bundle(src, bundle)
-        msg = (f"→ {bundle.name}  "
+        msg = (f"→ {bundle_dir.name}{os.sep}_bundle.txt  "
                f"(para={stats['paragraphs']}, table={stats['tables']}, char={stats['chars']:,})")
         return 'ok', msg
 
     if ext == '.txt':
-        # _bundle 접미 떼어내기 (없으면 stem 그대로)
-        base = src.name[:-len('_bundle.txt')] if src.name.endswith('_bundle.txt') else src.stem
+        # 새 폴더형: <some>/_bundle.txt → 부모 폴더명을 base 로
+        # 옛 단일형: <stem>_bundle.txt   → 접미 떼어 base
+        if src.name == '_bundle.txt':
+            base = src.parent.name or 'root'
+        elif src.name.endswith('_bundle.txt'):
+            base = src.name[:-len('_bundle.txt')]
+        else:
+            base = src.stem
         if out_dir is None:
             chart_dir = src.parent / f"{base}_charts"
         else:
@@ -1364,21 +1592,29 @@ def _cmd_batch(argv: list[str]) -> int:
 
 
 def _cmd_restore(argv: list[str], kind: str) -> int:
-    """공통: --to-<kind> <bundle.txt> [out.ext]."""
+    """공통: --to-<kind> <bundle.txt|bundle폴더> [out.ext]."""
     ext_map = {"xlsx": ".xlsx", "pdf": ".pdf", "docx": ".docx", "pptx": ".pptx"}
     ext = ext_map[kind]
     if len(argv) < 3:
-        print(f"[에러] 사용법: --to-{kind} <bundle.txt> [out{ext}]")
+        print(f"[에러] 사용법: --to-{kind} <bundle.txt|bundle폴더> [out{ext}]")
         return 2
     src = Path(argv[2]).expanduser().resolve()
-    if not src.is_file():
-        print(f"[에러] 번들 파일 없음: {src}")
+    if not (src.is_file() or src.is_dir()):
+        print(f"[에러] 번들 경로 없음: {src}")
+        return 2
+    if src.is_dir() and not (src / "_bundle.txt").is_file():
+        print(f"[에러] 폴더 안 _bundle.txt 없음: {src}")
         return 2
     if len(argv) >= 4:
         dst = Path(argv[3]).expanduser().resolve()
     else:
-        base = src.name[:-len('_bundle.txt')] if src.name.endswith('_bundle.txt') else src.stem
-        dst = src.parent / f"{base}_restored{ext}"
+        if src.is_dir():
+            # `<stem>_bundle/` → `<stem>_restored.<ext>`
+            base = src.name[:-len('_bundle')] if src.name.endswith('_bundle') else src.name
+            dst = src.parent / f"{base}_restored{ext}"
+        else:
+            base = src.name[:-len('_bundle.txt')] if src.name.endswith('_bundle.txt') else src.stem
+            dst = src.parent / f"{base}_restored{ext}"
     dst.parent.mkdir(parents=True, exist_ok=True)
     print(f"[번들] {src}")
     print(f"[출력] {dst}")
