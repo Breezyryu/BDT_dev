@@ -12985,7 +12985,7 @@ class Ui_sitool(object):
         self.verticalLayout_4.addWidget(self._stepnum_container)
 
         # ── 사이클 타임라인 바 (GroupBox 박스 처리, 데이터 범위/그래프 옵션과 시각 일관) ──
-        self._timeline_groupbox = QtWidgets.QGroupBox("사이클 패턴", parent=self.tab_6)
+        self._timeline_groupbox = QtWidgets.QGroupBox("2. 사이클 패턴", parent=self.tab_6)
         _tl_layout = QtWidgets.QVBoxLayout(self._timeline_groupbox)
         _tl_layout.setContentsMargins(8, 6, 8, 6)
         _tl_layout.setSpacing(4)
@@ -13030,7 +13030,7 @@ class Ui_sitool(object):
         # ══════════════════════════════════════════
         # GroupBox 1: 데이터 범위
         # ══════════════════════════════════════════
-        self._data_scope_groupbox = QtWidgets.QGroupBox("데이터 범위", parent=self.tab_6)
+        self._data_scope_groupbox = QtWidgets.QGroupBox("3. 데이터 범위", parent=self.tab_6)
         # 박스 가로 길이 — 폭 명시 없이 부모 verticalLayout_4 stretch 따름
         # (그래프 옵션 박스와 동일 부모 → 자연스럽게 동일 폭 받음)
         _ds_layout = QtWidgets.QVBoxLayout(self._data_scope_groupbox)
@@ -13209,7 +13209,7 @@ class Ui_sitool(object):
         # ══════════════════════════════════════════
         # GroupBox 2: 그래프 옵션
         # ══════════════════════════════════════════
-        self._graph_opt_groupbox_pf = QtWidgets.QGroupBox("그래프 옵션", parent=self.tab_6)
+        self._graph_opt_groupbox_pf = QtWidgets.QGroupBox("4. 그래프 옵션", parent=self.tab_6)
         _gs_layout = QtWidgets.QVBoxLayout(self._graph_opt_groupbox_pf)
         _gs_layout.setContentsMargins(6, 4, 6, 4)
         _gs_layout.setSpacing(4)
@@ -13331,7 +13331,7 @@ class Ui_sitool(object):
         # ══════════════════════════════════════════
         # 프로필 분석 — 모드 + 실행 버튼 (상단 배치)
         # ══════════════════════════════════════════
-        self._profile_analysis_groupbox = QtWidgets.QGroupBox("프로파일 분석", parent=self.tab_6)
+        self._profile_analysis_groupbox = QtWidgets.QGroupBox("5. 프로파일 분석", parent=self.tab_6)
         self._profile_analysis_groupbox.setFont(_pf_font)
         _pa_vlayout = QtWidgets.QVBoxLayout(self._profile_analysis_groupbox)
         _pa_vlayout.setContentsMargins(6, 6, 6, 6)
