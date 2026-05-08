@@ -4,6 +4,14 @@
 
 ----- 다음 빌드 대기 -----
 
+260508 데이터 처리 trace 인프라 분리 — bdt_trace.py 신설 (류성택 요청)
+       BDT_TRACE=1 환경변수 ON 시 monolith stub → 실체 monkey-patch + 콜백
+       Stage 1~7 + load_raw / cycle_map sub-step 측정 (substep 레벨)
+       산출물: step.csv / step_summary.md / step_hotspot.png + Stage snapshot pickle
+       PyInstaller --exclude-module bdt_trace 적용 (exe 빌드 0 영향)
+       run_with_trace.bat 추가 (dev 헬퍼)
+       wiki/31_software_dev/260508_data_pipeline_trace_walkthrough.md 작성
+
 [2026-05-07] BatteryDataTool v260507 배포
 
 260507 현황 필터 결과 드래그·복사·붙여넣기 지원

@@ -75,6 +75,7 @@ if not exist "%SPLASH_PATH%" (
     --exclude-module pytest ^
     --exclude-module sphinx ^
     --exclude-module notebook ^
+    --exclude-module bdt_trace ^
     --runtime-hook="%RUNTIME_HOOK%" ^
     --add-data "%BDT_PYBAMM%;." ^
     --splash="%SPLASH_PATH%" ^

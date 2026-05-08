@@ -88,54 +88,71 @@ if not _perf_logger.handlers:
 logger = _perf_logger
 
 
-# ── 프로파일 파싱 스테이지 추적 (디버그) ──────────────────────────
-# 런타임에 True 로 켜면 각 Stage 의 DataFrame 을 pickle 로 저장한다.
-# 기본값 False 일 때는 함수 내부 분기 비용만 추가 (사실상 0).
-# 사용법:
-#   import DataTool_optRCD_proto_ as bdt
-#   bdt._DEBUG_PROFILE_TRACE = True
-#   bdt._DEBUG_TRACE_DIR = r"C:\tmp\bdt_trace"   # (선택) 경로 지정
-#   # ... GUI에서 프로파일 분석 1회 실행 ...
-#   # 이후 노트북에서 pickle 로드 (tools/profile_trace_viewer.ipynb)
+# ── Trace 인프라 (thin stub — 실체는 bdt_trace.py) ───────────────
+# 분리 정책 (260508):
+#   - log_perf / PerfSection / _debug_snapshot / _trace_substep 의 본체는
+#     bdt_trace.py 로 이전 (dev-only, PyInstaller --exclude-module 적용).
+#   - monolith 는 콜백 list + monkey-patch 가능한 thin stub 만 보유.
+#   - BDT_TRACE 환경변수 ON 시 bdt_trace.activate 가 실체 주입 (callback / patch).
+#   - exe 빌드 (--noconsole) 는 bdt_trace 미포함 → try-import 실패 → dormant.
+#   - dormant 모드 비용: 콜백 list 빈 검사 (~ns), 측정 자체 미수행.
+#
+# 사용법 (개발자):
+#   set BDT_TRACE=1
+#   set BDT_TRACE_LEVEL=substep        # (선택) stage|substep
+#   python DataTool_optRCD_proto_.py
+#
+# 또는 노트북:
+#   import os; os.environ['BDT_TRACE'] = '1'
+#   import DataTool_optRCD_proto_      # 모듈 로드 시 자동 activate
+#
+# 산출물 (활성화 시): C:\tmp\bdt_trace\session_<TS>\
+#   step.csv / step_summary.md / step_hotspot.png / NNN_<stage>_<tag>.pkl
+
+# 콜백 list — bdt_trace.activate 가 채움. 비어 있으면 fast-path passthrough.
+_trace_func_callbacks: list = []
+_trace_section_callbacks: list = []
+
+# 호환성 변수 (legacy 코드 경로) — 활성화 신호는 BDT_TRACE 환경변수가 우선.
 _DEBUG_PROFILE_TRACE: bool = False
 _DEBUG_TRACE_DIR: str = r"C:\tmp\bdt_trace"
-_DEBUG_TRACE_SESSION: str | None = None  # 세션 식별자 (None=타임스탬프 자동)
+_DEBUG_TRACE_SESSION: str | None = None
 
 
 def _debug_snapshot(obj, stage: str, tag: str = "") -> None:
-    """프로파일 파이프라인의 중간 산출물을 pickle 로 저장 (_DEBUG_PROFILE_TRACE=True 일 때).
+    """(stub) Stage 끝 DataFrame snapshot.
 
-    저장 파일명: {session}/{NN}_{stage}_{tag}.pkl
-    payload dict: stage, tag, shape, columns, dtypes, head(30), df(전체)
+    실체: bdt_trace._real_debug_snapshot — bdt_trace.activate() 가
+    monkey-patch 로 모듈 attribute 자체를 교체. dormant 시 no-op.
     """
-    if not _DEBUG_PROFILE_TRACE:
-        return
-    try:
-        import pickle, time
-        global _DEBUG_TRACE_SESSION
-        if _DEBUG_TRACE_SESSION is None:
-            _DEBUG_TRACE_SESSION = time.strftime("session_%Y%m%d_%H%M%S")
-        sess_dir = os.path.join(_DEBUG_TRACE_DIR, _DEBUG_TRACE_SESSION)
-        os.makedirs(sess_dir, exist_ok=True)
-        # 스테이지 순번 유지용 카운터
-        _counter = _debug_snapshot.__dict__.setdefault("_n", 0)
-        _debug_snapshot._n = _counter + 1
-        fname = os.path.join(
-            sess_dir, f"{_counter:03d}_{stage}_{tag}.pkl" if tag
-            else f"{_counter:03d}_{stage}.pkl")
-        payload: dict = {"stage": stage, "tag": tag, "ts": time.time()}
-        if isinstance(obj, pd.DataFrame):
-            payload["shape"] = obj.shape
-            payload["columns"] = list(obj.columns)
-            payload["dtypes"] = {c: str(obj[c].dtype) for c in obj.columns}
-            payload["head"] = obj.head(30).copy()
-            payload["df"] = obj.copy()
-        else:
-            payload["obj"] = obj
-        with open(fname, "wb") as f:
-            pickle.dump(payload, f)
-    except Exception as _ex:
-        _perf_logger.warning(f"[debug_snapshot] {stage}/{tag}: {_ex}")
+    return None
+
+
+import contextlib as _contextlib  # _trace_substep 용
+
+
+@_contextlib.contextmanager
+def _trace_substep(stage: str, sub_step: str, **ctx):
+    """(stub) Stage 내부 sub-step 측정 hook.
+
+    실체: bdt_trace._real_trace_substep — activate 시 monkey-patch.
+    Dormant 시 no-op holder yield (set_* 메서드는 모두 pass).
+
+    사용 예 (호출 지점):
+        with _trace_substep('S2_load_raw', 'cyc_attempt',
+                            tc_min=tc_min, tc_max=tc_max) as t:
+            df = _try_cyc_profile(...)
+            t.set_rows_out(len(df) if df is not None else 0)
+            t.set_cache('hit' if cached else 'miss')
+    """
+    class _NoopHolder:
+        def set_rows_in(self, n): pass
+        def set_rows_out(self, n): pass
+        def set_cache(self, s): pass
+        def set_n_files(self, n): pass
+        def set_path(self, p): pass
+        def set_extra(self, **kw): pass
+    yield _NoopHolder()
 
 
 def calc_optimal_workers(task_count: int) -> int:
@@ -155,7 +172,15 @@ def calc_optimal_workers(task_count: int) -> int:
 
 
 def log_perf(func):
-    """함수의 시작/종료 시점과 소요 시간을 콘솔에 기록하는 데코레이터"""
+    """(stub) 함수 timing 데코레이터 — 콜백 list 가 비어 있으면 passthrough.
+
+    실체: bdt_trace 의 콜백이 등록되면 매 호출마다 timing 측정 + step.csv 기록.
+    Dormant 시 콜백 list 빈 검사만 수행 (비용 ~ns).
+
+    데코레이터 패턴 특성상 monkey-patch 로 교체 불가 (이미 22 함수가 wrap 됨).
+    따라서 콜백 list 패턴 사용 — bdt_trace.activate 가 _trace_func_callbacks 에
+    측정 콜백 등록.
+    """
     import inspect
     _n_params = len(inspect.signature(func).parameters)
 
@@ -163,41 +188,63 @@ def log_perf(func):
     def wrapper(*args, **kwargs):
         # PyQt 시그널이 추가로 전달하는 인자 (bool 등) 를 제거
         trimmed = args[:_n_params]
+        if not _trace_func_callbacks:
+            # Fast path — dormant. 콘솔 로그/timing 측정 미수행 (exe --noconsole 환경 대응).
+            return func(*trimmed, **kwargs)
         name = func.__qualname__
-        _perf_logger.info(f'▶ {name} 시작')
         t0 = time.perf_counter()
+        t_iso = time.strftime('%H:%M:%S')
+        ok, exc_name = True, None
         try:
-            result = func(*trimmed, **kwargs)
-            elapsed = time.perf_counter() - t0
-            _perf_logger.info(f'◀ {name} 완료  [{elapsed:.3f}s]')
-            return result
+            return func(*trimmed, **kwargs)
         except Exception as e:
-            elapsed = time.perf_counter() - t0
-            _perf_logger.error(f'✖ {name} 실패  [{elapsed:.3f}s] {type(e).__name__}: {e}')
+            ok, exc_name = False, type(e).__name__
             raise
+        finally:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            for _cb in _trace_func_callbacks:
+                try:
+                    _cb(name, t_iso, elapsed_ms, ok, exc_name)
+                except Exception:
+                    pass
+
     return wrapper
 
 
 class PerfSection:
-    """구간별 소요 시간을 측정하는 컨텍스트 매니저.
+    """(stub) 구간 timing 컨텍스트 매니저 — 콜백 list 빈 시 fast-path no-op.
+
+    실체: bdt_trace.activate 가 _trace_section_callbacks 에 측정 콜백 등록.
+    Dormant 시 콜백 빈 검사만 (~ns).
+
     Usage:
         with PerfSection('데이터 로딩', files=3):
             ...
     """
+    __slots__ = ('label', 'ctx', '_t0', '_t_iso')
+
     def __init__(self, label, **ctx):
         self.label = label
         self.ctx = ctx
+        self._t0 = None
+        self._t_iso = ''
 
     def __enter__(self):
-        parts = [f'{k}={v}' for k, v in self.ctx.items()]
-        ctx_str = f'  ({", ".join(parts)})' if parts else ''
-        _perf_logger.info(f'  ┌ {self.label}{ctx_str}')
+        if not _trace_section_callbacks:
+            return self  # Fast path
         self._t0 = time.perf_counter()
+        self._t_iso = time.strftime('%H:%M:%S')
         return self
 
     def __exit__(self, *exc):
-        elapsed = time.perf_counter() - self._t0
-        _perf_logger.info(f'  └ {self.label}  [{elapsed:.3f}s]')
+        if self._t0 is None:
+            return False
+        elapsed_ms = (time.perf_counter() - self._t0) * 1000
+        for _cb in _trace_section_callbacks:
+            try:
+                _cb(self.label, self._t_iso, elapsed_ms, dict(self.ctx))
+            except Exception:
+                pass
         return False
 
 # plot 스타일 설정
@@ -1481,6 +1528,10 @@ def _log_pne_endpoint_indices(data_folders) -> None:
 def _cached_pne_restore_files(raw_file_path: str) -> tuple:
     """PNE Restore 폴더의 SaveEndData, file_index, subfile 목록을 캐싱하여 반환.
 
+    Schema reference: wiki/10_cycle_data/260508_raw_data_schema_unified_reference.md §3.4-3.5
+      - SaveEndData.csv: step row 메타 (Stepmode·Condition·V·I·Cap·TotlCycle 등)
+      - SaveData<NNNN>.csv: 동일 schema 시계열, .cyc로 gap-fill
+
     SaveEndData.csv 이후 .cyc 파일에 추가된 최신 사이클 데이터를 자동 보충한다.
     보충 발생 시 콘솔에 보충된 사이클 범위를 출력.
 
@@ -1683,6 +1734,10 @@ def _unified_pne_load_raw(
 ) -> pd.DataFrame | None:
     """PNE SaveData에서 원시 프로필 데이터 로딩 — Layer A (Source).
 
+    Schema reference: wiki/10_cycle_data/260508_raw_data_schema_unified_reference.md §3.4-3.5
+      - SaveEndData.csv (헤더 X, 48+ 컬럼 정수 인코딩): step row 메타
+      - SaveData<NNNN>.csv: 동일 schema 시계열 (1 step = 다수 row)
+
     Layer A 단일화 (ADR 0002, 260504): `data_scope` 파라미터 제거. 항상 모든
     Cond (1, 2, 3) row + 사이클 범위의 모든 TC 를 로딩. data_scope 별 row 필터링
     은 downstream Stage 3 (`_unified_filter_condition`) 와 view layer Step 1
@@ -1782,45 +1837,61 @@ def _unified_pne_load_raw(
         logical_to_totl = None
 
     # ── raw 캐시 조회 (동일 채널+TC 범위 → I/O 스킵) ──
-    _ch_cache = _get_channel_cache(raw_file_path)
-    _raw_cache = _ch_cache.get('unified_raw')
-    if _raw_cache is not None and _raw_cache[0] == (tc_min, tc_max):
+    with _trace_substep('S2_load_raw', 'cache_lookup',
+                        tc_min=tc_min, tc_max=tc_max) as _t:
+        _t.set_path(raw_file_path)
+        _ch_cache = _get_channel_cache(raw_file_path)
+        _raw_cache = _ch_cache.get('unified_raw')
+        _cache_hit = _raw_cache is not None and _raw_cache[0] == (tc_min, tc_max)
+        _t.set_cache('hit' if _cache_hit else 'miss')
+
+    if _cache_hit:
         raw = _raw_cache[1].copy()
         _perf_logger.debug(f'  [unified_raw] 캐시 히트: TC {tc_min}~{tc_max}')
     else:
         # ── .cyc 우선 로드 시도 ──
-        _cyc_raw = _try_cyc_profile(raw_file_path, tc_min, tc_max)
+        with _trace_substep('S2_load_raw', 'cyc_attempt',
+                            tc_min=tc_min, tc_max=tc_max) as _t:
+            _cyc_raw = _try_cyc_profile(raw_file_path, tc_min, tc_max)
+            _t.set_rows_out(len(_cyc_raw) if _cyc_raw is not None else 0)
+            _t.set_cache('hit' if _cyc_raw is not None else 'miss')
+
         if _cyc_raw is not None:
             raw = _cyc_raw
         elif has_restore:
             # ── CSV fallback (Restore 폴더 존재 시) ──
-            subfile = [f for f in os.listdir(restore_dir) if f.endswith(".csv")]
-            filepos = pne_search_cycle(restore_dir, tc_min, tc_max)
+            with _trace_substep('S2_load_raw', 'csv_concat',
+                                tc_min=tc_min, tc_max=tc_max) as _t:
+                subfile = [f for f in os.listdir(restore_dir) if f.endswith(".csv")]
+                filepos = pne_search_cycle(restore_dir, tc_min, tc_max)
 
-            if filepos[0] != -1:
-                file_slice = subfile[filepos[0]:(filepos[1] + 1)]
-            elif filepos[0] == -1 and tc_min == 1:
-                file_slice = subfile[0:(filepos[1] + 1)]
-            else:
-                file_slice = []
+                if filepos[0] != -1:
+                    file_slice = subfile[filepos[0]:(filepos[1] + 1)]
+                elif filepos[0] == -1 and tc_min == 1:
+                    file_slice = subfile[0:(filepos[1] + 1)]
+                else:
+                    file_slice = []
 
-            dfs = []
-            for fname in file_slice:
-                if "SaveData" in fname:
-                    fpath = os.path.join(restore_dir, fname)
-                    dfs.append(pd.read_csv(
-                        fpath, sep=",", skiprows=0, engine="c",
-                        header=None, encoding="cp949", on_bad_lines='skip',
-                    ))
+                dfs = []
+                for fname in file_slice:
+                    if "SaveData" in fname:
+                        fpath = os.path.join(restore_dir, fname)
+                        dfs.append(pd.read_csv(
+                            fpath, sep=",", skiprows=0, engine="c",
+                            header=None, encoding="cp949", on_bad_lines='skip',
+                        ))
 
-            if not dfs:
-                _perf_logger.warning(
-                    f"[Profile] PNE SaveData CSV 없음: {restore_dir} "
-                    f"(TC {tc_min}~{tc_max})"
-                )
-                return None
+                if not dfs:
+                    _t.set_n_files(0)
+                    _perf_logger.warning(
+                        f"[Profile] PNE SaveData CSV 없음: {restore_dir} "
+                        f"(TC {tc_min}~{tc_max})"
+                    )
+                    return None
 
-            raw = pd.concat(dfs, ignore_index=True)
+                raw = pd.concat(dfs, ignore_index=True)
+                _t.set_n_files(len(dfs))
+                _t.set_rows_out(len(raw))
         else:
             # Restore 폴더 없고 .cyc도 실패
             _perf_logger.warning(
@@ -1831,40 +1902,44 @@ def _unified_pne_load_raw(
         # 캐시 저장
         _ch_cache['unified_raw'] = ((tc_min, tc_max), raw.copy())
 
-    # 사이클 범위 필터
-    if cycle_map and totl_cycles:
-        # cycle_map 사용 시: 유효한 TotlCycle 값만 필터 (set으로 빠른 검색)
-        raw = raw.loc[raw[27].isin(totl_cycles_set)]
-    else:
-        raw = raw.loc[(raw[27] >= tc_min) & (raw[27] <= tc_max)]
+    # 사이클 범위 필터 + 컬럼 매핑 (S2_load_raw 의 sub-step: column_map)
+    with _trace_substep('S2_load_raw', 'column_map',
+                        tc_min=tc_min, tc_max=tc_max) as _t:
+        _t.set_rows_in(len(raw))
+        if cycle_map and totl_cycles:
+            # cycle_map 사용 시: 유효한 TotlCycle 값만 필터 (set으로 빠른 검색)
+            raw = raw.loc[raw[27].isin(totl_cycles_set)]
+        else:
+            raw = raw.loc[(raw[27] >= tc_min) & (raw[27] <= tc_max)]
 
-    # 표준 컬럼 구조로 변환
-    cols_needed = [0, 2, 7, 8, 9, 10, 11, 14, 15, 17, 18, 19, 21, 27]
-    cols_present = [c for c in cols_needed if c in raw.columns]
-    result = raw[cols_present].copy()
+        # 표준 컬럼 구조로 변환
+        cols_needed = [0, 2, 7, 8, 9, 10, 11, 14, 15, 17, 18, 19, 21, 27]
+        cols_present = [c for c in cols_needed if c in raw.columns]
+        result = raw[cols_present].copy()
 
-    # 컬럼명 매핑
-    col_map = {
-        0: "Index", 2: "Condition", 7: "Step", 8: "Voltage_raw",
-        9: "Current_raw", 10: "ChgCap_raw", 11: "DchgCap_raw",
-        14: "ChgWh_raw", 15: "DchgWh_raw", 17: "StepTime_raw",
-        18: "TotTime_Day", 19: "TotTime_Sec_raw", 21: "Temp_raw",
-        27: "Cycle",
-    }
-    result = result.rename(columns={c: col_map[c] for c in cols_present if c in col_map})
+        # 컬럼명 매핑
+        col_map = {
+            0: "Index", 2: "Condition", 7: "Step", 8: "Voltage_raw",
+            9: "Current_raw", 10: "ChgCap_raw", 11: "DchgCap_raw",
+            14: "ChgWh_raw", 15: "DchgWh_raw", 17: "StepTime_raw",
+            18: "TotTime_Day", 19: "TotTime_Sec_raw", 21: "Temp_raw",
+            27: "Cycle",
+        }
+        result = result.rename(columns={c: col_map[c] for c in cols_present if c in col_map})
 
-    # cycle_map이 있으면 Cycle 컬럼을 논리사이클 번호로 교체
-    if logical_to_totl and "Cycle" in result.columns:
-        result["PhysicalCycle"] = result["Cycle"].copy()  # 원본 TotlCycle 보존
-        result["Cycle"] = result["Cycle"].map(logical_to_totl)
-        # 매핑 안 되는 행 제거 (cycle_map에 없는 TotlCycle)
-        result = result.dropna(subset=["Cycle"])
-        result["Cycle"] = result["Cycle"].astype(int)
+        # cycle_map이 있으면 Cycle 컬럼을 논리사이클 번호로 교체
+        if logical_to_totl and "Cycle" in result.columns:
+            result["PhysicalCycle"] = result["Cycle"].copy()  # 원본 TotlCycle 보존
+            result["Cycle"] = result["Cycle"].map(logical_to_totl)
+            # 매핑 안 되는 행 제거 (cycle_map에 없는 TotlCycle)
+            result = result.dropna(subset=["Cycle"])
+            result["Cycle"] = result["Cycle"].astype(int)
 
-    # 누락 컬럼 보충 (ChgWh, DchgWh는 없을 수 있음)
-    for col in ["ChgWh_raw", "DchgWh_raw", "TotTime_Day", "TotTime_Sec_raw"]:
-        if col not in result.columns:
-            result[col] = 0
+        # 누락 컬럼 보충 (ChgWh, DchgWh는 없을 수 있음)
+        for col in ["ChgWh_raw", "DchgWh_raw", "TotTime_Day", "TotTime_Sec_raw"]:
+            if col not in result.columns:
+                result[col] = 0
+        _t.set_rows_out(len(result))
 
     # ── OCV/CCV 컬럼 복원 (origin L1546-1572) ──
     # SaveEndData 기반 스텝 단위 분류 (origin 규칙, 휴리스틱 없음):
@@ -1874,32 +1949,35 @@ def _unified_pne_load_raw(
     #
     # ── Stepmode 컬럼 추가 (SaveEndData col[1]) ──
     # CC/CV 필터링(include_cv=False)의 기준. 무휴리스틱.
-    try:
-        _se_data, _, _ = _cached_pne_restore_files(raw_file_path)
-    except Exception:
-        _se_data = None
+    with _trace_substep('S2_load_raw', 'saveend_merge') as _t:
+        _t.set_rows_in(len(result))
+        try:
+            _se_data, _, _ = _cached_pne_restore_files(raw_file_path)
+        except Exception:
+            _se_data = None
 
-    if _se_data is not None and not _se_data.empty and "Index" in result.columns:
-        # OCV: 휴지(REST) 스텝의 종료 전압 (uV)
-        _ocv_src = _se_data[_se_data[2] == 3][[0, 8]].rename(
-            columns={0: "Index", 8: "OCV_raw"})
-        # CCV: 충전/방전 스텝의 종료 전압 (uV)
-        _ccv_src = _se_data[_se_data[2].isin([1, 2])][[0, 8]].rename(
-            columns={0: "Index", 8: "CCV_raw"})
-        if not _ocv_src.empty:
-            result = result.merge(_ocv_src, on="Index", how="left")
-        if not _ccv_src.empty:
-            result = result.merge(_ccv_src, on="Index", how="left")
+        if _se_data is not None and not _se_data.empty and "Index" in result.columns:
+            # OCV: 휴지(REST) 스텝의 종료 전압 (uV)
+            _ocv_src = _se_data[_se_data[2] == 3][[0, 8]].rename(
+                columns={0: "Index", 8: "OCV_raw"})
+            # CCV: 충전/방전 스텝의 종료 전압 (uV)
+            _ccv_src = _se_data[_se_data[2].isin([1, 2])][[0, 8]].rename(
+                columns={0: "Index", 8: "CCV_raw"})
+            if not _ocv_src.empty:
+                result = result.merge(_ocv_src, on="Index", how="left")
+            if not _ccv_src.empty:
+                result = result.merge(_ccv_src, on="Index", how="left")
 
-        # Stepmode 브로드캐스트: StepNo → Stepmode
-        if 1 in _se_data.columns and 7 in _se_data.columns and "Step" in result.columns:
-            _sm_map = (_se_data[[7, 1]]
-                       .drop_duplicates(subset=[7])
-                       .set_index(7)[1]
-                       .astype(int))
-            result["Stepmode"] = result["Step"].map(_sm_map)
-            # 매핑 안 된 행은 기본값 2 (CC) 로 (휴리스틱 아닌 "모름→기본" 처리)
-            result["Stepmode"] = result["Stepmode"].fillna(2).astype(int)
+            # Stepmode 브로드캐스트: StepNo → Stepmode
+            if 1 in _se_data.columns and 7 in _se_data.columns and "Step" in result.columns:
+                _sm_map = (_se_data[[7, 1]]
+                           .drop_duplicates(subset=[7])
+                           .set_index(7)[1]
+                           .astype(int))
+                result["Stepmode"] = result["Step"].map(_sm_map)
+                # 매핑 안 된 행은 기본값 2 (CC) 로 (휴리스틱 아닌 "모름→기본" 처리)
+                result["Stepmode"] = result["Stepmode"].fillna(2).astype(int)
+        _t.set_rows_out(len(result))
 
     result["CyclerType"] = "PNE"
     _debug_snapshot(result, "S2_load_raw",
@@ -3191,35 +3269,43 @@ def unified_profile_core(
     _include_rest_pipe = True if unified_flow else include_rest
 
     # === Stage 1: 사이클러 판별 및 cycle_map 확보 ===
-    if is_pne is None:
-        is_pne = is_pne_folder(raw_file_path)
+    with _trace_substep('S1_classify', 'cycler_and_capmap',
+                        cycle_start=cycle_start, cycle_end=cycle_end) as _t:
+        _t.set_path(raw_file_path)
+        if is_pne is None:
+            is_pne = is_pne_folder(raw_file_path)
 
-    if is_pne:
-        mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
-    else:
-        mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
-    if cycle_map is None:
-        cycle_map, _ = get_cycle_map(raw_file_path, mincapacity, inirate, is_pne=is_pne)
+        if is_pne:
+            mincapacity = pne_min_cap(raw_file_path, mincapacity, inirate)
+        else:
+            mincapacity = toyo_min_cap(raw_file_path, mincapacity, inirate)
+        if cycle_map is None:
+            cycle_map, _ = get_cycle_map(raw_file_path, mincapacity, inirate, is_pne=is_pne)
 
-    # 스윕 시험 여부 판별: cycle_map의 chg/dchg TC가 분리(disjoint)이면 스윕
-    _is_sweep = cycle_map is not None and _is_sweep_map(cycle_map)
-    # multi-TC 여부: 논리사이클 내 TC가 2개 이상인 경우 용량 누적 보정 필요
-    _is_multi_tc = cycle_map is not None and any(
-        v['all'][0] != v['all'][1] for v in cycle_map.values() if isinstance(v, dict))
+        # 스윕 시험 여부 판별: cycle_map의 chg/dchg TC가 분리(disjoint)이면 스윕
+        _is_sweep = cycle_map is not None and _is_sweep_map(cycle_map)
+        # multi-TC 여부: 논리사이클 내 TC가 2개 이상인 경우 용량 누적 보정 필요
+        _is_multi_tc = cycle_map is not None and any(
+            v['all'][0] != v['all'][1] for v in cycle_map.values() if isinstance(v, dict))
+        _t.set_extra(is_pne=is_pne, sweep=_is_sweep, multi_tc=_is_multi_tc,
+                     mincap=mincapacity)
 
     # ── 통합 파이프라인: 스윕/비스윕 공통 ──
     # Stage 2: 원시 데이터 로딩 (Layer A — ADR 0002: 항상 모든 Cond/TC 로딩)
     # data_scope 별 row 필터링은 Stage 3 + view Step 1 에서 수행.
-    if is_pne:
-        raw = _unified_pne_load_raw(
-            raw_file_path, cycle_start, cycle_end,
-            cycle_map=cycle_map,
-        )
-    else:
-        raw = _unified_toyo_load_raw(
-            raw_file_path, cycle_start, cycle_end,
-            cycle_map=cycle_map,
-        )
+    with _trace_substep('S2_load_raw', 'dispatch',
+                        cycler='PNE' if is_pne else 'TOYO') as _t:
+        if is_pne:
+            raw = _unified_pne_load_raw(
+                raw_file_path, cycle_start, cycle_end,
+                cycle_map=cycle_map,
+            )
+        else:
+            raw = _unified_toyo_load_raw(
+                raw_file_path, cycle_start, cycle_end,
+                cycle_map=cycle_map,
+            )
+        _t.set_rows_out(0 if raw is None else len(raw))
 
     if raw is None or raw.empty:
         return UnifiedProfileResult(
@@ -3228,9 +3314,13 @@ def unified_profile_core(
                       "cycle_range": cycle_range, "error": "데이터 없음"})
 
     # Stage 3: Condition 필터링 (CC 재분류 + 휴지 분류 + 보충전 제외)
-    filtered = _unified_filter_condition(
-        raw, _data_scope_pipe, _include_rest_pipe,
-        is_sweep=_is_sweep, mincapacity=mincapacity, include_cv=include_cv)
+    with _trace_substep('S3_filter_condition', 'apply',
+                        scope=_data_scope_pipe, include_cv=include_cv) as _t:
+        _t.set_rows_in(len(raw))
+        filtered = _unified_filter_condition(
+            raw, _data_scope_pipe, _include_rest_pipe,
+            is_sweep=_is_sweep, mincapacity=mincapacity, include_cv=include_cv)
+        _t.set_rows_out(len(filtered))
 
     if filtered.empty:
         # filter 의 raw 폴백을 거쳐도 empty 인 edge case (raw 자체가 빈 경우 등) —
@@ -3243,48 +3333,66 @@ def unified_profile_core(
                       "cycle_range": cycle_range, "error": _err})
 
     # Stage 4: 정규화
-    if is_pne:
-        normalized = _unified_normalize_pne(filtered, mincapacity, raw_file_path)
-    else:
-        normalized = _unified_normalize_toyo(filtered, mincapacity)
+    with _trace_substep('S4_normalize', 'apply',
+                        cycler='PNE' if is_pne else 'TOYO') as _t:
+        _t.set_rows_in(len(filtered))
+        if is_pne:
+            normalized = _unified_normalize_pne(filtered, mincapacity, raw_file_path)
+        else:
+            normalized = _unified_normalize_toyo(filtered, mincapacity)
 
-    if "Step" not in normalized.columns:
-        normalized["Step"] = filtered["Step"].values
+        if "Step" not in normalized.columns:
+            normalized["Step"] = filtered["Step"].values
+        _t.set_rows_out(len(normalized))
 
     # Stage 5: 스텝 병합 (multi-TC일 때 용량 리셋 감지 + 누적)
-    merged = _unified_merge_steps(
-        normalized, _data_scope_pipe, multi_tc=_is_multi_tc)
+    with _trace_substep('S5_merge_steps', 'apply', multi_tc=_is_multi_tc) as _t:
+        _t.set_rows_in(len(normalized))
+        merged = _unified_merge_steps(
+            normalized, _data_scope_pipe, multi_tc=_is_multi_tc)
+        _t.set_rows_out(len(merged))
 
     # Stage 5.5: Block 컬럼 할당 (스윕 + cycle + 비연속 모드 한정)
-    if _is_sweep and _data_scope_pipe == "cycle" and overlap != "continuous":
-        if "RawCycle" in merged.columns:
-            block = np.zeros(len(merged), dtype=int)
-            for ln in range(cycle_start, cycle_end + 1):
-                entry = cycle_map.get(ln)
-                if not entry or not isinstance(entry, dict):
-                    continue
-                for tc in entry.get('chg', []):
-                    block[merged['RawCycle'].values == tc] = 1
-                for tc in entry.get('dchg', []):
-                    block[merged['RawCycle'].values == tc] = 2
-                for tc in entry.get('chg_rest', []):
-                    block[merged['RawCycle'].values == tc] = 1
-                for tc in entry.get('dchg_rest', []):
-                    block[merged['RawCycle'].values == tc] = 2
-            merged['Block'] = block
+    with _trace_substep('S5_merge_steps', 'block_alloc',
+                        sweep=_is_sweep, scope=_data_scope_pipe) as _t:
+        if _is_sweep and _data_scope_pipe == "cycle" and overlap != "continuous":
+            if "RawCycle" in merged.columns:
+                block = np.zeros(len(merged), dtype=int)
+                for ln in range(cycle_start, cycle_end + 1):
+                    entry = cycle_map.get(ln)
+                    if not entry or not isinstance(entry, dict):
+                        continue
+                    for tc in entry.get('chg', []):
+                        block[merged['RawCycle'].values == tc] = 1
+                    for tc in entry.get('dchg', []):
+                        block[merged['RawCycle'].values == tc] = 2
+                    for tc in entry.get('chg_rest', []):
+                        block[merged['RawCycle'].values == tc] = 1
+                    for tc in entry.get('dchg_rest', []):
+                        block[merged['RawCycle'].values == tc] = 2
+                merged['Block'] = block
 
     if unified_flow:
         # === 레벨 2 단일 flow: dQdV 우선 계산 (모든 Condition) → view 마지막 ===
-        if calc_dqdv:
-            merged = _unified_calculate_dqdv(
-                merged, smooth_degree, origin_compat=origin_compat)
-        with_axis = _unified_apply_view(
-            merged, data_scope, axis_mode, overlap,
-            cutoff=cutoff, include_rest=include_rest)
+        with _trace_substep('S6_calc_axis', 'unified_flow',
+                            calc_dqdv=calc_dqdv) as _t:
+            _t.set_rows_in(len(merged))
+            if calc_dqdv:
+                merged = _unified_calculate_dqdv(
+                    merged, smooth_degree, origin_compat=origin_compat)
+            with_axis = _unified_apply_view(
+                merged, data_scope, axis_mode, overlap,
+                cutoff=cutoff, include_rest=include_rest)
+            _t.set_rows_out(len(with_axis))
     else:
         # === 기존 흐름 ===
         # Stage 6: X축 및 SOC 계산
-        with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
+        with _trace_substep('S6_calc_axis', 'axis',
+                            scope=data_scope, axis_mode=axis_mode,
+                            overlap=overlap) as _t:
+            _t.set_rows_in(len(merged))
+            with_axis = _unified_calculate_axis(merged, axis_mode, data_scope, overlap)
+            _t.set_rows_out(len(with_axis))
 
         # === Cutoff 필터 ===
         # 이전 버전 호환 (mode별 cutoff 의미):
@@ -3293,20 +3401,28 @@ def unified_profile_core(
         #   - Dchg Profile (discharge + *): Voltage 하한 (이전 dchg_Profile_data 동작)
         #   - Cycle/Continue: 적용 안 함 (충방전 혼재, 의미 모호)
         if cutoff > 0:
-            if data_scope == "charge" and axis_mode == "soc":
-                # 충전 프로파일 (SOC 축): 전압 하한
-                with_axis = with_axis[with_axis["Voltage"] >= cutoff]
-            elif data_scope == "charge":
-                # Step/Rate (time 축): Crate 하한
-                with_axis = with_axis[with_axis["Crate"] >= cutoff]
-            elif data_scope == "discharge":
-                # 방전: 전압 하한
-                with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+            with _trace_substep('S6_calc_axis', 'cutoff',
+                                scope=data_scope, cutoff=cutoff) as _t:
+                _t.set_rows_in(len(with_axis))
+                if data_scope == "charge" and axis_mode == "soc":
+                    # 충전 프로파일 (SOC 축): 전압 하한
+                    with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+                elif data_scope == "charge":
+                    # Step/Rate (time 축): Crate 하한
+                    with_axis = with_axis[with_axis["Crate"] >= cutoff]
+                elif data_scope == "discharge":
+                    # 방전: 전압 하한
+                    with_axis = with_axis[with_axis["Voltage"] >= cutoff]
+                _t.set_rows_out(len(with_axis))
 
         # === Stage 6: 파생값 계산 ===
         if calc_dqdv:
-            with_axis = _unified_calculate_dqdv(
-                with_axis, smooth_degree, origin_compat=origin_compat)
+            with _trace_substep('S6_calc_axis', 'dqdv',
+                                smooth_degree=smooth_degree) as _t:
+                _t.set_rows_in(len(with_axis))
+                with_axis = _unified_calculate_dqdv(
+                    with_axis, smooth_degree, origin_compat=origin_compat)
+                _t.set_rows_out(len(with_axis))
 
     # === 최종 컬럼 구성 ===
     base_cols = ["TimeMin", "SOC", "Voltage", "Crate", "Temp"]
@@ -5092,7 +5208,13 @@ def generate_simulation_full(ca_ccv_raw, an_ccv_raw, real_raw, ca_mass, ca_slip,
     return simul_full
 
 # 토요 데이터 csv 확인/ 폴더, cycle 순으로 입력
-def toyo_read_csv(*args): 
+def toyo_read_csv(*args):
+    """Toyo CAPACITY.LOG (1 인자) 또는 NNNNNN 시계열 (2 인자) 읽기.
+
+    Schema reference: wiki/10_cycle_data/260508_raw_data_schema_unified_reference.md §2.4-2.5
+      - CAPACITY.LOG (17/19 컬럼): step row 메타. Cond·Mode·TotlCycle·Cap·Finish 등
+      - NNNNNN: 시계열 per step. PassTime·V·I·Cond·Mode·TotlCycle 등 16 컬럼
+    """
     if len(args) == 1:
         # capacity.log — 캐시 적용
         cache = _get_channel_cache(args[0])
@@ -5938,60 +6060,74 @@ def pne_build_cycle_map(
         return {}, 0
 
     # SaveEndData 캐시 조회
-    save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
+    with _trace_substep('CycleMap_PNE', 'saveend_cache_lookup') as _t:
+        _t.set_path(raw_file_path)
+        save_end_cached, _, _ = _cached_pne_restore_files(raw_file_path)
+        _t.set_rows_out(0 if save_end_cached is None else len(save_end_cached))
+        _t.set_cache('hit' if save_end_cached is not None else 'miss')
     if save_end_cached is None:
         return {}, mincapacity
 
-    Cycleraw = save_end_cached[[27, 2, 10, 11]].copy()
-    Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap"]
-
     # TotlCycle × Condition 피벗
-    pivot = Cycleraw.pivot_table(
-        index="TotlCycle",
-        columns="Condition",
-        values=["DchgCap", "chgCap"],
-        aggfunc="sum",
-    )
-    all_tcs = sorted(Cycleraw["TotlCycle"].unique())
+    with _trace_substep('CycleMap_PNE', 'pivot') as _t:
+        Cycleraw = save_end_cached[[27, 2, 10, 11]].copy()
+        Cycleraw.columns = ["TotlCycle", "Condition", "chgCap", "DchgCap"]
+        _t.set_rows_in(len(Cycleraw))
+        pivot = Cycleraw.pivot_table(
+            index="TotlCycle",
+            columns="Condition",
+            values=["DchgCap", "chgCap"],
+            aggfunc="sum",
+        )
+        all_tcs = sorted(Cycleraw["TotlCycle"].unique())
+        _t.set_rows_out(len(all_tcs))
+        _t.set_extra(n_tcs=len(all_tcs))
     if not all_tcs:
         return {}, mincapacity
 
     # ── 시험 유형 판별: .sch 힌트 우선 → 데이터 휴리스틱 폴백 ──
-    # 1차: .sch 기반 모드 확정 (있으면)
-    _sch_sweep = sch_struct.get('sweep_mode') if isinstance(sch_struct, dict) else None
+    with _trace_substep('CycleMap_PNE', 'mode_decision') as _t:
+        # 1차: .sch 기반 모드 확정 (있으면)
+        _sch_sweep = sch_struct.get('sweep_mode') if isinstance(sch_struct, dict) else None
 
-    # 2차: 데이터 기반 유의 TC 비율 (1차 미결정 시 사용)
-    threshold = mincapacity * 1000 * 0.2  # μAh 단위 (공칭 20%)
-    chg_s = pivot["chgCap"].get(1, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
-    dchg_s = pivot["DchgCap"].get(2, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
-    max_cap = pd.concat([chg_s, dchg_s], axis=1).max(axis=1)
-    n_significant = int((max_cap >= threshold).sum())
-    sig_ratio = n_significant / len(all_tcs)
+        # 2차: 데이터 기반 유의 TC 비율 (1차 미결정 시 사용)
+        threshold = mincapacity * 1000 * 0.2  # μAh 단위 (공칭 20%)
+        chg_s = pivot["chgCap"].get(1, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
+        dchg_s = pivot["DchgCap"].get(2, pd.Series(dtype=float)).reindex(all_tcs).fillna(0)
+        max_cap = pd.concat([chg_s, dchg_s], axis=1).max(axis=1)
+        n_significant = int((max_cap >= threshold).sum())
+        sig_ratio = n_significant / len(all_tcs)
 
-    # has_both 비율: 충방전 쌍이 모두 있는 TC의 비율
-    # 낮으면 단방향 펄스 시험 (GITT 반셀 등) → 스윕 모드로 처리해야 함
-    has_both_mask = (chg_s > 0) & (dchg_s > 0)
-    has_both_ratio = float(has_both_mask.sum()) / len(all_tcs) if all_tcs else 0
+        # has_both 비율: 충방전 쌍이 모두 있는 TC의 비율
+        # 낮으면 단방향 펄스 시험 (GITT 반셀 등) → 스윕 모드로 처리해야 함
+        has_both_mask = (chg_s > 0) & (dchg_s > 0)
+        has_both_ratio = float(has_both_mask.sum()) / len(all_tcs) if all_tcs else 0
 
-    # 보관/소규모 시험 특수 처리: TC ≤ 5이면 스윕 판별 무의미 → 일반 모드 강제
-    if len(all_tcs) <= 5 and _sch_sweep is None:
-        _sch_sweep = False
+        # 보관/소규모 시험 특수 처리: TC ≤ 5이면 스윕 판별 무의미 → 일반 모드 강제
+        if len(all_tcs) <= 5 and _sch_sweep is None:
+            _sch_sweep = False
 
-    # 최종 모드 결정
-    if _sch_sweep is not None:
-        # .sch 확정 판별 — 데이터 휴리스틱 불필요
-        _use_general = not _sch_sweep
-    else:
-        # .sch 미제공 또는 미결정 → 데이터 휴리스틱 폴백
-        _use_general = (sig_ratio >= 0.5 and has_both_ratio >= 0.3)
-        # 경계값 근방 경고: 판별 불확실 구간 로깅
-        _near_boundary = (0.35 <= sig_ratio <= 0.65) or (0.2 <= has_both_ratio <= 0.4)
-        _perf_logger.warning(
-            f'  [cycle_map] .sch 없음 - 데이터 휴리스틱 폴백 '
-            f'path={raw_file_path!r} '
-            f'(sig={sig_ratio:.2f}, both={has_both_ratio:.2f}) '
-            f'-> {"GENERAL" if _use_general else "SWEEP"}'
-            f'{" [!] 경계값 근방 - 판별 불확실" if _near_boundary else ""}')
+        # 최종 모드 결정
+        if _sch_sweep is not None:
+            # .sch 확정 판별 — 데이터 휴리스틱 불필요
+            _use_general = not _sch_sweep
+            _t.set_extra(source='sch', sweep=_sch_sweep)
+        else:
+            # .sch 미제공 또는 미결정 → 데이터 휴리스틱 폴백
+            _use_general = (sig_ratio >= 0.5 and has_both_ratio >= 0.3)
+            # 경계값 근방 경고: 판별 불확실 구간 로깅
+            _near_boundary = (0.35 <= sig_ratio <= 0.65) or (0.2 <= has_both_ratio <= 0.4)
+            _t.set_extra(source='heuristic',
+                         sig_ratio=f'{sig_ratio:.2f}',
+                         both_ratio=f'{has_both_ratio:.2f}',
+                         use_general=_use_general,
+                         near_boundary=_near_boundary)
+            _perf_logger.warning(
+                f'  [cycle_map] .sch 없음 - 데이터 휴리스틱 폴백 '
+                f'path={raw_file_path!r} '
+                f'(sig={sig_ratio:.2f}, both={has_both_ratio:.2f}) '
+                f'-> {"GENERAL" if _use_general else "SWEEP"}'
+                f'{" [!] 경계값 근방 - 판별 불확실" if _near_boundary else ""}')
 
     if _use_general:
         # ── 일반 시험: TotlCycle 단위 1:1 매핑 ──
@@ -7256,6 +7392,8 @@ def _parse_ptn_step(line: str) -> dict:
       방전측: mode[262:266] cur[268:276] endv[311:318] rest[361:366]
       루프:   loop_to[535:539] loop_count[539:543]
       모드코드: 00=CC, 10=CCCV, 30=Rest
+
+    Schema reference: wiki/10_cycle_data/260508_raw_data_schema_unified_reference.md §2.1
     """
     def _f(s: str) -> float:
         """공백/대시 제거 후 float 변환. 실패 시 0."""
@@ -7429,6 +7567,11 @@ def extract_toyo_ptn_structure(
     capacity: float = 0,
 ) -> dict | None:
     """Toyo .PTN 파일에서 스케줄 구조 정보(시험유형, 패턴) 추출.
+
+    Schema reference: wiki/10_cycle_data/260508_raw_data_schema_unified_reference.md §2.1-2.3
+      - .PTN: 메인 schedule (chg+dchg+loop 인코딩)
+      - _Option.PTN: 셀 capacity (BaseCellCapacity)
+      - _Option2.PTN: step별 안전 옵션 (현재 미활용)
 
     .PTN 파일의 루프/스텝 구조를 분석하여 시험유형을 판별한다.
     toyo_build_cycle_map()에 용량 임계값 힌트를 제공하는 것이 주 용도.
@@ -8026,6 +8169,13 @@ _SCH_HEADER_SIZE = 1920     # 파일 헤더 크기 (bytes)
 
 def _parse_pne_sch(sch_path: str) -> dict | None:
     """PNE .sch 바이너리 파일을 파싱하여 스텝 구조 반환.
+
+    Schema reference:
+      - wiki/10_cycle_data/260508_raw_data_schema_unified_reference.md §3.1
+      - wiki/10_cycle_data/260504_audit_phase0_extractable_fields.md (4 sample 정밀 분석)
+    핵심 offset: header magic=+0, schedule desc=+664, step TypeCode=+8,
+                  V cutoff=+12/+16, I cutoff=+20, time=+24, LOOP count=+56,
+                  chamber_temp_C=+396, end_condition=+500.
 
     Parameters
     ----------
@@ -36368,6 +36518,22 @@ def _splash_close() -> None:
         pyi_splash.close()
     except Exception:
         pass
+
+
+# ── BDT_TRACE 활성화 hook (dev-only) ──────────────────────────────
+# BDT_TRACE 환경변수가 설정되어 있으면 bdt_trace.py 가 monkey-patch +
+# 콜백 등록으로 trace 인프라 활성화. PyInstaller 빌드는 --exclude-module
+# bdt_trace 로 제외되어 ImportError 시 자동 dormant.
+#
+# 모듈 레벨 위치: import 이후 모든 클래스/함수 정의가 끝난 직후. notebook
+# 에서 `import DataTool_optRCD_proto_` 만으로도 활성화되도록 main 진입
+# 직전이 아닌 모듈 끝에 배치.
+try:
+    if os.environ.get('BDT_TRACE'):
+        import bdt_trace as _bdt_trace  # type: ignore[import-not-found]
+        _bdt_trace.activate(sys.modules[__name__])
+except ImportError:
+    pass  # exe 빌드 또는 dev-only 모듈 미설치 — silent OFF
 
 
 # UI 실행
