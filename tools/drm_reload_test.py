@@ -23,10 +23,20 @@
     python drm_reload_test.py <입력파일> [출력stem]
     #   → <stem>_bundle/ 폴더 생성 + 안에 분리된 .txt 들
 
+    # 사내 — 여러 파일 한번에 (--batch 플래그 불필요, 자동 감지)
+    #   인자 2개 이상이고 모두 실재 경로(파일/디렉터리)면 배치 모드로 자동 위임
+    python drm_reload_test.py <입력1> <입력2> [<입력3>...]
+    #   → 각 원본 옆에 <stem>_bundle/ 폴더 생성 (디렉터리는 재귀 탐색)
+
+    # 코드 내 다중 입력 — argv 없이 IDE/Run 으로 실행
+    #   파일 상단 SRCS 리스트에 경로 넣고 그냥 실행. 비어있으면 무시.
+    #   OUT_DIR 채우면 평탄화 출력 (<parent>_<stem>_bundle/ 네이밍).
+    python drm_reload_test.py
+
     # 외부 — 단일 렌더링 (폴더 또는 _bundle.txt 둘 다 OK)
     python drm_reload_test.py --render <bundle폴더|bundle.txt> [출력디렉터리] [png|svg|pdf]
 
-    # 여러 경로 한번에 (파일/디렉터리 혼합 가능, 디렉터리는 재귀 탐색)
+    # 명시적 배치 (--out / --format 옵션 사용 시)
     #   .xlsx/.xls/.xlsm/.pptx/.ppt/.pptm/.pdf/.docx → <stem>_bundle/ 폴더
     #   *_bundle.txt 또는 *_bundle/ 폴더              → 차트 렌더링
     python drm_reload_test.py --batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]
@@ -66,6 +76,20 @@ from pathlib import Path
 
 SRC = r""
 DST = r""
+
+# 코드 내 다중 입력 — 비어있지 않으면 argv 없이 실행해도 배치 모드로 자동 처리.
+# 파일/디렉터리 혼합 가능. 디렉터리는 재귀 탐색 (.xlsx/.xls/.xlsm/.pptx/.ppt/.pptm/
+# .pdf/.docx/.doc/.docm + *_bundle.txt). SRC 보다 우선.
+#   예시:
+#     SRCS = [
+#         r"C:\path\to\file1.xlsx",
+#         r"C:\path\to\file2.pptx",
+#         r"C:\folder\with\office_files",
+#     ]
+SRCS: list[str] = [
+]
+# 배치 출력 디렉터리 (None 이면 각 원본 옆에 <stem>_bundle/ 생성, 경로 주면 평탄화 출력)
+OUT_DIR = r""
 
 
 # ── 공용 헬퍼 ────────────────────────────────────────────────────────
@@ -1309,6 +1333,22 @@ def export_pptx_bundle(src: Path, bundle_txt: Path) -> dict:
 
 # ── 엔트리 포인트 ────────────────────────────────────────────────────
 def _cmd_extract(argv: list[str]) -> int:
+    # 다중 입력 자동 감지: 인자 2개 이상이고 모두 실재 파일/디렉터리면 배치 위임.
+    # 단일 모드의 [출력stem] 인자는 통상 미존재 경로이므로 충돌 없음.
+    if len(argv) >= 3:
+        cand = argv[1:]
+        if all(Path(a).expanduser().exists() for a in cand):
+            files = _collect_batch_inputs(cand)
+            return _run_batch(files, out_dir=None, fmt='png')
+
+    # 코드 내 다중 입력: argv 없고 SRCS 채워져 있으면 배치 위임.
+    if len(argv) < 2 and SRCS:
+        out_dir = Path(OUT_DIR).expanduser().resolve() if OUT_DIR else None
+        if out_dir is not None:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        files = _collect_batch_inputs(SRCS)
+        return _run_batch(files, out_dir=out_dir, fmt='png')
+
     if len(argv) >= 2:
         src = argv[1]
         dst = argv[2] if len(argv) >= 3 else ""
@@ -1316,7 +1356,7 @@ def _cmd_extract(argv: list[str]) -> int:
         src, dst = SRC, DST
 
     if not src:
-        print("[에러] 입력 파일 경로 필요. 인자 전달 또는 SRC 변수 수정.")
+        print("[에러] 입력 파일 경로 필요. 인자 전달 또는 SRC/SRCS 변수 수정.")
         return 2
 
     src_path = Path(src).expanduser().resolve()
@@ -1517,37 +1557,11 @@ def _process_one(src: Path, out_dir: Path | None, fmt: str) -> tuple[str, str]:
     return 'skip', f"미지원: {ext}"
 
 
-def _cmd_batch(argv: list[str]) -> int:
-    """--batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]"""
-    i = 2
-    out_dir: Path | None = None
-    fmt = 'png'
-    paths: list[str] = []
+def _run_batch(files: list[Path], out_dir: Path | None, fmt: str) -> int:
+    """수집된 파일 리스트를 배치 처리. 인자 파싱은 호출 측에서 완료.
 
-    while i < len(argv):
-        a = argv[i]
-        if a == '--out':
-            if i + 1 >= len(argv):
-                print("[에러] --out 값 필요"); return 2
-            out_dir = Path(argv[i + 1]).expanduser().resolve()
-            out_dir.mkdir(parents=True, exist_ok=True)
-            i += 2
-        elif a == '--format':
-            if i + 1 >= len(argv):
-                print("[에러] --format 값 필요"); return 2
-            fmt = argv[i + 1].lower()
-            if fmt not in ('png', 'svg', 'pdf'):
-                print(f"[에러] format 은 png/svg/pdf: {fmt}"); return 2
-            i += 2
-        else:
-            paths.append(a)
-            i += 1
-
-    if not paths:
-        print("[에러] 사용법: --batch [--out <dir>] [--format png|svg|pdf] <path>...")
-        return 2
-
-    files = _collect_batch_inputs(paths)
+    Returns: 0 (전부 성공) / 1 (일부 실패) / 2 (입력 없음).
+    """
     if not files:
         print("[에러] 처리할 파일 없음")
         return 2
@@ -1589,6 +1603,40 @@ def _cmd_batch(argv: list[str]) -> int:
             print(f"  ! {src}: {err}")
 
     return 0 if fail == 0 else 1
+
+
+def _cmd_batch(argv: list[str]) -> int:
+    """--batch [--out <dir>] [--format png|svg|pdf] <path> [<path>...]"""
+    i = 2
+    out_dir: Path | None = None
+    fmt = 'png'
+    paths: list[str] = []
+
+    while i < len(argv):
+        a = argv[i]
+        if a == '--out':
+            if i + 1 >= len(argv):
+                print("[에러] --out 값 필요"); return 2
+            out_dir = Path(argv[i + 1]).expanduser().resolve()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            i += 2
+        elif a == '--format':
+            if i + 1 >= len(argv):
+                print("[에러] --format 값 필요"); return 2
+            fmt = argv[i + 1].lower()
+            if fmt not in ('png', 'svg', 'pdf'):
+                print(f"[에러] format 은 png/svg/pdf: {fmt}"); return 2
+            i += 2
+        else:
+            paths.append(a)
+            i += 1
+
+    if not paths:
+        print("[에러] 사용법: --batch [--out <dir>] [--format png|svg|pdf] <path>...")
+        return 2
+
+    files = _collect_batch_inputs(paths)
+    return _run_batch(files, out_dir, fmt)
 
 
 def _cmd_restore(argv: list[str], kind: str) -> int:
