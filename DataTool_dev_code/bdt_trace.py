@@ -30,7 +30,9 @@ PyInstaller 빌드 격리
 환경변수
 --------
 - `BDT_TRACE=1`         -- 활성화 (값은 truthy 면 OK)
-- `BDT_TRACE_DIR=<path>` -- trace 디렉토리 (기본: C:\\tmp\\bdt_trace)
+- `BDT_TRACE_DIR=<path>` -- trace 디렉토리 (기본: <BDT_dev 부모>/bdt_trace,
+                            결정 실패 시 C:\\tmp\\bdt_trace 폴백.
+                            사내 빌드 폴더 (..\\build\\) 와 동등 레벨.)
 - `BDT_TRACE_LEVEL=stage|substep`
                         -- stage: Stage 단위만 (기본)
                         -- substep: Stage + sub-step 모두
@@ -81,12 +83,29 @@ except ImportError:
 _LOGGER = logging.getLogger("BDT.trace")
 _ACTIVE: bool = False
 _LEVEL: str = "stage"  # "stage" | "substep"
-_TRACE_DIR: str = r"C:\tmp\bdt_trace"
+_TRACE_DIR: str = ""   # activate() 시점에 _resolve_default_trace_dir 로 결정
 _SESSION: str | None = None
 _SESSION_DIR: str | None = None
 _RECORDS: list[dict] = []
 _SNAPSHOT_COUNTER: int = 0
 _PERF_LOGGER = None  # monolith 의 _perf_logger 참조 (activate 시점에 주입)
+
+
+def _resolve_default_trace_dir(monolith_module=None) -> str:
+    """trace 기본 디렉토리 — build 폴더와 동등 레벨 (BDT_dev 부모/bdt_trace).
+
+    사내환경 빌드 (`build_exe_onepath.bat` 의 `..\\build\\`) 와 같은 위치
+    체계로 — `<BDT_dev 부모>/bdt_trace/` 사용. 결정 실패 시 C:\\tmp 폴백.
+    """
+    try:
+        if monolith_module is not None and hasattr(monolith_module, '__file__'):
+            monolith_path = Path(monolith_module.__file__).resolve()
+            # monolith 위치: <root>/BDT_dev/DataTool_dev_code/DataTool_optRCD_proto_.py
+            # parents[0]=DataTool_dev_code, [1]=BDT_dev, [2]=<root> (build 폴더와 동등)
+            return str(monolith_path.parents[2] / 'bdt_trace')
+    except Exception:
+        pass
+    return r"C:\tmp\bdt_trace"
 
 
 # ── 데이터 모델 ────────────────────────────────────────────────────
@@ -138,7 +157,9 @@ def activate(monolith_module) -> None:
     _LEVEL = os.environ.get("BDT_TRACE_LEVEL", "stage").lower()
     if _LEVEL not in ("stage", "substep"):
         _LEVEL = "stage"
-    _TRACE_DIR = os.environ.get("BDT_TRACE_DIR", _TRACE_DIR)
+    # 우선순위: BDT_TRACE_DIR 환경변수 > monolith 위치 기준 default > C:\tmp 폴백
+    _TRACE_DIR = (os.environ.get("BDT_TRACE_DIR")
+                  or _resolve_default_trace_dir(monolith_module))
     _SESSION = time.strftime("session_%Y%m%d_%H%M%S")
     _SESSION_DIR = os.path.join(_TRACE_DIR, _SESSION)
     os.makedirs(_SESSION_DIR, exist_ok=True)

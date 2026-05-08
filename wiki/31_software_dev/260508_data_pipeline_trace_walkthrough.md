@@ -27,14 +27,14 @@
 ```bat
 set BDT_TRACE=1
 set BDT_TRACE_LEVEL=substep      :: stage|substep
-set BDT_TRACE_DIR=C:\tmp\bdt_trace
+:: BDT_TRACE_DIR 미설정 시: <BDT_dev 부모>\bdt_trace (build 폴더와 동등 레벨)
 python DataTool_dev_code\DataTool_optRCD_proto_.py
 ```
 
 또는 헬퍼 배치 사용:
 
 ```bat
-run_with_trace.bat                                  :: 기본 substep + C:\tmp\bdt_trace
+run_with_trace.bat                                  :: 기본 substep + <BDT_dev 부모>\bdt_trace
 run_with_trace.bat C:\tmp\my_trace                  :: 디렉토리 override
 run_with_trace.bat C:\tmp\my_trace stage            :: stage 단위만 (sub-step 미수집)
 ```
@@ -47,13 +47,21 @@ run_with_trace.bat C:\tmp\my_trace stage            :: stage 단위만 (sub-step
 
 ### 산출물 위치
 
+기본값 — 사내환경 build 폴더와 동등 레벨:
+
 ```
-C:\tmp\bdt_trace\session_<TS>\
+<BDT_dev 부모>\bdt_trace\session_<TS>\
   ├── step.csv            -- 한 행 = 한 측정 (raw 데이터)
   ├── step_summary.md     -- 사람용 요약 (Top-10 hotspot, Stage 누적, 캐시 통계)
   ├── step_hotspot.png    -- Top-15 가로 막대 차트
   └── NNN_<stage>_<tag>.pkl  -- Stage 끝 DataFrame snapshot (S2/S3/S4/S5/S6/S7)
 ```
+
+예 (사내 PC): BDT_dev 가 `C:\Users\Ryu\battery\python\BDT_dev\` → trace 는
+`C:\Users\Ryu\battery\python\bdt_trace\session_<TS>\`. build 산출물 (`...\python\build\`)
+과 같은 부모 디렉토리.
+
+`BDT_TRACE_DIR` 환경변수로 override 가능. 결정 실패 시 `C:\tmp\bdt_trace` 로 폴백.
 
 ---
 

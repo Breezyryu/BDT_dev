@@ -39,6 +39,7 @@ updated: 2026-04-21
 
 ## 🔌 Toyo / PNE 데이터 구조
 
+- ⭐ [[260508_raw_data_schema_unified_reference]] — **Toyo + PNE 통합 reference (6 차원 매트릭스, 동등성)**
 - [[260310_toyo_cycle_data_pipeline_analysis]] — Toyo 용량산정·병합·효율
 - [[260310_link_cycle_multi_path_analysis]] — 연결사이클 멀티경로·병렬
 - [[260319_analysis_cyc_parsing_feasibility]] — PNE `.cyc` 파싱 100%

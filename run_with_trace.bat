@@ -6,8 +6,9 @@ echo.
 
 cd /d "%~dp0"
 
+REM Default: <BDT_dev parent>\bdt_trace (same level as build folder)
 if "%~1"=="" (
-    set "TRACE_DIR=C:\tmp\bdt_trace"
+    set "TRACE_DIR=%~dp0..\bdt_trace"
 ) else (
     set "TRACE_DIR=%~1"
 )
