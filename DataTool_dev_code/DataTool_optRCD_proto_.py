@@ -7468,11 +7468,23 @@ def _build_channel_meta(
     cycle_map, _ = get_cycle_map(channel_path, min_capacity, ini_crate, is_pne=is_pne)
 
     if cycle_map:
-        # cycle_map key는 논리사이클이지만 General 모드에서 TC=논리사이클
-        # max TC: cycle_map 내 최대 TC 값 (all 범위의 끝)
-        all_tc_ends = [v['all'][1] for v in cycle_map.values()
-                       if isinstance(v, dict) and 'all' in v]
-        _max_tc = max(all_tc_ends) if all_tc_ends else max(cycle_map.keys())
+        # TC(=col4 입력 단위) 산출 — 사이클러별 의미가 다름 (260509 정정):
+        #   PNE: Cycle-loop = TotlCycle = TC. cycle_map[ln]['all']=(s,e) 의 e 가 곧
+        #        TotlCycle 이므로 max(all_tc_ends) 가 사용자 입력 TC 의 상한.
+        #        Sweep 시험(PULSE_DCIR 등) 도 동일 — 각 pulse 가 별도 TotlCycle 이고
+        #        260505 fix(_unified_pne_load_raw _tc_to_logical 폴백) 가 그룹 내부
+        #        TotlCycle 직접 선택을 지원.
+        #   Toyo: Step별 OriCycle 파일 → cycle_map[ln]['all'] 은 OriCycle 범위 (≠TC).
+        #        TC 는 충방전 그룹핑 결과(=cycle_map.keys()) 카운트.
+        #        예) 1-100 schedule lifetime: OriCycle 1..399 (4 step/cycle),
+        #            TC 1..102 (충방전 그룹). col4 placeholder/사이클바/연결처리
+        #            offset 모두 102 기준이어야 정합.
+        if is_pne:
+            all_tc_ends = [v['all'][1] for v in cycle_map.values()
+                           if isinstance(v, dict) and 'all' in v]
+            _max_tc = max(all_tc_ends) if all_tc_ends else max(cycle_map.keys())
+        else:
+            _max_tc = max(cycle_map.keys())
 
     # ── 6. TC 정보 구축 (사전 → 실측 덮어쓰기) ──
     tc_info_prior: dict = {}
@@ -25889,12 +25901,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             except Exception:
                 cm = None
         if cm:
-            all_tc = [v['all'][1] for v in cm.values()
-                      if isinstance(v, dict)
-                      and isinstance(v.get('all'), (list, tuple))
-                      and len(v['all']) >= 2]
-            if all_tc:
-                auto_cyc_str = str(max(all_tc))
+            # 사이클러별 TC 의미 분기 (260509 정정 — classify_paths_summary 와 동일):
+            #   PNE: TotlCycle = TC → max(all_tc_ends).
+            #   Toyo: OriCycle ≠ TC, cycle_map.keys() = 충방전 그룹 = TC → max(keys).
+            _is_pne_path = (meta_hit.is_pne if meta_hit is not None
+                            else is_pne_folder(path))
+            if _is_pne_path:
+                all_tc = [v['all'][1] for v in cm.values()
+                          if isinstance(v, dict)
+                          and isinstance(v.get('all'), (list, tuple))
+                          and len(v['all']) >= 2]
+                if all_tc:
+                    auto_cyc_str = str(max(all_tc))
+            else:
+                if cm:
+                    auto_cyc_str = str(max(cm.keys()))
         if not auto_cyc_str:
             # cycle_map 없으면 _quick_max_cycle 폴백 (TC ≈ 논리사이클 in General)
             max_cyc = _quick_max_cycle(path, cap_for_cycle)
@@ -27056,17 +27077,23 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         max_cyc = _quick_max_cycle(path, cap)
         if not max_cyc:
             return None
-        # max raw TC 계산
+        # max raw TC 계산 (260509 정정 — 사이클러별 의미 분기):
+        #   PNE: TotlCycle = TC = raw → max(all_tc_ends).
+        #   Toyo: OriCycle ≠ TC. raw 자체가 의미 없는 단위 (step file 번호) 이므로
+        #         max_raw = max_cycle (= cycle_map.keys() 카운트) 로 통일.
         max_raw = ''
         try:
             cm = _build_cycle_map_for_path(path, cap)
             if cm:
-                all_tc = [v['all'][1] for v in cm.values()
-                          if isinstance(v, dict)
-                          and isinstance(v.get('all'), (list, tuple))
-                          and len(v['all']) >= 2]
-                if all_tc:
-                    max_raw = str(max(all_tc))
+                if is_pne_folder(path):
+                    all_tc = [v['all'][1] for v in cm.values()
+                              if isinstance(v, dict)
+                              and isinstance(v.get('all'), (list, tuple))
+                              and len(v['all']) >= 2]
+                    if all_tc:
+                        max_raw = str(max(all_tc))
+                else:
+                    max_raw = str(max(cm.keys()))
         except Exception:
             pass
         return {'max_cycle': str(max_cyc), 'max_raw': max_raw or str(max_cyc)}
@@ -27358,16 +27385,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     row_info.append(None)
                     continue
                 mc = self._get_path_max_cycle(path)
-                # raw cycle: 메타에서 cycle_map의 최대 TotlCycle 조회
+                # raw cycle: 메타에서 cycle_map의 최대 TotlCycle 조회 (사이클러별 의미 분기 — 260509 정정)
+                #   PNE: TotlCycle = TC = raw → max(all_tc_ends).
+                #   Toyo: OriCycle ≠ TC → raw 단위 의미 없음, mr = mc (cycle_map.keys() 카운트).
                 mr = 0
                 for f in os.scandir(path):
                     if f.is_dir() and _is_channel_folder(f.name):
                         meta = get_channel_meta(f.path)
                         if meta and meta.cycle_map:
-                            all_tc = [v['all'][1] for v in meta.cycle_map.values()
-                                      if isinstance(v, dict)]
-                            if all_tc:
-                                mr = max(all_tc)
+                            if meta.is_pne:
+                                all_tc = [v['all'][1] for v in meta.cycle_map.values()
+                                          if isinstance(v, dict)]
+                                if all_tc:
+                                    mr = max(all_tc)
+                            else:
+                                mr = max(meta.cycle_map.keys())
                         break
                 row_info.append({'cycle': mc, 'raw': mr})
 
