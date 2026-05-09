@@ -26,6 +26,7 @@ dependencies = [
 test = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
+    "pytest-benchmark>=4.0",
 ]
 
 [tool.pytest.ini_options]
@@ -33,6 +34,7 @@ testpaths = ["tests"]
 markers = [
     "gui: GUI 필요 테스트 (pytest-qt, Windows)",
     "slow: 대용량 데이터 또는 오래 걸리는 테스트",
+    "perf: 성능 회귀 검증 (pytest-benchmark) — 사용자 raw 데이터 의존",
 ]
-# Level A 기본 실행: GUI 테스트 제외
-addopts = "-m 'not gui' -v"
+# Level A 기본 실행: GUI + perf 테스트 제외 (사용자 데이터 의존)
+addopts = "-m 'not gui and not perf' -v"
