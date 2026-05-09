@@ -47,3 +47,4 @@ wiki/.obsidian/
 wiki/outputs/
 # humanize-korean 작업 산출물 (run_id 폴더)
 _workspace/
+tests/regression/baselines/
