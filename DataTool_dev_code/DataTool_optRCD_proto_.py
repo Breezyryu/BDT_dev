@@ -2015,6 +2015,21 @@ def _unified_toyo_load_raw(
     충전(Condition==1), 방전(Condition==2). 휴지는 Condition==0.
     cycle_map 사용 시 논리사이클 번호가 Cycle 컬럼에 부여된다.
     """
+    # ── C′ (260509) raw 캐시 조회 — PNE _unified_pne_load_raw (proto_:1839) 패턴 mirror.
+    # 동일 (cycle_start, cycle_end, cycle_map id) 재호출 시 NNNNNN N회 read 스킵.
+    # 채널별 single-entry cache — `_get_channel_cache(path)['unified_raw_toyo']`.
+    # cycle_map 동일 object 보존 시 hit; 새 dict 면 miss (호출부 정책 의존).
+    # Reset: `_reset_all_caches()` 사용자 명시 trigger.
+    # 참조: wiki/10_cycle_data/260509_review_c_step_feasibility_roi.md §5.1
+    _ch_cache = _get_channel_cache(raw_file_path)
+    _cache_key = (cycle_start, cycle_end, id(cycle_map) if cycle_map is not None else None)
+    _raw_cache = _ch_cache.get('unified_raw_toyo')
+    if _raw_cache is not None and _raw_cache[0] == _cache_key:
+        _perf_logger.debug(
+            f'  [unified_raw] Toyo 캐시 히트: cycle_range=({cycle_start},{cycle_end}) '
+            f'path={os.path.basename(raw_file_path)}')
+        return _raw_cache[1].copy()
+
     frames = []
     file_boundaries = []  # (시작 인덱스, 사이클 번호)
     total_rows = 0
@@ -2125,6 +2140,10 @@ def _unified_toyo_load_raw(
 
     _debug_snapshot(result, "S2_load_raw",
                     tag=f"TOYO_cyc{cycle_start}-{cycle_end}")
+
+    # C′ (260509) — 결과 캐시 저장 (PNE proto_:1903 패턴 mirror).
+    # 다음 동일 (cycle_start, cycle_end, cycle_map id) 호출 시 즉시 hit.
+    _ch_cache['unified_raw_toyo'] = (_cache_key, result.copy())
     return result
 
 
