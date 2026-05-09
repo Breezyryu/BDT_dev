@@ -51,6 +51,27 @@ class ChannelInfo:
     cycler: str
 
 
+@dataclass(frozen=True)
+class PathBundle:
+    """경로 모드별 baseline fixture — 일반·다중·연결 처리.
+
+    Fields:
+        label: unique 라벨 (`<mode>__<dataset_or_group>`)
+        mode: 'single' | 'multi' | 'connected'
+        data_folders: 상위 dataset 경로 list (BDT 의 all_data_folder 입력 정합)
+        cycler: 'PNE' or 'Toyo' (mixed 시 'mixed')
+
+    경로 모드 정의 ([[260310_link_cycle_multi_path_analysis]] 참조):
+      - single: 1 dataset 폴더 (단일 시험 분석)
+      - multi: 동일 cycler·시험 type 의 여러 dataset (시리즈 비교, 색상 분리)
+      - connected: 시계열 연결 dataset (1-100cyc + 101-200cyc + ... 연속 분석)
+    """
+    label: str
+    mode: str
+    data_folders: tuple[Path, ...]
+    cycler: str
+
+
 def _is_toyo_channel(ch_path: Path) -> bool:
     """Toyo 채널 판별 — 폴더명 digit + CAPACITY.LOG 또는 NNNNNN 존재."""
     name = ch_path.name
@@ -222,6 +243,90 @@ def signatures_equal(
             if not _stat_eq(sa[stat], sb[stat], rel_tol=rel_tol, abs_tol=abs_tol):
                 return False
     return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 경로 모드 fixture — 일반·다중·연결 baseline 측
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def discover_path_bundles(exp_data_root: str | Path) -> list[PathBundle]:
+    """경로 모드 3종 bundle 자동 발견.
+
+    구조 가정 — exp_data/<category>/<dataset>/<channel>/...
+
+    경로 모드 자동 분류:
+      single: 1 dataset 폴더 단독 (대표 1~2 카테고리당)
+      multi: 동일 셀명·시험 type 인접 dataset 묶음 (날짜 prefix 차이만)
+      connected: 사이클 범위 연속 dataset 측 (예: 1-100cyc, 101-200cyc, ...)
+
+    Returns
+    -------
+    list[PathBundle]
+        single ~3개 + multi ~2개 + connected ~2개 (대표 fixture).
+        ROI 측 전수 X — 대표 시나리오만 cover.
+    """
+    root = Path(exp_data_root)
+    if not root.is_dir():
+        return []
+    bundles: list[PathBundle] = []
+
+    # ── single 모드 — 카테고리당 1 dataset (3개 — 수명_Toyo / 수명 / 성능_코인셀) ──
+    for cat in ("수명_Toyo", "수명", "성능_코인셀"):
+        cat_path = root / cat
+        if not cat_path.is_dir():
+            continue
+        ds = sorted([d for d in cat_path.iterdir() if d.is_dir()])
+        if not ds:
+            continue
+        # 첫 1개
+        bundles.append(PathBundle(
+            label=f"single__{cat}__{_slug_short(ds[0].name)}",
+            mode="single",
+            data_folders=(ds[0],),
+            cycler=("Toyo" if cat == "수명_Toyo" else "PNE"),
+        ))
+
+    # ── multi 모드 — 동일 셀의 여러 dataset (수명_Toyo 측 김건희 245mAh 수명 시리즈) ──
+    toyo_root = root / "수명_Toyo"
+    if toyo_root.is_dir():
+        # 김건희 245mAh 수명 (single space) 시리즈 — 7 datasets
+        kim_life = sorted([
+            d for d in toyo_root.iterdir()
+            if d.is_dir() and "245mAh_ATL JINJU SUS" in d.name and "장수명" not in d.name
+        ])
+        if len(kim_life) >= 2:
+            bundles.append(PathBundle(
+                label="multi__Toyo_Kim245_life_series",
+                mode="multi",
+                data_folders=tuple(kim_life[:3]),  # 첫 3개만
+                cycler="Toyo",
+            ))
+
+    # ── connected 모드 — 김동진 Q7M Inner 시계열 연결 (1-100·101-200·201-300·301-400) ──
+    if toyo_root.is_dir():
+        kim_dj = sorted([
+            d for d in toyo_root.iterdir()
+            if d.is_dir() and "김동진" in d.name and "Q7M Inner" in d.name and "cyc" in d.name
+        ])
+        if len(kim_dj) >= 2:
+            bundles.append(PathBundle(
+                label="connected__Toyo_KimDJ_Q7M_Inner_1_400cyc",
+                mode="connected",
+                data_folders=tuple(kim_dj),  # 4개 연속
+                cycler="Toyo",
+            ))
+
+    # ── multi 모드 PNE — 수명 측 동일 dataset 의 여러 채널은 single 측에서 cover.
+    # 다른 dataset 의 cell 동일 묶음 — 데이터 측 식별 어려움 → 일단 single 만.
+
+    return bundles
+
+
+def _slug_short(s: str) -> str:
+    """label 측 짧은 slug — alphanumeric 만, 길이 50 cap."""
+    cleaned = "".join(c if c.isalnum() else "_" for c in s).strip("_")
+    return cleaned[:50]
 
 
 def signature_diff(
