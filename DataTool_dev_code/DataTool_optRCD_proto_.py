@@ -6609,13 +6609,101 @@ def classify_pne_cycles(df: pd.DataFrame, capacity: int) -> list[dict]:
       - 충전+방전 포함, n_charge == 1   → RPT
       - 단일 동작 펄스 반복             → GITT
       - 방전만                          → initial
+
+    구현: groupby 빌트인 sum agg 로 TC별 카운트 일괄 계산 후, TC 수만큼만
+    Python 루프로 분류 트리 평가. `_classify_single_pne_cycle` 함수 호출
+    오버헤드(TC당 group 슬라이싱 + 4개 .sum + .isin) 제거. 760 TC 기준
+    ~155ms → ~10ms (15x). 회귀 슈트:
+    `tools/test_code/regression_classify_pne_cycles.py`.
     """
-    real = df[df['StepType'] != 8].copy()
-    raw_results = []
-    for cyc, group in real.groupby('TotlCycle'):
-        info = _classify_single_pne_cycle(group)
-        info['cycle'] = int(cyc)
-        raw_results.append(info)
+    real = df[df['StepType'] != 8]
+    if real.empty:
+        return []
+
+    step_type = real['StepType'].to_numpy()
+    end_state = real['EndState'].to_numpy()
+    step_time = real['StepTime'].to_numpy().astype(np.float64)
+
+    is_chg = (step_type == 1)
+    is_dchg = (step_type == 2)
+    is_rest = (step_type == 3)
+    is_chg_or_extra = (step_type == 1) | (step_type == 9)
+    long_chg_step = is_chg_or_extra & ((step_time / 100.0) >= 300.0)
+
+    # 사전 column 추가 — groupby 가 numeric 빌트인 sum 만 호출
+    real2 = real.assign(**{
+        '_chg': is_chg.astype(np.int32),
+        '_dchg': is_dchg.astype(np.int32),
+        '_rest': is_rest.astype(np.int32),
+        '_es78': (end_state == 78).astype(np.int32),
+        '_chg_es65': (is_chg & (end_state == 65)).astype(np.int32),
+        '_chg_es66': (is_chg & (end_state == 66)).astype(np.int32),
+        '_long_chg': long_chg_step.astype(np.int32),
+    })
+    agg = real2.groupby('TotlCycle').agg({
+        '_chg': 'sum',
+        '_dchg': 'sum',
+        '_rest': 'sum',
+        '_es78': 'sum',
+        '_chg_es65': 'sum',
+        '_chg_es66': 'sum',
+        '_long_chg': 'sum',
+    })
+    total_steps_arr = real.groupby('TotlCycle').size().reindex(agg.index).to_numpy()
+
+    cols = list(agg.columns)
+    p_chg = cols.index('_chg')
+    p_dchg = cols.index('_dchg')
+    p_rest = cols.index('_rest')
+    p_es78 = cols.index('_es78')
+    p_chg_es65 = cols.index('_chg_es65')
+    p_chg_es66 = cols.index('_chg_es66')
+    p_long_chg = cols.index('_long_chg')
+    idx_arr = agg.index.to_numpy()
+    vals = agg.to_numpy()
+
+    raw_results: list[dict] = []
+    for i in range(len(idx_arr)):
+        row = vals[i]
+        n_charge = int(row[p_chg])
+        n_discharge = int(row[p_dchg])
+        n_rest = int(row[p_rest])
+        has_es78 = bool(row[p_es78] > 0)
+        chg_es65 = bool(row[p_chg_es65] > 0)
+        chg_es66 = bool(row[p_chg_es66] > 0)
+        long_chg = bool(row[p_long_chg] > 0)
+        n_active = n_charge + n_discharge
+
+        if n_active == 0:
+            action = 'REST_ONLY'
+        elif n_charge > 0 and n_discharge == 0:
+            action = 'CHG_ONLY'
+        elif n_discharge > 0 and n_charge == 0:
+            action = 'DCHG_ONLY'
+        else:
+            action = 'MIXED'
+
+        if n_charge == 0 and n_discharge == 0:
+            cat = 'initial'
+        elif action in ('CHG_ONLY', 'DCHG_ONLY'):
+            cat = '_pulse'
+        elif has_es78 and n_charge >= 2 and n_discharge >= 2:
+            cat = 'DCIR'
+        elif has_es78:
+            cat = 'RPT' if long_chg else 'Rss'
+        elif n_charge >= 2 and n_discharge >= 1:
+            cat = 'RPT' if (n_charge == 2 and chg_es65 and chg_es66) else '가속수명'
+        elif n_charge == 1 and n_discharge >= 1:
+            cat = 'RPT'
+        else:
+            cat = 'unknown'
+
+        raw_results.append({
+            'n_charge': n_charge, 'n_discharge': n_discharge, 'n_rest': n_rest,
+            'total_steps': int(total_steps_arr[i]), 'has_es78': has_es78,
+            'action': action, 'category': cat,
+            'cycle': int(idx_arr[i]),
+        })
 
     merged = _merge_pulse_groups(raw_results)
     results = []
@@ -7895,6 +7983,11 @@ def _extract_tc_info_pne(
       - dchg_crate = 방전 CC 전류 max |I|/capacity
       - mode_chg = CCCV 존재 시 'CCCV', 아니면 'CC'
 
+    구현: numpy 마스크 + groupby 빌트인 agg (max/min/sum) 만 사용.
+    iterrows / 람다 0건. 760 TC 기준 ~254ms → ~50ms (5x). 회귀 슈트:
+    `tools/test_code/regression_extract_tc_info_pne.py` (760 TC × 9 fields
+    byte-equal 검증).
+
     Returns
     -------
     dict[int, TcInfo]
@@ -7907,44 +8000,85 @@ def _extract_tc_info_pne(
     if real.empty:
         return {}
 
+    # numpy 사전 계산 (모든 row, broadcasting)
+    step_type = real[2].to_numpy()
+    end_state = real[6].to_numpy()
+    end_volt_uV = real[8].to_numpy().astype(np.float64)
+    end_curr_uA = real[9].to_numpy().astype(np.float64)
+    cc_time_cs = real[38].to_numpy().astype(np.float64)
+    cc_cap_uAh = real[39].to_numpy().astype(np.float64)
+
+    is_chg = (step_type == 1)
+    is_dchg = (step_type == 2)
+    is_cccv = (end_state == 66)
+
+    # 충전 row current_mA: CCCV → cc_cap*3600/cc_time, 그 외 → |EndCurrent|
+    cc_time_s = cc_time_cs / 100.0
+    cc_cap_mAh = cc_cap_uAh / 1000.0
+    end_curr_abs_mA = np.abs(end_curr_uA) / 1000.0
+    _safe_cc_time = np.where(cc_time_s > 0, cc_time_s, 1.0)
+    cccv_curr = np.where(cc_time_s > 0, cc_cap_mAh * 3600.0 / _safe_cc_time, 0.0)
+    cccv_mode = is_cccv & (cc_time_s > 0)
+    chg_curr_mA = np.where(cccv_mode, cccv_curr, end_curr_abs_mA)
+
+    # NaN 마스크 column → groupby 가 NaN 무시 max/min 처리
+    real2 = real.assign(**{
+        '_v_chg_uV': np.where(is_chg, end_volt_uV, np.nan),
+        '_v_dchg_uV': np.where(is_dchg, end_volt_uV, np.nan),
+        '_chg_curr_mA': np.where(is_chg, chg_curr_mA, np.nan),
+        '_dchg_curr_mA': np.where(is_dchg, end_curr_abs_mA, np.nan),
+        '_chg_cccv': (is_chg & is_cccv).astype(np.int32),
+        '_chg_cnt': is_chg.astype(np.int32),
+        '_dchg_cnt': is_dchg.astype(np.int32),
+    })
+
+    # groupby(27=TotlCycle) — 빌트인 agg 만 (lambda 0)
+    agg = real2.groupby(27).agg({
+        '_v_chg_uV': 'max',
+        '_v_dchg_uV': 'min',
+        '_chg_curr_mA': 'max',
+        '_dchg_curr_mA': 'max',
+        '_chg_cccv': 'sum',
+        '_chg_cnt': 'sum',
+        '_dchg_cnt': 'sum',
+    })
+
+    # numpy 행 단위 접근 (TC 가짓수만 — 보통 100~700, iterrows 대비 매우 빠름)
     out: dict[int, TcInfo] = {}
-    for tc, grp in real.groupby(27):
-        tc_int = int(tc)
-        chg_rows = grp[grp[2] == 1]
-        dchg_rows = grp[grp[2] == 2]
+    has_cap = capacity > 0
+    cols = list(agg.columns)
+    idx_arr = agg.index.to_numpy()
+    vals = agg.to_numpy()
+    p_v_chg = cols.index('_v_chg_uV')
+    p_v_dchg = cols.index('_v_dchg_uV')
+    p_chg_curr = cols.index('_chg_curr_mA')
+    p_dchg_curr = cols.index('_dchg_curr_mA')
+    p_chg_cccv = cols.index('_chg_cccv')
+    p_chg_cnt = cols.index('_chg_cnt')
+    p_dchg_cnt = cols.index('_dchg_cnt')
 
-        v_max = None
-        v_min = None
-        chg_crate = None
-        dchg_crate = None
-        mode_chg = None
+    for i in range(len(idx_arr)):
+        tc_int = int(idx_arr[i])
+        row = vals[i]
+        chg_cnt = int(row[p_chg_cnt])
+        dchg_cnt = int(row[p_dchg_cnt])
 
-        if not chg_rows.empty:
-            v_max = float(chg_rows[8].max()) / 1e6  # μV → V
-            # CCCV(EndState==66)가 하나라도 있으면 CCCV, 아니면 CC
-            mode_chg = 'CCCV' if (chg_rows[6] == 66).any() else 'CC'
-            # C-rate: CC 구간의 |I| (CC current = cc_cap/cc_time for CCCV)
-            if capacity > 0:
-                currents_mA = []
-                for _, row in chg_rows.iterrows():
-                    end_state = int(row[6])
-                    cc_time = float(row[38]) / 100  # centisec → sec
-                    cc_cap = float(row[39]) / 1000  # μAh → mAh
-                    if end_state == 66 and cc_time > 0:
-                        # CCCV: CC 전류는 용량/시간으로 역산
-                        currents_mA.append(cc_cap / (cc_time / 3600))
-                    else:
-                        # CC: EndCurrent 절대값
-                        currents_mA.append(abs(float(row[9])) / 1000)
-                if currents_mA:
-                    chg_crate = round(max(currents_mA) / capacity, 2)
+        if chg_cnt > 0:
+            v_max = float(row[p_v_chg]) / 1e6
+            mode_chg = 'CCCV' if int(row[p_chg_cccv]) > 0 else 'CC'
+            chg_crate = round(float(row[p_chg_curr]) / capacity, 2) if has_cap else None
+        else:
+            v_max = None
+            mode_chg = None
+            chg_crate = None
 
-        if not dchg_rows.empty:
-            v_min = float(dchg_rows[8].min()) / 1e6
-            if capacity > 0:
-                dchg_i = dchg_rows[9].abs().max() / 1000  # μA → mA
-                if dchg_i > 0:
-                    dchg_crate = round(float(dchg_i) / capacity, 2)
+        if dchg_cnt > 0:
+            v_min = float(row[p_v_dchg]) / 1e6
+            dchg_i = float(row[p_dchg_curr])
+            dchg_crate = round(dchg_i / capacity, 2) if (has_cap and dchg_i > 0) else None
+        else:
+            v_min = None
+            dchg_crate = None
 
         out[tc_int] = TcInfo(
             tc=tc_int,
@@ -7956,6 +8090,297 @@ def _extract_tc_info_pne(
             source='measured',
         )
     return out
+
+
+# ── PNE 데이터 무결성 다층 cross-check ─────────────────────────────────
+# .log (운영 이력) + CSV TC continuity + endpoint(.cyc vs SaveData) 정합성
+# 의 3-layer 검증으로 silent corruption 을 탐지. 호출처: _build_channel_meta
+# (Phase 0) — ChannelMeta.integrity 분류 (clean / data_loss / compromised).
+# 회귀 슈트: tools/test_code/regression_log_integrity.py
+
+_PNE_LOG_DT = re.compile(r'^(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) :: (.+)$')
+_PNE_LOG_STOP_POS = re.compile(r'Current Cycle:(\d+),\s*Step:(\d+)')
+
+
+def _parse_pne_log(log_path: str) -> dict:
+    """PNE `.log` 파일에서 운영 이력/예외 추출 (silent corruption 1차 단서).
+
+    PNE 시험기는 운영자 stop/resume, 시스템 pause 를 시간순으로 `.log` 에 기록한다.
+    `.cyc`/CSV 데이터 손상이 의심되면 이벤트 순서로 원인을 역추적할 수 있다.
+
+    인식 패턴 (cp949):
+      - `작업 시작 act`                                        → start
+      - `작업 계속 act`                                        → resume
+      - `act 즉시 멈춤 시행 (Current Cycle:N, Step:M / ...)`  → stop (위치 포함)
+      - `Paused. [ Code:N / ... ]`                            → pause (시스템)
+      - `was created` 또는 `result file [...]`                 → created (참고용)
+
+    Returns
+    -------
+    dict
+        n_stops, n_resumes, n_pauses : int
+        last_stop_cycle, last_stop_step : int (없으면 0)
+        first_start_dt : str | None — 'YYYY/MM/DD HH:MM:SS'
+        last_event_dt, last_event_kind : str | None — 'start'|'stop'|'resume'|'pause'|'created'|'unknown'
+        n_lines : int
+        is_present : bool — 파일 존재 + 1줄 이상
+    """
+    out = {
+        'n_stops': 0, 'n_resumes': 0, 'n_pauses': 0,
+        'last_stop_cycle': 0, 'last_stop_step': 0,
+        'first_start_dt': None, 'last_event_dt': None,
+        'last_event_kind': None, 'n_lines': 0,
+        'is_present': False,
+    }
+    if not log_path or not os.path.isfile(log_path):
+        return out
+    try:
+        with open(log_path, 'r', encoding='cp949', errors='replace') as f:
+            lines = [ln.rstrip() for ln in f]
+    except OSError:
+        return out
+    out['n_lines'] = len(lines)
+    if not lines:
+        return out
+    out['is_present'] = True
+
+    for ln in lines:
+        m = _PNE_LOG_DT.match(ln)
+        if not m:
+            continue
+        dt_str, body = m.group(1), m.group(2)
+        if '작업 시작 act' in body:
+            kind = 'start'
+            if out['first_start_dt'] is None:
+                out['first_start_dt'] = dt_str
+        elif '작업 계속 act' in body:
+            kind = 'resume'
+            out['n_resumes'] += 1
+        elif '즉시 멈춤 시행' in body and 'Current Cycle' in body:
+            kind = 'stop'
+            out['n_stops'] += 1
+            ms = _PNE_LOG_STOP_POS.search(body)
+            if ms:
+                out['last_stop_cycle'] = int(ms.group(1))
+                out['last_stop_step'] = int(ms.group(2))
+        elif 'Paused.' in body:
+            kind = 'pause'
+            out['n_pauses'] += 1
+        elif 'was created' in body or 'result file' in body:
+            kind = 'created'
+        else:
+            kind = 'unknown'
+        out['last_event_dt'] = dt_str
+        out['last_event_kind'] = kind
+    return out
+
+
+def _check_csv_tc_continuity(raw_df: pd.DataFrame) -> dict:
+    """SaveEndData TC continuity 검증 (partial run / 중간 손실 탐지).
+
+    PNE SaveEndData col[27]=TotlCycle 가 1 부터 연속이어야 정상.
+
+    - `tc_min != 1` → partial run (앞부분 누락, replicated 불가)
+    - 중간 gap → 데이터 손상 (StepType==8 loop 마커 제외 후 판별)
+
+    Returns
+    -------
+    dict
+        tc_min, tc_max, n_unique : int
+        starts_at_one : bool
+        has_gaps : bool
+        n_missing_tc : int — (tc_max - tc_min + 1) - n_unique
+        gap_intervals : list[tuple[int, int]] — (gap_start, gap_end) 누락 구간
+        is_anomaly : bool — `not starts_at_one` 또는 `has_gaps`
+    """
+    out = {
+        'tc_min': 0, 'tc_max': 0, 'n_unique': 0,
+        'starts_at_one': False, 'has_gaps': False,
+        'n_missing_tc': 0, 'gap_intervals': [],
+        'is_anomaly': False,
+    }
+    if raw_df is None or raw_df.empty or raw_df.shape[1] < 28:
+        return out
+    real = raw_df[raw_df[2] != 8]
+    if real.empty:
+        return out
+    tcs = np.sort(real[27].unique().astype(np.int64))
+    out['tc_min'] = int(tcs[0])
+    out['tc_max'] = int(tcs[-1])
+    out['n_unique'] = int(len(tcs))
+    out['starts_at_one'] = bool(tcs[0] == 1)
+    diffs = np.diff(tcs)
+    gap_pos = np.where(diffs > 1)[0]
+    if len(gap_pos) > 0:
+        out['has_gaps'] = True
+        for g in gap_pos:
+            out['gap_intervals'].append((int(tcs[g]) + 1, int(tcs[g + 1]) - 1))
+    out['n_missing_tc'] = int((out['tc_max'] - out['tc_min'] + 1) - out['n_unique'])
+    out['is_anomaly'] = bool((not out['starts_at_one']) or out['has_gaps'])
+    return out
+
+
+def _check_endpoint_anomaly(cyc_max_recidx: int, csv_max_recidx: int) -> dict:
+    """endpoint 정합성 — `.cyc` 와 SaveData CSV RecIndex 끝점 비교.
+
+    - 정상: `.cyc` 마지막 RecIndex ≈ SaveData 의 마지막 col[0] 값
+    - Silent corruption: `.cyc` < SaveData (`.cyc` 만 손실)
+    - SaveData 미갱신 (in_progress): `.cyc` > SaveData (자정 갱신 전 일시 상태)
+
+    `csv_max_recidx` 는 raw_df[0].max() 또는 SaveDataNNNN 마지막 chunk 의
+    col[0].max() 로 호출처에서 사전 계산. `cyc_max_recidx` 는 `_cyc_to_cycle_df`
+    결과의 RecIndex.max() 또는 마지막 .cyc record 의 fid22 값.
+
+    Returns
+    -------
+    dict
+        cyc_max, csv_max : int
+        gap : int — csv_max - cyc_max (양수면 .cyc 손실)
+        has_anomaly : bool — gap > 0
+        ratio_cyc_to_csv : float — cyc_max / csv_max
+        reason : str — 사람용 설명
+    """
+    out = {
+        'cyc_max': int(cyc_max_recidx) if cyc_max_recidx else 0,
+        'csv_max': int(csv_max_recidx) if csv_max_recidx else 0,
+        'gap': 0, 'has_anomaly': False,
+        'ratio_cyc_to_csv': 0.0, 'reason': '',
+    }
+    if out['csv_max'] <= 0:
+        out['reason'] = 'csv_max=0 (SaveData empty/unloaded)'
+        return out
+    if out['cyc_max'] <= 0:
+        out['reason'] = 'cyc_max=0 (.cyc empty/unloaded)'
+        return out
+    out['gap'] = out['csv_max'] - out['cyc_max']
+    out['ratio_cyc_to_csv'] = out['cyc_max'] / out['csv_max']
+    if out['gap'] > 0:
+        loss_pct = (out['gap'] / out['csv_max']) * 100
+        out['has_anomaly'] = True
+        out['reason'] = (f'.cyc({out["cyc_max"]}) < SaveData({out["csv_max"]}) — '
+                        f'{loss_pct:.1f}% records lost')
+    elif out['gap'] < -100:
+        out['reason'] = (f'.cyc({out["cyc_max"]}) > SaveData({out["csv_max"]}) — '
+                        f'SaveData 미갱신 (in_progress)')
+    else:
+        out['reason'] = 'OK (cyc ~= csv)'
+    return out
+
+
+def _decode_save_end_datetime(date_int: int, time_int: int) -> pd.Timestamp | None:
+    """SaveEndData col[33]/[34] → pd.Timestamp.
+
+    PNE SaveEndData 의 timestamp 인코딩:
+      - col[33] = YYYYMMDD (8 digit int)         ex) 20251028
+      - col[34] = HHMMSSmmm (9 digit int, ms 정밀도) ex) 71949013 → 07:19:49.013
+
+    `.cyc` FID 43/44 (proto_:10119, 11521) 와 동일 의미론. 0 또는 음수 → None.
+    """
+    try:
+        d = int(date_int)
+        t = int(time_int)
+    except (TypeError, ValueError):
+        return None
+    if d <= 19000000 or d >= 30000000:
+        return None
+    if t < 0 or t >= 1_000_000_000:
+        return None
+    yyyy = d // 10000
+    mm = (d // 100) % 100
+    dd = d % 100
+    tstr = f'{t:09d}'
+    hh = int(tstr[0:2])
+    mi = int(tstr[2:4])
+    ss = int(tstr[4:6])
+    ms = int(tstr[6:9])
+    if not (1 <= mm <= 12 and 1 <= dd <= 31 and 0 <= hh < 24 and 0 <= mi < 60
+            and 0 <= ss < 60):
+        return None
+    try:
+        return pd.Timestamp(year=yyyy, month=mm, day=dd, hour=hh, minute=mi,
+                            second=ss, microsecond=ms * 1000)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _extract_save_end_dt_summary(raw_df: pd.DataFrame) -> dict:
+    """SaveEndData col[33]/[34] 에서 채널의 시간축 요약 추출.
+
+    PNE 시험기는 step 종료 시각을 col 33/34 에 기록. 채널의 시작/종료 시각과
+    경과 시간을 ms 정밀도로 알 수 있어 다음 용도에 사용:
+
+      - `.log` first_start_dt 와 cross-check (sanity)
+      - endpoint anomaly 시 .cyc FID 43/44 의 last_dt 와 비교
+      - Phase 0 콘솔 detail line 의 last_dt (운영자 인지)
+      - in_progress 채널의 stale time 평가
+
+    Returns
+    -------
+    dict
+        first_dt, last_dt : pd.Timestamp | None
+        duration_days : float — (last - first) days, None 이면 0.0
+        n_dt_valid : int — col[33]/[34] 디코딩 성공 row 수
+        n_total : int — StepType==8 제외 후 row 수
+        is_present : bool — first_dt/last_dt 모두 존재
+    """
+    out = {
+        'first_dt': None, 'last_dt': None, 'duration_days': 0.0,
+        'n_dt_valid': 0, 'n_total': 0, 'is_present': False,
+    }
+    if raw_df is None or raw_df.empty or raw_df.shape[1] < 35:
+        return out
+    real = raw_df[raw_df[2] != 8]
+    if real.empty:
+        return out
+    out['n_total'] = int(len(real))
+
+    date_arr = real[33].to_numpy()
+    time_arr = real[34].to_numpy()
+    # 빠른 mask: 0 또는 negative 제외
+    valid = (date_arr > 19000000) & (date_arr < 30000000) & (time_arr >= 0) & (time_arr < 1_000_000_000)
+    if not valid.any():
+        return out
+    out['n_dt_valid'] = int(valid.sum())
+
+    first_idx = int(np.argmax(valid))
+    # last valid idx
+    rev_valid = valid[::-1]
+    last_idx = len(valid) - 1 - int(np.argmax(rev_valid))
+
+    first = _decode_save_end_datetime(int(date_arr[first_idx]), int(time_arr[first_idx]))
+    last = _decode_save_end_datetime(int(date_arr[last_idx]), int(time_arr[last_idx]))
+    if first is None or last is None:
+        return out
+    out['first_dt'] = first
+    out['last_dt'] = last
+    out['duration_days'] = round((last - first).total_seconds() / 86400.0, 2)
+    out['is_present'] = True
+    return out
+
+
+def _classify_pne_integrity(
+    log_summary: dict | None,
+    csv_check: dict | None,
+    ep_check: dict | None,
+) -> str:
+    """3-layer cross-check → 4-tier integrity 분류.
+
+    분류 기준 (우선순위 순):
+      1. `compromised` — endpoint anomaly 또는 CSV TC anomaly (실 누락)
+      2. `data_loss`   — `.log` 에 stop/pause 있으나 endpoint/TC 정상
+                        (PNE 자동 복구된 상태 — 데이터 안전)
+      3. `in_progress` — last_event_kind 가 'pause' 이고 stop 없음
+      4. `clean`       — 운영 이벤트 0 + 모두 정상
+    """
+    if ep_check and ep_check.get('has_anomaly'):
+        return 'compromised'
+    if csv_check and csv_check.get('is_anomaly'):
+        return 'compromised'
+    if log_summary and (log_summary.get('n_stops', 0) + log_summary.get('n_pauses', 0)) > 0:
+        return 'data_loss'
+    if log_summary and log_summary.get('last_event_kind') == 'pause':
+        return 'in_progress'
+    return 'clean'
 
 
 def _analyze_accel_pattern_pne(
