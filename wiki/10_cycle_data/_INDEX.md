@@ -40,6 +40,11 @@ updated: 2026-04-21
 ## 🔌 Toyo / PNE 데이터 구조
 
 - ⭐ [[260508_raw_data_schema_unified_reference]] — **Toyo + PNE 통합 reference (6 차원 매트릭스, 동등성)**
+- ⭐ [[260509_policy_toyo_data_operation]] — **TOYO 운영 정책 (PNE 차이 매트릭스 + Open Decision 4건)**
+- ⭐ [[260509_policy_data_parsing_pipeline]] — **데이터 파싱 정책 (사이클·프로파일 × Toyo·PNE 4 매트릭스 + 컴퓨팅 벤치)**
+- ⭐ [[260509_proposal_toyo_speedup_to_pne_parity]] — **Toyo 가속 제안 (PNE 동등 — 4 trajectory A·B·C·D)**
+- ⭐ [[260509_changelog_a_step_implementation]] — **A 단계 구현 changelog (usecols + ThreadPool + agg) — PNE 동등 진입 ✅**
+- ⭐ [[260509_audit_toyo_lifetime_full_inventory]] — **TOYO 수명 데이터 전수조사 (26 datasets · 156 ch · 358K NNNNNN · anomaly 7)**
 - [[260310_toyo_cycle_data_pipeline_analysis]] — Toyo 용량산정·병합·효율
 - [[260310_link_cycle_multi_path_analysis]] — 연결사이클 멀티경로·병렬
 - [[260319_analysis_cyc_parsing_feasibility]] — PNE `.cyc` 파싱 100%
