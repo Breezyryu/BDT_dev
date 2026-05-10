@@ -1,0 +1,1019 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>BDT 사이클 타임라인 바 UX 개선안 (260510)</title>
+<style>
+:root{
+  /* THEME.PALETTE 와 동일 */
+  --p0:#3C5488; --p1:#E64B35; --p2:#00A087; --p3:#F39B7F; --p4:#4DBBD5;
+  --p5:#8491B4; --p6:#B09C85; --p7:#91D1C2; --p8:#DC0000; --p9:#7E6148;
+  --bg:#FAFBFD; --paper:#FFFFFF; --line:#E5E8EC; --ink:#1F2937;
+  --muted:#6B7280; --accent:#FFC400; --shadow:0 1px 3px rgba(0,0,0,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:"Malgun Gothic","맑은 고딕","Segoe UI",sans-serif;font-size:13px;line-height:1.55}
+.wrap{max-width:1240px;margin:0 auto;padding:24px 28px 80px}
+header h1{margin:0 0 4px;font-size:22px;letter-spacing:-.2px}
+header .meta{color:var(--muted);font-size:12px;margin-bottom:18px}
+header .meta b{color:var(--ink);font-weight:600}
+
+.grid{display:grid;gap:16px}
+.section{background:var(--paper);border:1px solid var(--line);border-radius:8px;
+  padding:18px 20px;box-shadow:var(--shadow);margin-bottom:18px}
+.section h2{margin:0 0 4px;font-size:15px;letter-spacing:-.1px}
+.section h2 .num{display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;
+  background:var(--p0);color:#fff;border-radius:50%;font-size:11px;margin-right:8px;font-weight:700}
+.section .lead{color:var(--muted);font-size:12px;margin:0 0 14px}
+
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.col{border:1px solid var(--line);border-radius:6px;padding:12px;background:#fff}
+.col .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;
+  margin-bottom:8px}
+.col.before .tag{background:#F3F4F6;color:#4B5563}
+.col.after  .tag{background:#FEF3C7;color:#92400E}
+.col h4{margin:6px 0 10px;font-size:13px}
+
+/* ── 타임라인 공통 ── */
+.tl{position:relative;background:#FAFBFD;border:1px solid var(--line);border-radius:4px;
+  padding:6px 4px 22px;user-select:none}
+.tl.row{margin-top:6px}
+.tl-track{position:relative;height:18px;border:1px solid #50505020;background:#fff;border-radius:2px;overflow:hidden}
+.tl-track.active{border-color:#505050a0}
+.blk{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;
+  font-size:10px;color:#fff;font-weight:600;letter-spacing:-.2px;cursor:pointer;
+  transition:opacity .15s, filter .15s;white-space:nowrap;overflow:hidden;text-overflow:clip}
+.blk:hover{filter:brightness(1.08)}
+.blk.dim{opacity:.18;filter:saturate(.4)}
+.blk.sel{box-shadow:inset 0 0 0 1.5px var(--accent), inset 0 0 0 3px rgba(255,255,255,.55)}
+.blk[data-half="1"]{opacity:.78}
+.tl-ticks{position:absolute;left:4px;right:4px;bottom:0;height:18px;pointer-events:none;color:#888;font-size:9.5px}
+.tl-ticks span{position:absolute;transform:translateX(-50%);text-align:center}
+.tl-ticks span::before{content:"";position:absolute;top:-3px;left:50%;width:1px;height:3px;background:#888;transform:translateX(-50%)}
+
+/* 마커 */
+.tl-markers{position:absolute;left:4px;right:4px;top:-10px;height:10px;pointer-events:none}
+.mk{position:absolute;transform:translateX(-50%);font-size:11px;line-height:1;cursor:default;pointer-events:auto}
+.mk[title]{cursor:help}
+.mk.rpt{color:var(--p5)}
+.mk.dcir{color:var(--p1)}
+.mk.gitt{color:var(--p3)}
+
+/* 미니맵 */
+.mini{position:relative;height:10px;background:#F3F4F6;border:1px solid var(--line);border-radius:2px;margin-bottom:6px;overflow:hidden;cursor:ew-resize}
+.mini .seg{position:absolute;top:0;bottom:0}
+.mini .vp{position:absolute;top:-2px;bottom:-2px;border:1.5px solid var(--p0);background:rgba(60,84,136,.12);border-radius:2px}
+
+/* 용량 오버레이 */
+.cap-svg{position:absolute;left:4px;right:4px;top:0;height:18px;pointer-events:none}
+.cap-svg path{fill:none;stroke:#111;stroke-width:1.2;stroke-opacity:.55;stroke-dasharray:2 1.5}
+.cap-axis{position:absolute;right:6px;top:-1px;font-size:9px;color:#666;background:rgba(255,255,255,.7);padding:0 3px;border-radius:2px}
+
+/* 칩 범례 */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 10px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--line);
+  border-radius:14px;font-size:11px;background:#fff;cursor:pointer;transition:all .12s}
+.chip .sw{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.chip:hover{border-color:#888}
+.chip.off{opacity:.35}
+.chip.solo{border-color:var(--p0);background:#EEF2FA;font-weight:600}
+
+/* 통계 카드 */
+.stat{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
+.stat .cell{border:1px solid var(--line);border-radius:6px;padding:8px 10px;background:#FAFBFD}
+.stat .cell .k{font-size:10px;color:var(--muted);letter-spacing:.2px}
+.stat .cell .v{font-size:15px;font-weight:700;margin-top:2px}
+.stat .cell .v .u{font-size:10px;color:var(--muted);font-weight:500;margin-left:2px}
+.stat .cell.bad .v{color:var(--p1)}
+.stat .cell.ok  .v{color:var(--p2)}
+
+/* 툴팁 */
+.tip{position:fixed;z-index:9999;background:#1F2937;color:#fff;font-size:11px;line-height:1.5;
+  padding:6px 9px;border-radius:4px;pointer-events:none;opacity:0;transition:opacity .08s;
+  max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.tip.show{opacity:1}
+.tip b{color:var(--accent)}
+
+/* 컨트롤 바 */
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12px}
+.controls label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.controls input[type=range]{width:140px}
+.controls .btn{padding:4px 10px;border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer;font-size:12px}
+.controls .btn:hover{border-color:#888}
+.controls .btn.on{background:#EEF2FA;border-color:var(--p0);color:var(--p0);font-weight:600}
+
+/* 단축키 표 */
+.kbd-tbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.kbd-tbl th,.kbd-tbl td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left}
+.kbd-tbl th{background:#F8FAFC;font-weight:600;color:var(--muted);font-size:11px}
+kbd{display:inline-block;padding:1px 6px;border:1px solid #C9CDD3;border-bottom-width:2px;border-radius:3px;
+  background:#F9FAFB;font-family:Consolas,monospace;font-size:11px;color:#374151}
+
+/* 배지 */
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;
+  margin-left:6px;vertical-align:1px}
+.badge.new{background:#FEF3C7;color:#92400E}
+.badge.fix{background:#DCFCE7;color:#166534}
+.badge.opt{background:#DBEAFE;color:#1E40AF}
+
+/* 코드 인용 */
+code{background:#F3F4F6;padding:1px 5px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;color:#B91C1C}
+
+/* 종합 데모 */
+.full-demo{padding:8px 10px;background:#fff;border:1px dashed var(--line);border-radius:6px}
+.full-demo .ch-label{font-size:11px;color:var(--muted);margin:8px 0 2px;font-weight:600}
+
+/* 토스트 */
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1F2937;color:#fff;
+  padding:8px 16px;border-radius:4px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9999}
+#toast.show{opacity:1}
+
+@media (max-width:900px){.cmp{grid-template-columns:1fr}.stat{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>사이클 타임라인 바 — UX 개선안</h1>
+  <div class="meta">
+    <b>Date</b> 2026-05-10 · <b>Author</b> 류성택 · <b>Target</b> <code>CycleTimelineBar</code> @ DataTool_optRCD_proto_.py:11026 ·
+    <b>Scope</b> 6개 개선 포인트 (라벨·범례·미니맵·진단마커·용량오버레이·통계카드)
+  </div>
+</header>
+
+<!-- ────────── 0. 현재 상태 요약 ────────── -->
+<section class="section">
+  <h2><span class="num">0</span>현재 상태 — 무엇이 좋고 무엇이 부족한가</h2>
+  <p class="lead">2026-04-12 정비 이후 안정화된 위젯. 패턴 블록·다중 행·Shift/Ctrl·우클릭·눈금까지 갖춘 상태에서 시각·인터랙션의 6가지 빈틈을 보강한다.</p>
+
+  <div class="cmp">
+    <div class="col before">
+      <span class="tag">기존 강점 (유지)</span>
+      <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7">
+        <li>패턴별 색상 (PALETTE 10색 · 18+ classified 카테고리)</li>
+        <li>행별 독립 선택 + 다중 채널 비교</li>
+        <li>Shift/Ctrl/Drag · 우클릭 (이 블록 / 같은 패턴 / 전체)</li>
+        <li>반사이클 0.3 가중 축소 + <code>_MIN_BLOCK_PX=8</code> 가시성 보장</li>
+        <li>호버 툴팁 + 동적 눈금 (5/10/50/100/500)</li>
+      </ul>
+    </div>
+    <div class="col after">
+      <span class="tag">남은 빈틈 (이번 개선)</span>
+      <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7">
+        <li><b>1.</b> 큰 블록도 호버해야 카테고리 식별 — 인지부하</li>
+        <li><b>2.</b> 범례·필터 없음 — 색상-카테고리 학습 비용</li>
+        <li><b>3.</b> 6000+ 사이클 시 줌 부재 — 미세 패턴 분간 불가</li>
+        <li><b>4.</b> RPT/DCIR/GITT 진단 사이클이 일반 사이클에 묻힘</li>
+        <li><b>5.</b> <code>_capacity_trend</code> 변수만 있고 <i>그리지 않음</i></li>
+        <li><b>6.</b> 선택 시 평균/fade%/시간 등 즉시 통계 부재</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 1. 인라인 라벨 + 카테고리 칩 범례 ────────── -->
+<section class="section">
+  <h2><span class="num">1</span>인라인 라벨 + 카테고리 칩 범례 <span class="badge new">NEW</span></h2>
+  <p class="lead">큰 블록(≥40px)에는 패턴 약어를 직접 그린다. 칩 클릭으로 해당 카테고리만 강조 (단독 모드)·Alt+클릭으로 토글. <b>패턴 학습 곡선이 사라지고, 한 번 보면 분포가 즉시 인지된다.</b></p>
+
+  <div class="cmp">
+    <div class="col before">
+      <span class="tag">BEFORE</span>
+      <h4>색상만 — 호버해야 알 수 있다</h4>
+      <div class="tl">
+        <div class="tl-track active" id="tl-1-before"></div>
+        <div class="tl-ticks" id="tk-1-before"></div>
+      </div>
+    </div>
+    <div class="col after">
+      <span class="tag">AFTER</span>
+      <h4>인라인 라벨 + 칩 범례 (클릭 시도)</h4>
+      <div class="chips" id="chips-1"></div>
+      <div class="tl">
+        <div class="tl-track active" id="tl-1-after"></div>
+        <div class="tl-ticks" id="tk-1-after"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 2. 미니맵 + 줌 ────────── -->
+<section class="section">
+  <h2><span class="num">2</span>미니맵 + 줌 슬라이더 <span class="badge new">NEW</span></h2>
+  <p class="lead">긴 수명평가(예: 6000사이클·ACCEL+RPT 반복)에서 인접 RPT 간격이 화면 1px 이하로 뭉친다. 상단 미니맵에서 viewport를 드래그하면 하단 메인이 해당 구간만 확대해 그린다. <b>전체 흐름과 디테일을 동시에.</b></p>
+
+  <div class="col after" style="grid-column:1/-1">
+    <span class="tag">AFTER</span>
+    <h4>미니맵을 드래그해 메인 영역 확대 — 휠 ±줌, Esc 리셋</h4>
+    <div class="mini" id="mini-2"><div class="vp" id="vp-2"></div></div>
+    <div class="tl">
+      <div class="tl-track active" id="tl-2"></div>
+      <div class="tl-ticks" id="tk-2"></div>
+    </div>
+    <div class="controls">
+      <label>줌
+        <input type="range" id="zoom-2" min="1" max="20" step="0.5" value="1" />
+        <span id="zv-2">1.0×</span>
+      </label>
+      <button class="btn" onclick="resetZoom2()">전체 보기</button>
+      <span style="color:var(--muted)">총 사이클 <b id="tot-2">—</b> · 표시 <b id="vis-2">—</b></span>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 3. 진단 사이클 마커 ────────── -->
+<section class="section">
+  <h2><span class="num">3</span>진단 사이클 마커 (RPT · DCIR · GITT) <span class="badge new">NEW</span></h2>
+  <p class="lead">사이클 사이에 띄엄띄엄 끼어 있는 진단 사이클은 <i>해석의 이정표</i>인데, 1~2 사이클짜리 짧은 블록이라 묻힌다. 트랙 위쪽에 ◆/▼/● 마커를 띄워 한눈에 들어오게 한다. 마커를 클릭하면 해당 진단 블록이 자동 선택된다.</p>
+
+  <div class="cmp">
+    <div class="col before">
+      <span class="tag">BEFORE</span>
+      <h4>RPT가 큰 ACCEL 사이에 묻힘 — 위치 파악 어려움</h4>
+      <div class="tl">
+        <div class="tl-track active" id="tl-3-before"></div>
+        <div class="tl-ticks" id="tk-3-before"></div>
+      </div>
+    </div>
+    <div class="col after">
+      <span class="tag">AFTER</span>
+      <h4>마커가 진단 사이클을 트랙 위로 끌어올림 (호버=툴팁, 클릭=선택)</h4>
+      <div class="tl" style="padding-top:14px">
+        <div class="tl-markers" id="mk-3"></div>
+        <div class="tl-track active" id="tl-3-after"></div>
+        <div class="tl-ticks" id="tk-3-after"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 4. 용량 트렌드 오버레이 ────────── -->
+<section class="section">
+  <h2><span class="num">4</span>용량 트렌드 오버레이 <span class="badge fix">FIX</span></h2>
+  <p class="lead"><code>self._capacity_trend</code> 변수는 이미 위젯에 들어가 있지만 <code>paintEvent</code>에서 그리지 않는다 (set만 되고 unused). 점선 폴리라인으로 트랙 위에 얹어 fade 흐름을 직관화한다. 우상단에 SOH 축 라벨.</p>
+
+  <div class="col after" style="grid-column:1/-1">
+    <span class="tag">AFTER</span>
+    <h4>fade trend 오버레이 — 토글로 끄고 켤 수 있어야</h4>
+    <div class="tl">
+      <div class="tl-track active" id="tl-4">
+        <svg class="cap-svg" id="cap-4" preserveAspectRatio="none" viewBox="0 0 1000 18"></svg>
+      </div>
+      <div class="cap-axis">SOH 100% — 80%</div>
+      <div class="tl-ticks" id="tk-4"></div>
+    </div>
+    <div class="controls">
+      <button class="btn on" id="btn-cap-4" onclick="toggleCap4()">용량 오버레이 ON</button>
+      <span style="color:var(--muted)">선택 구간 fade · <b id="fade-4">—</b></span>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 5. 선택 통계 카드 ────────── -->
+<section class="section">
+  <h2><span class="num">5</span>선택 통계 카드 <span class="badge new">NEW</span></h2>
+  <p class="lead">선택 텍스트(예: <code>1-200 401-600</code>)는 분석 입력으로는 적절하지만, <i>선택했더니 무슨 의미인가</i>를 즉시 알려주지 못한다. 선택 변경 시 4종 핵심 KPI를 카드로 띄운다.</p>
+
+  <div class="col after" style="grid-column:1/-1">
+    <span class="tag">AFTER</span>
+    <h4>드래그·클릭으로 사이클 선택 (Ctrl=다중, Shift=범위)</h4>
+    <div class="tl">
+      <div class="tl-track active" id="tl-5"></div>
+      <div class="tl-ticks" id="tk-5"></div>
+    </div>
+    <div class="stat" id="stat-5">
+      <div class="cell"><div class="k">선택 사이클</div><div class="v"><span id="s-cnt">0</span><span class="u">cy</span></div></div>
+      <div class="cell"><div class="k">패턴 분포</div><div class="v" style="font-size:12px"><span id="s-pat">—</span></div></div>
+      <div class="cell ok"><div class="k">평균 SOH</div><div class="v"><span id="s-soh">—</span><span class="u">%</span></div></div>
+      <div class="cell bad"><div class="k">fade rate</div><div class="v"><span id="s-fade">—</span><span class="u">%/100cy</span></div></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px">
+      선택 텍스트 (사이클 탭 입력란과 동기): <code id="s-txt">—</code>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 6. 다중 채널 정렬 동기화 ────────── -->
+<section class="section">
+  <h2><span class="num">6</span>다중 채널 정렬 동기화 <span class="badge opt">OPT</span></h2>
+  <p class="lead">현재는 행마다 자체 max_lc 기준으로 100% 폭을 채워서 그리므로, 채널 길이가 달라도 끝점이 같아 보인다 — <i>비교 시 착시</i>. 동기화 토글을 켜면 모든 행이 글로벌 max_lc 기준으로 정렬되어 종료 시점 차이가 한눈에 보인다.</p>
+
+  <div class="col after" style="grid-column:1/-1">
+    <span class="tag">AFTER</span>
+    <h4>3개 채널 비교 — 동기화 OFF/ON 토글</h4>
+    <div class="controls" style="margin-bottom:8px;margin-top:0">
+      <button class="btn" id="btn-sync-6" onclick="toggleSync6()">정렬 동기화: OFF (행별 100%)</button>
+      <span style="color:var(--muted)">ON 시 글로벌 <code>max_lc=<span id="gmax-6">—</span></code> 기준 정렬</span>
+    </div>
+    <div id="multi-6"></div>
+  </div>
+</section>
+
+<!-- ────────── 7. 종합 데모 ────────── -->
+<section class="section">
+  <h2><span class="num">7</span>종합 데모 — 6개 개선이 모두 켜진 상태</h2>
+  <p class="lead">실제 위젯에 통합 시 모습. 라벨·칩·미니맵·마커·오버레이·통계가 한 화면에서 협업한다.</p>
+
+  <div class="col after" style="grid-column:1/-1">
+    <span class="tag">FULL</span>
+    <div class="full-demo">
+      <div class="chips" id="chips-7"></div>
+      <div class="ch-label">CH-A · 정상 셀 (max_lc=620)</div>
+      <div class="mini" id="mini-7"><div class="vp" id="vp-7"></div></div>
+      <div class="tl" style="padding-top:14px">
+        <div class="tl-markers" id="mk-7"></div>
+        <div class="tl-track active" id="tl-7">
+          <svg class="cap-svg" id="cap-7" preserveAspectRatio="none" viewBox="0 0 1000 18"></svg>
+        </div>
+        <div class="cap-axis">SOH</div>
+        <div class="tl-ticks" id="tk-7"></div>
+      </div>
+      <div class="stat" id="stat-7">
+        <div class="cell"><div class="k">전체</div><div class="v">620<span class="u">cy</span></div></div>
+        <div class="cell"><div class="k">선택</div><div class="v"><span id="s7-cnt">0</span><span class="u">cy</span></div></div>
+        <div class="cell ok"><div class="k">평균 SOH</div><div class="v"><span id="s7-soh">—</span><span class="u">%</span></div></div>
+        <div class="cell bad"><div class="k">fade</div><div class="v"><span id="s7-fade">—</span><span class="u">%/100cy</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ────────── 8. 단축키 + 구현 메모 ────────── -->
+<section class="section">
+  <h2><span class="num">8</span>단축키 + 구현 메모</h2>
+  <table class="kbd-tbl">
+    <tr><th style="width:200px">단축키 / 동작</th><th>결과</th></tr>
+    <tr><td><kbd>클릭</kbd></td><td>블록 전체 선택 (기존 유지)</td></tr>
+    <tr><td><kbd>Shift</kbd>+클릭</td><td>마지막 anchor부터 범위 선택 (기존 유지)</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+클릭</td><td>다중 선택 토글 (기존 유지)</td></tr>
+    <tr><td><kbd>Drag</kbd></td><td>임의 범위 (기존 유지)</td></tr>
+    <tr><td><kbd>휠</kbd> / <kbd>Ctrl</kbd>+휠</td><td><b>NEW</b> · 줌 ± (커서 위치 중심)</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td><b>NEW</b> · 줌 리셋 + 선택 해제</td></tr>
+    <tr><td><kbd>L</kbd></td><td><b>NEW</b> · 인라인 라벨 토글</td></tr>
+    <tr><td><kbd>C</kbd></td><td><b>NEW</b> · 용량 오버레이 토글</td></tr>
+    <tr><td>칩 클릭 / <kbd>Alt</kbd>+칩</td><td><b>NEW</b> · 단독 강조 / 다중 토글</td></tr>
+    <tr><td>마커 클릭</td><td><b>NEW</b> · 해당 진단 블록 선택 + 줌</td></tr>
+  </table>
+
+  <h4 style="margin:18px 0 6px;font-size:13px">PyQt6 구현 포인트</h4>
+  <ul style="margin:0;padding-left:18px;color:#374151;line-height:1.7">
+    <li><b>라벨 그리기</b>: <code>paintEvent</code> 블록 루프 안에서 <code>bw &gt;= 40 and pat['name']</code>일 때 <code>painter.drawText(QRect(x1,y,bw,h), Qt.AlignmentFlag.AlignCenter, abbrev)</code></li>
+    <li><b>칩 범례</b>: 위젯 외부 <code>QWidget</code>로 분리 (<code>CycleLegendChips</code>) → <code>filterChanged(set[str])</code> 시그널 → <code>CycleTimelineBar.set_filter(cats)</code></li>
+    <li><b>줌</b>: <code>self._view = (start, end)</code> 멤버 추가, <code>_build_block_layout</code>에 <code>view</code> 인자. <code>wheelEvent</code>로 줌 인/아웃, 미니맵은 별도 자식 위젯</li>
+    <li><b>마커</b>: classified 카테고리가 <code>{'RPT','DCIR','GITT','GITT(full)','GITT(simplified)'}</code>인 블록을 위쪽 16px 영역에 그림. <code>setMinimumHeight</code>를 16px 늘림</li>
+    <li><b>용량 오버레이</b>: 기존 <code>self._capacity_trend</code> 사용. <code>QPainterPath</code>로 점선 (DashLine, width=1.2, alpha=140)</li>
+    <li><b>통계 카드</b>: <code>selectionChanged</code> 시그널을 받아 부모 컨테이너에서 계산·렌더 (위젯 자체는 변경 최소화)</li>
+    <li><b>정렬 동기화</b>: <code>set_multi_blocks(rows, sync_max=True)</code> 옵션 추가. <code>True</code>면 <code>total_cycles</code> 대신 <code>global_max</code> 기준으로 layout 계산</li>
+  </ul>
+
+  <h4 style="margin:14px 0 6px;font-size:13px">테스트 포인트</h4>
+  <ul style="margin:0;padding-left:18px;color:#374151;line-height:1.7">
+    <li>cycle_regression_validator 4 케이스 회귀 (선택 텍스트·블록 좌표 동일)</li>
+    <li>회귀 baseline 갱신 — 추가 마커·라벨 픽셀 비교 허용 마진 ±1px</li>
+    <li>채널 1개 / 다중 채널 / 6000+ 사이클 / 빈 분류 폴백 4종 시나리오</li>
+  </ul>
+</section>
+
+</div>
+
+<div class="tip" id="tip"></div>
+<div id="toast"></div>
+
+<script>
+/* ─────────── 공통 데이터 ─────────── */
+const PALETTE = ["#3C5488","#E64B35","#00A087","#F39B7F","#4DBBD5","#8491B4","#B09C85","#91D1C2","#DC0000","#7E6148"];
+// 카테고리: [key, abbrev, color_idx, desc, isDiag(진단)]
+const CATS = {
+  "FORMATION":  {abbr:"FORM", ci:0, desc:"FORMATION (활성화)"},
+  "ACCEL":      {abbr:"ACCEL",ci:0, desc:"가속수명 (멀티스텝 충전)"},
+  "RPT":        {abbr:"RPT",  ci:5, desc:"RPT (0.2C 충방전)", diag:"rpt"},
+  "DCIR":       {abbr:"DCIR", ci:1, desc:"DCIR (단일 펄스)",   diag:"dcir"},
+  "GITT":       {abbr:"GITT", ci:3, desc:"GITT (OCV·D_Li 측정)",diag:"gitt"},
+  "충전(세팅)":  {abbr:"CHG",  ci:2, desc:"충전 (SOC 세팅)"},
+  "방전(초기)":  {abbr:"DCHG", ci:4, desc:"방전 (초기 반사이클)", half:true},
+  "방전(종료)":  {abbr:"END",  ci:4, desc:"방전 (시험 종료)",     half:true},
+  "저장":        {abbr:"STO",  ci:7, desc:"저장 (장시간 휴지)"},
+};
+
+// 데이터 빌더: [{cat, count}, ...] → 시작/끝 부여
+function build(rows){
+  const out=[]; let s=1;
+  for(const r of rows){
+    const c=CATS[r.cat]||{abbr:"X",ci:9,desc:"기타"};
+    out.push({cat:r.cat, abbr:c.abbr, ci:c.ci, desc:c.desc, half:c.half||false, diag:c.diag||null,
+              start:s, end:s+r.count-1, count:r.count});
+    s+=r.count;
+  }
+  return out;
+}
+
+// 표준 시나리오
+const SCN_STD = build([
+  {cat:"방전(초기)",count:1},
+  {cat:"FORMATION",count:3},
+  {cat:"RPT",count:1},
+  {cat:"ACCEL",count:200},
+  {cat:"DCIR",count:1},
+  {cat:"RPT",count:1},
+  {cat:"ACCEL",count:200},
+  {cat:"GITT",count:1},
+  {cat:"RPT",count:1},
+  {cat:"ACCEL",count:200},
+  {cat:"방전(종료)",count:1},
+]);
+const TOTAL_STD = SCN_STD[SCN_STD.length-1].end;
+
+const SCN_LONG = build([
+  {cat:"방전(초기)",count:1},{cat:"FORMATION",count:3},{cat:"RPT",count:1},
+  ...Array.from({length:8},(_,i)=>[{cat:"ACCEL",count:300}, i%2?{cat:"DCIR",count:1}:{cat:"GITT",count:1}, {cat:"RPT",count:1}]).flat(),
+  {cat:"ACCEL",count:300},
+  {cat:"방전(종료)",count:1},
+]);
+const TOTAL_LONG = SCN_LONG[SCN_LONG.length-1].end;
+
+/* ─────────── 툴팁 ─────────── */
+const tipEl = document.getElementById('tip');
+function showTip(html, x, y){
+  tipEl.innerHTML = html;
+  tipEl.classList.add('show');
+  const r=tipEl.getBoundingClientRect();
+  let nx=x+12, ny=y+14;
+  if(nx+r.width>window.innerWidth-8) nx=x-r.width-12;
+  if(ny+r.height>window.innerHeight-8) ny=y-r.height-14;
+  tipEl.style.left=nx+'px'; tipEl.style.top=ny+'px';
+}
+function hideTip(){ tipEl.classList.remove('show'); }
+document.addEventListener('mouseleave', hideTip);
+
+/* ─────────── 토스트 ─────────── */
+const toastEl = document.getElementById('toast');
+let toastT=null;
+function toast(msg){
+  toastEl.textContent=msg; toastEl.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),1400);
+}
+
+/* ─────────── 레이아웃 (Qt와 동일 알고리즘 단순화) ─────────── */
+function layout(blocks, total, viewStart=1, viewEnd=null, opts={}){
+  const ve = viewEnd ?? total;
+  const span = ve - viewStart + 1;
+  if(span<=0||!blocks.length) return [];
+  const minPx = opts.minPx ?? 8;
+  // viewport에 잘리는 블록만 추출 + 가시 범위로 클램프
+  const vis = [];
+  for(const b of blocks){
+    if(b.end < viewStart || b.start > ve) continue;
+    const s = Math.max(b.start, viewStart);
+    const e = Math.min(b.end, ve);
+    vis.push({...b, _s:s, _e:e, _w:e-s+1});
+  }
+  if(!vis.length) return [];
+  // 가중치 (반사이클 0.3)
+  const weights = vis.map(b => b._w * (b.half?0.3:1));
+  const wTot = weights.reduce((a,c)=>a+c,0);
+  const W = 1000;  // 가상 폭 (퍼센트로 변환)
+  const linear = weights.map(w => w/wTot * W);
+  const shortIdx = linear.map((px,i)=>px<minPx?i:-1).filter(i=>i>=0);
+  const shortTotal = shortIdx.length * minPx;
+  const longSum = weights.reduce((a,w,i)=>a+(linear[i]>=minPx?w:0),0);
+  const remaining = Math.max(0, W - shortTotal);
+  const out=[]; let x=0;
+  vis.forEach((b,i)=>{
+    const bw = linear[i]<minPx ? minPx : (longSum>0 ? weights[i]/longSum*remaining : linear[i]);
+    out.push({...b, x1:x, x2:x+bw});
+    x += bw;
+  });
+  return out;
+}
+
+/* ─────────── 렌더러 ─────────── */
+function renderTrack(elId, blocks, total, opts={}){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML='';
+  const vs = opts.viewStart ?? 1;
+  const ve = opts.viewEnd ?? total;
+  const items = layout(blocks, total, vs, ve, opts);
+  for(const b of items){
+    const div = document.createElement('div');
+    div.className='blk';
+    if(b.half) div.dataset.half='1';
+    div.style.left = b.x1/10+'%';
+    div.style.width = (b.x2-b.x1)/10+'%';
+    div.style.background = PALETTE[b.ci];
+    if(opts.label && (b.x2-b.x1) >= 36) div.textContent = b.abbr;
+    div.dataset.cat = b.cat;
+    div.dataset.start = b.start; div.dataset.end = b.end;
+    // 호버 툴팁
+    div.addEventListener('mouseenter', e=>{
+      showTip(`<b>${b.cat}</b><br>${b.desc}<br>사이클 ${b.start}~${b.end} (${b.count}cy)`, e.clientX, e.clientY);
+    });
+    div.addEventListener('mousemove', e=>{
+      tipEl.style.left=(e.clientX+12)+'px'; tipEl.style.top=(e.clientY+14)+'px';
+    });
+    div.addEventListener('mouseleave', hideTip);
+    if(opts.onClick) div.addEventListener('click', ev=>opts.onClick(b, ev));
+    el.appendChild(div);
+  }
+  return items;
+}
+
+function renderTicks(elId, total, viewStart=1, viewEnd=null){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML='';
+  const ve = viewEnd ?? total;
+  const span = ve-viewStart+1;
+  let step;
+  if(span<=20) step=5;
+  else if(span<=100) step=10;
+  else if(span<=500) step=50;
+  else if(span<=2000) step=100;
+  else step=500;
+  const ticks=[];
+  for(let t=Math.ceil(viewStart/step)*step; t<=ve; t+=step) ticks.push(t);
+  if(!ticks.includes(ve)) ticks.push(ve);
+  for(const t of ticks){
+    const sp=document.createElement('span');
+    sp.textContent=t;
+    sp.style.left = ((t-viewStart)/(span-1)*100)+'%';
+    sp.style.top='4px';
+    el.appendChild(sp);
+  }
+}
+
+function renderMarkers(elId, blocks, total, viewStart=1, viewEnd=null){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML='';
+  const ve = viewEnd ?? total;
+  for(const b of blocks){
+    const c = CATS[b.cat];
+    if(!c || !c.diag) continue;
+    if(b.start<viewStart||b.end>ve) continue;
+    const mid = (b.start+b.end)/2;
+    const sp = document.createElement('span');
+    sp.className = 'mk '+c.diag;
+    sp.textContent = c.diag==='rpt'?'◆':(c.diag==='dcir'?'▼':'●');
+    sp.style.left = ((mid-viewStart)/(ve-viewStart)*100)+'%';
+    sp.title = `${b.cat} @ cy ${b.start}${b.end!==b.start?'-'+b.end:''}`;
+    sp.addEventListener('mouseenter', e=>{
+      showTip(`<b>${b.cat}</b> · ${c.desc}<br>사이클 ${b.start}${b.end!==b.start?'-'+b.end:''}<br><i>클릭=선택</i>`, e.clientX, e.clientY);
+    });
+    sp.addEventListener('mouseleave', hideTip);
+    sp.addEventListener('click', ()=>{
+      // dispatch custom event
+      el.dispatchEvent(new CustomEvent('marker-click', {detail:b, bubbles:true}));
+      toast(`${b.cat} 사이클 ${b.start}${b.end!==b.start?'-'+b.end:''} 선택`);
+    });
+    el.appendChild(sp);
+  }
+}
+
+/* 용량 곡선 (가짜 fade) */
+function fakeFadeAt(cy, total){
+  // SOH 100 → 80 사이를 비선형 (제곱근 형태)으로 떨어뜨림
+  const r = cy/total;
+  return 100 - 20*Math.pow(r,0.55) - Math.sin(r*8)*0.6;
+}
+function drawCapacity(svgId, total, viewStart=1, viewEnd=null){
+  const svg = document.getElementById(svgId);
+  if(!svg) return;
+  const ve = viewEnd ?? total;
+  const span = ve-viewStart+1;
+  let d = '';
+  const N = Math.min(160, span);
+  for(let i=0;i<=N;i++){
+    const cy = viewStart + (span-1)*i/N;
+    const x = i/N * 1000;
+    const soh = fakeFadeAt(cy, total);  // 100..80
+    const y = (1 - (soh-78)/(102-78)) * 18;  // 76~102 → 18~0
+    d += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(2) + ' ';
+  }
+  svg.innerHTML = `<path d="${d}"/>`;
+}
+
+/* ─────────── 1. 인라인 라벨 + 칩 범례 ─────────── */
+function buildChips(elId, scenarios, target){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML='';
+  const used = new Set(scenarios.map(b=>b.cat));
+  let solo = null;
+  for(const k of used){
+    const c = CATS[k]; if(!c) continue;
+    const chip = document.createElement('span');
+    chip.className='chip';
+    chip.innerHTML = `<span class="sw" style="background:${PALETTE[c.ci]}"></span>${k}`;
+    chip.addEventListener('click', e=>{
+      const isAlt = e.altKey;
+      if(isAlt){
+        chip.classList.toggle('off');
+      } else {
+        if(solo===k){
+          // 해제
+          el.querySelectorAll('.chip').forEach(x=>{x.classList.remove('solo');x.classList.remove('off');});
+          solo=null;
+        } else {
+          el.querySelectorAll('.chip').forEach(x=>{x.classList.remove('solo');x.classList.add('off');});
+          chip.classList.remove('off'); chip.classList.add('solo');
+          solo=k;
+        }
+      }
+      // 적용
+      const offCats = new Set();
+      el.querySelectorAll('.chip.off').forEach(x=>offCats.add(x.textContent.trim()));
+      target.querySelectorAll('.blk').forEach(b=>{
+        if(offCats.has(b.dataset.cat)) b.classList.add('dim');
+        else b.classList.remove('dim');
+      });
+    });
+    el.appendChild(chip);
+  }
+}
+
+renderTrack('tl-1-before', SCN_STD, TOTAL_STD, {label:false});
+renderTicks('tk-1-before', TOTAL_STD);
+const tlAfter = document.getElementById('tl-1-after');
+renderTrack('tl-1-after', SCN_STD, TOTAL_STD, {label:true});
+renderTicks('tk-1-after', TOTAL_STD);
+buildChips('chips-1', SCN_STD, tlAfter);
+
+/* ─────────── 2. 미니맵 + 줌 ─────────── */
+let view2 = {start:1, end:TOTAL_LONG};
+const tl2 = document.getElementById('tl-2');
+const mini2 = document.getElementById('mini-2');
+const vp2 = document.getElementById('vp-2');
+const zoomEl2 = document.getElementById('zoom-2');
+const zvEl2 = document.getElementById('zv-2');
+const totEl2 = document.getElementById('tot-2');
+const visEl2 = document.getElementById('vis-2');
+totEl2.textContent = TOTAL_LONG;
+
+function renderMini(elId, blocks, total){
+  const el = document.getElementById(elId);
+  // 기존 segment 제거 (vp는 보존)
+  el.querySelectorAll('.seg').forEach(s=>s.remove());
+  for(const b of blocks){
+    const seg = document.createElement('div');
+    seg.className='seg';
+    seg.style.left = ((b.start-1)/total*100)+'%';
+    seg.style.width = (b.count/total*100)+'%';
+    seg.style.background = PALETTE[b.ci];
+    seg.style.opacity = 0.85;
+    el.appendChild(seg);
+  }
+}
+
+function update2(){
+  const span = view2.end-view2.start+1;
+  renderTrack('tl-2', SCN_LONG, TOTAL_LONG, {label:true, viewStart:view2.start, viewEnd:view2.end});
+  renderTicks('tk-2', TOTAL_LONG, view2.start, view2.end);
+  vp2.style.left = ((view2.start-1)/TOTAL_LONG*100)+'%';
+  vp2.style.width = (span/TOTAL_LONG*100)+'%';
+  visEl2.textContent = `${view2.start}-${view2.end} (${span}cy)`;
+  zvEl2.textContent = (TOTAL_LONG/span).toFixed(1)+'×';
+  zoomEl2.value = TOTAL_LONG/span;
+}
+renderMini('mini-2', SCN_LONG, TOTAL_LONG);
+update2();
+
+zoomEl2.addEventListener('input', ()=>{
+  const z = parseFloat(zoomEl2.value);
+  const span = Math.max(20, Math.round(TOTAL_LONG/z));
+  const center = (view2.start+view2.end)/2;
+  view2.start = Math.max(1, Math.round(center - span/2));
+  view2.end = Math.min(TOTAL_LONG, view2.start + span - 1);
+  view2.start = Math.max(1, view2.end - span + 1);
+  update2();
+});
+function resetZoom2(){ view2 = {start:1, end:TOTAL_LONG}; update2(); }
+
+// 미니맵 드래그
+let dragging2 = false;
+mini2.addEventListener('mousedown', e=>{
+  dragging2 = true;
+  const r = mini2.getBoundingClientRect();
+  const span = view2.end-view2.start+1;
+  const cy = Math.round((e.clientX-r.left)/r.width * TOTAL_LONG);
+  view2.start = Math.max(1, Math.round(cy - span/2));
+  view2.end = Math.min(TOTAL_LONG, view2.start+span-1);
+  view2.start = Math.max(1, view2.end-span+1);
+  update2();
+});
+window.addEventListener('mousemove', e=>{
+  if(!dragging2) return;
+  const r = mini2.getBoundingClientRect();
+  const span = view2.end-view2.start+1;
+  const cy = Math.round((e.clientX-r.left)/r.width * TOTAL_LONG);
+  view2.start = Math.max(1, Math.round(cy - span/2));
+  view2.end = Math.min(TOTAL_LONG, view2.start+span-1);
+  view2.start = Math.max(1, view2.end-span+1);
+  update2();
+});
+window.addEventListener('mouseup', ()=>{dragging2=false});
+
+// 휠 줌
+tl2.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const r = tl2.getBoundingClientRect();
+  const frac = (e.clientX-r.left)/r.width;
+  const span = view2.end-view2.start+1;
+  const cyAtCursor = view2.start + span*frac;
+  const factor = e.deltaY<0?0.85:1.18;
+  const newSpan = Math.max(20, Math.min(TOTAL_LONG, Math.round(span*factor)));
+  view2.start = Math.max(1, Math.round(cyAtCursor - newSpan*frac));
+  view2.end = Math.min(TOTAL_LONG, view2.start+newSpan-1);
+  view2.start = Math.max(1, view2.end-newSpan+1);
+  update2();
+}, {passive:false});
+
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape'){ resetZoom2(); resetSel5(); resetSel7(); }
+});
+
+/* ─────────── 3. 진단 마커 ─────────── */
+renderTrack('tl-3-before', SCN_STD, TOTAL_STD, {label:false});
+renderTicks('tk-3-before', TOTAL_STD);
+const tl3 = document.getElementById('tl-3-after');
+renderTrack('tl-3-after', SCN_STD, TOTAL_STD, {label:true});
+renderTicks('tk-3-after', TOTAL_STD);
+renderMarkers('mk-3', SCN_STD, TOTAL_STD);
+document.getElementById('mk-3').addEventListener('marker-click', ev=>{
+  const b = ev.detail;
+  tl3.querySelectorAll('.blk').forEach(x=>x.classList.remove('sel'));
+  tl3.querySelectorAll(`.blk[data-start="${b.start}"]`).forEach(x=>x.classList.add('sel'));
+});
+
+/* ─────────── 4. 용량 오버레이 ─────────── */
+let cap4on = true;
+renderTrack('tl-4', SCN_STD, TOTAL_STD, {label:true});
+renderTicks('tk-4', TOTAL_STD);
+drawCapacity('cap-4', TOTAL_STD);
+function toggleCap4(){
+  cap4on = !cap4on;
+  document.getElementById('cap-4').style.display = cap4on?'block':'none';
+  const btn = document.getElementById('btn-cap-4');
+  btn.classList.toggle('on', cap4on);
+  btn.textContent = '용량 오버레이 '+(cap4on?'ON':'OFF');
+}
+document.getElementById('fade-4').textContent =
+  ((fakeFadeAt(1,TOTAL_STD)-fakeFadeAt(TOTAL_STD,TOTAL_STD))/TOTAL_STD*100).toFixed(2);
+
+/* ─────────── 5. 선택 통계 ─────────── */
+const tl5 = document.getElementById('tl-5');
+let sel5 = [];  // [(s,e),...]
+renderTrack('tl-5', SCN_STD, TOTAL_STD, {label:true, onClick:(b,ev)=>{
+  const range=[b.start,b.end];
+  if(ev.shiftKey && sel5.length){
+    const last = sel5[sel5.length-1];
+    sel5 = [[Math.min(last[0],b.start), Math.max(last[1],b.end)]];
+  } else if(ev.ctrlKey || ev.metaKey){
+    const idx = sel5.findIndex(s=>s[0]===range[0]&&s[1]===range[1]);
+    if(idx>=0) sel5.splice(idx,1); else sel5.push(range);
+  } else {
+    sel5 = [range];
+  }
+  applySel5();
+}});
+renderTicks('tk-5', TOTAL_STD);
+
+function applySel5(){
+  tl5.querySelectorAll('.blk').forEach(div=>{
+    const s=+div.dataset.start, e=+div.dataset.end;
+    const inSel = sel5.some(r => s>=r[0] && e<=r[1]);
+    div.classList.toggle('sel', inSel);
+  });
+  // 통계
+  let cnt=0; const patCnt={}; let sohSum=0; let n=0;
+  for(const [s,e] of sel5){
+    cnt += e-s+1;
+    for(const b of SCN_STD){
+      if(b.end<s||b.start>e) continue;
+      const ov = Math.min(b.end,e)-Math.max(b.start,s)+1;
+      patCnt[b.abbr] = (patCnt[b.abbr]||0)+ov;
+    }
+    for(let cy=s; cy<=e; cy++){ sohSum += fakeFadeAt(cy, TOTAL_STD); n++; }
+  }
+  document.getElementById('s-cnt').textContent = cnt;
+  const patStr = Object.entries(patCnt).sort((a,b)=>b[1]-a[1]).slice(0,3)
+    .map(([k,v])=>`${k}×${v}`).join(' · ') || '—';
+  document.getElementById('s-pat').textContent = patStr;
+  if(cnt>0){
+    const sohAvg = sohSum/n;
+    document.getElementById('s-soh').textContent = sohAvg.toFixed(2);
+    // fade rate per 100 cy
+    if(sel5.length===1 && (sel5[0][1]-sel5[0][0])>1){
+      const [s,e]=sel5[0];
+      const fade = fakeFadeAt(s,TOTAL_STD)-fakeFadeAt(e,TOTAL_STD);
+      const rate = fade/((e-s)/100);
+      document.getElementById('s-fade').textContent = rate.toFixed(2);
+    } else {
+      document.getElementById('s-fade').textContent='—';
+    }
+  } else {
+    document.getElementById('s-soh').textContent='—';
+    document.getElementById('s-fade').textContent='—';
+  }
+  document.getElementById('s-txt').textContent = sel5.length?
+    sel5.map(([s,e])=>s===e?s:`${s}-${e}`).join(' ') : '—';
+}
+function resetSel5(){ sel5=[]; applySel5(); }
+
+/* ─────────── 6. 다중 채널 정렬 ─────────── */
+const SCN_CH_A = build([{cat:"FORMATION",count:3},{cat:"RPT",count:1},{cat:"ACCEL",count:200},{cat:"RPT",count:1},{cat:"ACCEL",count:200},{cat:"RPT",count:1},{cat:"ACCEL",count:200},{cat:"방전(종료)",count:1}]);
+const SCN_CH_B = build([{cat:"FORMATION",count:3},{cat:"RPT",count:1},{cat:"ACCEL",count:200},{cat:"RPT",count:1},{cat:"ACCEL",count:120},{cat:"방전(종료)",count:1}]);
+const SCN_CH_C = build([{cat:"FORMATION",count:3},{cat:"RPT",count:1},{cat:"ACCEL",count:200},{cat:"RPT",count:1},{cat:"ACCEL",count:200},{cat:"RPT",count:1},{cat:"ACCEL",count:380},{cat:"방전(종료)",count:1}]);
+const tot_A = SCN_CH_A[SCN_CH_A.length-1].end;
+const tot_B = SCN_CH_B[SCN_CH_B.length-1].end;
+const tot_C = SCN_CH_C[SCN_CH_C.length-1].end;
+const G_MAX = Math.max(tot_A, tot_B, tot_C);
+document.getElementById('gmax-6').textContent = G_MAX;
+
+let sync6 = false;
+function renderMulti6(){
+  const el = document.getElementById('multi-6');
+  el.innerHTML='';
+  const channels = [['CH-A · 정상 (max_lc=782)', SCN_CH_A, tot_A],
+                    ['CH-B · 조기 종료 (max_lc=326)', SCN_CH_B, tot_B],
+                    ['CH-C · 장수명 (max_lc=787)', SCN_CH_C, tot_C]];
+  for(const [lab, blocks, total] of channels){
+    const wrap = document.createElement('div');
+    wrap.style.marginBottom='8px';
+    wrap.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:2px;font-weight:600">${lab}</div>`;
+    const tl = document.createElement('div'); tl.className='tl';
+    const tr = document.createElement('div'); tr.className='tl-track active';
+    tr.id = 'r6-'+lab.split(' ')[0];
+    tl.appendChild(tr);
+    const tk = document.createElement('div'); tk.className='tl-ticks';
+    tk.id = 'k6-'+lab.split(' ')[0];
+    tl.appendChild(tk);
+    wrap.appendChild(tl);
+    el.appendChild(wrap);
+    const renderTotal = sync6 ? G_MAX : total;
+    const blockList = sync6
+      ? blocks.concat([{cat:"_pad", abbr:"", ci:9, desc:"미실시", half:false, diag:null,
+                        start:total+1, end:G_MAX, count:G_MAX-total}])
+      : blocks;
+    renderTrack(tr.id, blockList.filter(b=>b.count>0), renderTotal, {label:true});
+    // 패딩 블록을 점선/회색으로
+    if(sync6){
+      tr.querySelectorAll('.blk').forEach(d=>{
+        if(d.dataset.cat==='_pad'){
+          d.style.background = 'repeating-linear-gradient(45deg,#E5E8EC,#E5E8EC 4px,#F3F4F6 4px,#F3F4F6 8px)';
+          d.style.color='#9CA3AF'; d.textContent='미실시';
+        }
+      });
+    }
+    renderTicks(tk.id, renderTotal);
+  }
+}
+function toggleSync6(){
+  sync6 = !sync6;
+  const btn = document.getElementById('btn-sync-6');
+  btn.classList.toggle('on', sync6);
+  btn.textContent = '정렬 동기화: '+(sync6?'ON (글로벌 max_lc)':'OFF (행별 100%)');
+  renderMulti6();
+}
+renderMulti6();
+
+/* ─────────── 7. 종합 데모 ─────────── */
+const SCN_FULL = build([
+  {cat:"방전(초기)",count:1},{cat:"FORMATION",count:3},{cat:"RPT",count:1},
+  {cat:"ACCEL",count:200},{cat:"DCIR",count:1},{cat:"RPT",count:1},
+  {cat:"ACCEL",count:200},{cat:"GITT",count:1},{cat:"RPT",count:1},
+  {cat:"ACCEL",count:209},{cat:"방전(종료)",count:1},
+]);
+const TOTAL_FULL = SCN_FULL[SCN_FULL.length-1].end;
+let view7 = {start:1, end:TOTAL_FULL};
+let sel7 = [];
+
+function update7(){
+  const tl = document.getElementById('tl-7');
+  renderTrack('tl-7', SCN_FULL, TOTAL_FULL, {
+    label:true, viewStart:view7.start, viewEnd:view7.end,
+    onClick:(b,ev)=>{
+      const range=[b.start,b.end];
+      if(ev.shiftKey && sel7.length){
+        const last = sel7[sel7.length-1];
+        sel7 = [[Math.min(last[0],b.start), Math.max(last[1],b.end)]];
+      } else if(ev.ctrlKey || ev.metaKey){
+        const idx = sel7.findIndex(s=>s[0]===range[0]&&s[1]===range[1]);
+        if(idx>=0) sel7.splice(idx,1); else sel7.push(range);
+      } else {
+        sel7 = [range];
+      }
+      applySel7();
+    }
+  });
+  renderTicks('tk-7', TOTAL_FULL, view7.start, view7.end);
+  renderMarkers('mk-7', SCN_FULL, TOTAL_FULL, view7.start, view7.end);
+  drawCapacity('cap-7', TOTAL_FULL, view7.start, view7.end);
+  // svg 다시 부착
+  const svg = document.getElementById('cap-7');
+  document.getElementById('tl-7').appendChild(svg);
+  applySel7();
+  // 미니맵 viewport
+  const vp = document.getElementById('vp-7');
+  vp.style.left = ((view7.start-1)/TOTAL_FULL*100)+'%';
+  vp.style.width = ((view7.end-view7.start+1)/TOTAL_FULL*100)+'%';
+}
+function applySel7(){
+  const tl = document.getElementById('tl-7');
+  tl.querySelectorAll('.blk').forEach(div=>{
+    const s=+div.dataset.start, e=+div.dataset.end;
+    const inSel = sel7.some(r => s>=r[0] && e<=r[1]);
+    div.classList.toggle('sel', inSel);
+  });
+  let cnt=0, sohSum=0, n=0;
+  for(const [s,e] of sel7){
+    cnt += e-s+1;
+    for(let cy=s; cy<=e; cy++){ sohSum += fakeFadeAt(cy, TOTAL_FULL); n++; }
+  }
+  document.getElementById('s7-cnt').textContent = cnt;
+  document.getElementById('s7-soh').textContent = cnt? (sohSum/n).toFixed(2):'—';
+  if(sel7.length===1 && (sel7[0][1]-sel7[0][0])>1){
+    const [s,e]=sel7[0];
+    const fade = fakeFadeAt(s,TOTAL_FULL)-fakeFadeAt(e,TOTAL_FULL);
+    document.getElementById('s7-fade').textContent = (fade/((e-s)/100)).toFixed(2);
+  } else {
+    document.getElementById('s7-fade').textContent = cnt? '—':'—';
+  }
+}
+function resetSel7(){ sel7=[]; applySel7(); }
+
+renderMini('mini-7', SCN_FULL, TOTAL_FULL);
+buildChips('chips-7', SCN_FULL, document.getElementById('tl-7'));
+update7();
+
+// 종합 데모: 휠 줌 + 미니맵 드래그
+const tl7 = document.getElementById('tl-7');
+tl7.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const r = tl7.getBoundingClientRect();
+  const frac = (e.clientX-r.left)/r.width;
+  const span = view7.end-view7.start+1;
+  const cyAtCursor = view7.start + span*frac;
+  const factor = e.deltaY<0?0.85:1.18;
+  const newSpan = Math.max(20, Math.min(TOTAL_FULL, Math.round(span*factor)));
+  view7.start = Math.max(1, Math.round(cyAtCursor - newSpan*frac));
+  view7.end = Math.min(TOTAL_FULL, view7.start+newSpan-1);
+  view7.start = Math.max(1, view7.end-newSpan+1);
+  update7();
+}, {passive:false});
+
+const mini7 = document.getElementById('mini-7');
+let dragging7=false;
+mini7.addEventListener('mousedown', e=>{
+  dragging7=true;
+  const r = mini7.getBoundingClientRect();
+  const span = view7.end-view7.start+1;
+  const cy = Math.round((e.clientX-r.left)/r.width * TOTAL_FULL);
+  view7.start = Math.max(1, Math.round(cy - span/2));
+  view7.end = Math.min(TOTAL_FULL, view7.start+span-1);
+  view7.start = Math.max(1, view7.end-span+1);
+  update7();
+});
+window.addEventListener('mousemove', e=>{
+  if(!dragging7) return;
+  const r = mini7.getBoundingClientRect();
+  const span = view7.end-view7.start+1;
+  const cy = Math.round((e.clientX-r.left)/r.width * TOTAL_FULL);
+  view7.start = Math.max(1, Math.round(cy - span/2));
+  view7.end = Math.min(TOTAL_FULL, view7.start+span-1);
+  view7.start = Math.max(1, view7.end-span+1);
+  update7();
+});
+window.addEventListener('mouseup', ()=>{dragging7=false});
+
+// 마커 클릭으로 줌
+document.getElementById('mk-7').addEventListener('marker-click', ev=>{
+  const b = ev.detail;
+  // 해당 블록 ±20cy로 줌
+  view7 = {start:Math.max(1,b.start-20), end:Math.min(TOTAL_FULL,b.end+20)};
+  sel7 = [[b.start, b.end]];
+  update7();
+});
+
+// 단축키 L/C
+document.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.key==='l'||e.key==='L'){
+    document.querySelectorAll('.blk').forEach(b=>{
+      if(!b.dataset.lblToggled){ b.dataset.lblToggled='1'; b.dataset.lblText=b.textContent; b.textContent=''; }
+      else { delete b.dataset.lblToggled; b.textContent=b.dataset.lblText||''; }
+    });
+    toast('인라인 라벨 토글');
+  }
+  if(e.key==='c'||e.key==='C'){
+    toggleCap4();
+    document.getElementById('cap-7').style.display = cap4on?'block':'none';
+    toast('용량 오버레이 '+(cap4on?'ON':'OFF'));
+  }
+});
+
+</script>
+</body>
+</html>

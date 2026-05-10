@@ -10811,6 +10811,44 @@ _CLASSIFIED_COLORS = {
 }
 
 
+# 사이클 바 인라인 라벨 약어 (블록 폭 ≥ 임계 시 블록 위에 직접 그림).
+# 키 누락 시 패턴 키 첫 6자로 폴백 (paintEvent 참조).
+_CYCLE_LABEL_ABBR = {
+    # 신 9종 + 서브태그
+    '충전':              '충전',
+    '충전(세팅)':         'CHG·S',
+    '방전':              '방전',
+    '방전(초기)':         '방·초',
+    '방전(종료)':         '방·말',
+    '방전(저장준비)':      '방·저',
+    '방전(SOC세팅)':      '방·S',
+    '저장':              '저장',
+    '저장(floating)':     'Float',
+    '사이클':             '사이클',
+    '사이클(FORMATION)':  'FORM',
+    '사이클(ACCEL)':      'ACCEL',
+    '사이클(스텝충전)':    'STEP',
+    'RPT':               'RPT',
+    'GITT':              'GITT',
+    'GITT(full)':         'GITT·F',
+    'GITT(simplified)':   'GITT·S',
+    'DCIR':              'DCIR',
+    'SOC별 사이클':       'SOC',
+    '히스테리시스':        '히스',
+    '히스테리시스(충방전)': '히·CD',
+    '히스테리시스(방충전)': '히·DC',
+    '히스테리시스(충전)':   '히·CD',
+    '히스테리시스(방전)':   '히·DC',
+    # 패턴 카테고리 A~G (StepType 폴백 분류)
+    'A': 'A·수명', 'B': 'B·단방', 'C': 'C·CC', 'D': 'D·초방',
+    'E': 'E·RPT', 'F': 'F·HPPC', 'G': 'G·ECT', 'X': '?',
+    # 구 alias
+    'Rss': 'Rss', '가속수명': 'ACCEL',
+    'initial': '초·반', '반사이클': '반사이클',
+    'unknown': '?',
+}
+
+
     # (구 _build_timeline_blocks_classified 삭제 — TC 1원화로 _build_timeline_blocks_tc_by_loop만 사용)
 
 
@@ -11036,7 +11074,14 @@ class CycleTimelineBar(QtWidgets.QWidget):
     _ROW_GAP = 2
     _TICK_HEIGHT = 16
     _MIN_BLOCK_PX = 8
+    _LABEL_MIN_PX = 36       # 블록 폭이 이 이상일 때 인라인 라벨 그림
     _HALF_CYCLE_PATTERNS = {'initial', '반사이클'}
+
+    # ── 시그널 ──
+    # 라벨 토글 (L 키) 시 칩 위젯 등 외부에서 상태 동기화용
+    labelsToggled = QtCore.pyqtSignal(bool)
+    # sync_max 토글 시 외부 토글 버튼 동기화
+    syncMaxToggled = QtCore.pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -11051,12 +11096,17 @@ class CycleTimelineBar(QtWidgets.QWidget):
         self._is_dragging = False
         self._hover_block: dict | None = None
         self._capacity_trend: list[float] | None = None
+        # ── 260510 UX: 인라인 라벨 / 카테고리 필터 / 정렬 동기화 ──
+        self._show_labels: bool = True
+        self._filter_cats: set[str] | None = None  # None=모두 / set=강조 카테고리 (off는 dim)
+        self._sync_max: bool = False               # True 시 모든 행을 글로벌 max_lc 기준 정렬
         self._min_h = self._ROW_HEIGHT + self._TICK_HEIGHT + 4
         self._max_h = self._ROW_HEIGHT * 4 + self._ROW_GAP * 3 + self._TICK_HEIGHT + 4
         self.setMinimumHeight(self._min_h)
         self.setMaximumHeight(self._min_h)
         self.setMouseTracking(True)
         self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)  # L 키 등 단축키 수신
 
     # ── 선택 접근자 (활성 행 기준, 호환) ──
 
@@ -11101,7 +11151,15 @@ class CycleTimelineBar(QtWidgets.QWidget):
         self._update_size()
         self.update()
 
-    def set_multi_blocks(self, rows: list[tuple[str, list[dict]]]) -> None:
+    def set_multi_blocks(self, rows: list[tuple[str, list[dict]]],
+                         sync_max: bool | None = None) -> None:
+        """다중 채널 블록 설정.
+
+        Parameters
+        ----------
+        rows : 행별 (label, blocks) 튜플 리스트.
+        sync_max : 글로벌 max_lc 정렬 동기화 (None=현재값 유지, True/False=설정).
+        """
         self._rows = []
         for label, blocks in rows:
             total = blocks[-1]['end'] if blocks else 0
@@ -11116,12 +11174,80 @@ class CycleTimelineBar(QtWidgets.QWidget):
         self._row_selections.clear()
         self._row_anchors.clear()
         self._capacity_trend = None
+        if sync_max is not None:
+            self._sync_max = bool(sync_max)
         self._update_size()
         self.update()
 
     def set_capacity_trend(self, trend: list[float]) -> None:
         self._capacity_trend = trend
         self.update()
+
+    # ── 260510 UX 메서드 ──
+
+    def set_show_labels(self, show: bool) -> None:
+        """블록 위 인라인 약어 라벨 표시 토글."""
+        show = bool(show)
+        if show == self._show_labels:
+            return
+        self._show_labels = show
+        self.labelsToggled.emit(show)
+        self.update()
+
+    def set_filter(self, cats: set[str] | None) -> None:
+        """카테고리 강조 필터.
+
+        cats=None → 전체 풀컬러.
+        cats=set → set 안의 카테고리만 풀컬러, 나머지는 dim.
+        """
+        if cats is not None:
+            cats = set(cats)
+            if not cats:
+                cats = None
+        self._filter_cats = cats
+        self.update()
+
+    def set_sync_max(self, sync: bool) -> None:
+        """다중 채널 정렬 동기화 토글 (글로벌 max_lc 기준 정렬)."""
+        sync = bool(sync)
+        if sync == self._sync_max:
+            return
+        self._sync_max = sync
+        self.syncMaxToggled.emit(sync)
+        self.update()
+
+    def category_set(self) -> list[str]:
+        """현재 표시된 모든 행에 등장한 카테고리 키를 출현 순서대로 반환 (legend 동기화용)."""
+        seen: dict[str, None] = {}
+        for _, blocks, _ in self._rows:
+            for b in blocks:
+                p = b.get('pattern')
+                if p and p != '_pad' and p not in seen:
+                    seen[p] = None
+        return list(seen.keys())
+
+    def _global_max(self) -> int:
+        return max((t for _, _, t in self._rows), default=0) if self._rows else 0
+
+    def _row_layout_data(self, ri: int) -> tuple[list[dict], int, int]:
+        """행 ri 의 (blocks, data_total, layout_total) 반환.
+
+        sync_max 모드에서는 layout_total = global_max, blocks 끝에 _pad 가상 블록을
+        추가해 빈 구간이 회색 패턴으로 그려지도록 한다 (data_total 은 원래 끝).
+        """
+        if not self._rows or ri >= len(self._rows):
+            return self._blocks, self._total_cycles, self._total_cycles
+        _, blocks, total = self._rows[ri]
+        if not self._sync_max:
+            return blocks, total, total
+        gmax = self._global_max()
+        if total >= gmax or gmax <= 0:
+            return blocks, total, gmax or total
+        pad = [{
+            'start': total + 1, 'end': gmax,
+            'pattern': '_pad', 'count': gmax - total,
+        }]
+        return blocks + pad, total, gmax
 
     def set_selection_from_text(self, text: str) -> None:
         sels = []
@@ -11185,6 +11311,9 @@ class CycleTimelineBar(QtWidgets.QWidget):
         return layout
 
     def _cycle_to_x(self, cycle: int, blocks=None, total=None) -> float:
+        # 인자 미지정 시 활성 행 augmented (sync_max 시 _pad 포함) 기준
+        if blocks is None and total is None and self._sync_max:
+            blocks, total = self._active_aug()
         blocks = blocks or self._blocks
         total = total or self._total_cycles
         if total <= 0 or not blocks:
@@ -11199,22 +11328,34 @@ class CycleTimelineBar(QtWidgets.QWidget):
                 return x1 + frac * (x2 - x1)
         return layout[-1][1] if layout else 4
 
+    def _active_aug(self) -> tuple[list[dict], int]:
+        """활성 행의 (augmented_blocks, layout_total) 반환. sync_max 시 _pad 포함."""
+        blocks, _, lt = self._row_layout_data(self._active_row)
+        return blocks, lt
+
     def _x_to_cycle(self, x: float) -> int:
-        if not self._blocks:
+        blocks_aug, layout_total = self._active_aug()
+        if not blocks_aug:
             return 1
-        layout = self._build_block_layout()
+        layout = self._build_block_layout(blocks_aug, layout_total)
         for i, (x1, x2) in enumerate(layout):
             if x1 <= x <= x2:
-                b = self._blocks[i]
+                b = blocks_aug[i]
+                # sync_max 패딩 영역은 실제 데이터 끝점으로 클램프
+                if b.get('pattern') == '_pad':
+                    return self._total_cycles
                 bw = x2 - x1
                 frac = (x - x1) / bw if bw > 0 else 0
                 cyc = b['start'] + int(frac * b['count'])
                 return max(b['start'], min(cyc, b['end']))
-        return max(1, min(self._total_cycles, self._blocks[-1]['end']))
+        return max(1, min(self._total_cycles, self._blocks[-1]['end']) if self._blocks else 1)
 
     def _block_at(self, x: float) -> dict | None:
+        blocks_aug, _ = self._active_aug()
         cyc = self._x_to_cycle(x)
-        for b in self._blocks:
+        for b in blocks_aug:
+            if b.get('pattern') == '_pad':
+                continue
             if b['start'] <= cyc <= b['end']:
                 return b
         return None
@@ -11242,29 +11383,67 @@ class CycleTimelineBar(QtWidgets.QWidget):
         painter.fillRect(0, 0, w_total, self.height(),
                          self.palette().color(self.backgroundRole()))
 
-        for ri, (label, blocks, total) in enumerate(self._rows):
+        # 인라인 라벨 폰트 (행마다 동일)
+        _lbl_font = QFont('맑은 고딕', 8)
+
+        for ri in range(len(self._rows)):
             bar_y = self._row_y(ri)
             bar_h = self._ROW_HEIGHT
-            layout = self._build_block_layout(blocks, total)
+            blocks_aug, _data_total, layout_total = self._row_layout_data(ri)
+            layout = self._build_block_layout(blocks_aug, layout_total)
 
             # 패턴 블록
-            for bi, block in enumerate(blocks):
+            for bi, block in enumerate(blocks_aug):
                 if bi >= len(layout):
                     break
                 x1, x2 = layout[bi]
                 bw = max(2, int(x2 - x1))
                 _p = block['pattern']
+                # ── sync_max 패딩 블록: 회색 빗금 + 옅은 라벨 ──
+                if _p == '_pad':
+                    pad_color = QColor(229, 232, 236)
+                    painter.fillRect(int(x1), bar_y, bw, bar_h, pad_color)
+                    # 사선 빗금
+                    painter.setPen(QPen(QColor(190, 195, 200, 140), 0.6))
+                    step = 6
+                    for hx in range(int(x1) - bar_h, int(x1 + bw) + bar_h, step):
+                        painter.drawLine(hx, bar_y + bar_h, hx + bar_h, bar_y)
+                    if bw >= self._LABEL_MIN_PX:
+                        painter.setPen(QPen(QColor(120, 125, 130), 1.0))
+                        painter.setFont(_lbl_font)
+                        painter.drawText(int(x1), bar_y, bw, bar_h,
+                                         QtCore.Qt.AlignmentFlag.AlignCenter, '미실시')
+                    continue
+
                 pat = (_CLASSIFIED_COLORS.get(_p)
                        or _PATTERN_CATEGORIES.get(_p)
                        or _PATTERN_CATEGORIES['X'])
+                # ── 카테고리 필터 (dim) ──
+                if self._filter_cats is not None and _p not in self._filter_cats:
+                    alpha_main = 60
+                    alpha_label = 90
+                else:
+                    alpha_main = 200
+                    alpha_label = 235
                 if block['count'] <= 2 and _p in ('C', 'E'):
                     mid = int((x1 + x2) / 2)
-                    painter.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
+                    pen_color = QColor(255, 255, 255, min(200, alpha_main + 40))
+                    painter.setPen(QPen(pen_color, 1.5))
                     painter.drawLine(mid, bar_y, mid, bar_y + bar_h)
                 else:
                     color = QColor(THEME['PALETTE'][pat['color_idx']])
-                    color.setAlpha(200)
+                    color.setAlpha(alpha_main)
                     painter.fillRect(int(x1), bar_y, bw, bar_h, color)
+
+                # ── 인라인 약어 라벨 ──
+                if self._show_labels and bw >= self._LABEL_MIN_PX:
+                    abbr = _CYCLE_LABEL_ABBR.get(_p)
+                    if not abbr:
+                        abbr = (_p[:6] if _p else '?')
+                    painter.setFont(_lbl_font)
+                    painter.setPen(QPen(QColor(255, 255, 255, alpha_label), 1.0))
+                    painter.drawText(int(x1) + 2, bar_y, bw - 4, bar_h,
+                                     QtCore.Qt.AlignmentFlag.AlignCenter, abbr)
 
             # 행 테두리 (활성 행만 진하게)
             if ri == self._active_row:
@@ -11273,13 +11452,13 @@ class CycleTimelineBar(QtWidgets.QWidget):
                 painter.setPen(QPen(QColor(160, 160, 160, 80), 0.5))
             painter.drawRect(3, bar_y - 1, w_total - 7, bar_h + 1)
 
-            # 선택 영역 하이라이트 (모든 행)
+            # 선택 영역 하이라이트 (모든 행) — augmented 좌표계 기준
             sels = self._row_selections.get(ri, [])
             if sels:
                 is_active = (ri == self._active_row)
                 for s, e in sels:
-                    sx = self._cycle_to_x(s, blocks, total)
-                    ex = self._cycle_to_x(e + 1, blocks, total)
+                    sx = self._cycle_to_x(s, blocks_aug, layout_total)
+                    ex = self._cycle_to_x(e + 1, blocks_aug, layout_total)
                     sw = max(2, int(ex - sx))
                     if is_active:
                         # 활성 행: 흰색 반투명 + 노란 테두리
@@ -11299,7 +11478,10 @@ class CycleTimelineBar(QtWidgets.QWidget):
             tick_y = self._row_y(len(self._rows) - 1) + self._ROW_HEIGHT + 2
             painter.setPen(QPen(QColor(120, 120, 120), 0.5))
             painter.setFont(QFont('맑은 고딕', 7))
-            tc = self._total_cycles
+            # sync_max 시 글로벌 max 기준으로 눈금 (활성 행 augmented 좌표계와 일치)
+            tc = self._global_max() if self._sync_max else self._total_cycles
+            if tc <= 0:
+                tc = self._total_cycles
             if tc <= 20:
                 step = 5
             elif tc <= 100:
@@ -11429,6 +11611,18 @@ class CycleTimelineBar(QtWidgets.QWidget):
         self._ctrl_drag = False
         self._pre_drag_selections = None
 
+    # ── 키보드 단축 ──
+
+    def keyPressEvent(self, event):
+        # L: 인라인 라벨 토글
+        if event.key() in (QtCore.Qt.Key.Key_L,) and not (
+                event.modifiers() & (QtCore.Qt.KeyboardModifier.ControlModifier
+                                     | QtCore.Qt.KeyboardModifier.AltModifier)):
+            self.set_show_labels(not self._show_labels)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # ── 우클릭 메뉴 ──
 
     def _show_context_menu(self, pos, global_pos) -> None:
@@ -11450,6 +11644,20 @@ class CycleTimelineBar(QtWidgets.QWidget):
         if self._selections:
             act_clear = menu.addAction("선택 해제")
             act_clear.triggered.connect(self._clear_selection)
+        # ── 260510 UX 토글 ──
+        menu.addSeparator()
+        act_lbl = menu.addAction("인라인 라벨 표시 (L)")
+        act_lbl.setCheckable(True)
+        act_lbl.setChecked(self._show_labels)
+        act_lbl.triggered.connect(lambda chk: self.set_show_labels(chk))
+        if len(self._rows) >= 2:
+            act_sync = menu.addAction("정렬 동기화 (글로벌 max_lc)")
+            act_sync.setCheckable(True)
+            act_sync.setChecked(self._sync_max)
+            act_sync.triggered.connect(lambda chk: self.set_sync_max(chk))
+        if self._filter_cats is not None:
+            act_filt = menu.addAction("카테고리 필터 해제")
+            act_filt.triggered.connect(lambda: self.set_filter(None))
         menu.exec(global_pos)
 
     def _select_block(self, block: dict) -> None:
@@ -11475,6 +11683,134 @@ class CycleTimelineBar(QtWidgets.QWidget):
         self._row_anchors[self._active_row] = None
         self.update()
         self.selectionChanged.emit(self._active_row, '')
+
+
+# ── 사이클 바 카테고리 칩 범례 (260510 UX) ──────────────────────
+
+class CycleLegendChips(QtWidgets.QWidget):
+    """사이클 바에 등장한 카테고리를 색상 칩으로 표시하고 필터링한다.
+
+    - 좌클릭 (단독): solo 강조 (그 카테고리만 풀컬러, 나머지 dim)
+    - Alt+좌클릭 (다중 토글): 해당 카테고리 dim 토글
+    - 두 번째 좌클릭으로 solo 해제
+
+    `filterChanged` 시그널은 `set[str] | None` (None=전체 풀컬러) 을 emit.
+    """
+    filterChanged = QtCore.pyqtSignal(object)  # set[str] | None
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cats: list[str] = []
+        self._off: set[str] = set()    # dim 처리할 카테고리 (Alt+클릭 누적)
+        self._solo: str | None = None  # 단독 강조 카테고리
+        self._layout = QtWidgets.QHBoxLayout(self)
+        self._layout.setContentsMargins(2, 2, 2, 2)
+        self._layout.setSpacing(4)
+        self._layout.addStretch(1)
+        self.setVisible(False)
+
+    def set_categories(self, cats: list[str]) -> None:
+        """사이클 바에서 받은 카테고리 키 리스트로 칩 재구성."""
+        # 카테고리 변경 시 필터 상태 초기화
+        if cats == self._cats:
+            return
+        self._cats = list(cats)
+        self._off.clear()
+        self._solo = None
+        # 기존 칩 제거 (stretch 보존)
+        while self._layout.count() > 1:
+            item = self._layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+        for cat in self._cats:
+            chip = self._make_chip(cat)
+            self._layout.insertWidget(self._layout.count() - 1, chip)
+        self.setVisible(bool(self._cats))
+        self._emit_filter()
+
+    def _make_chip(self, cat: str) -> QtWidgets.QPushButton:
+        pat = (_CLASSIFIED_COLORS.get(cat)
+               or _PATTERN_CATEGORIES.get(cat)
+               or _PATTERN_CATEGORIES['X'])
+        color = THEME['PALETTE'][pat['color_idx']]
+        abbr = _CYCLE_LABEL_ABBR.get(cat, cat[:6] if cat else '?')
+        text = f"● {cat}" if cat == abbr else f"● {cat} · {abbr}"
+        btn = QtWidgets.QPushButton(text)
+        btn.setObjectName(f"cycle_chip__{cat}")
+        btn.setProperty('cat', cat)
+        btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        btn.setFlat(True)
+        btn.setCheckable(False)
+        btn.setStyleSheet(self._chip_qss(color, on=True, solo=False))
+        btn.setToolTip(f"{cat} — {pat.get('desc', '')}\n클릭=단독 강조 / Alt+클릭=토글")
+        btn.clicked.connect(lambda _=False, c=cat, b=btn: self._on_clicked(c, b))
+        return btn
+
+    @staticmethod
+    def _chip_qss(color: str, on: bool, solo: bool) -> str:
+        bg = '#FFFFFF' if not solo else '#EEF2FA'
+        fg = '#1F2937' if on else '#9CA3AF'
+        opacity = '1.0' if on else '0.45'
+        border = color if (on and solo) else '#E5E8EC'
+        weight = '600' if solo else '500'
+        return (
+            f"QPushButton{{background:{bg};color:{fg};border:1px solid {border};"
+            f"border-radius:10px;padding:1px 8px 1px 6px;font-size:11px;font-weight:{weight};"
+            f"text-align:left;}}"
+            f"QPushButton:hover{{border-color:#888;}}"
+            f"QPushButton{{color:{color if on else '#9CA3AF'};}}"
+        )
+
+    def _on_clicked(self, cat: str, btn: QtWidgets.QPushButton) -> None:
+        mods = QtWidgets.QApplication.keyboardModifiers()
+        is_alt = bool(mods & QtCore.Qt.KeyboardModifier.AltModifier)
+        if is_alt:
+            self._solo = None
+            if cat in self._off:
+                self._off.discard(cat)
+            else:
+                self._off.add(cat)
+        else:
+            self._off.clear()
+            if self._solo == cat:
+                self._solo = None  # 두 번째 클릭 = 해제
+            else:
+                self._solo = cat
+        self._refresh_styles()
+        self._emit_filter()
+
+    def _refresh_styles(self) -> None:
+        for i in range(self._layout.count()):
+            w = self._layout.itemAt(i).widget()
+            if not isinstance(w, QtWidgets.QPushButton):
+                continue
+            cat = w.property('cat')
+            pat = (_CLASSIFIED_COLORS.get(cat)
+                   or _PATTERN_CATEGORIES.get(cat)
+                   or _PATTERN_CATEGORIES['X'])
+            color = THEME['PALETTE'][pat['color_idx']]
+            if self._solo is not None:
+                on = (cat == self._solo)
+                solo = on
+            else:
+                on = (cat not in self._off)
+                solo = False
+            w.setStyleSheet(self._chip_qss(color, on=on, solo=solo))
+
+    def _emit_filter(self) -> None:
+        if self._solo is not None:
+            self.filterChanged.emit({self._solo})
+        elif self._off:
+            allowed = set(self._cats) - self._off
+            self.filterChanged.emit(allowed if allowed else None)
+        else:
+            self.filterChanged.emit(None)
+
+    def reset(self) -> None:
+        self._off.clear()
+        self._solo = None
+        self._refresh_styles()
+        self._emit_filter()
 
 
 # ── .cyc 우선 프로파일 분석 유틸리티 ─────────────────────────────
@@ -13765,6 +14101,32 @@ class Ui_sitool(object):
         _tl_layout = QtWidgets.QVBoxLayout(self._timeline_groupbox)
         _tl_layout.setContentsMargins(8, 6, 8, 6)
         _tl_layout.setSpacing(4)
+
+        # 카테고리 칩 범례 + 동기화 토글 (260510 UX) — 사이클 바 위
+        self._timeline_legend_row = QtWidgets.QHBoxLayout()
+        self._timeline_legend_row.setContentsMargins(0, 0, 0, 0)
+        self._timeline_legend_row.setSpacing(6)
+        self.cycle_legend_chips = CycleLegendChips(parent=self._timeline_groupbox)
+        self.cycle_legend_chips.setObjectName("cycle_legend_chips")
+        self._timeline_legend_row.addWidget(self.cycle_legend_chips, 1)
+        self.cycle_sync_max_btn = QtWidgets.QToolButton(parent=self._timeline_groupbox)
+        self.cycle_sync_max_btn.setObjectName("cycle_sync_max_btn")
+        self.cycle_sync_max_btn.setCheckable(True)
+        self.cycle_sync_max_btn.setText("정렬 동기화 OFF")
+        self.cycle_sync_max_btn.setToolTip(
+            "다중 채널 정렬 동기화\n"
+            "OFF: 행마다 자체 max_lc 기준 100% 폭\n"
+            "ON: 글로벌 max_lc 기준, 짧은 행은 '미실시' 빗금 패딩"
+        )
+        self.cycle_sync_max_btn.setStyleSheet(
+            "QToolButton{padding:2px 10px;border:1px solid #E5E8EC;border-radius:10px;"
+            "background:#FFFFFF;font-size:11px;color:#4B5563;}"
+            "QToolButton:hover{border-color:#888;}"
+            "QToolButton:checked{background:#EEF2FA;border-color:#3C5488;color:#3C5488;font-weight:600;}"
+        )
+        self.cycle_sync_max_btn.setVisible(False)  # 다중 행일 때만 노출
+        self._timeline_legend_row.addWidget(self.cycle_sync_max_btn, 0)
+        _tl_layout.addLayout(self._timeline_legend_row)
 
         self._timeline_row = QtWidgets.QHBoxLayout()
         self._timeline_row.setContentsMargins(0, 0, 0, 0)
@@ -19758,6 +20120,10 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_timeline.selectionChanged.connect(
             lambda row, text: self._on_timeline_selection_changed(row, text))
         self.stepnum.textChanged.connect(self._on_stepnum_text_changed)
+        # ── 칩 범례 / 정렬 동기화 토글 (260510 UX) ──
+        self.cycle_legend_chips.filterChanged.connect(self.cycle_timeline.set_filter)
+        self.cycle_sync_max_btn.toggled.connect(self._on_cycle_sync_max_toggled)
+        self.cycle_timeline.syncMaxToggled.connect(self._on_cycle_sync_max_state)
         # 기존 버튼 시그널 (숨김 — 하위 호환)
         # SET 관련 버튼
         # self.BMSetProfile.clicked.connect(self.BMSetProfilebutton)
@@ -28651,6 +29017,31 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.cycle_timeline.set_blocks(rows[0][1])
         elif len(rows) > 1:
             self.cycle_timeline.set_multi_blocks(rows)
+        # ── 칩 범례 카테고리 / 동기화 버튼 가시성 갱신 (260510 UX) ──
+        try:
+            self.cycle_legend_chips.set_categories(
+                self.cycle_timeline.category_set())
+            multi = len(rows) >= 2
+            self.cycle_sync_max_btn.setVisible(multi)
+            if not multi and self.cycle_sync_max_btn.isChecked():
+                self.cycle_sync_max_btn.setChecked(False)
+        except Exception:
+            pass
+
+    def _on_cycle_sync_max_toggled(self, checked: bool) -> None:
+        """동기화 버튼 → 사이클 바 동기화 상태 적용 + 라벨 갱신."""
+        self.cycle_timeline.set_sync_max(checked)
+        self.cycle_sync_max_btn.setText(
+            "정렬 동기화 ON" if checked else "정렬 동기화 OFF")
+
+    def _on_cycle_sync_max_state(self, checked: bool) -> None:
+        """우클릭 메뉴 등 외부에서 sync 상태가 바뀐 경우 버튼 동기화."""
+        if self.cycle_sync_max_btn.isChecked() != checked:
+            self.cycle_sync_max_btn.blockSignals(True)
+            self.cycle_sync_max_btn.setChecked(checked)
+            self.cycle_sync_max_btn.blockSignals(False)
+        self.cycle_sync_max_btn.setText(
+            "정렬 동기화 ON" if checked else "정렬 동기화 OFF")
 
     # ─── 프로파일 연결처리 헬퍼 ───
 
