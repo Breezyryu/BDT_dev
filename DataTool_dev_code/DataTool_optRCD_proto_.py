@@ -11072,7 +11072,7 @@ class CycleTimelineBar(QtWidgets.QWidget):
 
     _ROW_HEIGHT = 18
     _ROW_GAP = 2
-    _TICK_HEIGHT = 16
+    _TICK_HEIGHT = 14         # 행 1개당 사이클 눈금/숫자 영역 (각 행마다 표시)
     _MIN_BLOCK_PX = 8
     _LABEL_MIN_PX = 36       # 블록 폭이 이 이상일 때 인라인 라벨 그림
     _HALF_CYCLE_PATTERNS = {'initial', '반사이클'}
@@ -11100,8 +11100,11 @@ class CycleTimelineBar(QtWidgets.QWidget):
         self._show_labels: bool = True
         self._filter_cats: set[str] | None = None  # None=모두 / set=강조 카테고리 (off는 dim)
         self._sync_max: bool = False               # True 시 모든 행을 글로벌 max_lc 기준 정렬
-        self._min_h = self._ROW_HEIGHT + self._TICK_HEIGHT + 4
-        self._max_h = self._ROW_HEIGHT * 4 + self._ROW_GAP * 3 + self._TICK_HEIGHT + 4
+        # 행마다 (바 + 눈금) 한 묶음 — 1행이면 _per_row + 4, 4행이면 *4 + GAP*3 + 4.
+        # _TICK_HEIGHT 의미가 "행 1개당 눈금 영역" 으로 변경됨 (260510).
+        _per_row = self._ROW_HEIGHT + self._TICK_HEIGHT
+        self._min_h = _per_row + 4
+        self._max_h = _per_row * 4 + self._ROW_GAP * 3 + 4
         self.setMinimumHeight(self._min_h)
         self.setMaximumHeight(self._min_h)
         self.setMouseTracking(True)
@@ -11130,14 +11133,16 @@ class CycleTimelineBar(QtWidgets.QWidget):
 
     def _update_size(self) -> None:
         n = max(1, len(self._rows))
-        h = n * self._ROW_HEIGHT + (n - 1) * self._ROW_GAP + self._TICK_HEIGHT + 4
+        per_row = self._ROW_HEIGHT + self._TICK_HEIGHT
+        h = n * per_row + (n - 1) * self._ROW_GAP + 4
         self.setMinimumHeight(h)
         self.setMaximumHeight(h)
         scroll = self.parent()
         if isinstance(scroll, QtWidgets.QScrollArea):
-            clamped = max(self._min_h, min(h, self._max_h))
-            scroll.setMinimumHeight(clamped)
-            scroll.setMaximumHeight(clamped)
+            scroll.setMinimumHeight(max(self._min_h, h))
+            # 부모(2. 사이클 패턴 GroupBox) 가 verticalLayout_4 의 잔여 공간을
+            # stretch 로 가져갈 수 있게 max 클램프 해제 — Qt 기본 상한 사용.
+            scroll.setMaximumHeight(16777215)
 
     def set_blocks(self, blocks: list[dict]) -> None:
         total = blocks[-1]['end'] if blocks else 0
@@ -11361,7 +11366,8 @@ class CycleTimelineBar(QtWidgets.QWidget):
         return None
 
     def _row_y(self, row_idx: int) -> int:
-        return 2 + row_idx * (self._ROW_HEIGHT + self._ROW_GAP)
+        per_row = self._ROW_HEIGHT + self._TICK_HEIGHT
+        return 2 + row_idx * (per_row + self._ROW_GAP)
 
     def _row_at_y(self, y: float) -> int:
         for ri in range(len(self._rows)):
@@ -11473,34 +11479,33 @@ class CycleTimelineBar(QtWidgets.QWidget):
                         painter.setPen(QPen(QColor(60, 84, 136, 100), 1.0))
                         painter.drawRect(int(sx), bar_y, sw, bar_h - 1)
 
-        # ── 눈금 표시 ──
-        if self._rows and self._total_cycles > 0:
-            tick_y = self._row_y(len(self._rows) - 1) + self._ROW_HEIGHT + 2
-            painter.setPen(QPen(QColor(120, 120, 120), 0.5))
-            painter.setFont(QFont('맑은 고딕', 7))
-            # sync_max 시 글로벌 max 기준으로 눈금 (활성 행 augmented 좌표계와 일치)
-            tc = self._global_max() if self._sync_max else self._total_cycles
-            if tc <= 0:
-                tc = self._total_cycles
-            if tc <= 20:
-                step = 5
-            elif tc <= 100:
-                step = 10
-            elif tc <= 500:
-                step = 50
-            elif tc <= 2000:
-                step = 100
-            else:
-                step = 500
-            ticks = list(range(step, tc, step))
-            if tc not in ticks:
-                ticks.append(tc)
-            for t in ticks:
-                tx = self._cycle_to_x(t)
-                painter.drawLine(int(tx), tick_y, int(tx), tick_y + 3)
-                painter.drawText(int(tx) - 20, tick_y + 3, 40, 12,
-                                 QtCore.Qt.AlignmentFlag.AlignHCenter
-                                 | QtCore.Qt.AlignmentFlag.AlignTop, str(t))
+            # ── 이 행 전용 눈금 (행마다 자기 total 기준, augmented 좌표계 적용) ──
+            # sync_max OFF: layout_total = 자기 total → 행별 다른 눈금 (사용자 요청 260510)
+            # sync_max ON : layout_total = 글로벌 max → 행마다 동일 눈금이 같은 X 에 표시
+            tick_total = layout_total
+            if tick_total > 0:
+                tick_y = bar_y + bar_h + 1
+                painter.setPen(QPen(QColor(120, 120, 120), 0.5))
+                painter.setFont(QFont('맑은 고딕', 7))
+                if tick_total <= 20:
+                    step = 5
+                elif tick_total <= 100:
+                    step = 10
+                elif tick_total <= 500:
+                    step = 50
+                elif tick_total <= 2000:
+                    step = 100
+                else:
+                    step = 500
+                ticks = list(range(step, tick_total, step))
+                if tick_total not in ticks:
+                    ticks.append(tick_total)
+                for t in ticks:
+                    tx = self._cycle_to_x(t, blocks_aug, layout_total)
+                    painter.drawLine(int(tx), tick_y, int(tx), tick_y + 3)
+                    painter.drawText(int(tx) - 20, tick_y + 3, 40, 11,
+                                     QtCore.Qt.AlignmentFlag.AlignHCenter
+                                     | QtCore.Qt.AlignmentFlag.AlignTop, str(t))
 
         painter.end()
 
@@ -14142,9 +14147,10 @@ class Ui_sitool(object):
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._timeline_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self._timeline_scroll.setMinimumHeight(self.cycle_timeline._min_h)
-        self._timeline_scroll.setMaximumHeight(self.cycle_timeline._max_h)
+        # max 클램프 해제 — 부모 GroupBox 가 verticalLayout_4 의 잔여 공간을
+        # stretch=1 로 가져갈 수 있도록.
         self._timeline_row.addWidget(self._timeline_scroll, 1)
-        _tl_layout.addLayout(self._timeline_row)
+        _tl_layout.addLayout(self._timeline_row, 1)
 
         # 사이클 바 아래 선택 상태 레이블 — 박스 안에 포함 (사이클 바와 한 묶음)
         self._timeline_selection_label = QtWidgets.QLabel(parent=self._timeline_groupbox)
@@ -14155,7 +14161,12 @@ class Ui_sitool(object):
         self._timeline_selection_label.setObjectName("_timeline_selection_label")
         _tl_layout.addWidget(self._timeline_selection_label)
 
-        self.verticalLayout_4.addWidget(self._timeline_groupbox)
+        # 박스 자체가 verticalLayout_4 의 남는 세로 공간을 흡수하도록 sizePolicy 확장.
+        self._timeline_groupbox.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        # stretch=1 — 데이터 범위/그래프 옵션/프로파일 분석 박스는 default(0).
+        self.verticalLayout_4.addWidget(self._timeline_groupbox, 1)
 
         # ── 공용 폰트 (Cycle 탭과 동일) ──
         _pf_font = QtGui.QFont("맑은 고딕", 10)
@@ -14518,8 +14529,8 @@ class Ui_sitool(object):
 
         # 모드+버튼을 그래프 옵션 아래에 배치
         self.verticalLayout_4.addWidget(self._profile_analysis_groupbox)
-        # 하단 여백
-        self.verticalLayout_4.addStretch(1)
+        # (구) 하단 addStretch(1) 제거 — "2. 사이클 패턴" 박스가 stretch=1 로
+        # 잔여 세로 공간을 흡수 (260510 류성택 요청)
 
         self.horizontalLayout_17.addLayout(self.verticalLayout_4)
         self.tabWidget_2.addTab(self.tab_6, "")
@@ -28376,14 +28387,16 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
     def _on_stepnum_text_changed(self) -> None:
         """stepnum 텍스트 변경 → 타임라인 바 + 테이블 col4 동기화.
-        stepnum은 항상 논리사이클 기준.
+        stepnum은 항상 논리사이클 기준. bar_row 는 사이클 바 활성 행 사용
+        (link_mode 에서 그룹 인덱스, 비-link 모드에서 데이터 행 인덱스).
         """
         if self._timeline_syncing:
             return
         self._timeline_syncing = True
         text = self.stepnum.toPlainText()
         self.cycle_timeline.set_selection_from_text(text)
-        self._write_cycle_to_table(text, col=4)
+        self._write_cycle_to_table(
+            text, col=4, bar_row=self.cycle_timeline._active_row)
         self._timeline_syncing = False
 
     def _update_timeline_selection_label(self, text: str) -> None:
@@ -28902,26 +28915,64 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
 
         col=4: 사이클 열 (논리사이클)
         col=5: Raw 열 (TotlCycle)
-        bar_row: 바 행 인덱스 → 테이블의 N번째 데이터 행에 기록.
+
+        bar_row 매핑 (260510 정정):
+          - **연결처리 모드**: bar_row = 사이클 바 행 인덱스 = 그룹 인덱스.
+            해당 그룹의 첫 데이터 행에만 기록하고 나머지는 빈칸.
+            (`_handle_link_cycle_table` 의 `1-cumul_tc` 힌트 위치와 일치)
+          - **비연결 모드**: bar_row = 데이터 행 인덱스 (그룹 무시, 기존 동작).
         """
         tbl = self.cycle_path_table
+        link_mode = self.chk_link_cycle.isChecked()
+
+        # 그룹별 데이터 행 인덱스 (빈 행 = 그룹 구분자)
+        groups: list[list[int]] = []
+        current: list[int] = []
+        for r in range(tbl.rowCount()):
+            if self._get_table_cell(r, 1):
+                current.append(r)
+            else:
+                if current:
+                    groups.append(current)
+                    current = []
+        if current:
+            groups.append(current)
+
+        def _set_text(row: int) -> None:
+            item = tbl.item(row, col)
+            if item is None:
+                item = QtWidgets.QTableWidgetItem(text)
+                tbl.setItem(row, col, item)
+            else:
+                item.setText(text)
+            item.setForeground(QtGui.QColor(0, 0, 0))
+            item.setToolTip('')
+
         tbl.blockSignals(True)
         try:
-            data_row_idx = 0  # 데이터 행 카운터 (빈 행 제외)
-            for r in range(tbl.rowCount()):
-                path = self._get_table_cell(r, 1)
-                if not path:
-                    continue
-                if data_row_idx == bar_row:
-                    item = tbl.item(r, col)
-                    if item is None:
-                        item = QtWidgets.QTableWidgetItem(text)
-                        tbl.setItem(r, col, item)
-                    else:
-                        item.setText(text)
-                    item.setForeground(QtGui.QColor(0, 0, 0))
+            if link_mode:
+                # bar_row = 그룹 인덱스. 그룹 첫 행에만 기록.
+                if not (0 <= bar_row < len(groups)):
                     return
-                data_row_idx += 1
+                grp = groups[bar_row]
+                if not grp:
+                    return
+                _set_text(grp[0])
+                # 그룹의 나머지 행은 빈칸 (link_mode 시각 일관성)
+                for r in grp[1:]:
+                    item = tbl.item(r, col)
+                    if item is not None:
+                        item.setText('')
+                        item.setToolTip('')
+            else:
+                # bar_row = 데이터 행 인덱스 (그룹 무시, 기존 동작 호환).
+                data_row_idx = 0
+                for grp in groups:
+                    for r in grp:
+                        if data_row_idx == bar_row:
+                            _set_text(r)
+                            return
+                        data_row_idx += 1
         finally:
             tbl.blockSignals(False)
 
