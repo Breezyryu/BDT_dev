@@ -11503,14 +11503,19 @@ class CycleTimelineBar(QtWidgets.QWidget):
                     painter.fillRect(int(x1), bar_y, bw, bar_h, color)
 
                 # ── 인라인 약어 라벨 ──
+                # ACCEL 카테고리는 라벨 숨김 — 사이클 바 대부분이 ACCEL 이라
+                # 라벨 노이즈가 심함 (260510 류성택 요청).
                 if self._show_labels and bw >= self._LABEL_MIN_PX:
                     abbr = _CYCLE_LABEL_ABBR.get(_p)
                     if not abbr:
                         abbr = (_p[:6] if _p else '?')
-                    painter.setFont(_lbl_font)
-                    painter.setPen(QPen(QColor(255, 255, 255, alpha_label), 1.0))
-                    painter.drawText(int(x1) + 2, bar_y, bw - 4, bar_h,
-                                     QtCore.Qt.AlignmentFlag.AlignCenter, abbr)
+                    if _p in ('사이클(ACCEL)', '가속수명', 'ACCEL'):
+                        abbr = ''
+                    if abbr:
+                        painter.setFont(_lbl_font)
+                        painter.setPen(QPen(QColor(255, 255, 255, alpha_label), 1.0))
+                        painter.drawText(int(x1) + 2, bar_y, bw - 4, bar_h,
+                                         QtCore.Qt.AlignmentFlag.AlignCenter, abbr)
 
             # 행 테두리 (활성 행만 진하게)
             if ri == self._active_row:
@@ -11716,11 +11721,7 @@ class CycleTimelineBar(QtWidgets.QWidget):
         act_lbl.setCheckable(True)
         act_lbl.setChecked(self._show_labels)
         act_lbl.triggered.connect(lambda chk: self.set_show_labels(chk))
-        if len(self._rows) >= 2:
-            act_sync = menu.addAction("정렬 동기화 (글로벌 max_lc)")
-            act_sync.setCheckable(True)
-            act_sync.setChecked(self._sync_max)
-            act_sync.triggered.connect(lambda chk: self.set_sync_max(chk))
+        # 정렬 동기화 메뉴 — 260510 류성택 요청으로 제거
         if self._filter_cats is not None:
             act_filt = menu.addAction("카테고리 필터 해제")
             act_filt.triggered.connect(lambda: self.set_filter(None))
@@ -14168,30 +14169,14 @@ class Ui_sitool(object):
         _tl_layout.setContentsMargins(8, 6, 8, 6)
         _tl_layout.setSpacing(4)
 
-        # 카테고리 칩 범례 + 동기화 토글 (260510 UX) — 사이클 바 위
+        # 카테고리 칩 범례 (260510 UX) — 사이클 바 위.
+        # 정렬 동기화 토글 버튼은 260510 류성택 요청으로 제거됨.
         self._timeline_legend_row = QtWidgets.QHBoxLayout()
         self._timeline_legend_row.setContentsMargins(0, 0, 0, 0)
         self._timeline_legend_row.setSpacing(6)
         self.cycle_legend_chips = CycleLegendChips(parent=self._timeline_groupbox)
         self.cycle_legend_chips.setObjectName("cycle_legend_chips")
         self._timeline_legend_row.addWidget(self.cycle_legend_chips, 1)
-        self.cycle_sync_max_btn = QtWidgets.QToolButton(parent=self._timeline_groupbox)
-        self.cycle_sync_max_btn.setObjectName("cycle_sync_max_btn")
-        self.cycle_sync_max_btn.setCheckable(True)
-        self.cycle_sync_max_btn.setText("정렬 동기화 OFF")
-        self.cycle_sync_max_btn.setToolTip(
-            "다중 채널 정렬 동기화\n"
-            "OFF: 행마다 자체 max_lc 기준 100% 폭\n"
-            "ON: 글로벌 max_lc 기준, 짧은 행은 '미실시' 빗금 패딩"
-        )
-        self.cycle_sync_max_btn.setStyleSheet(
-            "QToolButton{padding:2px 10px;border:1px solid #E5E8EC;border-radius:10px;"
-            "background:#FFFFFF;font-size:11px;color:#4B5563;}"
-            "QToolButton:hover{border-color:#888;}"
-            "QToolButton:checked{background:#EEF2FA;border-color:#3C5488;color:#3C5488;font-weight:600;}"
-        )
-        self.cycle_sync_max_btn.setVisible(False)  # 다중 행일 때만 노출
-        self._timeline_legend_row.addWidget(self.cycle_sync_max_btn, 0)
         _tl_layout.addLayout(self._timeline_legend_row)
 
         self._timeline_row = QtWidgets.QHBoxLayout()
@@ -20192,10 +20177,8 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         self.cycle_timeline.selectionChanged.connect(
             lambda row, text: self._on_timeline_selection_changed(row, text))
         self.stepnum.textChanged.connect(self._on_stepnum_text_changed)
-        # ── 칩 범례 / 정렬 동기화 토글 (260510 UX) ──
+        # ── 칩 범례 (260510 UX) — 동기화 토글은 260510 류성택 요청으로 제거 ──
         self.cycle_legend_chips.filterChanged.connect(self.cycle_timeline.set_filter)
-        self.cycle_sync_max_btn.toggled.connect(self._on_cycle_sync_max_toggled)
-        self.cycle_timeline.syncMaxToggled.connect(self._on_cycle_sync_max_state)
         # 기존 버튼 시그널 (숨김 — 하위 호환)
         # SET 관련 버튼
         # self.BMSetProfile.clicked.connect(self.BMSetProfilebutton)
@@ -22091,6 +22074,33 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
         # 헤더/탭 라벨은 앱 기본 폰트 (Malgun Gothic) 유지.
         _cell_font = QFont("Consolas")
         _cell_font.setPointSize(9)
+
+        def _wrap_channel_header(text: str) -> str:
+            """채널 헤더 줄바꿈 — 컬럼 폭은 숫자 데이터 기준으로 좁게 잡고,
+            긴 채널명은 자연 break point 에서 여러 줄로 나눠 헤더 높이 확장.
+
+            우선 '@' 기준 분할 (앞: 모델/타입, 뒤: 채널 ID),
+            앞부분이 길면 공백 가운데를 한 번 더 분할.
+            """
+            t = (text or '').strip()
+            if '@' in t:
+                prefix, suffix = t.split('@', 1)
+                prefix = prefix.strip()
+                suffix = '@' + suffix
+                if len(prefix) > 12:
+                    words = prefix.split()
+                    if len(words) >= 2:
+                        mid = (len(words) + 1) // 2
+                        return (' '.join(words[:mid]) + '\n'
+                                + ' '.join(words[mid:]) + '\n' + suffix)
+                return f"{prefix}\n{suffix}" if prefix else suffix
+            if len(t) > 14:
+                words = t.split()
+                if len(words) >= 2:
+                    mid = (len(words) + 1) // 2
+                    return ' '.join(words[:mid]) + '\n' + ' '.join(words[mid:])
+            return t
+
         for sheet_name, ch_series in sheets_per_channel.items():
             if not ch_series:
                 continue
@@ -22116,12 +22126,14 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             )
             # 다중 셀 선택 + Ctrl+C 복사 / Ctrl+A 전체선택 단축키
             self._install_data_table_copy_shortcut(tbl)
-            # 헤더 — OriCyc + 채널 라벨
-            headers = ["OriCyc"] + col_labels
+            # 헤더 — OriCyc + 채널 라벨 (긴 채널명은 자연 break 에서 줄바꿈)
+            wrapped_labels = [_wrap_channel_header(c) for c in col_labels]
+            headers = ["OriCyc"] + wrapped_labels
             tbl.setHorizontalHeaderLabels(headers)
             tbl.verticalHeader().setVisible(False)
+            # 폭은 데이터 기반 (셀 채운 뒤 sample-based 계산) — 헤더 길이 무시
             tbl.horizontalHeader().setSectionResizeMode(
-                QHeaderView.ResizeMode.ResizeToContents)
+                QHeaderView.ResizeMode.Interactive)
             # 채널 헤더 색상 적용
             for ci, ch_label in enumerate(col_labels):
                 _info = channel_map.get(ch_label) or {}
@@ -22164,6 +22176,21 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
                     _it.setFlags(Qt.ItemFlag.ItemIsSelectable
                                  | Qt.ItemFlag.ItemIsEnabled)
                     tbl.setItem(ri, ci + 1, _it)
+            # 데이터 기반 컬럼 폭 — sample 50행 스캔 (Consolas 9pt ≈ 7px/char,
+            # padding 14px). 헤더가 더 길어도 컬럼은 좁게 유지하고 헤더는
+            # 줄바꿈으로 처리.
+            _h_header = tbl.horizontalHeader()
+            _sample_n = min(50, n_rows)
+            for _ci in range(n_cols):
+                _max_chars = 4  # 최소 보장
+                for _ri in range(_sample_n):
+                    _smp = tbl.item(_ri, _ci)
+                    if _smp is not None:
+                        _max_chars = max(_max_chars, len(_smp.text()))
+                _h_header.resizeSection(_ci, max(55, _max_chars * 7 + 14))
+            # 헤더 높이 — wrap 결과 라인 수에 비례 (9pt ≈ 14px/line + padding)
+            _max_lines = max((str(h).count('\n') + 1) for h in headers)
+            _h_header.setFixedHeight(_max_lines * 16 + 8)
             sheet_tabs.addTab(tbl, sheet_name)
         if sheet_tabs.count() == 0:
             return None
@@ -29129,31 +29156,15 @@ class WindowClass(QtWidgets.QMainWindow, Ui_sitool):
             self.cycle_timeline.set_blocks(rows[0][1])
         elif len(rows) > 1:
             self.cycle_timeline.set_multi_blocks(rows)
-        # ── 칩 범례 카테고리 / 동기화 버튼 가시성 갱신 (260510 UX) ──
+        # ── 칩 범례 카테고리 갱신 — RPT 만 표시 (260510 류성택 요청) ──
+        # 그 외 카테고리 (방전(초기)/사이클(ACCEL)/충전(세팅)/DCIR …) 은 사이클
+        # 바에서 색상으로만 식별하고 칩에서는 숨김.
         try:
+            _cats = self.cycle_timeline.category_set()
             self.cycle_legend_chips.set_categories(
-                self.cycle_timeline.category_set())
-            multi = len(rows) >= 2
-            self.cycle_sync_max_btn.setVisible(multi)
-            if not multi and self.cycle_sync_max_btn.isChecked():
-                self.cycle_sync_max_btn.setChecked(False)
+                [c for c in _cats if c == 'RPT'])
         except Exception:
             pass
-
-    def _on_cycle_sync_max_toggled(self, checked: bool) -> None:
-        """동기화 버튼 → 사이클 바 동기화 상태 적용 + 라벨 갱신."""
-        self.cycle_timeline.set_sync_max(checked)
-        self.cycle_sync_max_btn.setText(
-            "정렬 동기화 ON" if checked else "정렬 동기화 OFF")
-
-    def _on_cycle_sync_max_state(self, checked: bool) -> None:
-        """우클릭 메뉴 등 외부에서 sync 상태가 바뀐 경우 버튼 동기화."""
-        if self.cycle_sync_max_btn.isChecked() != checked:
-            self.cycle_sync_max_btn.blockSignals(True)
-            self.cycle_sync_max_btn.setChecked(checked)
-            self.cycle_sync_max_btn.blockSignals(False)
-        self.cycle_sync_max_btn.setText(
-            "정렬 동기화 ON" if checked else "정렬 동기화 OFF")
 
     # ─── 프로파일 연결처리 헬퍼 ───
 
