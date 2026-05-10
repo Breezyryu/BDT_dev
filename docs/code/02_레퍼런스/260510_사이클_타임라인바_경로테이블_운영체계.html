@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>사이클 타임라인 바 + 경로 테이블 운영 체계 — BDT 레퍼런스</title>
+<style>
+  :root{
+    --c-bg:#fafbfc; --c-fg:#1c2026; --c-mute:#5b6573; --c-line:#e3e7ee;
+    --c-accent:#3C5488; --c-accent2:#E64B35; --c-ok:#00A087; --c-warn:#F39B7F;
+    --c-info:#4DBBD5; --c-soft:#8491B4; --c-card:#ffffff; --c-code:#f3f4f7;
+    --pal0:#3C5488; --pal1:#E64B35; --pal2:#00A087; --pal3:#F39B7F;
+    --pal4:#4DBBD5; --pal5:#8491B4; --pal6:#B09C85; --pal7:#91D1C2;
+    --pal8:#DC0000; --pal9:#7E6148;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--c-bg);color:var(--c-fg);
+    font-family:"Pretendard","Apple SD Gothic Neo","맑은 고딕","Malgun Gothic",
+    -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:14.5px; line-height:1.6}
+  .wrap{max-width:1180px; margin:0 auto; padding:36px 28px 80px}
+  header.title{border-bottom:2px solid var(--c-accent); padding-bottom:14px; margin-bottom:24px}
+  header.title h1{margin:0; font-size:1.7em; color:var(--c-accent); letter-spacing:-0.01em}
+  header.title .meta{color:var(--c-mute); font-size:0.92em; margin-top:6px}
+  header.title .meta b{color:var(--c-fg)}
+  h2{margin:42px 0 14px; padding:8px 0 8px 12px; border-left:4px solid var(--c-accent);
+     font-size:1.32em; color:var(--c-accent); background:linear-gradient(90deg,#eef1f7 0%, transparent 60%)}
+  h3{margin:24px 0 10px; font-size:1.08em; color:var(--c-fg);
+     border-bottom:1px dashed var(--c-line); padding-bottom:4px}
+  h4{margin:16px 0 6px; font-size:0.98em; color:var(--c-accent2)}
+  p,li{margin:4px 0}
+  ul,ol{padding-left:22px; margin:8px 0}
+  code,kbd{background:var(--c-code); padding:1px 6px; border-radius:4px;
+    font-family:"JetBrains Mono","Cascadia Code","D2Coding","Consolas",monospace;
+    font-size:0.92em}
+  kbd{border:1px solid var(--c-line); box-shadow:inset 0 -1.5px 0 var(--c-line)}
+  pre{background:#0f1419; color:#e6e6ea; padding:14px 16px; border-radius:7px;
+     overflow-x:auto; font-size:0.88em; line-height:1.5}
+  pre code{background:transparent; color:inherit; padding:0}
+  table{border-collapse:collapse; width:100%; margin:10px 0; font-size:0.93em;
+    background:var(--c-card); border:1px solid var(--c-line); border-radius:6px; overflow:hidden}
+  thead th{background:#eef1f7; color:var(--c-accent); font-weight:600; text-align:left;
+    padding:9px 12px; border-bottom:1px solid var(--c-line)}
+  tbody td{padding:8px 12px; border-bottom:1px solid var(--c-line); vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:nth-child(even){background:#fafbfc}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin:14px 0}
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:14px 0}
+  .card{background:var(--c-card); border:1px solid var(--c-line); border-radius:8px;
+    padding:14px 16px; box-shadow:0 1px 2px rgba(20,30,50,0.03)}
+  .card h4{margin-top:0}
+  .card.ok{border-left:4px solid var(--c-ok)}
+  .card.warn{border-left:4px solid var(--c-warn)}
+  .card.bad{border-left:4px solid var(--c-accent2)}
+  .card.info{border-left:4px solid var(--c-info)}
+  .badge{display:inline-block; padding:2px 8px; border-radius:10px;
+    font-size:0.78em; font-weight:600; margin-right:5px; vertical-align:1px}
+  .b-pne{background:#dde7f7; color:#234478}
+  .b-toyo{background:#fce7df; color:#9a3a23}
+  .b-link{background:#e0f1ee; color:#1f6e60}
+  .b-multi{background:#ecead6; color:#7a6c1d}
+  .b-light{background:#f4eee0; color:#7c5e1a}
+  .b-full{background:#e7e9f4; color:#3a4480}
+  .b-step{background:#dfe9f6; color:#1f4477; border:1px solid #b8cae6;
+    margin-right:8px; padding:1px 7px}
+  .toc{background:#fff; border:1px solid var(--c-line); border-radius:7px;
+    padding:14px 18px 14px 36px; margin-bottom:20px}
+  .toc ol{margin:0; padding-left:18px}
+  .toc li{padding:1.5px 0}
+  .toc a{color:var(--c-accent); text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  .legend{display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 14px; font-size:0.9em}
+  .legend span{display:inline-flex; align-items:center; gap:6px;
+    background:#fff; border:1px solid var(--c-line); padding:3px 10px; border-radius:14px}
+  .swatch{display:inline-block; width:12px; height:12px; border-radius:2px}
+  .timeline-demo{background:#fff; border:1px solid var(--c-line);
+    border-radius:6px; padding:12px; margin:8px 0}
+  .tl-row{display:flex; align-items:center; gap:8px; margin:6px 0; font-size:0.85em}
+  .tl-label{width:140px; color:var(--c-mute); font-family:"D2Coding",monospace}
+  .tl-bar{flex:1; height:18px; display:flex; border:1px solid #d0d4dc; border-radius:2px; overflow:hidden}
+  .tl-bar > div{height:100%; opacity:0.85}
+  .tl-tick{display:flex; padding-left:148px; gap:0; font-size:0.74em; color:var(--c-mute);
+    margin-top:2px}
+  .tl-tick > span{flex:1; text-align:left; border-left:1px solid var(--c-line)}
+  .tl-tick > span:first-child{border-left:none}
+  .ascii{background:#0f1419; color:#cdd9e5; padding:14px 18px; border-radius:7px;
+    font-family:"D2Coding","Consolas",monospace; font-size:0.85em; line-height:1.5;
+    white-space:pre; overflow-x:auto}
+  .case-tag{display:inline-block; min-width:62px; padding:4px 10px; border-radius:4px;
+    background:var(--c-accent); color:#fff; font-weight:600; font-size:0.85em;
+    margin-right:8px; text-align:center}
+  .case-A{background:var(--c-accent)}
+  .case-B{background:var(--c-info)}
+  .case-C{background:var(--c-ok)}
+  .case-D{background:var(--c-accent2)}
+  .case-E{background:var(--c-soft)}
+  .case-F{background:#9b59b6}
+  .quote{border-left:3px solid var(--c-mute); background:#f6f7f9; padding:8px 14px;
+    margin:10px 0; color:#3a3f48; font-style:italic; font-size:0.94em}
+  .anchor{display:block; height:0; margin-top:-12px; padding-top:12px}
+  .small{font-size:0.85em; color:var(--c-mute)}
+  .col-mark{display:inline-block; width:18px; text-align:center; background:var(--c-accent);
+    color:#fff; border-radius:3px; font-size:0.78em; padding:1px 0; font-weight:700; margin-right:4px}
+  .pill{display:inline-block; padding:1px 8px; border-radius:8px; font-size:0.8em;
+    background:#eef1f7; color:var(--c-accent); margin:1px 2px}
+  .ok{color:var(--c-ok); font-weight:600}
+  .bad{color:var(--c-accent2); font-weight:600}
+  .arrow{color:var(--c-mute); margin:0 6px}
+  .src{color:var(--c-mute); font-size:0.85em; margin-left:4px;
+    font-family:"D2Coding",monospace}
+  hr{border:none; border-top:1px dashed var(--c-line); margin:36px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="title">
+  <h1>사이클 타임라인 바 + 경로 테이블 — 사이클 운영 체계 기준</h1>
+  <div class="meta">
+    <b>대상 코드</b> <code>DataTool_dev_code/DataTool_optRCD_proto_.py</code> &nbsp;|&nbsp;
+    <b>대상 위젯</b> <code>CycleTimelineBar</code> · <code>cycle_path_table</code> ·
+    <code>chk_link_cycle</code> &nbsp;|&nbsp;
+    <b>버전 기준</b> 260510 (commit fe7a9b1) &nbsp;|&nbsp;
+    <b>작성</b> 260510 류성택 요청 (사외 BDT_dev)
+  </div>
+</header>
+
+<div class="toc">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s1">1. 개요 — 두 위젯의 역할과 단위 일원화</a></li>
+    <li><a href="#s2">2. 사이클러별 TC/논리사이클 의미 (PNE vs Toyo)</a></li>
+    <li><a href="#s3">3. 사이클 타임라인 바 — 위젯 구조</a></li>
+    <li><a href="#s4">4. 경로 테이블 — 7컬럼 구조와 자동 채우기</a></li>
+    <li><a href="#s5">5. 운영 케이스 6종 — 단일·다중·연결·다중그룹·ECT·첫 분석 가드</a></li>
+    <li><a href="#s6">6. 연결처리(link mode) 동작 — 오프셋 라우팅 + 누적 hint</a></li>
+    <li><a href="#s7">7. 타임라인 바 ↔ col4 동기화 모델</a></li>
+    <li><a href="#s8">8. 패턴 색상 팔레트 + 분류 카테고리</a></li>
+    <li><a href="#s9">9. 알려진 버그 / 회귀 가드 / 회귀 검증 인프라</a></li>
+  </ol>
+</div>
+
+<!-- ============================== Section 1 ============================== -->
+<a id="s1" class="anchor"></a>
+<h2>1. 개요 — 두 위젯의 역할과 단위 일원화</h2>
+
+<p>BDT 사이클 데이터 탭의 운영 체계는 <b>두 핵심 위젯의 단위 정합성</b>으로 정의된다:</p>
+
+<div class="grid2">
+  <div class="card info">
+    <h4>① 사이클 타임라인 바 <span class="src">L11026 CycleTimelineBar</span></h4>
+    <ul>
+      <li>경로별 충방전 패턴을 <b>색상 블록</b>으로 시각화</li>
+      <li>행별 독립 선택 — 다중 경로 시 행마다 별도 선택 유지</li>
+      <li>클릭/Shift/Ctrl/우클릭 메뉴 + 눈금 + 툴팁</li>
+      <li>입력 단위 = <b>TC (TotlCycle 의미상 등가)</b></li>
+    </ul>
+  </div>
+  <div class="card info">
+    <h4>② 경로 테이블 <span class="src">cycle_path_table 7 cols</span></h4>
+    <ul>
+      <li>경로 입력 + 메타 자동 채우기 + TC 범위 입력</li>
+      <li>연결처리 토글로 그룹·누적 운영</li>
+      <li>빈 행이 다중 그룹 구분자 역할</li>
+      <li>입력 단위 = <b>TC (col4)</b>, 누적 단위는 그룹별 TC 합</li>
+    </ul>
+  </div>
+</div>
+
+<p>두 위젯은 <b>같은 TC 단위</b>로 동기화된다. 사용자가 col4에 입력한 값은 타임라인 바 선택을 갱신하고, 바 클릭은 col4를 갱신한다 (<code>_timeline_syncing</code> 플래그로 이중 갱신 차단).</p>
+
+<div class="quote">
+사이클 번호 통일 기준 (260412 정비) — <b>사용자 레이어 = 논리사이클(=TC)</b>, 내부 데이터 매핑 레이어 = TC. <code>CycleNo single source = col4</code>.
+</div>
+
+<!-- ============================== Section 2 ============================== -->
+<a id="s2" class="anchor"></a>
+<h2>2. 사이클러별 TC/논리사이클 의미 (PNE vs Toyo)</h2>
+
+<p>두 사이클러는 같은 "TC"라는 용어를 쓰지만 raw 단위가 다르다. 이 차이가 연결처리 라우팅 / col4 placeholder / 사이클바 max 의 정합성 핵심.</p>
+
+<table>
+  <thead>
+    <tr><th style="width:90px">사이클러</th><th>OriCycle</th><th>TC (사용자 입력 단위)</th><th>관계</th><th>max_tc 산출</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge b-pne">PNE</span></td>
+      <td>Cycle-loop = TotlCycle</td>
+      <td>TotlCycle</td>
+      <td>OriCycle = TC</td>
+      <td><code>max(v['all'][1] for v in cycle_map.values())</code></td>
+    </tr>
+    <tr>
+      <td><span class="badge b-toyo">Toyo</span></td>
+      <td>Step별 파일 (CC/CV/dchg/rest 각자 1)</td>
+      <td>충방전 그룹핑 결과</td>
+      <td>OriCycle ≠ TC<br>(N OriCycle = 1 TC)</td>
+      <td><code>max(cycle_map.keys())</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>분기 적용 위치 (<span class="src">260509 fix, commit 90e1bba</span>):</p>
+<ul>
+  <li><code>classify_paths_summary</code> — <code>meta.max_tc</code> single-source <span class="src">L7470</span></li>
+  <li><code>_resolve_path_meta</code> — col4 placeholder <code>auto_cyc_str</code> <span class="src">L25903</span></li>
+  <li><code>_get_row_max_cycle_info</code> — col4 회색 힌트 <code>max_raw</code> <span class="src">L27087</span></li>
+  <li><code>_update_cycle_hints_for_link</code> — 연결처리 row_info raw <span class="src">L27393</span></li>
+</ul>
+
+<div class="card warn" style="margin-top:14px">
+  <h4>⚠ 정합 회복 시나리오 — ATL JINJU 사례</h4>
+  <p>8 폴더 연결 (Toyo, 채널 022/023/024/032), 245mAh:</p>
+  <table style="margin-top:6px">
+    <thead><tr><th>단계</th><th>기존 (raw OriCycle)</th><th>정정 (TC 그룹)</th></tr></thead>
+    <tbody>
+      <tr><td>폴더1 max_tc</td><td>399</td><td>102</td></tr>
+      <tr><td>offsets</td><td>[0, 399, 798, 1594, ...]</td><td>[0, 102, ~204, ...]</td></tr>
+      <tr><td>입력 <code>103</code> 라우팅</td><td>pi=0 → 폴더1 → "데이터 없음" <span class="bad">✗</span></td><td>pi=1 → 폴더2 cm[3] → 정상 <span class="ok">✓</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================== Section 3 ============================== -->
+<a id="s3" class="anchor"></a>
+<h2>3. 사이클 타임라인 바 — 위젯 구조</h2>
+
+<h3>3.1 행 모델 — 단일경로 vs 다중경로</h3>
+<div class="grid2">
+  <div class="card">
+    <h4>단일경로 (1 row)</h4>
+    <pre><code>set_blocks(blocks)
+→ self._rows = [('', blocks, total)]
+→ _active_row = 0
+높이: 18px (1 row)</code></pre>
+  </div>
+  <div class="card">
+    <h4>다중경로 (N rows, 최대 4행 가시)</h4>
+    <pre><code>set_multi_blocks([(label, blocks), ...])
+→ self._rows = [(label, blocks, total), ...]
+→ _row_selections: dict[int, list[(s,e)]]
+높이: 자동 (N×18 + N-1×2 + 16 tick + 4)
+스크롤: _max_h = 4-row 한계 초과 시</code></pre>
+  </div>
+</div>
+
+<p>활성 행 전환 — 다른 행 클릭 시 <code>_active_row</code> 변경, 이전 선택은 유지(파란 오버레이로 표시), 새 활성 행 선택은 흰색+노란 테두리.</p>
+
+<h3>3.2 블록 빌드 파이프라인</h3>
+
+<div class="ascii">_update_cycle_timeline(self, raw_file_path=None)
+├─ pne_path_setting() → folders 목록
+├─ for folder in folders:
+│   ├─ scandir → 채널 폴더 정렬
+│   ├─ Phase 0 메타 기반 max_tc 가장 큰 채널을 대표 채널로 선정
+│   ├─ blocks 생성:
+│   │   ├─ classified 있음 → _build_timeline_blocks_tc_by_loop  ← 우선
+│   │   ├─ PNE classified 없음 → _build_timeline_blocks(SaveEndData)  ← 폴백
+│   │   └─ Toyo classified 없음 → _build_timeline_blocks_toyo(channel_path)
+│   └─ rows.append((label, blocks))
+├─ link_mode + len(rows) > 1:
+│   └─ _get_table_row_groups() → 그룹별 블록 누적 합산 + offset 적용
+└─ rows 1개 → set_blocks / 다수 → set_multi_blocks</div>
+
+<h4>블록 dict 형태</h4>
+<pre><code>{
+  'start': 1,         # TC 시작
+  'end':   30,        # TC 끝
+  'pattern': '가속수명',  # classified category 또는 'A'~'G','X'
+  'count': 30,        # end - start + 1
+}</code></pre>
+
+<h3>3.3 마우스 인터랙션 매트릭스</h3>
+<table>
+  <thead><tr><th>입력</th><th>동작</th><th>예</th></tr></thead>
+  <tbody>
+    <tr><td>좌클릭 (블록 위)</td><td>해당 블록 전체 선택 (start~end)</td><td>15-30 RPT 블록 클릭 → "15-30"</td></tr>
+    <tr><td>좌클릭 (블록 외)</td><td>단일 사이클 선택</td><td>X=120px → "37"</td></tr>
+    <tr><td><kbd>Shift</kbd>+클릭</td><td>last_anchor부터 현재까지 범위</td><td>5에서 시작, 30 클릭 → "5-30"</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+클릭 (블록)</td><td>다중 범위 토글 (이미 있으면 제거)</td><td>"5-10 20-25" 누적 가능</td></tr>
+    <tr><td>드래그</td><td>임의 사이클 범위 드래그</td><td>X1~X2 → 사이클 범위 매핑</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+드래그</td><td>기존 선택에 새 범위 추가</td><td>"5-10" 보존 + "20-25" 추가</td></tr>
+    <tr><td>우클릭</td><td>컨텍스트 메뉴: 이 블록 선택 / 같은 패턴 전체 / 전체 / 해제</td><td>RPT 6개 일괄 선택</td></tr>
+  </tbody>
+</table>
+
+<h3>3.4 시각 표현 규약</h3>
+<ul>
+  <li><b>활성 행</b>: 진한 회색 테두리 + 선택 영역 흰색 반투명 + 노란 테두리</li>
+  <li><b>비활성 행</b>: 옅은 회색 테두리 + 선택 영역 파란 반투명 + 파란 테두리</li>
+  <li><b>반사이클 패턴</b> (initial, 반사이클): 시각 가중치 0.3배 — 짧게 표시</li>
+  <li><b>최소 블록 폭</b>: 8px — 짧은 블록도 가독성 보장 (긴 블록에서 비례 분배)</li>
+  <li><b>C·E 패턴, count ≤ 2</b>: 색칠 대신 가운데 흰색 세로선 (시작/종료 마커)</li>
+  <li><b>눈금 step</b>: tc≤20→5 / ≤100→10 / ≤500→50 / ≤2000→100 / >2000→500</li>
+</ul>
+
+<!-- ============================== Section 4 ============================== -->
+<a id="s4" class="anchor"></a>
+<h2>4. 경로 테이블 — 7컬럼 구조와 자동 채우기</h2>
+
+<h3>4.1 컬럼 구조</h3>
+<table>
+  <thead><tr><th style="width:60px">col</th><th style="width:120px">의미</th><th>입력원</th><th>자동/수동</th><th>역할</th></tr></thead>
+  <tbody>
+    <tr><td><span class="col-mark">0</span></td><td>시험명</td><td>경로 basename에서 추출</td><td>auto (light)</td><td>그래프 범례, 보고서 헤더</td></tr>
+    <tr><td><span class="col-mark">1</span></td><td>경로</td><td>사용자 입력 / paste / drop</td><td>수동</td><td>분석 대상 폴더 — 필수</td></tr>
+    <tr><td><span class="col-mark">2</span></td><td>채널</td><td>scandir + 채널 폴더 검색</td><td>auto (full)</td><td>채널 필터 (예 "1,2,3")</td></tr>
+    <tr><td><span class="col-mark">3</span></td><td>용량</td><td>경로명 regex (mAh)</td><td>auto (light)</td><td>공칭 용량, mincapacity</td></tr>
+    <tr><td><span class="col-mark">4</span></td><td>TC</td><td>cycle_map 빌드</td><td>auto (full) / 수동</td><td><b>분석 사이클 범위</b> — 사이클바와 동기화</td></tr>
+    <tr><td><span class="col-mark">5</span></td><td>모드</td><td>ECT 시 사용자 입력</td><td>수동 (ECT만)</td><td>비-ECT 시 read-only 회색</td></tr>
+    <tr><td><span class="col-mark">6</span></td><td>v_nom</td><td>schedule/측정</td><td>auto (full)</td><td>공칭 전압 (보조)</td></tr>
+  </tbody>
+</table>
+
+<h3>4.2 자동 채우기 모드 — Light vs Full</h3>
+<div class="grid2">
+  <div class="card ok">
+    <h4><span class="badge b-light">LIGHT</span> IO 0, regex만</h4>
+    <ul>
+      <li>대상 컬럼: <span class="col-mark">0</span> 시험명 + <span class="col-mark">3</span> 용량</li>
+      <li>호출 시점: <b>경로 입력 직후</b> (paste / drop / cellChanged / load)</li>
+      <li>비용: <b>0 ms</b> (basename + name_capacity 정규식)</li>
+      <li>캐시: <code>_path_meta_cache_light</code> (인스턴스 dict)</li>
+    </ul>
+  </div>
+  <div class="card warn">
+    <h4><span class="badge b-full">FULL</span> scandir + cycle_map</h4>
+    <ul>
+      <li>대상 컬럼: <span class="col-mark">0</span><span class="col-mark">2</span><span class="col-mark">3</span><span class="col-mark">4</span><span class="col-mark">6</span> 전부</li>
+      <li>호출 시점: <b>"사이클 분석" 버튼 클릭</b> (confirm 진입부)</li>
+      <li>비용: 100 ms ~ 5 s/경로 (cycle_map 빌드 포함)</li>
+      <li>캐시: <code>_path_meta_cache</code> + <code>lru_cache(check_cycler/_quick_max_cycle)</code></li>
+      <li>UI 응답: statusBar "<code>채널·TC 채우기 중... (k/n)</code>" + <code>processEvents()</code></li>
+    </ul>
+  </div>
+</div>
+
+<h3>4.3 트리거 매트릭스</h3>
+<table>
+  <thead><tr><th>호출자</th><th>액션</th><th>모드</th><th>위치</th></tr></thead>
+  <tbody>
+    <tr><td><code>_on_path_cell_changed</code></td><td>셀 직접 입력·교체</td><td><span class="badge b-light">light</span></td><td>L22013</td></tr>
+    <tr><td><code>_cycle_table_paste</code></td><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td><span class="badge b-light">light</span></td><td>L23038</td></tr>
+    <tr><td><code>_drop_paths_to_table</code></td><td>파일·폴더 drag-drop</td><td><span class="badge b-light">light</span></td><td>L23981</td></tr>
+    <tr><td><code>_open_table_from_path_file</code></td><td>txt/csv 경로 파일 import</td><td><span class="badge b-light">light</span></td><td>L22852</td></tr>
+    <tr><td><code>unified_cyc_confirm_button</code></td><td>"사이클 분석" 클릭</td><td><span class="badge b-full">full</span></td><td>L20917</td></tr>
+    <tr><td><code>_autofill_all_rows</code> 버튼</td><td>"채우기" 버튼</td><td><span class="badge b-full">full</span></td><td>L25585</td></tr>
+  </tbody>
+</table>
+
+<h3>4.4 캐시 일관성 (Step 5)</h3>
+<ul>
+  <li><b>경로 변경 시</b> (col1 셀 교체) — 기존 경로가 다른 행에서 사용 중이 아니면 light/full 캐시 모두 pop</li>
+  <li><b>행 삭제 시</b> (<kbd>Del</kbd>) — col1 비워진 경로 중 다른 행 미사용 경로만 캐시 정리</li>
+  <li><b>다른 행 사용 검사</b> (<code>still_in_use</code>) — 다중 행 동일 경로 시나리오 보호</li>
+  <li><b>전체 초기화</b> (<code>_clear_table</code>, <code>_reset_all_caches</code>) — 두 캐시 모두 일괄 비움</li>
+</ul>
+
+<h3>4.5 paste 헤더 자동 검출 (Step 6)</h3>
+<p>엑셀에서 헤더 포함 영역 복사 시 첫 행이 데이터로 들어가는 문제 방지:</p>
+<pre><code>_PASTE_HEADER_TOKENS = frozenset({
+  '시험명','경로','채널','용량','tc','모드',
+  '경로(필수입력)','경로(필수)',
+  'pathname','path','ch','channel','capacity','cycle','mode','name',
+})
+조건: 첫 줄 split(\t) 비어있지 않은 토큰 ≥ 2 AND 모두 헤더 토큰 → skip</code></pre>
+<ul>
+  <li>단일 셀 paste ("TC")는 데이터로 처리 (오탐 방지)</li>
+  <li>일부만 헤더 키워드 → 데이터로 처리</li>
+</ul>
+
+<!-- ============================== Section 5 ============================== -->
+<a id="s5" class="anchor"></a>
+<h2>5. 운영 케이스 6종 — 단일·다중·연결·다중그룹·ECT·첫 분석 가드</h2>
+
+<p>경로 테이블의 입력 패턴 + 분석 시점 가드 동작에 따라 6가지 케이스가 발생한다. A~E는 정적 입력 모드, F는 분석 시점에 발생하는 동적 UX 케이스(=v2 guard 상호작용).</p>
+
+<table>
+  <thead><tr><th>케이스</th><th>차원</th><th>핵심 특징</th></tr></thead>
+  <tbody>
+    <tr><td><span class="case-tag case-A">A</span> 단일</td><td>정적 (입력)</td><td>1행, 사이클바 1행</td></tr>
+    <tr><td><span class="case-tag case-B">B</span> 다중 OFF</td><td>정적 (입력)</td><td>N행, 사이클바 N행, 각 행 독립</td></tr>
+    <tr><td><span class="case-tag case-C">C</span> 연결 단일그룹</td><td>정적 (입력)</td><td>N행 합산, 사이클바 1행 (offset)</td></tr>
+    <tr><td><span class="case-tag case-D">D</span> 연결 다중그룹</td><td>정적 (입력)</td><td>빈 행 구분, 그룹 수 = 사이클바 행</td></tr>
+    <tr><td><span class="case-tag case-E">E</span> ECT</td><td>정적 (입력)</td><td>chk_link_cycle 강제 OFF, col5 활성</td></tr>
+    <tr><td><span class="case-tag case-F">F</span> 첫 분석 가드</td><td><b>동적 (분석 시점)</b></td><td><b>v2 guard 자동 col4 덮어쓰기 → user input 유실 vector</b></td></tr>
+  </tbody>
+</table>
+
+<h3 id="caseA"><span class="case-tag case-A">CASE A</span> 단일 경로 (single)</h3>
+<table>
+  <thead><tr><th>설정</th><th>값</th></tr></thead>
+  <tbody>
+    <tr><td>경로 행 수</td><td>1</td></tr>
+    <tr><td>빈 행</td><td>0</td></tr>
+    <tr><td><code>chk_link_cycle</code></td><td>OFF (또는 ON 무관 — len(rows)==1)</td></tr>
+    <tr><td>사이클바</td><td>1행, 단일 막대 (set_blocks)</td></tr>
+    <tr><td>col4 placeholder</td><td>"1-{max_tc}" — meta.max_tc</td></tr>
+    <tr><td>분석 호출</td><td><code>_load_all_unified_parallel([path], CycleNo, ...)</code></td></tr>
+  </tbody>
+</table>
+<div class="ascii">┌── path A: ATL JINJU 1-100 (max_tc=102, Toyo)
+│   ┌───── col0 ────────┬──── col1 ───────┬─col2─┬─col3─┬─col4─┐
+│ 1 │ ATL_JINJU_상온수명 │ D:\…\1-100      │  22  │ 245  │ 1-50 │  ← 사용자 입력
+│   └───────────────────┴─────────────────┴──────┴──────┴──────┘
+└── 사이클바: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ (TC 1-102)</div>
+
+<h3 id="caseB"><span class="case-tag case-B">CASE B</span> 다중 경로 (multi, 연결 OFF)</h3>
+<table>
+  <thead><tr><th>설정</th><th>값</th></tr></thead>
+  <tbody>
+    <tr><td>경로 행 수</td><td>≥ 2</td></tr>
+    <tr><td>빈 행</td><td>0 (모든 행이 같은 그룹 = 1 그룹)</td></tr>
+    <tr><td><code>chk_link_cycle</code></td><td>OFF</td></tr>
+    <tr><td>사이클바</td><td><b>N행 multi blocks</b> — 각 행이 독립 max_tc</td></tr>
+    <tr><td>col4 placeholder</td><td>각 행 개별 "1-{max_tc}" — 회색</td></tr>
+    <tr><td>분석</td><td>각 경로 독립 로딩, overlay 그래프 (channel_map 통합)</td></tr>
+    <tr><td>그룹 번호</td><td>표시 안 됨 (link OFF)</td></tr>
+  </tbody>
+</table>
+<div class="ascii">┌── 다중 경로 = 같은 셀의 여러 dataset (overlay 비교)
+│   ┌─col0──────────────┬──col1───────┬col2┬col3┬col4 ─────┐
+│ 1 │ Sample-A          │ D:\…\Set1   │ 1  │245 │ 1-100 (auto)
+│ 2 │ Sample-B          │ D:\…\Set2   │ 1  │245 │ 1-100 (auto)
+│ 3 │ Sample-C          │ D:\…\Set3   │ 1  │245 │ 1-100 (auto)
+│   └───────────────────┴─────────────┴────┴────┴──────────┘
+└── 사이클바 (3 rows):
+    [Sample-A] ━━━━━━━━━━━━━━━━━━━━ (1-100)
+    [Sample-B] ━━━━━━━━━━━━━━━━━━━━ (1-100)
+    [Sample-C] ━━━━━━━━━━━━━━━━━━━━ (1-100)</div>
+
+<h3 id="caseC"><span class="case-tag case-C">CASE C</span> 다중 경로 + 연결처리 (link, 단일 그룹)</h3>
+<table>
+  <thead><tr><th>설정</th><th>값</th></tr></thead>
+  <tbody>
+    <tr><td>경로 행 수</td><td>≥ 2</td></tr>
+    <tr><td>빈 행</td><td>0 (단일 그룹)</td></tr>
+    <tr><td><code>chk_link_cycle</code></td><td><b>ON</b></td></tr>
+    <tr><td>사이클바</td><td>1행 — 그룹 블록을 offset 적용해 합산</td></tr>
+    <tr><td>col4 placeholder</td><td><b>그룹 첫 행만 "1-{cumul_tc}"</b>, 나머지 행은 빈칸</td></tr>
+    <tr><td>그룹 번호</td><td>row header "1" (그룹 첫 행만)</td></tr>
+    <tr><td>경로명 백업</td><td>그룹 후속 행 col0 비워짐 (백업: <code>_link_hidden_names</code>)</td></tr>
+    <tr><td>분석</td><td>offset 라우팅 → 사용자 누적 사이클을 로컬로 변환 → 병합</td></tr>
+  </tbody>
+</table>
+<div class="ascii">┌── 시계열 연속 dataset 4개 연결 (max_tc 102+100+99+99 = 400)
+│   ┌─col0────────────┬──col1───────┬─col2─┬─col3─┬col4 ────────────┐
+│ 1 │ ATL_상온수명_연결 │ …\1-100     │  22  │ 245  │ 1-400 (cumul)  │ ← 그룹 첫 행
+│ 2 │ (빈칸)           │ …\101-200   │(빈칸)│(빈칸)│   (빈칸)        │
+│ 3 │ (빈칸)           │ …\201-300   │(빈칸)│(빈칸)│   (빈칸)        │
+│ 4 │ (빈칸)           │ …\301-400   │(빈칸)│(빈칸)│   (빈칸)        │
+│   └─────────────────┴─────────────┴──────┴──────┴────────────────┘
+│   row header: "1"  ""  ""  ""        (그룹 1번)
+└── 사이클바 (1 row, offset 적용):
+    ━━━━━━┃━━━━━━┃━━━━━━┃━━━━━━ (1-102 ┃ 103-202 ┃ 203-301 ┃ 302-400)
+    offsets = [0, 102, 202, 301]; total = 400
+
+[비채움 정책] 그룹 내 모든 경로의 채널·용량이 같으면 follow-up 행 col2/col3 모두 공란
+[예외 표시] 채널 매칭 정보(예 `032,-,-`) 또는 용량 불일치(예 245 vs 248)
+            가 있는 행만 해당 셀에 텍스트 노출</div>
+
+<h3 id="caseD"><span class="case-tag case-D">CASE D</span> 다중 그룹 (link ON, 빈 행으로 구분)</h3>
+<table>
+  <thead><tr><th>설정</th><th>값</th></tr></thead>
+  <tbody>
+    <tr><td>경로 행 수</td><td>≥ 2</td></tr>
+    <tr><td>빈 행</td><td>≥ 1 (위·아래 모두 경로 존재 시 그룹 구분자)</td></tr>
+    <tr><td><code>chk_link_cycle</code></td><td><b>ON</b></td></tr>
+    <tr><td>사이클바</td><td><b>그룹 수만큼 rows</b> (multi blocks, 각 그룹 내부는 offset 합산)</td></tr>
+    <tr><td>그룹 번호</td><td>row header "1", "2", ... (각 그룹 첫 행)</td></tr>
+    <tr><td>구분 행 표시</td><td>높이 6px + 회색 배경 <code>#D5D8DC</code></td></tr>
+    <tr><td>분석</td><td>각 그룹별 독립 라우팅 + overlay (channel_map)</td></tr>
+  </tbody>
+</table>
+<div class="ascii">┌── 그룹 1: 셀 A 의 시계열 4개 연결 (TC cumul 400)
+│   ┌─col0─────────┬──col1──────┬─col2─┬─col3─┬─col4─┐
+│ 1 │ Sample-A_연결 │ …\A_1-100  │  22  │ 245  │ 1-400│ ← 그룹1 첫 행
+│ 2 │ (빈칸)        │ …\A_101-200│(빈칸)│(빈칸)│(빈칸)│
+│ 3 │ (빈칸)        │ …\A_201-300│(빈칸)│(빈칸)│(빈칸)│
+│ 4 │ (빈칸)        │ …\A_301-400│(빈칸)│(빈칸)│(빈칸)│
+│ 5 │ ▒▒▒▒▒▒▒▒▒▒▒▒ │ ▒▒▒▒▒▒▒▒▒▒ │▒▒▒▒▒▒│▒▒▒▒▒▒│▒▒▒▒▒▒│ ← 빈 행 (구분자, 회색)
+│ 6 │ Sample-B_연결 │ …\B_1-100  │  22  │ 245  │ 1-300│ ← 그룹2 첫 행
+│ 7 │ (빈칸)        │ …\B_101-200│(빈칸)│(빈칸)│(빈칸)│
+│ 8 │ (빈칸)        │ …\B_201-300│(빈칸)│(빈칸)│(빈칸)│
+│   └──────────────┴────────────┴──────┴──────┴──────┘
+│   row header: "1" "" "" "" "" "2" "" ""
+└── 사이클바 (2 rows):
+    [Sample-A] ━━━━━┃━━━━━┃━━━━━┃━━━━━ (그룹1 cumul 1-400)
+    [Sample-B] ━━━━━┃━━━━━┃━━━━━       (그룹2 cumul 1-300)
+
+[비채움 정책] 동일 — 그룹 내 채널·용량 일치 시 follow-up 행 col2/col3 모두 공란
+[그룹 간 비교] 그룹1 col3=245 / 그룹2 col3=248 처럼 다르면 그룹 첫 행은 각자 표시</div>
+
+<h4>다중 그룹 라우팅</h4>
+<ol>
+  <li><code>_get_table_row_groups()</code> — 빈 행 기준으로 N개 그룹 dict 리스트 반환</li>
+  <li>각 그룹 <code>grp_paths</code> 별로 offset 테이블 독립 산출</li>
+  <li>그룹 첫 경로(primary) 기준으로 <code>(gi, si, cyc_key)</code> 키 생성</li>
+  <li>그래프는 그룹 단위로 색상 + 범례, 누적 데이터는 그룹 내부에서만 연결</li>
+</ol>
+
+<h3 id="caseE"><span class="case-tag case-E">CASE E</span> ECT 모드 (chk_ectpath ON)</h3>
+<table>
+  <thead><tr><th>설정</th><th>값</th></tr></thead>
+  <tbody>
+    <tr><td><code>chk_ectpath</code></td><td><b>ON</b></td></tr>
+    <tr><td><code>chk_link_cycle</code></td><td>강제 OFF + disabled (ECT와 상호배타)</td></tr>
+    <tr><td><code>stepnum</code> 입력란</td><td>read-only 회색 (ECT 모드: 테이블 col5에서 입력)</td></tr>
+    <tr><td>col5 (모드)</td><td><b>편집 가능</b> (ECT 패턴 정의)</td></tr>
+    <tr><td>col4 (TC)</td><td>항상 편집 가능 (ECT 무관)</td></tr>
+    <tr><td>중복 경로 표시</td><td>같은 경로 행은 col0/col1 회색 (forward-fill 처리)</td></tr>
+    <tr><td>그룹 분리</td><td><code>_get_table_row_groups_ffill()</code> — ffill 변형 사용</td></tr>
+  </tbody>
+</table>
+
+<h3 id="caseF"><span class="case-tag case-F">CASE F</span> 첫 분석 가드 + 재입력 후 사이클 분석 (260510 류성택 보고)</h3>
+
+<div class="card warn">
+  <h4>🐛 사용자 보고 시나리오</h4>
+  <p class="quote" style="margin:6px 0">
+    "프로파일 분석 시, 해당 경로의 사이클 동작을 확인했고 또 다시 입력 후 사이클 분석하여 입력 사이클이 사라지는 케이스" — 260510
+  </p>
+</div>
+
+<h4>F-1. v2 가드 동작 (260505 도입, <code>unified_profile_confirm_button</code> only)</h4>
+<table>
+  <thead><tr><th>위치</th><th>역할</th><th>부수효과</th></tr></thead>
+  <tbody>
+    <tr><td><code>L29060-29068</code></td><td><code>_rows_last_analyzed_path</code>와 현재 경로 비교</td><td>다르면 → guard 진입</td></tr>
+    <tr><td><code>L29071</code></td><td>매핑 즉시 커밋 (<code>_rows_last_analyzed_path = dict(_cur_paths)</code>)</td><td>다음 클릭부터는 guard skip</td></tr>
+    <tr><td><code>L29078-29102</code></td><td><b>변경 행 col4 → "1-{max_tc}" 검정 폰트로 자동 덮어쓰기</b></td><td><b>⚠ 사용자가 입력했던 col4 값 유실</b></td></tr>
+    <tr><td><code>L29104-29106</code></td><td><code>ProfileConfirm.setEnabled(True)</code> + return (분석 skip)</td><td>실제 분석은 두 번째 클릭부터</td></tr>
+  </tbody>
+</table>
+
+<h4>F-2. 흐름 도식 — 입력 사이클 사라짐 vector</h4>
+<div class="ascii">┌─[A] 초기 진입 (Path A 입력 후)─────────────────────────┐
+│   col4 = "1-102" 회색(auto)  ·  _rows_last_analyzed_path = {} │
+└────────────────────────────────────────────────────────┘
+                ↓ ① 사용자: col4 = "10-20" 직접 입력 (검정)
+┌─[B] 사용자 입력 상태─────────────────────────────────┐
+│   col4 = "10-20" 검정(user input)  ·  마지막 분석 경로 = {} │
+└────────────────────────────────────────────────────────┘
+                ↓ ② 사용자: 프로파일 분석 클릭 (1차)
+┌─[C] v2 guard 진입 (path 비교 결과 changed)──────────┐
+│   • _rows_last_analyzed_path = {row: Path A} 커밋    │
+│   • L29094: item4.setText(f"1-{max_tc}")  ← "10-20" 덮어쓰기 │
+│   • L29095: setForeground(검정)  ← 사용자 입력 취급 │
+│   • return (분석 skip, "새 경로 감지" 메시지 의도)  │
+└────────────────────────────────────────────────────────┘
+                ↓ ③ 사용자가 알아챔 — 입력값 사라짐
+                ↓ ④ "또 다시 입력 후" — col4 = "10-20" 재입력
+┌─[D] 사이클 분석 클릭 (cycle 버튼)────────────────────┐
+│   • unified_cyc_confirm_button (v2 guard 없음)       │
+│   • _parse_cycle_input → col4 = "10-20" 정상 파싱    │
+│   • _autofill_table_empty_cells(mode='full')         │
+│       └ col4 not empty → tooltip 갱신만, 텍스트 보존  │
+│   • 분석 실행 — TC=10-20 의도대로 작동 ✓              │
+└────────────────────────────────────────────────────────┘</div>
+
+<h4>F-3. 핵심 진단</h4>
+<div class="grid2">
+  <div class="card bad">
+    <h4>⚠ 1차 사라짐 — v2 guard 자동 덮어쓰기 (확정)</h4>
+    <ul>
+      <li>가드 자체는 <b>의도된 동작</b> (260505 stale 분석 방지)</li>
+      <li>"TC 범위 초과" 다이얼로그 회피 위해 col4를 새 경로 max로 자동 갱신</li>
+      <li>그러나 <b>사용자 입력(검정)을 보존하지 않음</b> → 입력값 유실 (UX 버그)</li>
+      <li>가드 적용 위치: <code>unified_profile_confirm_button</code> only (cycle confirm은 가드 없음)</li>
+    </ul>
+  </div>
+  <div class="card info">
+    <h4>2차 사이클 분석 — col4 보존 ✓</h4>
+    <ul>
+      <li><code>unified_cyc_confirm_button</code>은 v2 guard 없음</li>
+      <li><code>_autofill_table_empty_cells</code>는 빈 셀만 채움 — col4 user input 보존</li>
+      <li><b>실제로는 사라지지 않아야 함</b> — 만약 사라진다면 미식별 vector 존재 (F-4 참조)</li>
+    </ul>
+  </div>
+</div>
+
+<h4>F-4. 잔여 가능성 (재현 시 추가 추적 필요)</h4>
+<ul>
+  <li><code>_remove_duplicates_across_rows</code> (L20297) — profile confirm L29052에서 호출. 다중 행에서 col4 중복 제거 시 user input도 빈 문자열로 덮음 가능</li>
+  <li>link mode follow-up 행 — <code>_autofill_row</code> L26033 <code>item4.setText('')</code>로 강제 클리어</li>
+  <li>탭 reset 핸들러 — <code>_rows_last_analyzed_path.clear()</code> 호출 시 다음 분석에서 guard 재진입</li>
+</ul>
+
+<h4>F-5. 권고 fix 방향</h4>
+<div class="card ok">
+  <h4>v2 guard 보완 — 사용자 입력 보존 옵션</h4>
+  <pre><code>// L29089 부근 변경 제안
+item4 = tbl.item(r, 4)
+_existing = item4.text() if item4 else ''
+_is_user_input = (item4 and
+                  item4.foreground().color() == QtGui.QColor(0, 0, 0))
+if _is_user_input and _existing.strip():
+    # 사용자 입력은 보존, 회색 placeholder만 갱신
+    item4.setToolTip(f"입력: {_existing}  (새 경로 max TC: {_max})")
+    continue   # 덮어쓰지 않음
+# 기존 로직: 회색 auto 또는 비어있을 때만 자동 갱신
+if _max:
+    item4.setText(f"1-{_max}")
+    item4.setForeground(QtGui.QColor(160, 160, 160))   # ← 회색으로 변경
+    item4.setToolTip(f"새 경로 자동 갱신 — 최대 TC: {_max}")</code></pre>
+  <p>핵심: user input(검정)은 그대로 두고, 새 경로 max TC를 회색 placeholder로만 표시. "TC 범위 초과" 다이얼로그는 다음 클릭의 <code>L29141-29150</code> 검증 로직이 따로 차단.</p>
+</div>
+
+<!-- ============================== Section 6 ============================== -->
+<a id="s6" class="anchor"></a>
+<h2>6. 연결처리(link mode) 동작 — 오프셋 라우팅 + 누적 hint</h2>
+
+<h3>6.1 토글 시그널</h3>
+<pre><code>self.chk_link_cycle.toggled.connect(self._update_group_separators)
+self.chk_link_cycle.toggled.connect(
+    lambda _checked: self._autofill_link_cumulative_hints(cache_only=True))</code></pre>
+<p><code>cache_only=True</code> — full IO 호출 안 함, <code>_path_meta_cache</code> 적중 행만 즉시 hint 갱신. 미적중 행은 다음 confirm에서 자연스럽게 채워짐.</p>
+
+<h3>6.2 누적 hint 산출 — <code>_update_cycle_hints_for_link</code></h3>
+<div class="ascii">link OFF (또는 단일 그룹 단독 경로):
+  for each row r:
+    item4.text = "1-{mc}"  where mc = row_info[r]['cycle']
+    item4.color = 회색 (auto fg 160,160,160)
+    item4.tooltip = "최대 TC: {mc}"
+
+link ON + len(grp_rows) > 1:
+  cumul_tc = sum(row_info[r]['cycle'] for r in grp_rows)
+  for idx, r in enumerate(grp_rows):
+    if idx == 0:
+      item4.text = "1-{cumul_tc}"   # 그룹 첫 행만 누적 표시
+      item4.tooltip = "누적 TC: {cumul_tc}"
+    else:
+      item4.text = ''               # 후속 행 빈칸</div>
+
+<h3>6.3 라우팅 — <code>_load_profile_link_mode</code></h3>
+<p>각 그룹의 분석은 <code>continue</code>(시계열 누적) 또는 <code>overlay</code>(분리) 모드로 분기:</p>
+
+<div class="grid2">
+  <div class="card">
+    <h4><b>continue 모드</b> (legacy_mode=="continue")</h4>
+    <ul>
+      <li>사용자 범위 [user_min, user_max] ∩ 각 경로 범위</li>
+      <li>로컬 사이클 = 누적 사이클 − offset</li>
+      <li><code>('_link', pi, local_key)</code> 임시 키</li>
+      <li><code>_merge_continue_link_data</code> 후처리 — 시간 오프셋 + concat</li>
+      <li>최종 키: <code>(gi, si, (user_min, user_max))</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4><b>overlay 모드</b> (default)</h4>
+    <ul>
+      <li>각 사용자 사이클 → 어느 경로(pi)에 속하는지 매핑</li>
+      <li><code>logical_to_local</code>: <code>{cumul: cumul-offset}</code></li>
+      <li>경로별 독립 로딩 → 로컬→누적 역변환</li>
+      <li>최종 키: <code>(gi, primary_si, logical_cyc)</code></li>
+      <li>병합 없이 그래프에 누적 사이클 그대로 plot</li>
+    </ul>
+  </div>
+</div>
+
+<h3>6.4 단일 경로 그룹 fallback</h3>
+<p>그룹 내 경로가 1개면 link 로직 우회 → <code>_load_all_unified_parallel([primary_path], ...)</code> 직접 호출. 다중 그룹에서 일부 그룹만 단일인 케이스 보호.</p>
+
+<h3>6.5 Follow-up 행 비채움 정책 (260510 류성택 정책 명시)</h3>
+
+<div class="card ok">
+  <h4>📐 정책 — col 0/2/3 follow-up 행 채움 규칙</h4>
+  <p>연결처리 그룹의 <b>그룹 첫 행</b>은 모든 메타(시험명·채널·용량·TC)를 표시하고, <b>follow-up 행은 기본 공란</b>. 단 다음 두 경우에만 해당 셀에 텍스트 노출:</p>
+  <table style="margin-top:10px">
+    <thead><tr><th style="width:90px">컬럼</th><th>비채움 (기본)</th><th>채움 (예외 = 의미 있는 입력)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="col-mark">0</span> 시험명</td>
+        <td>항상 공란 (그룹 첫 행만 표시)</td>
+        <td>없음 — 무조건 첫 행만 표시 (<code>_link_hidden_names</code>로 백업)</td>
+      </tr>
+      <tr>
+        <td><span class="col-mark">2</span> 채널</td>
+        <td>그룹 내 모든 경로의 채널 set이 일치할 때 → 공란</td>
+        <td><b>채널 매칭 정보 입력 시</b> — 위치 기반 표기(예 <code>032,-,-</code>) 또는 경로 간 채널이 다를 때 (per-path filter 의도)</td>
+      </tr>
+      <tr>
+        <td><span class="col-mark">3</span> 용량</td>
+        <td>그룹 내 모든 경로의 용량이 동일할 때 → 공란</td>
+        <td><b>용량이 다를 때만 입력</b> — 그룹 첫 행과 다른 공칭값을 가진 행은 해당 행에 직접 표기</td>
+      </tr>
+      <tr>
+        <td><span class="col-mark">4</span> TC</td>
+        <td>follow-up 행 항상 공란 (그룹 첫 행에 누적 표시)</td>
+        <td>없음 — TC는 그룹 단위 누적이므로 first row 전용</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h4>구현 — <code>_autofill_row</code> 의 <code>skip_dup</code> 분기 (proto_:25990-26028)</h4>
+<pre><code>cols = [
+    (0, auto['name'], first_meta['name']),
+    (2, auto['ch'],   first_meta['ch']),
+    (3, auto['cap'],  first_meta['cap']),
+]
+for col, auto_val, first_val in cols:
+    if link_mode and not is_grp_first and col == 0:
+        skip_dup = True              # col 0 항상 비움
+    else:
+        skip_dup = (link_mode and not is_grp_first
+                    and auto_val and first_val
+                    and auto_val.strip() == first_val.strip())
+                                     # col 2/3: 일치 시만 비움
+    if not existing and auto_val and not skip_dup:
+        item.setText(auto_val)       # 다를 때만 채움</code></pre>
+
+<h4>의미 있는 비채움/채움 시나리오</h4>
+<div class="grid2">
+  <div class="card">
+    <h4>✅ 모든 경로 동일 — 모두 공란</h4>
+    <pre><code>[1] Sample-A  …\1-100    22  245  1-400
+[2]            …\101-200  ·   ·    ·       ← col2/3/4 공란
+[3]            …\201-300  ·   ·    ·
+[4]            …\301-400  ·   ·    ·</code></pre>
+    <p class="small">= 동일 셀의 시계열 연결. 채널 22, 용량 245 모두 동일.</p>
+  </div>
+  <div class="card warn">
+    <h4>⚠ 채널 매칭 정보 — col 2 채움</h4>
+    <pre><code>[1] Sample-A  …\Set1     022,073,074  245  1-100
+[2]            …\Set2     105,-,-      ·    ·
+[3]            …\Set3     208,-,-      ·    ·</code></pre>
+    <p class="small">= 위치 기반 매칭 (Set1의 022 ↔ Set2의 105 ↔ Set3의 208). <code>'-'</code>는 해당 위치 채널 없음.</p>
+  </div>
+  <div class="card warn">
+    <h4>⚠ 용량 불일치 — col 3 채움</h4>
+    <pre><code>[1] Sample-A  …\1-100    22  245  1-400
+[2]            …\101-200  ·   248  ·         ← cap 다름 → 빨간 폰트 + 표시
+[3]            …\201-300  ·   ·    ·
+[4]            …\301-400  ·   ·    ·</code></pre>
+    <p class="small"><code>_highlight_capacity_mismatch</code>가 다수결 산출 후 소수파 행을 빨간색으로 표시.</p>
+  </div>
+  <div class="card info">
+    <h4>ℹ 사후 검증 — 빨간 폰트 강조</h4>
+    <ul>
+      <li><code>_highlight_channel_mismatch</code> (L26817) — 위치 수 부족 / 누락 채널 빨간색</li>
+      <li><code>_highlight_capacity_mismatch</code> (L26918) — 다수결 + Phase 2 실측 교차검증</li>
+      <li>강조 동작은 채움/비움 정책과 별개 — 표시된 셀이 mismatch 후보면 색상으로 한 번 더 알림</li>
+    </ul>
+  </div>
+</div>
+
+<h3>6.6 채널 매칭 — sub_label 기반</h3>
+<p>시계열 연결의 <b>대전제</b>는 "같은 채널은 모든 폴더에서 동일한 라벨을 가진다". 라벨은 <code>extract_text_in_brackets(folder_basename)</code>으로 추출 (예: <code>Cell[022]</code> → "022"):</p>
+<pre><code>primary_sub_map = {sub_label: psi}    # primary 경로의 라벨→인덱스
+local_sub_map   = {lsi: lsl}          # 현재 경로의 인덱스→라벨
+
+for (fi, si, local_key), val in local_data.items():
+    sub_label = local_sub_map.get(si)
+    primary_si = primary_sub_map.get(sub_label)  # primary 인덱스로 통일
+    merged_data[(gi, primary_si, …)] = val</code></pre>
+
+<!-- ============================== Section 7 ============================== -->
+<a id="s7" class="anchor"></a>
+<h2>7. 타임라인 바 ↔ col4 동기화 모델</h2>
+
+<div class="ascii">┌───────────────────┐               ┌──────────────────┐
+│   사이클바 클릭    │ ─selectionChanged(row, text)→ │  _on_bar_selection_  │
+│   (CycleTimelineBar)│   ↑                            │    changed           │
+└───────────────────┘   │                            │    → write to col4    │
+                        │_set_bar_selection_for_row    └──────────────────┘
+┌───────────────────┐   │                                   │
+│   col4 셀 편집    │ ─cellChanged(row,4)→ _on_cycle_cell_  │
+│   (cycle_path_table)│                    _changed         │
+└───────────────────┘                       → set_selection │
+                                            _from_text      │
+                                                            ▼
+                                           동기화 가드: _timeline_syncing
+                                           (이중 갱신 차단 플래그)</div>
+
+<h3>7.1 col4 폰트/색상 규칙</h3>
+<table>
+  <thead><tr><th>상태</th><th>색상</th><th>의미</th></tr></thead>
+  <tbody>
+    <tr><td>auto-hint (기본)</td><td>회색 <code>(160,160,160)</code></td><td>"1-{max_tc}" placeholder, full meta 적용 후</td></tr>
+    <tr><td>사용자 입력</td><td>검정 <code>(0,0,0)</code></td><td>실제 분석 범위, _restore_cycle_hint 우선순위 ↓</td></tr>
+    <tr><td>link mode 후속 행</td><td>(빈 텍스트)</td><td>그룹 첫 행이 누적값 보유</td></tr>
+    <tr><td>그룹 구분 빈 행</td><td>회색 배경</td><td>편집 불가 (시각 표시만)</td></tr>
+  </tbody>
+</table>
+
+<h3>7.2 행→바 매핑 — <code>_table_row_to_bar_row</code></h3>
+<p>경로 테이블 row와 사이클 바 row는 <b>그룹 단위</b>로 매핑된다 (link 모드):</p>
+<ul>
+  <li>link OFF: table_row → bar_row 1:1</li>
+  <li>link ON: table_row가 어느 그룹에 속하는지 + 그룹 내 첫 행 → 그룹 인덱스 = bar_row</li>
+  <li>빈 행은 매핑 없음 (시각 구분자만)</li>
+</ul>
+
+<!-- ============================== Section 8 ============================== -->
+<a id="s8" class="anchor"></a>
+<h2>8. 패턴 색상 팔레트 + 분류 카테고리</h2>
+
+<h3>8.1 _PATTERN_CATEGORIES (StepType 폴백, classified 없을 때)</h3>
+<div class="legend">
+  <span><span class="swatch" style="background:var(--pal0)"></span>A 일반수명 (다단CC+CC방전)</span>
+  <span><span class="swatch" style="background:var(--pal3)"></span>B 단일방전</span>
+  <span><span class="swatch" style="background:var(--pal2)"></span>C 단순CC</span>
+  <span><span class="swatch" style="background:var(--pal4)"></span>D 초기방전</span>
+  <span><span class="swatch" style="background:var(--pal5)"></span>E RPT/보충전</span>
+  <span><span class="swatch" style="background:var(--pal1)"></span>F HPPC</span>
+  <span><span class="swatch" style="background:#B09C85"></span>G ECT스윕</span>
+  <span><span class="swatch" style="background:var(--pal9)"></span>X 기타</span>
+</div>
+
+<h3>8.2 _CLASSIFIED_COLORS (Phase 0 분류기 결과, 우선)</h3>
+<p>Phase 2 (260419) 신 9종 + 서브태그:</p>
+<table>
+  <thead><tr><th>color_idx</th><th>색상 (hex)</th><th>패턴 그룹</th><th>예시 카테고리</th></tr></thead>
+  <tbody>
+    <tr><td><span class="swatch" style="background:var(--pal0); margin-right:6px"></span>0</td><td>#3C5488 네이비</td><td>사이클 계열</td><td>가속수명 / 화성</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal1); margin-right:6px"></span>1</td><td>#E64B35 빨강</td><td>DCIR 계열</td><td>DCIR / Rss</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal2); margin-right:6px"></span>2</td><td>#00A087 청녹</td><td>충전 계열</td><td>충전 / 충전(세팅)</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal3); margin-right:6px"></span>3</td><td>#F39B7F 연주황</td><td>GITT 계열</td><td>GITT / GITT(simplified)</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal4); margin-right:6px"></span>4</td><td>#4DBBD5 하늘</td><td>방전 계열</td><td>방전 / 방전(초기) / 반사이클</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal5); margin-right:6px"></span>5</td><td>#8491B4 회보라</td><td>RPT</td><td>RPT</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal6); margin-right:6px"></span>6</td><td>#B09C85 베이지</td><td>SOC별 사이클</td><td>SOC별 사이클</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal7); margin-right:6px"></span>7</td><td>#91D1C2 민트</td><td>저장 계열</td><td>저장 / floating</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal8); margin-right:6px"></span>8</td><td>#DC0000 진빨강</td><td>히스테리시스</td><td>히스테리시스</td></tr>
+    <tr><td><span class="swatch" style="background:var(--pal9); margin-right:6px"></span>9</td><td>#7E6148 브라운</td><td>분류 불가</td><td>unknown / 기타</td></tr>
+  </tbody>
+</table>
+
+<h3>8.3 분류 RLE 합침 규칙</h3>
+<ul>
+  <li>연속 동일 category 사이클 → 1 블록 합침</li>
+  <li>GITT 등 펄스 그룹의 <code>raw_range</code> 필드("5-30") → 범위 펼쳐서 같은 category 채움</li>
+  <li>첫 TC=initial → "초기 반사이클" 보존, 이후 initial → "반사이클" 변환</li>
+</ul>
+
+<!-- ============================== Section 9 ============================== -->
+<a id="s9" class="anchor"></a>
+<h2>9. 알려진 버그 / 회귀 가드 / 회귀 검증 인프라</h2>
+
+<h3>9.1 회귀 가드 인프라 (260509 신설)</h3>
+<table>
+  <thead><tr><th>인프라</th><th>대상</th><th>검증 단위</th></tr></thead>
+  <tbody>
+    <tr><td><code>tests/regression/test_full_sweep.py</code></td><td>단일 채널 사이클·프로파일</td><td>904 tests, byte-level</td></tr>
+    <tr><td><code>tests/regression/test_path_modes.py</code></td><td>경로 모드 3종 + 프로파일 옵션 4종</td><td>30 tests (single/multi/connected × 5 bundles)</td></tr>
+    <tr><td><code>discover_path_bundles()</code></td><td>data/exp_data 자동 발견</td><td>single 3 + multi 1 + connected 1</td></tr>
+  </tbody>
+</table>
+<p>경로 모드 회귀 실행:</p>
+<pre><code>pytest tests/regression/test_path_modes.py --update-baseline   # 첫 baseline 생성
+pytest tests/regression/test_path_modes.py                     # 정기 회귀
+pytest tests/regression/test_path_modes.py -k "connected"      # connected 만</code></pre>
+
+<h3>9.2 미수정 버그 (사이클 분석 탭 분석)</h3>
+<div class="grid2">
+  <div class="card bad">
+    <h4>Bug-1: chkir 분기 이중 할당</h4>
+    <p><code>if chkir:</code> → <code>elif chkir:</code> 이어야 함. dcir 컬럼 유실 가능성.</p>
+  </div>
+  <div class="card bad">
+    <h4>Bug-2: SOC70 추출 인덱스 가정</h4>
+    <p>SOC 포인트가 3/5/7개일 때 인덱스 assumption 깨짐.</p>
+  </div>
+  <div class="card bad">
+    <h4>Bug-3: v2 guard col4 user input 유실 (260510 신규, <a href="#caseF">Case F</a>)</h4>
+    <p><code>unified_profile_confirm_button</code> v2 guard가 새 경로 진입 시 col4 사용자 입력(검정)도 무차별 덮어씀. 권고 fix: 사용자 입력 보존 분기 추가 (Case F-5 참조).</p>
+  </div>
+  <div class="card warn">
+    <h4>Perf-1: matplotlib 메인스레드 블로킹</h4>
+    <p>사이클 탭 figure 생성이 동기 호출 — 큰 데이터에서 UI freeze.</p>
+  </div>
+  <div class="card warn">
+    <h4>Perf-2: progressBar cross-thread setValue</h4>
+    <p><code>ThreadPoolExecutor</code> 내부에서 직접 <code>.setValue()</code> — Qt 경고.</p>
+  </div>
+</div>
+
+<h3>9.3 최근 회귀 fix 이력 (요약)</h3>
+<table>
+  <thead><tr><th>날짜</th><th>fix</th><th>위치</th></tr></thead>
+  <tbody>
+    <tr><td>260412</td><td>cycle_map 이중 생성 + lru_cache 통합</td><td>_get_toyo_cycle_map / _reset_all_caches</td></tr>
+    <tr><td>260412</td><td>df.NewData DCIR 가변 컬럼 → 6개 표준 컬럼 보장</td><td>_ensure_dcir_columns</td></tr>
+    <tr><td>260412</td><td>갭 TC 추정 O(n) → O(log n)</td><td>_totl_to_logical_str (bisect)</td></tr>
+    <tr><td>260415</td><td>TC 단위 전기화학 정보 + LC 그룹 추가</td><td>TcInfo / LogicalCycleGroup</td></tr>
+    <tr><td>260419</td><td>Phase 2 분류 9종 + 서브태그 색상</td><td>_CLASSIFIED_COLORS</td></tr>
+    <tr><td>260426</td><td>경로 테이블 6 PR — light/full + statusBar + 캐시 일관성 + paste 헤더</td><td>Step 1~6</td></tr>
+    <tr><td>260505</td><td>has_es78 → has_caplim (sch fallback) — Rss/DCIR/RPT 분기 회복</td><td>_classify_single_pne_cycle</td></tr>
+    <tr><td>260505</td><td>경로 변경 시 stale TC 분석 가드 — _rows_last_analyzed_path 도입</td><td>(360505_fix_path_change_stale_tc)</td></tr>
+    <tr><td><b>260509</b></td><td><b>연결처리 Toyo TC 단위 정정 (raw OriCycle → 충방전 그룹 카운트)</b></td><td><b>4 위치 PNE/Toyo 분기</b></td></tr>
+  </tbody>
+</table>
+
+<h3>9.4 연결처리 검증 절차 (사용자 알파)</h3>
+<ol>
+  <li>앱 재시작 (<code>_reset_all_caches</code> 호출 보장)</li>
+  <li>ATL JINJU 8 폴더 연결, 채널 022/023/024/032, 245 mAh</li>
+  <li>그룹의 col4 placeholder가 사이클바 max와 정합 ("1-{cumul_tc}")</li>
+  <li>col4에 누적 사이클(예 103) 입력 → 의도한 폴더로 라우팅</li>
+  <li>4 채널 모두 그래프 표시 (overlay 또는 continue)</li>
+  <li>사이클바 클릭으로 1, 50, 100, 200, ... 검증 — col4 동기화 확인</li>
+  <li>connected baseline 회귀: <code>pytest -k connected</code></li>
+</ol>
+
+<hr>
+
+<div style="text-align:center; color:var(--c-mute); font-size:0.85em; margin-top:20px">
+  BDT 사이클 운영 체계 레퍼런스 · 260510 류성택 요청 · 본 문서는 코드/wiki SSOT 기반의 정합 요약본으로 코드 변경 시 갱신 대상.<br>
+  관련 wiki: <code>wiki/10_cycle_data/260411_analysis_cycle_concepts_unification.md</code>,
+  <code>260412_cycle_pipeline_refactor.md</code>,
+  <code>260426_changelog_path_table_step1~6_*.md</code>,
+  <code>260509_changelog_baseline_path_modes.md</code>.
+</div>
+
+</div>
+</body>
+</html>
