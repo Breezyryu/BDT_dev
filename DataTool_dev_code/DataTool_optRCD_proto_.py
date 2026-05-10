@@ -1583,13 +1583,23 @@ def _cached_pne_restore_files(raw_file_path: str) -> tuple:
                 if len(cyc_df) > 0:
                     if save_end_data is not None:
                         # CSV에 없는 스텝을 .cyc에서 gap-fill
-                        # RecIndex 기준 비교: 같은 TC 내 신규 스텝도 보충
+                        # RecIndex 기준 비교: 같은 TC 내 신규 스텝도 보충.
+                        # 260510 fix (류성택 보고): 같은 TC가 CSV·.cyc 양쪽에
+                        # 다른 RecIdx로 중복 기록된 경우 (장비 재시작·chunk 재기록
+                        # 등) RecIdx 필터만으로는 중복을 차단 못해 pivot_table
+                        # `aggfunc=sum` 단계에서 DchgCap 이 2배로 누적되는 문제.
+                        # → CSV 에 이미 존재하는 TC 는 .cyc 보충에서 완전 제외
+                        # (CSV 가 더 신뢰 가능한 최신 기록). gap-fill 본 의도는
+                        # CSV 가 가지지 않은 신규 TC 만 추가.
                         _cyc_mapped = _cyc_df_to_save_end_format(
                             cyc_df, save_end_data.shape[1])
                         csv_rec_indices = set(
                             int(x) for x in save_end_data[0].unique())
+                        csv_tcs = set(
+                            int(x) for x in save_end_data[27].unique())
                         supplement = _cyc_mapped[
-                            ~_cyc_mapped[0].astype(int).isin(csv_rec_indices)]
+                            ~_cyc_mapped[0].astype(int).isin(csv_rec_indices)
+                            & ~_cyc_mapped[27].astype(int).isin(csv_tcs)]
                         if len(supplement) > 0:
                             _ch_name = os.path.basename(raw_file_path)
                             _cyc_tcs = sorted(
