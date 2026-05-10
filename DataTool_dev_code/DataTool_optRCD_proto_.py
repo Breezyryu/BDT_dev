@@ -6454,8 +6454,11 @@ CATEGORY_LABELS = {
     '사이클(스텝충전)': '사이클 (스텝 충전)',  # 260505: N=1 multi-step CHG + DCHG (POR/PA1 등)
     'RPT': 'RPT (0.2C 충방전)',
     'GITT': 'GITT',
-    'GITT(full)': 'GITT (OCV·D_Li 측정)',
+    'GITT(full)': 'GITT (충방전 alternating)',
     'GITT(simplified)': 'GITT (simplified, RSS 측정)',
+    # 260510 (류성택): 단방향 sequential GITT 분기
+    'GITT(charge)': 'GITT 충전방향 (sequential)',
+    'GITT(discharge)': 'GITT 방전방향 (sequential)',
     'DCIR': 'DCIR (단일 펄스)',
     'SOC별 사이클': 'SOC별 사이클',
     '히스테리시스': '히스테리시스',
@@ -6547,6 +6550,9 @@ _HEURISTIC_CAT_NORMALIZE = {
     'GITT':                'fwd',
     'GITT(full)':           'fwd',
     'GITT(simplified)':     'fwd',
+    # 260510 (류성택): GITT 방향 분기 — 단방향 sequential
+    'GITT(charge)':         'fwd',
+    'GITT(discharge)':      'fwd',
     'SOC별 사이클':         'fwd',
     '히스테리시스':          'fwd',
     '히스테리시스(충방전)':  'fwd',
@@ -6662,6 +6668,13 @@ def _apply_sch_categories_to_classified(
             tc_target = entry.get('cycle')
         new_cat = tc_to_new_cat.get(int(tc_target)) if tc_target is not None else None
         if new_cat:
+            # 260510 (류성택): GITT 방향 분기 보존 — sch가 GITT(full)/GITT 로
+            # 매핑하더라도 entry 가 이미 방향-특정 GITT 면 분기 유지
+            cur_cat = entry.get('category', '')
+            if (new_cat in ('GITT(full)', 'GITT')
+                    and cur_cat in ('GITT(charge)', 'GITT(discharge)')):
+                out.append(entry)  # 방향 보존, sch 덮어쓰기 skip
+                continue
             e2 = dict(entry)
             e2['category'] = new_cat
             out.append(e2)
@@ -6730,7 +6743,18 @@ def _classify_single_pne_cycle(group: pd.DataFrame) -> dict:
 
 
 def _merge_pulse_groups(raw_results: list[dict]) -> list[dict]:
-    """연속 동일 동작 펄스(_pulse)를 GITT 논리 사이클로 병합."""
+    """연속 동일 동작 펄스(_pulse)를 GITT 논리 사이클로 병합.
+
+    260510 (류성택 요청) 방향 분기:
+    - 길이 ≥ `_GITT_PAIR_THRESHOLD` 인 단방향 pulse 그룹 → `GITT(charge)` /
+      `GITT(discharge)` 별도 블록으로 보존 (sequential 단계 = phase test).
+    - 짧은 (각 그룹 < threshold) 인접 반대방향 pair → `GITT(full)` 으로 병합
+      (alternating GITT = 한 logical cycle 안에 충/방전 sub-step).
+    - 너무 적은 pulse (총 < 2) → `initial` (반사이클) 로 강등.
+
+    240821 GITT (105 CHG + 105 DCHG sequential) 의 단일 GITT(full) 블록 문제 해결:
+    이제 `GITT(charge)` 105cy + `GITT(discharge)` 105cy 두 블록으로 분기.
+    """
     if not raw_results:
         return []
 
@@ -6745,7 +6769,7 @@ def _merge_pulse_groups(raw_results: list[dict]) -> list[dict]:
         else:
             segments.append(('normal', [r], None))
 
-    # 2단계: 인접 펄스 그룹 쌍 → GITT 논리 사이클로 병합
+    # 2단계: pulse 그룹 처리 — 짧은 인접 반대방향만 pair, 그 외 단독 분기
     merged = []
     si = 0
     while si < len(segments):
@@ -6756,37 +6780,61 @@ def _merge_pulse_groups(raw_results: list[dict]) -> list[dict]:
             si += 1
             continue
 
-        paired_items = list(items)
-        has_multi_pulse = len(items) >= 2
-        if (si + 1 < len(segments)
-                and segments[si + 1][0] == 'pulse'
-                and segments[si + 1][2] != action):
+        # 인접 pulse 그룹 (반대방향, 둘 다 짧을 때만) → alternating pair
+        next_seg = segments[si + 1] if si + 1 < len(segments) else None
+        can_pair = (
+            next_seg is not None
+            and next_seg[0] == 'pulse'
+            and next_seg[2] != action
+            and len(items) < _GITT_PAIR_THRESHOLD
+            and len(next_seg[1]) < _GITT_PAIR_THRESHOLD
+        )
+        if can_pair:
+            paired_items = items + next_seg[1]
+            actions = {action, next_seg[2]}
+            si += 2
+        else:
+            paired_items = list(items)
+            actions = {action}
             si += 1
-            paired_items.extend(segments[si][1])
-            if len(segments[si][1]) >= 2:
-                has_multi_pulse = True
 
-        if not has_multi_pulse:
+        # 총 pulse 가 < 2 면 초기 반사이클로 강등
+        if len(paired_items) < 2:
             for r in paired_items:
                 r['category'] = 'initial'
                 merged.append(r)
-            si += 1
             continue
+
+        # 방향 → 카테고리
+        if actions == {'CHG_ONLY'}:
+            cat = 'GITT(charge)'
+        elif actions == {'DCHG_ONLY'}:
+            cat = 'GITT(discharge)'
+        else:
+            cat = 'GITT(full)'
 
         raw_cycles = [r['cycle'] for r in paired_items]
         merged.append({
             'cycle': raw_cycles[0],
-            'category': 'GITT',
+            'category': cat,
             'n_charge': sum(r['n_charge'] for r in paired_items),
             'n_discharge': sum(r['n_discharge'] for r in paired_items),
             'n_rest': sum(r['n_rest'] for r in paired_items),
             'total_steps': sum(r['total_steps'] for r in paired_items),
             'raw_cycles': len(paired_items),
             'raw_range': f'{min(raw_cycles)}-{max(raw_cycles)}',
+            'gitt_direction': (
+                'charge' if cat == 'GITT(charge)'
+                else 'discharge' if cat == 'GITT(discharge)'
+                else 'full'),
         })
-        si += 1
 
     return merged
+
+
+# 인접 단방향 pulse 그룹 길이가 이 값 미만이면 alternating pair 로 간주 (GITT(full))
+# 이 값 이상이면 sequential phase test 로 간주 → GITT(charge)/(discharge) 분기
+_GITT_PAIR_THRESHOLD = 3
 
 
 def classify_pne_cycles(df: pd.DataFrame, capacity: int) -> list[dict]:
@@ -10792,8 +10840,11 @@ _CLASSIFIED_COLORS = {
     '사이클(스텝충전)':     {'color_idx': 0, 'desc': '사이클 (스텝 충전)'},  # 260505: POR/PA1 등
     'RPT':                {'color_idx': 5, 'desc': 'RPT (0.2C 충방전)'},
     'GITT':               {'color_idx': 3, 'desc': 'GITT'},
-    'GITT(full)':          {'color_idx': 3, 'desc': 'GITT (OCV·D_Li 측정)'},
+    'GITT(full)':          {'color_idx': 3, 'desc': 'GITT (충방전 alternating)'},
     'GITT(simplified)':    {'color_idx': 3, 'desc': 'GITT (simplified, RSS 측정)'},
+    # 260510 (류성택 요청): 단방향 sequential GITT 분기
+    'GITT(charge)':        {'color_idx': 3, 'desc': 'GITT 충전방향 (sequential)'},
+    'GITT(discharge)':     {'color_idx': 3, 'desc': 'GITT 방전방향 (sequential)'},
     'DCIR':               {'color_idx': 1, 'desc': 'DCIR (단일 펄스)'},
     'SOC별 사이클':        {'color_idx': 6, 'desc': 'SOC별 사이클'},
     '히스테리시스':         {'color_idx': 8, 'desc': '히스테리시스'},
